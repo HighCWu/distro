@@ -4,7 +4,7 @@
   debug,
   llvm-toolchain-unwrapped,
   src ? pkgs.fetchFromGitHub {
-    owner = "tombl";
+    owner = "HighCWu";
     repo = "musl";
     rev = "637b0d25dafa7e4740357f25fb0b5e3949f1ed1f";
     hash = "sha256-JsiHpPB8EVs7uyI1fbnoGy3f17KrEf4nCi5nHE31du8=";

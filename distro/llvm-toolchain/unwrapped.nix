@@ -1,9 +1,9 @@
-# clang/lld for the build platform, from the tombl/llvm-project fork whose
+# clang/lld for the build platform, from the HighCWu/llvm-project fork whose
 # wasm-linux branch carries the wasm32-unknown-linux-musl target.
 {
   pkgs,
   src ? pkgs.fetchFromGitHub {
-    owner = "tombl";
+    owner = "HighCWu";
     repo = "llvm-project";
     rev = "9aaceb42fef4f924a00126e0d66140d01482921c";
     hash = "sha256-UXfcTGqVJsIVQHDSSF2tcRuM7zysJycaEsmCmlepVVM=";
