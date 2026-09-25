@@ -151,11 +151,31 @@ let
       disks = [ rootDisk ] ++ disks;
       initramfs = image.bootInitramfs;
     };
+
+  # Architecture bring-up needs to test a freshly bootstrapped executable
+  # before that architecture has enough packages to construct an APK system.
+  rawInitramfsTest =
+    {
+      name,
+      init,
+      contents ? [ ],
+      files ? { },
+      cpus ? 1,
+      heavy ? true,
+    }:
+    bootInstalledSystem {
+      inherit cpus heavy name;
+      initramfs = image.mkInitramfs {
+        name = "${lib.replaceStrings [ "_" ] [ "-" ] name}-initramfs";
+        inherit init contents files;
+      };
+    };
 in
 {
   inherit
     installedDisk
     installedTest
+    rawInitramfsTest
     runner
     ;
   recurseForDerivations = true;

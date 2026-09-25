@@ -96,6 +96,10 @@ jobs:
             .#llvm-toolchain-wasm64 \
             .#toolchain-smoke-wasm64
           nix build \
+            --no-link \
+            --print-build-logs \
+            .#toolchain-smoke-runtime-wasm64
+          nix build \
             --out-link result-kernel-wasm64 \
             --print-build-logs \
             .#kernel-wasm64

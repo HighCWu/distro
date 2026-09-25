@@ -11,12 +11,15 @@
   src ? pkgs.fetchFromGitHub {
     owner = "HighCWu";
     repo = "linux";
-    rev = "b957f53b5af88139ddd2b55857ba0d63d47bdfc6";
-    hash = "sha256-y5rLbZuGQrRav9rojh5Skbgcph0guTHj+Sm62EoS+hg=";
+    rev = "10ddadea4ce84f8eb31fc0bc51eebdb99ed2882f";
+    hash = "sha256-Xei753+zhkWFA6BoHaIDBI1Z/SwoTckKt7IOac7VQck=";
   },
 }:
 
-assert lib.assertOneOf "wasmBits" wasmBits [ 32 64 ];
+assert lib.assertOneOf "wasmBits" wasmBits [
+  32
+  64
+];
 
 pkgs.stdenvNoCC.mkDerivation {
   pname = "linux-wasm${toString wasmBits}";

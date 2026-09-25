@@ -10,14 +10,18 @@ let
   cSource = pkgs.writeText "toolchain-smoke.c" ''
     #include <stdint.h>
     #include <stdlib.h>
+    #include <unistd.h>
 
     int main(void) {
+      static const char marker[] = "::vm-test::pass\n";
       uint64_t *value = malloc(sizeof(*value));
       if (!value)
         return 1;
       *value = UINT64_C(0x123456789abcdef0);
       int result = *value != UINT64_C(0x123456789abcdef0);
       free(value);
+      if (!result && write(STDOUT_FILENO, marker, sizeof(marker) - 1) != sizeof(marker) - 1)
+        result = 1;
       return result;
     }
   '';
@@ -53,6 +57,7 @@ pkgs.runCommand "toolchain-smoke-${platform.wasmArch}"
     mkdir -p $out
     clang ${compileFlags} ${cSource} -o $out/smoke-c.wasm
     clang++ ${compileFlags} ${cxxSource} -o $out/smoke-cxx.wasm
+    chmod 0755 $out/smoke-c.wasm $out/smoke-cxx.wasm
     wasm-validate --enable-memory64 --enable-threads --enable-exceptions $out/smoke-c.wasm
     wasm-validate --enable-memory64 --enable-threads --enable-exceptions $out/smoke-cxx.wasm
   ''

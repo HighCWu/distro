@@ -25,6 +25,7 @@ lib.makeScope (scope: lib.callPackageWith ({ inherit lib pkgs; } // scope)) (
     # that repository contains lowland-boot itself. This private index is the
     # acyclic package-only input used to construct those images.
     bootstrapRepository = callPackage ./repository.nix { };
+    vmTestWasm64 = callPackage ./vm-test/package.nix { kernel = self.kernel-wasm64; };
   in
   {
     inherit debug sourceVersion;
@@ -77,6 +78,10 @@ lib.makeScope (scope: lib.callPackageWith ({ inherit lib pkgs; } // scope)) (
       platform = self.platform-wasm64;
       llvm-toolchain = self.llvm-toolchain-wasm64;
       sysroot = self.sysroot-wasm64;
+    };
+    toolchain-smoke-runtime-wasm64 = vmTestWasm64.rawInitramfsTest {
+      name = "toolchain-smoke-runtime-wasm64";
+      init = "${self.toolchain-smoke-wasm64}/smoke-c.wasm";
     };
 
     # The wasm stdenv: nixpkgs' generic stdenv with a cc-wrapped fork toolchain
