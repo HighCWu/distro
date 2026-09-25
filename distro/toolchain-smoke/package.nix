@@ -53,6 +53,6 @@ pkgs.runCommand "toolchain-smoke-${platform.wasmArch}"
     mkdir -p $out
     clang ${compileFlags} ${cSource} -o $out/smoke-c.wasm
     clang++ ${compileFlags} ${cxxSource} -o $out/smoke-cxx.wasm
-    wasm-validate --enable-memory64 --enable-threads $out/smoke-c.wasm
-    wasm-validate --enable-memory64 --enable-threads $out/smoke-cxx.wasm
+    wasm-validate --enable-memory64 --enable-threads --enable-exceptions $out/smoke-c.wasm
+    wasm-validate --enable-memory64 --enable-threads --enable-exceptions $out/smoke-cxx.wasm
   ''
