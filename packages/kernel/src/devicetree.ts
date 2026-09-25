@@ -19,7 +19,7 @@ type DeviceTreeProperty =
   | string
   | number
   | bigint
-  | readonly number[]
+  | readonly (number | bigint)[]
   | Uint8Array
   | Uint16Array
   | Uint32Array
@@ -126,10 +126,12 @@ export function generate_devicetree(
           } else if (prop instanceof ArrayBuffer) {
             value = prop;
           } else {
-            value = new Uint32Array(prop.length).buffer;
+            const wide = prop.some((cell) => typeof cell === "bigint");
+            value = new ArrayBuffer(prop.length * (wide ? 8 : 4));
             const dv = new DataView(value);
             for (const [i, n] of prop.entries()) {
-              dv.setUint32(i * 4, n);
+              if (wide) dv.setBigUint64(i * 8, BigInt(n));
+              else dv.setUint32(i * 4, Number(n));
             }
           }
           break;

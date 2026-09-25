@@ -13,6 +13,9 @@ import {
   type Instance,
   kernel_imports,
   MachineTerminationReason,
+  type WasmAddress,
+  wasm_address_from_number,
+  wasm_address_to_number,
   type UserContext,
 } from "./wasm.ts";
 import type { ForwardedInitMessage, InitMessage, WorkerMessage } from "./worker.ts";
@@ -107,10 +110,7 @@ async function read_resources() {
     memory.module === "env" && memory.name === "memory",
     "Kernel memory must be imported as env.memory",
   );
-  assert(
-    memory.type.address === "i32" && memory.type.shared,
-    "Kernel memory must be a shared memory32",
-  );
+  assert(memory.type.shared, "Kernel memory must be shared");
 
   const custom_section = (name: string) => {
     const sections = WebAssembly.Module.customSections(vmlinux, name);
@@ -135,17 +135,27 @@ const load_resources = () => (resources ??= read_resources());
 
 const PAGE_SIZE = 0x10000;
 // Leave the final wasm32 page out so the physical-memory size fits in u32.
-const KERNEL_MEMORY_MAXIMUM_PAGES = 0xffff;
+const KERNEL_MEMORY32_MAXIMUM_PAGES = 0xffff;
+const KERNEL_MEMORY64_MAXIMUM_PAGES = 0x40000;
+
+function kernel_maximum_pages(memory: WasmMemoryType): number {
+  const preferred =
+    memory.address === "i64" ? KERNEL_MEMORY64_MAXIMUM_PAGES : KERNEL_MEMORY32_MAXIMUM_PAGES;
+  const declared = memory.maximum === undefined ? preferred : Number(memory.maximum);
+  assert(Number.isSafeInteger(declared), "Kernel memory maximum is outside the host range");
+  return Math.min(preferred, declared);
+}
 
 function kernel_initial_pages(memory: WasmMemoryType, initcpio_size: number): number {
-  const maximum = BigInt(KERNEL_MEMORY_MAXIMUM_PAGES);
+  const maximum_pages = kernel_maximum_pages(memory);
+  const maximum = BigInt(maximum_pages);
   assert(
     memory.minimum <= maximum && memory.maximum !== undefined && memory.maximum >= maximum,
-    "Kernel memory limits are incompatible with a 4 GiB - 64 KiB memory",
+    "Kernel memory limits are incompatible with the runtime profile",
   );
   const initcpio_pages = Math.ceil(initcpio_size / PAGE_SIZE);
   const initial = Number(memory.minimum) + initcpio_pages;
-  assert(initial <= KERNEL_MEMORY_MAXIMUM_PAGES, "Initramfs does not fit in kernel memory");
+  assert(initial <= maximum_pages, "Initramfs does not fit in kernel memory");
   return initial;
 }
 
@@ -233,15 +243,18 @@ export async function bootMachine(options: BootMachineOptions): Promise<Machine>
     const module_pages = Number(memory_type.minimum);
     const initcpio_addr = module_pages * PAGE_SIZE;
     const pages = kernel_initial_pages(memory_type, initcpio?.byteLength ?? 0);
+    const preferred_maximum_pages = kernel_maximum_pages(memory_type);
     const { memory: wasm_memory, maximum_pages } = allocate_shared_memory(
       pages,
-      KERNEL_MEMORY_MAXIMUM_PAGES,
+      preferred_maximum_pages,
+      undefined,
+      memory_type.address,
     );
     assert(wasm_memory.buffer.byteLength === pages * PAGE_SIZE);
 
     const devicetree: DeviceTreeNode = {
-      "#address-cells": 1,
-      "#size-cells": 1,
+      "#address-cells": memory_type.address === "i64" ? 2 : 1,
+      "#size-cells": memory_type.address === "i64" ? 2 : 1,
       chosen: {
         "rng-seed": crypto.getRandomValues(new Uint8Array(64)),
         bootargs: `console=hvc0 ${configured.args.join(" ")}`,
@@ -250,11 +263,14 @@ export async function bootMachine(options: BootMachineOptions): Promise<Machine>
       aliases: {},
       memory: {
         device_type: "memory",
-        reg: [0, maximum_pages * PAGE_SIZE],
+        reg:
+          memory_type.address === "i64"
+            ? [0n, BigInt(maximum_pages) * BigInt(PAGE_SIZE)]
+            : [0, maximum_pages * PAGE_SIZE],
       },
       "reserved-memory": {
-        "#address-cells": 1,
-        "#size-cells": 1,
+        "#address-cells": memory_type.address === "i64" ? 2 : 1,
+        "#size-cells": memory_type.address === "i64" ? 2 : 1,
         ranges: undefined,
       },
     };
@@ -332,7 +348,9 @@ export async function bootMachine(options: BootMachineOptions): Promise<Machine>
               break;
             case "run_on_main":
               assert(instance);
-              instance.exports.__indirect_function_table.get(message.fn >>> 0)!(message.arg);
+              instance.exports.__indirect_function_table.get(
+                wasm_address_to_number(message.fn, "function table index"),
+              )!(message.arg);
               break;
             case "worker_exit": {
               // The worker closes itself after posting this message. Calling
@@ -352,8 +370,8 @@ export async function bootMachine(options: BootMachineOptions): Promise<Machine>
     };
 
     const spawn_worker = (
-      fn: number,
-      arg: number,
+      fn: WasmAddress,
+      arg: WasmAddress,
       name: string,
       user: UserContext | null,
       copy_user_memory: boolean,
@@ -367,6 +385,7 @@ export async function bootMachine(options: BootMachineOptions): Promise<Machine>
         arg,
         vmlinux,
         memory: wasm_memory,
+        kernel_address: memory_type.address,
         user,
         user_copy_status: null,
       });
@@ -381,22 +400,25 @@ export async function bootMachine(options: BootMachineOptions): Promise<Machine>
       env: { memory: wasm_memory },
       boot: {
         get_devicetree: (buf, size) => {
-          const address = buf >>> 0;
-          const capacity = size >>> 0;
-          if (address === 0 && capacity === 0) return generated_devicetree.byteLength;
+          const address = wasm_address_to_number(buf);
+          const capacity = wasm_address_to_number(size, "device tree capacity");
+          if (address === 0 && capacity === 0) {
+            return wasm_address_from_number(generated_devicetree.byteLength, memory_type.address);
+          }
           assert(capacity >= generated_devicetree.byteLength, "Device tree truncated");
           new Uint8Array(wasm_memory.buffer).set(generated_devicetree, address);
-          return generated_devicetree.byteLength;
+          return wasm_address_from_number(generated_devicetree.byteLength, memory_type.address);
         },
         get_initramfs: (buf, size) => {
-          const address = buf >>> 0;
-          const capacity = size >>> 0;
+          const address = wasm_address_to_number(buf);
+          const capacity = wasm_address_to_number(size, "initramfs capacity");
           assert(capacity >= initramfs.byteLength, "Initramfs truncated");
           new Uint8Array(wasm_memory.buffer).set(initramfs, address);
           return initramfs.byteLength;
         },
       },
       kernel: kernel_imports({
+        address: memory_type.address,
         is_worker: false,
         memory: wasm_memory,
         spawn_worker,

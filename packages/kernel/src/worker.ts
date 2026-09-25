@@ -12,16 +12,23 @@ import {
   kernel_imports,
   type MachineTerminationReason,
   memory_bytes,
+  refresh_memory,
   user_module_imports_supported,
+  type WasmAddress,
+  type WasmAddressType,
+  wasm_address_from_number,
+  wasm_address_to_number,
+  wasm_value_to_number,
   type UserContext,
 } from "./wasm.ts";
 
 export interface InitMessage {
   type: "init";
-  fn: number;
-  arg: number;
+  fn: WasmAddress;
+  arg: WasmAddress;
   vmlinux: WebAssembly.Module;
   memory: WebAssembly.Memory;
+  kernel_address: WasmAddressType;
   user: UserContext | null;
   /** One-shot user-memory copy result: 0 pending, 1 complete, negative errno. */
   user_copy_status: Int32Array<SharedArrayBuffer> | null;
@@ -39,7 +46,7 @@ export type WorkerMessage =
   | { type: "boot_console_write"; message: ArrayBuffer }
   | { type: "boot_console_close" }
   | { type: "terminate_machine"; reason: MachineTerminationReason }
-  | { type: "run_on_main"; fn: number; arg: number }
+  | { type: "run_on_main"; fn: WasmAddress; arg: WasmAddress }
   | { type: "worker_exit" };
 
 const unavailable = () => {
@@ -52,10 +59,12 @@ const postMessage = (message: WorkerMessage, transfer?: Transferable[]) =>
 
 function user_imports({
   kernel_memory,
+  kernel_address,
   get_kernel_instance,
   parent_user: parent,
 }: {
   kernel_memory: WebAssembly.Memory;
+  kernel_address: WasmAddressType;
   get_kernel_instance: () => Instance;
   parent_user: UserContext | null;
 }): {
@@ -75,33 +84,34 @@ function user_imports({
 
   function copy_bytes(
     destination_memory: WebAssembly.Memory,
-    destination: number,
+    destination: WasmAddress,
     source_memory: WebAssembly.Memory,
-    source: number,
-    length: number,
+    source: WasmAddress,
+    length: WasmAddress,
   ): number {
+    const requested = wasm_address_to_number(length, "copy length");
     const to = memory_bytes(destination_memory, destination, length);
     const from = memory_bytes(source_memory, source, length);
-    if (!to || !from) return length;
+    if (!to || !from) return requested;
 
     try {
       to.set(from);
       return 0;
     } catch {
-      return length;
+      return requested;
     }
   }
 
-  function user_atomic_word(uaddr: number): Int32Array | null {
-    const address = uaddr >>> 0;
+  function user_atomic_word(uaddr: WasmAddress): Int32Array | null {
+    const address = wasm_address_to_number(uaddr);
     if (!context || (address & 3) !== 0) return null;
 
     const bytes = memory_bytes(context.memory, address, Int32Array.BYTES_PER_ELEMENT);
     return bytes ? new Int32Array(bytes.buffer, bytes.byteOffset, 1) : null;
   }
 
-  function write_kernel_u32(addr: number, value: number): boolean {
-    const bytes = memory_bytes(kernel_memory, addr >>> 0, Uint32Array.BYTES_PER_ELEMENT);
+  function write_kernel_u32(addr: WasmAddress, value: number): boolean {
+    const bytes = memory_bytes(kernel_memory, addr, Uint32Array.BYTES_PER_ELEMENT);
     if (!bytes) return false;
 
     new DataView(bytes.buffer, bytes.byteOffset, bytes.byteLength).setUint32(0, value, true);
@@ -132,16 +142,30 @@ function user_imports({
           arg5: number,
         ) => {
           const original_instance = instance;
-          const ret = kernel_instance.exports.syscall(nr, arg0, arg1, arg2, arg3, arg4, arg5);
+          const args = [nr, arg0, arg1, arg2, arg3, arg4, arg5].map((value) =>
+            kernel_address === "i64" ? BigInt.asUintN(32, BigInt(value)) : value,
+          ) as [
+            WasmAddress,
+            WasmAddress,
+            WasmAddress,
+            WasmAddress,
+            WasmAddress,
+            WasmAddress,
+            WasmAddress,
+          ];
+          const ret = kernel_instance.exports.syscall(...args);
           if (instance !== original_instance) {
             call_entry = call_start;
             throw HALT_USER;
           }
-          return ret;
+          return wasm_value_to_number(ret, "system call result");
         },
-        get_thread_area: kernel_instance.exports.get_thread_area,
+        get_thread_area: () =>
+          wasm_address_to_number(kernel_instance.exports.get_thread_area(), "thread area"),
         copy_siginfo: (to: number) => {
-          const result = kernel_instance.exports.copy_siginfo(to);
+          const result = kernel_instance.exports.copy_siginfo(
+            wasm_address_from_number(to, kernel_address),
+          );
           const current = siginfo_copy_results.length - 1;
           if (current >= 0) siginfo_copy_results[current] = result;
           return result;
@@ -181,7 +205,7 @@ function user_imports({
         }
       },
       compile_write(buf, offset, size) {
-        const source = buf >>> 0;
+        const source = wasm_address_to_number(buf);
         const destination = offset >>> 0;
         const length = size >>> 0;
         const kernel_buffer = kernel_memory.buffer;
@@ -324,19 +348,19 @@ function user_imports({
 
       // memory:
       read(to, from, n) {
-        const length = n >>> 0;
+        const length = wasm_address_to_number(n, "copy length");
         if (!context) return length;
-        return copy_bytes(kernel_memory, to >>> 0, context.memory, from >>> 0, length);
+        return copy_bytes(kernel_memory, to, context.memory, from, length);
       },
       write(to, from, n) {
-        const length = n >>> 0;
+        const length = wasm_address_to_number(n, "copy length");
         if (!context) return length;
-        return copy_bytes(context.memory, to >>> 0, kernel_memory, from >>> 0, length);
+        return copy_bytes(context.memory, to, kernel_memory, from, length);
       },
       write_zeroes(to, n) {
-        const length = n >>> 0;
+        const length = wasm_address_to_number(n, "zero fill length");
         if (!context) return length;
-        const destination = memory_bytes(context.memory, to >>> 0, length);
+        const destination = memory_bytes(context.memory, to, length);
         if (!destination) return length;
 
         try {
@@ -389,6 +413,7 @@ function start({
   arg,
   vmlinux,
   memory,
+  kernel_address,
   user: initial_user_context,
   user_copy_status,
 }: InitMessage) {
@@ -396,8 +421,10 @@ function start({
   // immediately, including any future additions to InitMessage. Chromium can
   // retain the fixed-length buffer wrapper captured before another isolate
   // grows it; grow(0) refreshes the wrapper before constructing any views.
-  memory.grow(0);
-  initial_user_context?.memory.grow(0);
+  refresh_memory(memory, kernel_address);
+  if (initial_user_context) {
+    refresh_memory(initial_user_context.memory, initial_user_context.address);
+  }
 
   let user_context = initial_user_context;
   if (user_copy_status) {
@@ -412,6 +439,8 @@ function start({
       const copied = allocate_shared_memory(
         source.byteLength / 0x10000,
         user_context.maximum_pages,
+        undefined,
+        user_context.address,
       );
       const destination = memory_bytes(copied.memory, 0, source.byteLength);
       if (!destination) throw new RangeError("invalid destination memory");
@@ -431,6 +460,7 @@ function start({
 
   const user = user_imports({
     kernel_memory: memory,
+    kernel_address,
     get_kernel_instance: () => instance,
     parent_user: user_context,
   });
@@ -443,6 +473,7 @@ function start({
     },
     user: user.imports,
     kernel: kernel_imports({
+      address: kernel_address,
       is_worker: true,
       memory,
       spawn_worker(fn, arg, name, user, copy_user_memory) {
@@ -462,6 +493,7 @@ function start({
           arg,
           vmlinux,
           memory,
+          kernel_address,
           user,
           user_copy_status,
         } satisfies InitMessage);
@@ -505,7 +537,9 @@ function start({
   const instance = new WebAssembly.Instance(vmlinux, imports) as Instance;
   user.prepare();
   try {
-    instance.exports.__indirect_function_table.get(fn >>> 0)!(arg);
+    instance.exports.__indirect_function_table.get(
+      wasm_address_to_number(fn, "function table index"),
+    )!(arg);
   } catch (error) {
     if (error === HALT_KERNEL) return;
     throw error;

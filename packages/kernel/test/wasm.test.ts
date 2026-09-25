@@ -14,6 +14,9 @@ import {
   allocate_shared_memory,
   memory_bytes,
   user_module_imports_supported,
+  wasm_address_from_number,
+  wasm_address_to_number,
+  type WasmMemoryDescriptor,
 } from "../src/wasm.ts";
 
 function wasm_module(hex: string) {
@@ -29,8 +32,8 @@ const memory = new WebAssembly.Memory({
 });
 
 function allocator_succeeding_at(successful_maximum: number, attempts: number[]) {
-  return (descriptor: WebAssembly.MemoryDescriptor) => {
-    attempts.push(descriptor.maximum!);
+  return (descriptor: WasmMemoryDescriptor) => {
+    attempts.push(Number(descriptor.maximum!));
     if (descriptor.maximum !== successful_maximum) throw new RangeError();
     return memory;
   };
@@ -43,6 +46,36 @@ test("shared memory allocation backs off by halves", () => {
   assert.deepEqual(attempts, [1000, 500, 250]);
   assert.strictEqual(allocated.memory, memory);
   assert.equal(allocated.maximum_pages, 250);
+});
+
+test("memory64 allocation uses BigInt limits and preserves its address type", () => {
+  let descriptor: WasmMemoryDescriptor | undefined;
+  const allocated = allocate_shared_memory(
+    1,
+    8,
+    (value) => {
+      descriptor = value;
+      return new WebAssembly.Memory(value as unknown as WebAssembly.MemoryDescriptor);
+    },
+    "i64",
+  );
+
+  assert.deepEqual(descriptor, {
+    initial: 1n,
+    maximum: 8n,
+    shared: true,
+    address: "i64",
+  });
+  assert.equal(allocated.address, "i64");
+  assert.equal(allocated.maximum_pages, 8);
+  const grow = allocated.memory.grow as unknown as (delta: bigint) => bigint;
+  assert.equal(grow.call(allocated.memory, 0n), 1n);
+});
+
+test("Wasm addresses cross the JavaScript boundary without truncation", () => {
+  assert.equal(wasm_address_to_number(0x1_0000_0000n), 0x1_0000_0000);
+  assert.equal(wasm_address_from_number(0x1_0000_0000, "i64"), 0x1_0000_0000n);
+  assert.throws(() => wasm_address_to_number(1n << 54n), RangeError);
 });
 
 test("the initial size is the floor", () => {
@@ -60,7 +93,7 @@ test("a RangeError at the initial size is propagated", () => {
   assert.throws(
     () =>
       allocate_shared_memory(100, 1000, (descriptor) => {
-        attempts.push(descriptor.maximum!);
+        attempts.push(Number(descriptor.maximum!));
         throw error;
       }),
     (thrown) => thrown === error,
@@ -75,7 +108,7 @@ test("a non-RangeError is propagated without retrying", () => {
   assert.throws(
     () =>
       allocate_shared_memory(100, 1000, (descriptor) => {
-        attempts.push(descriptor.maximum!);
+        attempts.push(Number(descriptor.maximum!));
         throw error;
       }),
     (thrown) => thrown === error,

@@ -3,7 +3,7 @@
 import { Struct, U16LE, U32LE, U64LE } from "@lowland/bytes";
 import { getMachinePlugin, type MachinePlugin, type MachinePluginProvider } from "../plugin.ts";
 import { assert } from "../util.ts";
-import type { Imports } from "../wasm.ts";
+import { type Imports, wasm_address_to_number } from "../wasm.ts";
 
 const TransportFeatures = {
   VERSION_1: 1n << 32n,
@@ -639,7 +639,7 @@ export function virtio_imports({
     enable_vring(dev, vq, size, desc_addr, irq) {
       const device = connected[dev];
       assert(device);
-      device.enable_queue(vq, size, desc_addr >>> 0, irq);
+      device.enable_queue(vq, size, wasm_address_to_number(desc_addr), irq);
     },
     disable_vring(dev, vq) {
       const device = connected[dev];
@@ -653,7 +653,7 @@ export function virtio_imports({
     },
 
     setup(dev, config_irq, config_addr, config_len) {
-      const address = config_addr >>> 0;
+      const address = wasm_address_to_number(config_addr);
       const length = config_len >>> 0;
       const device = connected[dev];
       assert(device);
