@@ -10,6 +10,7 @@ on:
       - distro/linux/**
       - packages/bytes/**
       - packages/kernel/**
+      - scripts/smoke-memory64.mjs
       - flake.lock
       - flake.nix
       - package.json
@@ -22,6 +23,7 @@ on:
       - distro/linux/**
       - packages/bytes/**
       - packages/kernel/**
+      - scripts/smoke-memory64.mjs
       - flake.lock
       - flake.nix
       - package.json
@@ -51,5 +53,10 @@ jobs:
           nix build \
             --no-link \
             --print-build-logs \
-            .#linux-wasm64 \
+            .#linux-wasm64
+          nix build \
+            --out-link result-kernel-wasm64 \
+            --print-build-logs \
             .#kernel-wasm64
+      - name: Boot Memory64 kernel
+        run: node scripts/smoke-memory64.mjs result-kernel-wasm64
