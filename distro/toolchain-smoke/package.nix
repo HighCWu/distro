@@ -8,21 +8,88 @@
 
 let
   cSource = pkgs.writeText "toolchain-smoke.c" ''
+    #define _GNU_SOURCE
+
+    #include <pthread.h>
+    #include <sched.h>
+    #include <signal.h>
     #include <stdint.h>
     #include <stdlib.h>
+    #include <string.h>
+    #include <sys/mman.h>
     #include <unistd.h>
 
-    int main(void) {
-      static const char marker[] = "::vm-test::pass\n";
+    static _Thread_local int tls_value = 41;
+    static volatile sig_atomic_t signal_seen;
+
+    static _Noreturn void report(const char *result, const char *detail) {
+      write(STDOUT_FILENO, result, strlen(result));
+      if (detail)
+        write(STDOUT_FILENO, detail, strlen(detail));
+      write(STDOUT_FILENO, "\n", 1);
+      for (;;)
+        sched_yield();
+    }
+
+    static _Noreturn void fail(const char *detail) {
+      report("::vm-test::fail: ", detail);
+    }
+
+    static void *thread_main(void *argument) {
+      if (tls_value != 41 || argument != (void *)(uintptr_t)0x12345678)
+        return (void *)(uintptr_t)1;
+      tls_value = 42;
+      return NULL;
+    }
+
+    static void signal_handler(int signal_number) {
+      if (signal_number == SIGUSR1)
+        signal_seen = 1;
+    }
+
+    int main(int argc, char **argv) {
+      if (argc != 1 || !argv[0] || strcmp(argv[0], "/init") != 0)
+        fail("process arguments were not preserved");
+      if (!getenv("HOME") || strcmp(getenv("HOME"), "/") != 0)
+        fail("process environment was not preserved");
+
       uint64_t *value = malloc(sizeof(*value));
       if (!value)
-        return 1;
+        fail("malloc failed");
       *value = UINT64_C(0x123456789abcdef0);
-      int result = *value != UINT64_C(0x123456789abcdef0);
+      if (*value != UINT64_C(0x123456789abcdef0))
+        fail("malloc memory was corrupted");
       free(value);
-      if (!result && write(STDOUT_FILENO, marker, sizeof(marker) - 1) != sizeof(marker) - 1)
-        result = 1;
-      return result;
+
+      size_t mapping_size = 2 * 65536;
+      unsigned char *mapping = mmap(NULL, mapping_size, PROT_READ | PROT_WRITE,
+                                    MAP_PRIVATE | MAP_ANONYMOUS, -1, 0);
+      if (mapping == MAP_FAILED)
+        fail("anonymous mmap failed");
+      mapping[0] = 0x5a;
+      mapping[mapping_size - 1] = 0xa5;
+      if (mapping[0] != 0x5a || mapping[mapping_size - 1] != 0xa5)
+        fail("anonymous mmap was not writable");
+      if (munmap(mapping, mapping_size) != 0)
+        fail("munmap failed");
+
+      pthread_t thread;
+      void *thread_result;
+      tls_value = 40;
+      if (pthread_create(&thread, NULL, thread_main,
+                         (void *)(uintptr_t)0x12345678) != 0)
+        fail("pthread_create failed");
+      if (pthread_join(thread, &thread_result) != 0 || thread_result != NULL)
+        fail("pthread callback failed");
+      if (tls_value != 40)
+        fail("thread-local storage was shared");
+
+      if (signal(SIGUSR1, signal_handler) == SIG_ERR || raise(SIGUSR1) != 0)
+        fail("signal setup failed");
+      if (!signal_seen)
+        fail("signal handler was not called");
+
+      report("::vm-test::pass", NULL);
     }
   '';
   cxxSource = pkgs.writeText "toolchain-smoke.cc" ''
