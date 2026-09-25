@@ -10,6 +10,7 @@ import { ethernetDevice, ethernetNetwork } from "../src/virtio/net.ts";
 import { vsockDevice } from "../src/virtio/vsock.ts";
 import { VirtioController, close_virtio_device, virtio_imports } from "../src/virtio/core.ts";
 import { serveDevice, workerDevice } from "../src/virtio/remote.ts";
+import { read_wasm_memories, user_memory_import } from "../src/wasm_binary.ts";
 import {
   allocate_shared_memory,
   memory_bytes,
@@ -166,6 +167,22 @@ test("userspace modules may only import the supported host ABI", () => {
 
   assert.equal(user_module_imports_supported(supported), true);
   assert.equal(user_module_imports_supported(unsupported), false);
+});
+
+test("userspace memory must match the kernel address width", () => {
+  const memory32 = Uint8Array.from(
+    "0061736d0100000002100103656e76066d656d6f727902030101".match(/../g)!,
+    (byte) => Number.parseInt(byte, 16),
+  );
+  const memory64 = Uint8Array.from(
+    "0061736d0100000002100103656e76066d656d6f727902070101".match(/../g)!,
+    (byte) => Number.parseInt(byte, 16),
+  );
+
+  assert.equal(user_memory_import(read_wasm_memories(memory32), "i32")?.type.address, "i32");
+  assert.equal(user_memory_import(read_wasm_memories(memory64), "i64")?.type.address, "i64");
+  assert.equal(user_memory_import(read_wasm_memories(memory32), "i64"), null);
+  assert.equal(user_memory_import(read_wasm_memories(memory64), "i32"), null);
 });
 
 test("closing an Ethernet network drops traffic from attached ports", async () => {

@@ -3,7 +3,7 @@
 import { listen_endpoint, post_endpoint } from "./endpoint.ts";
 import { platform } from "./platform.ts";
 import { assert } from "./util.ts";
-import { read_wasm_memories } from "./wasm_binary.ts";
+import { read_wasm_memories, user_memory_import } from "./wasm_binary.ts";
 import {
   allocate_shared_memory,
   HALT_KERNEL,
@@ -16,10 +16,8 @@ import {
   user_module_imports_supported,
   type WasmAddress,
   type WasmAddressType,
-  wasm_address_from_number,
   wasm_address_to_number,
   wasm_table_get,
-  wasm_value_to_number,
   type UserContext,
 } from "./wasm.ts";
 
@@ -134,39 +132,25 @@ function user_imports({
       env: { memory: context.memory },
       linux: {
         syscall: (
-          nr: number,
-          arg0: number,
-          arg1: number,
-          arg2: number,
-          arg3: number,
-          arg4: number,
-          arg5: number,
+          nr: WasmAddress,
+          arg0: WasmAddress,
+          arg1: WasmAddress,
+          arg2: WasmAddress,
+          arg3: WasmAddress,
+          arg4: WasmAddress,
+          arg5: WasmAddress,
         ) => {
           const original_instance = instance;
-          const args = [nr, arg0, arg1, arg2, arg3, arg4, arg5].map((value) =>
-            kernel_address === "i64" ? BigInt.asUintN(32, BigInt(value)) : value,
-          ) as [
-            WasmAddress,
-            WasmAddress,
-            WasmAddress,
-            WasmAddress,
-            WasmAddress,
-            WasmAddress,
-            WasmAddress,
-          ];
-          const ret = kernel_instance.exports.syscall(...args);
+          const ret = kernel_instance.exports.syscall(nr, arg0, arg1, arg2, arg3, arg4, arg5);
           if (instance !== original_instance) {
             call_entry = call_start;
             throw HALT_USER;
           }
-          return wasm_value_to_number(ret, "system call result");
+          return ret;
         },
-        get_thread_area: () =>
-          wasm_address_to_number(kernel_instance.exports.get_thread_area(), "thread area"),
-        copy_siginfo: (to: number) => {
-          const result = kernel_instance.exports.copy_siginfo(
-            wasm_address_from_number(to, kernel_address),
-          );
+        get_thread_area: () => kernel_instance.exports.get_thread_area(),
+        copy_siginfo: (to: WasmAddress) => {
+          const result = kernel_instance.exports.copy_siginfo(to);
           const current = siginfo_copy_results.length - 1;
           if (current >= 0) siginfo_copy_results[current] = result;
           return result;
@@ -231,19 +215,8 @@ function user_imports({
         let maximum: number;
         try {
           const memories = read_wasm_memories(bytes);
-          const memory_import = memories.imports[0];
-          if (
-            memories.definitions.length !== 0 ||
-            memories.imports.length !== 1 ||
-            !memory_import ||
-            memory_import.module !== "env" ||
-            memory_import.name !== "memory" ||
-            memory_import.type.address !== "i32" ||
-            !memory_import.type.shared ||
-            memory_import.type.maximum === undefined
-          ) {
-            return -8; // exec format error
-          }
+          const memory_import = user_memory_import(memories, kernel_address);
+          if (!memory_import) return -8; // exec format error
 
           module = new WebAssembly.Module(bytes);
           if (!user_module_imports_supported(module)) {
@@ -260,7 +233,7 @@ function user_imports({
 
         let allocated: ReturnType<typeof allocate_shared_memory>;
         try {
-          allocated = allocate_shared_memory(minimum, maximum);
+          allocated = allocate_shared_memory(minimum, maximum, undefined, kernel_address);
         } catch {
           return -12; // out of memory
         }
@@ -302,7 +275,7 @@ function user_imports({
           const { __indirect_function_table } = instance.exports;
           assert(__indirect_function_table instanceof WebAssembly.Table, "Invalid function table");
 
-          const f = __indirect_function_table.get(fn >>> 0);
+          const f = wasm_table_get(__indirect_function_table, fn);
           assert(typeof f === "function" && f.length === 1, "Invalid function signature");
 
           f(arg);
@@ -319,7 +292,7 @@ function user_imports({
         const { __indirect_function_table } = instance.exports;
         assert(__indirect_function_table instanceof WebAssembly.Table, "Invalid function table");
 
-        const f = __indirect_function_table.get(fn >>> 0);
+        const f = wasm_table_get(__indirect_function_table, fn);
         assert(typeof f === "function" && f.length === 1, "Invalid function signature");
 
         f(sig);
@@ -330,7 +303,7 @@ function user_imports({
         const { __indirect_function_table } = instance.exports;
         assert(__indirect_function_table instanceof WebAssembly.Table, "Invalid function table");
 
-        const f = __indirect_function_table.get(trampoline >>> 0);
+        const f = wasm_table_get(__indirect_function_table, trampoline);
         assert(typeof f === "function" && f.length === 2, "Invalid siginfo trampoline");
 
         siginfo_copy_results.push(null);

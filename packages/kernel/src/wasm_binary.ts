@@ -22,6 +22,31 @@ export interface WasmMemories {
   definitions: WasmMemoryType[];
 }
 
+/**
+ * Returns the single shared userspace memory import accepted by the runtime.
+ * The kernel and userspace module must use one pointer width: mixing memory32
+ * and memory64 would otherwise silently narrow syscall and callback values.
+ */
+export function user_memory_import(
+  memories: WasmMemories,
+  kernel_address: WasmMemoryType["address"],
+): WasmMemoryImport | null {
+  const memory_import = memories.imports[0];
+  if (
+    memories.definitions.length !== 0 ||
+    memories.imports.length !== 1 ||
+    !memory_import ||
+    memory_import.module !== "env" ||
+    memory_import.name !== "memory" ||
+    memory_import.type.address !== kernel_address ||
+    !memory_import.type.shared ||
+    memory_import.type.maximum === undefined
+  ) {
+    return null;
+  }
+  return memory_import;
+}
+
 export class WasmParseError extends Error {
   constructor(message: string, offset: number) {
     super(`${message} at byte ${offset}`);

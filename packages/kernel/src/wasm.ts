@@ -208,11 +208,11 @@ export interface Imports {
     compile_abort(): void;
     instantiate(fresh_memory: number): void;
     call(): void;
-    switch_entry(fn: number, arg: number): void;
-    call_signal_handler(fn: number, sig: number): void;
+    switch_entry(fn: WasmAddress, arg: WasmAddress): void;
+    call_signal_handler(fn: WasmAddress, sig: number): void;
     call_siginfo_handler(
-      trampoline: number,
-      fn: number,
+      trampoline: WasmAddress,
+      fn: WasmAddress,
       sig: number,
       code: number,
       pid: number,
