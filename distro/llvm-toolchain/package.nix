@@ -40,6 +40,13 @@ pkgs.runCommand "llvm-toolchain-${platform.wasmArch}-${version}"
     chmod -R u+w $out
     mkdir -p $out/lib/clang/${llvmMajorVersion}/lib
 
+    # Keep libc++ discoverable by an unwrapped clang++ as well as by the Nix
+    # cc-wrapper. Clang searches this installation-relative location before
+    # falling back to target sysroot conventions.
+    cp -r ${llvm-runtimes}/include/c++ $out/include/
+    mkdir -p $out/include/${platform.targetTriple}
+    cp -r ${llvm-runtimes}/include/${platform.targetTriple}/c++ $out/include/${platform.targetTriple}/
+
     cp -r ${llvm-runtimes}/lib/clang/${llvmMajorVersion}/lib/${platform.targetTriple} $out/lib/clang/${llvmMajorVersion}/lib/
     cp -r ${llvm-runtimes}/lib/clang/${llvmMajorVersion}/lib/${platform.wasmArch} $out/lib/clang/${llvmMajorVersion}/lib/
     cp -r ${llvm-runtimes}/lib/clang/${llvmMajorVersion}/lib/${platform.wasmArch}-unknown $out/lib/clang/${llvmMajorVersion}/lib/
