@@ -27,6 +27,23 @@ type DeviceTreeProperty =
   | ArrayBuffer
   | undefined;
 
+/** Encode section address/size pairs using the root device-tree cell width. */
+export function section_properties(
+  sections: Record<string, readonly [number, number]>,
+  address_cells: 1 | 2,
+): DeviceTreeNode {
+  return Object.fromEntries(
+    Object.entries(sections).map(([name, [address, size]]) => {
+      assert(Number.isSafeInteger(address) && address >= 0, `invalid section address: ${name}`);
+      assert(Number.isSafeInteger(size) && size >= 0, `invalid section size: ${name}`);
+      return [
+        name,
+        address_cells === 2 ? [BigInt(address), BigInt(size)] : [address, size],
+      ];
+    }),
+  );
+}
+
 // https://devicetree-specification.readthedocs.io/en/latest/chapter5-flattened-format.html
 const FdtHeader = Struct({
   magic: U32BE,

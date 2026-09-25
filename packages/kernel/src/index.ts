@@ -1,6 +1,10 @@
 // SPDX-License-Identifier: MIT
 
-import { type DeviceTreeNode, generate_devicetree } from "./devicetree.ts";
+import {
+  type DeviceTreeNode,
+  generate_devicetree,
+  section_properties,
+} from "./devicetree.ts";
 import { platform, type WorkerHandle } from "./platform.ts";
 import { configure_machine, merge_device_tree, run_machine_booted } from "./plugin-internal.ts";
 import type { MachinePluginInput } from "./plugin.ts";
@@ -301,7 +305,10 @@ export async function bootMachine(options: BootMachineOptions): Promise<Machine>
       });
     }
 
-    (devicetree.chosen as DeviceTreeNode).sections = sections;
+    (devicetree.chosen as DeviceTreeNode).sections = section_properties(
+      sections,
+      memory_type.address === "i64" ? 2 : 1,
+    );
     merge_device_tree(devicetree, configured.deviceTree);
 
     const generated_devicetree = generate_devicetree(devicetree, {
