@@ -18,6 +18,7 @@ import {
   type WasmAddressType,
   wasm_address_from_number,
   wasm_address_to_number,
+  wasm_table_get,
   wasm_value_to_number,
   type UserContext,
 } from "./wasm.ts";
@@ -537,9 +538,7 @@ function start({
   const instance = new WebAssembly.Instance(vmlinux, imports) as Instance;
   user.prepare();
   try {
-    instance.exports.__indirect_function_table.get(
-      wasm_address_to_number(fn, "function table index"),
-    )!(arg);
+    wasm_table_get(instance.exports.__indirect_function_table, fn)!(arg);
   } catch (error) {
     if (error === HALT_KERNEL) return;
     throw error;

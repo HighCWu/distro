@@ -21,6 +21,7 @@ import {
   wasm_address_from_number,
   wasm_address_to_number,
   type UserContext,
+  wasm_table_get,
 } from "./wasm.ts";
 import type { ForwardedInitMessage, InitMessage, WorkerMessage } from "./worker.ts";
 
@@ -355,9 +356,7 @@ export async function bootMachine(options: BootMachineOptions): Promise<Machine>
               break;
             case "run_on_main":
               assert(instance);
-              instance.exports.__indirect_function_table.get(
-                wasm_address_to_number(message.fn, "function table index"),
-              )!(message.arg);
+              wasm_table_get(instance.exports.__indirect_function_table, message.fn)!(message.arg);
               break;
             case "worker_exit": {
               // The worker closes itself after posting this message. Calling

@@ -16,6 +16,7 @@ import {
   user_module_imports_supported,
   wasm_address_from_number,
   wasm_address_to_number,
+  wasm_table_get,
   type WasmMemoryDescriptor,
 } from "../src/wasm.ts";
 
@@ -76,6 +77,17 @@ test("Wasm addresses cross the JavaScript boundary without truncation", () => {
   assert.equal(wasm_address_to_number(0x1_0000_0000n), 0x1_0000_0000);
   assert.equal(wasm_address_from_number(0x1_0000_0000, "i64"), 0x1_0000_0000n);
   assert.throws(() => wasm_address_to_number(1n << 54n), RangeError);
+});
+
+test("table64 lookups preserve BigInt indices", () => {
+  const table = new WebAssembly.Table({
+    element: "anyfunc",
+    initial: 1n,
+    address: "i64",
+  } as unknown as WebAssembly.TableDescriptor);
+
+  assert.equal(wasm_table_get(table, 0n), null);
+  assert.throws(() => wasm_table_get(table, 0), /BigInt/);
 });
 
 test("the initial size is the floor", () => {
