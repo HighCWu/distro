@@ -1,4 +1,4 @@
-# compiler-rt builtins, libc++, and libc++abi cross-compiled for wasm.
+# compiler-rt builtins, libunwind, libc++, and libc++abi cross-compiled for wasm.
 {
   pkgs,
   lib,
@@ -36,7 +36,7 @@ let
     "-DCMAKE_BUILD_WITH_INSTALL_RPATH=OFF"
     "-DCMAKE_SKIP_BUILD_RPATH=ON"
     "-DCMAKE_SKIP_INSTALL_RPATH=ON"
-    "-DLLVM_ENABLE_RUNTIMES=compiler-rt;libcxx;libcxxabi"
+    "-DLLVM_ENABLE_RUNTIMES=compiler-rt;libunwind;libcxx;libcxxabi"
     "-DLLVM_DEFAULT_TARGET_TRIPLE=${platform.targetTriple}"
     "-DLLVM_BUILTIN_TARGETS=${platform.targetTriple}"
     "-DLLVM_ENABLE_PER_TARGET_RUNTIME_DIR=ON"
@@ -58,7 +58,9 @@ let
     "-DLIBCXX_USE_COMPILER_RT=ON"
     "-DLIBCXXABI_ENABLE_SHARED=OFF"
     "-DLIBCXXABI_USE_COMPILER_RT=ON"
-    "-DLIBCXXABI_USE_LLVM_UNWINDER=OFF"
+    "-DLIBCXXABI_USE_LLVM_UNWINDER=ON"
+    "-DLIBUNWIND_ENABLE_SHARED=OFF"
+    "-DLIBUNWIND_USE_COMPILER_RT=ON"
   ];
 in
 
