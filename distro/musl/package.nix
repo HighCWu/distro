@@ -2,17 +2,20 @@
   pkgs,
   lib,
   debug,
+  wasmBits ? 32,
   llvm-toolchain-unwrapped,
   src ? pkgs.fetchFromGitHub {
     owner = "HighCWu";
     repo = "musl";
-    rev = "637b0d25dafa7e4740357f25fb0b5e3949f1ed1f";
-    hash = "sha256-JsiHpPB8EVs7uyI1fbnoGy3f17KrEf4nCi5nHE31du8=";
+    rev = "aa3feb4a24288f62d5abc9b50c94855707fecbf0";
+    hash = "sha256-HbCpTbvTCrepx+DYaIyRlp/4e3XguuTbUjDYS/3xGzk=";
   },
 }:
 
+assert builtins.elem wasmBits [ 32 64 ];
+
 pkgs.stdenvNoCC.mkDerivation {
-  name = "musl";
+  name = "musl-wasm${toString wasmBits}";
   inherit src;
 
   nativeBuildInputs = [ llvm-toolchain-unwrapped ];
@@ -24,6 +27,7 @@ pkgs.stdenvNoCC.mkDerivation {
 
     cat >config.mak <<EOF
     ARCH=wasm32
+    WASM_BITS=${toString wasmBits}
     prefix=$out
     syslibdir=$out
     CFLAGS=${lib.optionalString debug "-g"}

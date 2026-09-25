@@ -8,6 +8,7 @@ on:
       - .github/workflows/wasm64.yml
       - distro/default.nix
       - distro/linux/**
+      - distro/musl/**
       - distro/npm/browser-tests.nix
       - packages/browser-tests/memory64-app.js
       - packages/browser-tests/memory64-index.html
@@ -28,6 +29,7 @@ on:
       - .github/workflows/wasm64.yml
       - distro/default.nix
       - distro/linux/**
+      - distro/musl/**
       - distro/npm/browser-tests.nix
       - packages/browser-tests/memory64-app.js
       - packages/browser-tests/memory64-index.html
@@ -72,6 +74,10 @@ jobs:
             --no-link \
             --print-build-logs \
             .#linux-wasm64
+          nix build \
+            --no-link \
+            --print-build-logs \
+            .#musl-wasm64
           nix build \
             --out-link result-kernel-wasm64 \
             --print-build-logs \
