@@ -10,6 +10,7 @@ let
   cSource = pkgs.writeText "toolchain-smoke.c" ''
     #define _GNU_SOURCE
 
+    #include <errno.h>
     #include <pthread.h>
     #include <sched.h>
     #include <signal.h>
@@ -72,6 +73,13 @@ let
         fail("anonymous mmap was not writable");
       if (munmap(mapping, mapping_size) != 0)
         fail("munmap failed");
+
+      errno = 0;
+      mapping = mmap((void *)(uintptr_t)-mapping_size, mapping_size,
+                     PROT_READ | PROT_WRITE,
+                     MAP_PRIVATE | MAP_ANONYMOUS | MAP_FIXED, -1, 0);
+      if (mapping != MAP_FAILED || errno != ENOMEM)
+        fail("out-of-range MAP_FIXED did not fail with ENOMEM");
 
       pthread_t thread;
       void *thread_result;
