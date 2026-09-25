@@ -73,6 +73,11 @@ lib.makeScope (scope: lib.callPackageWith ({ inherit lib pkgs; } // scope)) (
       platform = self.platform-wasm64;
       llvm-runtimes = self.llvm-runtimes-wasm64;
     };
+    toolchain-smoke-wasm64 = callPackage ./toolchain-smoke/package.nix {
+      platform = self.platform-wasm64;
+      llvm-toolchain = self.llvm-toolchain-wasm64;
+      sysroot = self.sysroot-wasm64;
+    };
 
     # The wasm stdenv: nixpkgs' generic stdenv with a cc-wrapped fork toolchain
     # and wasm32-unknown-linux-musl as the host platform. Everything below here

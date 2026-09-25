@@ -14,6 +14,7 @@ on:
       - distro/platform.nix
       - distro/sysroot-base/**
       - distro/sysroot/**
+      - distro/toolchain-smoke/**
       - distro/npm/browser-tests.nix
       - packages/browser-tests/memory64-app.js
       - packages/browser-tests/memory64-index.html
@@ -40,6 +41,7 @@ on:
       - distro/platform.nix
       - distro/sysroot-base/**
       - distro/sysroot/**
+      - distro/toolchain-smoke/**
       - distro/npm/browser-tests.nix
       - packages/browser-tests/memory64-app.js
       - packages/browser-tests/memory64-index.html
@@ -91,7 +93,8 @@ jobs:
             .#sysroot-base-wasm64 \
             .#llvm-runtimes-wasm64 \
             .#sysroot-wasm64 \
-            .#llvm-toolchain-wasm64
+            .#llvm-toolchain-wasm64 \
+            .#toolchain-smoke-wasm64
           nix build \
             --out-link result-kernel-wasm64 \
             --print-build-logs \
