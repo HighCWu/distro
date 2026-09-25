@@ -58,6 +58,7 @@ pkgs.runCommand "llvm-toolchain-${platform.wasmArch}-${version}"
     -stdlib=libc++
     --unwindlib=libunwind
     -mexception-handling
+    -lunwind
     EOF
 
     ln -sf wasm-ld $out/bin/ld
