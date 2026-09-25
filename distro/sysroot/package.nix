@@ -6,7 +6,7 @@
   sysroot-base,
 }:
 
-pkgs.runCommand "sysroot" { } ''
+pkgs.runCommand "sysroot-${platform.wasmArch}" { } ''
   mkdir -p $out/lib $out/include/${platform.multiarchTriple} $out/share
 
   cp -r ${sysroot-base}/include/* $out/include/

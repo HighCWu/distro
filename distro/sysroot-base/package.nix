@@ -2,11 +2,12 @@
 # depending on them.
 {
   pkgs,
+  platform,
   linux,
   musl,
 }:
 
-pkgs.runCommand "sysroot-base" { } ''
+pkgs.runCommand "sysroot-base-${platform.wasmArch}" { } ''
   mkdir -p $out/lib $out/include
 
   cp -r ${linux.headers}/include/* $out/include/

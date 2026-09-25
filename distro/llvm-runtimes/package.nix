@@ -63,7 +63,7 @@ let
 in
 
 pkgs.stdenvNoCC.mkDerivation {
-  pname = "llvm-runtimes";
+  pname = "llvm-runtimes-${platform.wasmArch}";
   inherit (llvm-toolchain-unwrapped) version;
   inherit src;
 
@@ -89,10 +89,10 @@ pkgs.stdenvNoCC.mkDerivation {
 
   installPhase = ''
     runHook preInstall
-    mkdir -p $out/lib/clang/${llvmMajorVersion}/lib/${platform.targetTriple} $out/lib/clang/${llvmMajorVersion}/lib/wasm32 $out/lib/clang/${llvmMajorVersion}/lib/wasm32-unknown
+    mkdir -p $out/lib/clang/${llvmMajorVersion}/lib/${platform.targetTriple} $out/lib/clang/${llvmMajorVersion}/lib/${platform.wasmArch} $out/lib/clang/${llvmMajorVersion}/lib/${platform.wasmArch}-unknown
     cp $out/lib/${platform.targetTriple}/libclang_rt.builtins.a $out/lib/clang/${llvmMajorVersion}/lib/${platform.targetTriple}/libclang_rt.builtins.a
-    cp $out/lib/${platform.targetTriple}/libclang_rt.builtins.a $out/lib/clang/${llvmMajorVersion}/lib/wasm32/libclang_rt.builtins.a
-    cp $out/lib/${platform.targetTriple}/libclang_rt.builtins.a $out/lib/clang/${llvmMajorVersion}/lib/wasm32-unknown/libclang_rt.builtins.a
+    cp $out/lib/${platform.targetTriple}/libclang_rt.builtins.a $out/lib/clang/${llvmMajorVersion}/lib/${platform.wasmArch}/libclang_rt.builtins.a
+    cp $out/lib/${platform.targetTriple}/libclang_rt.builtins.a $out/lib/clang/${llvmMajorVersion}/lib/${platform.wasmArch}-unknown/libclang_rt.builtins.a
     runHook postInstall
   '';
 }

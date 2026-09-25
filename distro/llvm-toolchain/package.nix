@@ -15,7 +15,7 @@ let
   llvmMajorVersion = lib.versions.major version;
 in
 
-pkgs.runCommand "llvm-toolchain-${version}"
+pkgs.runCommand "llvm-toolchain-${platform.wasmArch}-${version}"
   {
     passthru = {
       isClang = true;
@@ -41,8 +41,8 @@ pkgs.runCommand "llvm-toolchain-${version}"
     mkdir -p $out/lib/clang/${llvmMajorVersion}/lib
 
     cp -r ${llvm-runtimes}/lib/clang/${llvmMajorVersion}/lib/${platform.targetTriple} $out/lib/clang/${llvmMajorVersion}/lib/
-    cp -r ${llvm-runtimes}/lib/clang/${llvmMajorVersion}/lib/wasm32 $out/lib/clang/${llvmMajorVersion}/lib/
-    cp -r ${llvm-runtimes}/lib/clang/${llvmMajorVersion}/lib/wasm32-unknown $out/lib/clang/${llvmMajorVersion}/lib/
+    cp -r ${llvm-runtimes}/lib/clang/${llvmMajorVersion}/lib/${platform.wasmArch} $out/lib/clang/${llvmMajorVersion}/lib/
+    cp -r ${llvm-runtimes}/lib/clang/${llvmMajorVersion}/lib/${platform.wasmArch}-unknown $out/lib/clang/${llvmMajorVersion}/lib/
 
     ln -sf wasm-ld $out/bin/ld
   ''

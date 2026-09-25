@@ -8,7 +8,12 @@ on:
       - .github/workflows/wasm64.yml
       - distro/default.nix
       - distro/linux/**
+      - distro/llvm-runtimes/**
+      - distro/llvm-toolchain/**
       - distro/musl/**
+      - distro/platform.nix
+      - distro/sysroot-base/**
+      - distro/sysroot/**
       - distro/npm/browser-tests.nix
       - packages/browser-tests/memory64-app.js
       - packages/browser-tests/memory64-index.html
@@ -29,7 +34,12 @@ on:
       - .github/workflows/wasm64.yml
       - distro/default.nix
       - distro/linux/**
+      - distro/llvm-runtimes/**
+      - distro/llvm-toolchain/**
       - distro/musl/**
+      - distro/platform.nix
+      - distro/sysroot-base/**
+      - distro/sysroot/**
       - distro/npm/browser-tests.nix
       - packages/browser-tests/memory64-app.js
       - packages/browser-tests/memory64-index.html
@@ -77,7 +87,11 @@ jobs:
           nix build \
             --no-link \
             --print-build-logs \
-            .#musl-wasm64
+            .#musl-wasm64 \
+            .#sysroot-base-wasm64 \
+            .#llvm-runtimes-wasm64 \
+            .#sysroot-wasm64 \
+            .#llvm-toolchain-wasm64
           nix build \
             --out-link result-kernel-wasm64 \
             --print-build-logs \

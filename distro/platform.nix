@@ -1,9 +1,13 @@
-{ lib }:
+{ lib, wasmBits ? 32 }:
+
+assert builtins.elem wasmBits [ 32 64 ];
 
 rec {
-  targetTriple = "wasm32-unknown-linux-musl";
-  multiarchTriple = "wasm32-linux-musl";
-  apkArch = "wasm32";
+  addressBits = wasmBits;
+  wasmArch = "wasm${toString wasmBits}";
+  targetTriple = "${wasmArch}-unknown-linux-musl";
+  multiarchTriple = "${wasmArch}-linux-musl";
+  apkArch = wasmArch;
 
   # The elaborated nixpkgs platform used as the stdenv's host platform. The
   # kernel is Linux but the executable format is not ELF; getting that right
@@ -37,7 +41,7 @@ rec {
   # scripts link, and promoting that to an error breaks every such probe.
   linkerFlags = [
     "--import-memory"
-    "--max-memory=4294967296"
+    "--max-memory=${if wasmBits == 32 then "4294967296" else "17179869184"}"
     "--shared-memory"
     "--export-table"
     # clang's wasm-linux toolchain defaults the table base to 3, reserving

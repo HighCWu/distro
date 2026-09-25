@@ -43,8 +43,7 @@ lib.makeScope (scope: lib.callPackageWith ({ inherit lib pkgs; } // scope)) (
     # must not consume it.
     llvm-toolchain-unwrapped = callPackage ./llvm-toolchain/unwrapped.nix {
     };
-    llvm-runtimes = callPackage ./llvm-runtimes/package.nix { };
-    llvm-toolchain = callPackage ./llvm-toolchain/package.nix { };
+    platform-wasm64 = callPackage ./platform.nix { wasmBits = 64; };
     linux = callPackage ./linux/package.nix { };
     linux-wasm64 = self.linux.override { wasmBits = 64; };
     bytes = callPackage ./npm/bytes.nix { };
@@ -53,7 +52,27 @@ lib.makeScope (scope: lib.callPackageWith ({ inherit lib pkgs; } // scope)) (
     musl = callPackage ./musl/package.nix { };
     musl-wasm64 = self.musl.override { wasmBits = 64; };
     sysroot-base = callPackage ./sysroot-base/package.nix { };
+    sysroot-base-wasm64 = callPackage ./sysroot-base/package.nix {
+      platform = self.platform-wasm64;
+      linux = self.linux-wasm64;
+      musl = self.musl-wasm64;
+    };
+    llvm-runtimes = callPackage ./llvm-runtimes/package.nix { };
+    llvm-runtimes-wasm64 = callPackage ./llvm-runtimes/package.nix {
+      platform = self.platform-wasm64;
+      sysroot-base = self.sysroot-base-wasm64;
+    };
     sysroot = callPackage ./sysroot/package.nix { };
+    sysroot-wasm64 = callPackage ./sysroot/package.nix {
+      platform = self.platform-wasm64;
+      llvm-runtimes = self.llvm-runtimes-wasm64;
+      sysroot-base = self.sysroot-base-wasm64;
+    };
+    llvm-toolchain = callPackage ./llvm-toolchain/package.nix { };
+    llvm-toolchain-wasm64 = callPackage ./llvm-toolchain/package.nix {
+      platform = self.platform-wasm64;
+      llvm-runtimes = self.llvm-runtimes-wasm64;
+    };
 
     # The wasm stdenv: nixpkgs' generic stdenv with a cc-wrapped fork toolchain
     # and wasm32-unknown-linux-musl as the host platform. Everything below here
