@@ -46,8 +46,10 @@ lib.makeScope (scope: lib.callPackageWith ({ inherit lib pkgs; } // scope)) (
     llvm-runtimes = callPackage ./llvm-runtimes/package.nix { };
     llvm-toolchain = callPackage ./llvm-toolchain/package.nix { };
     linux = callPackage ./linux/package.nix { };
+    linux-wasm64 = self.linux.override { wasmBits = 64; };
     bytes = callPackage ./npm/bytes.nix { };
     kernel = callPackage ./npm/kernel.nix { };
+    kernel-wasm64 = self.kernel.override { linux = self.linux-wasm64; };
     musl = callPackage ./musl/package.nix { };
     sysroot-base = callPackage ./sysroot-base/package.nix { };
     sysroot = callPackage ./sysroot/package.nix { };

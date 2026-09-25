@@ -6,6 +6,7 @@
   pkgs,
   lib,
   debug,
+  wasmBits ? 32,
   llvm-toolchain-unwrapped,
   src ? pkgs.fetchFromGitHub {
     owner = "HighCWu";
@@ -15,8 +16,10 @@
   },
 }:
 
+assert lib.assertOneOf "wasmBits" wasmBits [ 32 64 ];
+
 pkgs.stdenvNoCC.mkDerivation {
-  pname = "linux";
+  pname = "linux-wasm${toString wasmBits}";
   version = "0.0.0";
   inherit src;
 
@@ -50,7 +53,7 @@ pkgs.stdenvNoCC.mkDerivation {
     make mrproper
     mkdir -p $out
 
-    make defconfig ${lib.optionalString debug "debug.config"}
+    make wasm${toString wasmBits}_defconfig ${lib.optionalString debug "debug.config"}
 
     make vmlinux.wasm
 
