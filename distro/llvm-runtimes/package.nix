@@ -15,7 +15,7 @@
 
 let
   llvmMajorVersion = lib.versions.major llvm-toolchain-unwrapped.version;
-  wasmCompileFlags = "--sysroot=${sysroot-base} ${toString platform.compilerFlags}";
+  wasmCompileFlags = "--sysroot=${sysroot-base} ${toString platform.compilerFlags} -mexception-handling";
 
   cmakeFlags = [
     "-DCMAKE_BUILD_TYPE=Release"
@@ -60,6 +60,7 @@ let
     "-DLIBCXXABI_USE_COMPILER_RT=ON"
     "-DLIBCXXABI_USE_LLVM_UNWINDER=ON"
     "-DLIBUNWIND_ENABLE_SHARED=OFF"
+    "-DLIBUNWIND_HIDE_SYMBOLS=ON"
     "-DLIBUNWIND_USE_COMPILER_RT=ON"
   ];
 in
