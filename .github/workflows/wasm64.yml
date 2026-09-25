@@ -8,6 +8,13 @@ on:
       - .github/workflows/wasm64.yml
       - distro/default.nix
       - distro/linux/**
+      - distro/npm/browser-tests.nix
+      - packages/browser-tests/memory64-app.js
+      - packages/browser-tests/memory64-index.html
+      - packages/browser-tests/memory64-tests/**
+      - packages/browser-tests/package.json
+      - packages/browser-tests/playwright.config.js
+      - packages/browser-tests/server.js
       - packages/bytes/**
       - packages/kernel/**
       - scripts/smoke-memory64.mjs
@@ -21,6 +28,13 @@ on:
       - .github/workflows/wasm64.yml
       - distro/default.nix
       - distro/linux/**
+      - distro/npm/browser-tests.nix
+      - packages/browser-tests/memory64-app.js
+      - packages/browser-tests/memory64-index.html
+      - packages/browser-tests/memory64-tests/**
+      - packages/browser-tests/package.json
+      - packages/browser-tests/playwright.config.js
+      - packages/browser-tests/server.js
       - packages/bytes/**
       - packages/kernel/**
       - scripts/smoke-memory64.mjs
