@@ -4,10 +4,10 @@
   lib,
   platform,
   src ? pkgs.fetchFromGitHub {
-    owner = "tombl";
+    owner = "HighCWu";
     repo = "llvm-project";
-    rev = "9aaceb42fef4f924a00126e0d66140d01482921c";
-    hash = "sha256-UXfcTGqVJsIVQHDSSF2tcRuM7zysJycaEsmCmlepVVM=";
+    rev = "137009e264eb237b5f5adcbae1b7e209f79291f5";
+    hash = "sha256-Rms9gK6XU3cN7muwE9kHTIe+DB++amxC6MeJcyciPS8=";
   },
   llvm-toolchain-unwrapped,
   sysroot-base,
