@@ -1,0 +1,55 @@
+name: Wasm64
+
+on:
+  push:
+    branches:
+      - main
+    paths:
+      - .github/workflows/wasm64.yml
+      - distro/default.nix
+      - distro/linux/**
+      - packages/bytes/**
+      - packages/kernel/**
+      - flake.lock
+      - flake.nix
+      - package.json
+      - pnpm-lock.yaml
+      - pnpm-workspace.yaml
+  pull_request:
+    paths:
+      - .github/workflows/wasm64.yml
+      - distro/default.nix
+      - distro/linux/**
+      - packages/bytes/**
+      - packages/kernel/**
+      - flake.lock
+      - flake.nix
+      - package.json
+      - pnpm-lock.yaml
+      - pnpm-workspace.yaml
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: wasm64-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  kernel:
+    name: Kernel and host runtime
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v6
+      - uses: nixbuild/nix-quick-install-action@v35
+      - uses: cachix/cachix-action@v17
+        with:
+          name: linuxwasm
+      - name: Build Memory64 artifacts
+        run: |
+          nix build \
+            --no-link \
+            --print-build-logs \
+            .#linux-wasm64 \
+            .#kernel-wasm64
