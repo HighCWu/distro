@@ -4,6 +4,7 @@
   image,
   lib,
   kernel,
+  kernel-wasm64,
   linux-guest,
   pkgs,
   playwright,
@@ -42,9 +43,25 @@ let
     tar -xzf ${linux-guest.package}/package.tgz --strip-components=1 -C $out/node_modules/@lowland/guest
   '';
 
+  memory64Suite = pkgs.runCommand "memory64-browser-tests" { } ''
+    mkdir -p \
+      $out/node_modules/@lowland/bytes \
+      $out/node_modules/@lowland/kernel \
+      $out/tests
+    ${playwright.linkRuntime "$out"}
+    cp ${source}/memory64-app.js $out/app.js
+    cp ${source}/memory64-index.html $out/index.html
+    cp ${source}/playwright.config.js $out/playwright.config.js
+    cp ${source}/server.js $out/server.js
+    cp ${source}/memory64-tests/memory64.spec.js $out/tests/
+    cp -r ${bytes}/. $out/node_modules/@lowland/bytes/
+    cp -r ${kernel-wasm64}/. $out/node_modules/@lowland/kernel/
+  '';
+
   suite = baseSuite // {
     checks = lib.optionalAttrs pkgs.stdenv.hostPlatform.isLinux (
       (lib.genAttrs projects check)
+      // (lib.genAttrs memory64Projects memory64Check)
       // {
         site-live = siteCheck;
         service-worker = serviceWorkerCheck;
@@ -58,12 +75,25 @@ let
     "webkit"
   ];
 
+  memory64Projects = [
+    "memory64-chromium"
+    "memory64-firefox"
+  ];
+
   check =
     project:
     playwright.mkCheck {
       name = "browser-tests-${project}";
       suite = baseSuite;
       inherit project;
+    };
+
+  memory64Check =
+    name:
+    playwright.mkCheck {
+      name = "browser-tests-${name}";
+      suite = memory64Suite;
+      project = lib.removePrefix "memory64-" name;
     };
 
   siteSuite = pkgs.runCommand "site-browser-tests" { } ''

@@ -64,3 +64,10 @@ jobs:
             .#kernel-wasm64
       - name: Boot Memory64 kernel
         run: node scripts/smoke-memory64.mjs result-kernel-wasm64
+      - name: Boot Memory64 kernel in stable browsers
+        run: |
+          nix build \
+            --no-link \
+            --print-build-logs \
+            .#checks.x86_64-linux.browser-tests-check-memory64-chromium \
+            .#checks.x86_64-linux.browser-tests-check-memory64-firefox
