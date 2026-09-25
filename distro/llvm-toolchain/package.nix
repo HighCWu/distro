@@ -51,5 +51,14 @@ pkgs.runCommand "llvm-toolchain-${platform.wasmArch}-${version}"
     cp -r ${llvm-runtimes}/lib/clang/${llvmMajorVersion}/lib/${platform.wasmArch} $out/lib/clang/${llvmMajorVersion}/lib/
     cp -r ${llvm-runtimes}/lib/clang/${llvmMajorVersion}/lib/${platform.wasmArch}-unknown $out/lib/clang/${llvmMajorVersion}/lib/
 
+    # This installation is a dedicated wasm toolchain. Keep the C++ runtime
+    # selection in Clang's public driver configuration so plain clang++ uses
+    # the matching libc++, libc++abi, and libunwind from the selected sysroot.
+    cat > $out/bin/clang++.cfg <<EOF
+    -stdlib=libc++
+    --unwindlib=libunwind
+    -mexception-handling
+    EOF
+
     ln -sf wasm-ld $out/bin/ld
   ''
