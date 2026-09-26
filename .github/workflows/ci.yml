@@ -40,8 +40,11 @@ jobs:
       - uses: nixbuild/nix-quick-install-action@v35
       - uses: nix-community/cache-nix-action@v7
         with:
-          primary-key: nix-${{ runner.os }}-${{ hashFiles('**/*.nix', 'flake.lock') }}
-          restore-prefixes-first-match: nix-${{ runner.os }}-
+          primary-key: nix-ci-${{ runner.os }}-${{ hashFiles('**/*.nix', 'flake.lock') }}
+          restore-prefixes-first-match: |
+            nix-ci-${{ runner.os }}-
+            nix-wasm64-${{ runner.os }}-
+            nix-${{ runner.os }}-
           gc-max-store-size-linux: 9G
       - uses: cachix/cachix-action@v17
         with:
@@ -155,8 +158,8 @@ jobs:
       - uses: nixbuild/nix-quick-install-action@v35
       - uses: nix-community/cache-nix-action@v7
         with:
-          primary-key: nix-${{ runner.os }}-${{ hashFiles('**/*.nix', 'flake.lock') }}
-          restore-prefixes-first-match: nix-${{ runner.os }}-
+          primary-key: nix-ci-${{ runner.os }}-${{ hashFiles('**/*.nix', 'flake.lock') }}
+          restore-prefixes-first-match: nix-ci-${{ runner.os }}-
           save: false
       - uses: cachix/cachix-action@v17
         with:
