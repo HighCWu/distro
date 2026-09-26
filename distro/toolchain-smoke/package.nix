@@ -62,17 +62,37 @@ let
         fail("malloc memory was corrupted");
       free(value);
 
-      size_t mapping_size = 2 * 65536;
+      const size_t page_size = 65536;
+      size_t mapping_size = 5 * page_size;
       unsigned char *mapping = mmap(NULL, mapping_size, PROT_READ | PROT_WRITE,
                                     MAP_PRIVATE | MAP_ANONYMOUS, -1, 0);
       if (mapping == MAP_FAILED)
         fail("anonymous mmap failed");
-      mapping[0] = 0x5a;
-      mapping[mapping_size - 1] = 0xa5;
-      if (mapping[0] != 0x5a || mapping[mapping_size - 1] != 0xa5)
-        fail("anonymous mmap was not writable");
-      if (munmap(mapping, mapping_size) != 0)
-        fail("munmap failed");
+      if ((uintptr_t)mapping % page_size != 0 || mapping[0] != 0 ||
+          mapping[2 * page_size] != 0 || mapping[mapping_size - 1] != 0)
+        fail("anonymous mmap was not aligned and zero-filled");
+      for (size_t page = 0; page < 5; ++page)
+        mapping[page * page_size] = (unsigned char)(page + 1);
+
+      errno = 0;
+      if (munmap(mapping + 1, page_size) != -1 || errno != EINVAL)
+        fail("unaligned munmap did not fail with EINVAL");
+
+      if (munmap(mapping + 2 * page_size, page_size) != 0)
+        fail("middle munmap failed");
+      if (mapping[0] != 1 || mapping[3 * page_size] != 4)
+        fail("partial munmap released live mapping storage");
+      if (munmap(mapping, page_size) != 0)
+        fail("prefix munmap failed");
+      if (munmap(mapping + 4 * page_size, page_size) != 0)
+        fail("suffix munmap failed");
+      if (mapping[page_size] != 2 || mapping[3 * page_size] != 4)
+        fail("trimmed mapping storage was corrupted");
+      if (munmap(mapping + page_size, page_size) != 0 ||
+          munmap(mapping + 3 * page_size, page_size) != 0)
+        fail("split mapping cleanup failed");
+      if (munmap((void *)(uintptr_t)page_size, page_size) != 0)
+        fail("unmapped range was not accepted as a no-op");
 
       errno = 0;
       mapping = mmap((void *)(uintptr_t)-mapping_size, mapping_size,
