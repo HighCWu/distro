@@ -36,10 +36,7 @@ export function section_properties(
     Object.entries(sections).map(([name, [address, size]]) => {
       assert(Number.isSafeInteger(address) && address >= 0, `invalid section address: ${name}`);
       assert(Number.isSafeInteger(size) && size >= 0, `invalid section size: ${name}`);
-      return [
-        name,
-        address_cells === 2 ? [BigInt(address), BigInt(size)] : [address, size],
-      ];
+      return [name, address_cells === 2 ? [BigInt(address), BigInt(size)] : [address, size]];
     }),
   );
 }

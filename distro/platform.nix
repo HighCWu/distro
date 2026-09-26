@@ -1,6 +1,12 @@
-{ lib, wasmBits ? 32 }:
+{
+  lib,
+  wasmBits ? 32,
+}:
 
-assert builtins.elem wasmBits [ 32 64 ];
+assert builtins.elem wasmBits [
+  32
+  64
+];
 
 rec {
   addressBits = wasmBits;

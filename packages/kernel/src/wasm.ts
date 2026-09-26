@@ -65,7 +65,10 @@ export function wasm_address_from_number(value: number, address: WasmAddressType
 }
 
 /** Looks up an entry without narrowing a table64 index to a JavaScript number. */
-export function wasm_table_get(table: WebAssembly.Table, index: WasmAddress): CallableFunction | null {
+export function wasm_table_get(
+  table: WebAssembly.Table,
+  index: WasmAddress,
+): CallableFunction | null {
   const get = table.get as unknown as (index: WasmAddress) => CallableFunction | null;
   return get.call(table, index);
 }

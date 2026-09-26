@@ -1,10 +1,6 @@
 // SPDX-License-Identifier: MIT
 
-import {
-  type DeviceTreeNode,
-  generate_devicetree,
-  section_properties,
-} from "./devicetree.ts";
+import { type DeviceTreeNode, generate_devicetree, section_properties } from "./devicetree.ts";
 import { platform, type WorkerHandle } from "./platform.ts";
 import { configure_machine, merge_device_tree, run_machine_booted } from "./plugin-internal.ts";
 import type { MachinePluginInput } from "./plugin.ts";

@@ -12,7 +12,10 @@
   },
 }:
 
-assert builtins.elem wasmBits [ 32 64 ];
+assert builtins.elem wasmBits [
+  32
+  64
+];
 
 pkgs.stdenvNoCC.mkDerivation {
   name = "musl-wasm${toString wasmBits}";
