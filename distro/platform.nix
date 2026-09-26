@@ -50,6 +50,12 @@ rec {
     "--max-memory=${if wasmBits == 32 then "4294967296" else "17179869184"}"
     "--shared-memory"
     "--export-table"
+    # Pull the direct anonymous mapping runtime into every executable. Raw
+    # SYS_mmap callers need the callback even when no C mmap symbol reference
+    # would otherwise extract its libc archive member.
+    "--undefined=__wasm_mmap"
+    "--export=__wasm_mmap"
+    "--export=__wasm_munmap"
     # clang's wasm-linux toolchain defaults the table base to 3, reserving
     # function-pointer values 1 and 2 for SIG_IGN and SIG_HOLD.
     # wasm-ld's default shadow stack is 64 KiB, which terminal setup in

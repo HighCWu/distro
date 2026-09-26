@@ -234,6 +234,8 @@ export interface Imports {
       expected: number,
       replacement: number,
     ): number;
+    mmap(len: WasmAddress): WasmAddress;
+    munmap(addr: WasmAddress, len: WasmAddress): WasmAddress;
   };
   virtio: {
     set_features(dev: number, features: bigint): void;

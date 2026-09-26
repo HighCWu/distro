@@ -378,6 +378,18 @@ function user_imports({
         const old = Atomics.compareExchange(word, 0, expected, replacement);
         return write_kernel_u32(oldval, old) ? 0 : -14; // bad address
       },
+      mmap(len) {
+        assert(instance);
+        const callback = instance.exports.__wasm_mmap;
+        if (typeof callback !== "function") return kernel_address === "i64" ? -38n : -38;
+        return callback(len) as WasmAddress;
+      },
+      munmap(addr, len) {
+        assert(instance);
+        const callback = instance.exports.__wasm_munmap;
+        if (typeof callback !== "function") return kernel_address === "i64" ? -38n : -38;
+        return callback(addr, len) as WasmAddress;
+      },
     },
   };
 }

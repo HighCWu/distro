@@ -172,6 +172,7 @@ in
       malloc-failure = installedCheck { name = "malloc-failure"; };
       malloc-thread = installedCheck { name = "malloc-thread"; };
       memory-abi = memoryAbiCheck;
+      mmap = installedCheck { name = "mmap"; };
       named-semaphore = namedSemaphoreCheck;
       proc-self-mem = installedCheck { name = "proc-self-mem"; };
       posix-spawn-stress = posixSpawnStressCheck;

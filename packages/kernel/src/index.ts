@@ -446,6 +446,8 @@ export async function bootMachine(options: BootMachineOptions): Promise<Machine>
         write_zeroes: unavailable,
         futex_atomic_op: unavailable,
         futex_atomic_cmpxchg: unavailable,
+        mmap: unavailable,
+        munmap: unavailable,
       },
       virtio: virtio_imports({
         memory: wasm_memory,
