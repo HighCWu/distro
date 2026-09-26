@@ -79,10 +79,11 @@ jobs:
       - uses: nixbuild/nix-quick-install-action@v35
       - uses: nix-community/cache-nix-action@v7
         with:
-          primary-key: nix-wasm64-${{ runner.os }}-${{ hashFiles('**/*.nix', 'flake.lock') }}
+          primary-key: nix-wasm64-v2-${{ runner.os }}-${{ hashFiles('**/*.nix', 'flake.lock') }}
           restore-prefixes-first-match: |
-            nix-wasm64-${{ runner.os }}-
+            nix-wasm64-v2-${{ runner.os }}-
             nix-ci-${{ runner.os }}-
+            nix-wasm64-${{ runner.os }}-
             nix-${{ runner.os }}-
           gc-max-store-size-linux: 9G
       - uses: cachix/cachix-action@v17
@@ -111,6 +112,11 @@ jobs:
             --out-link result-kernel-wasm64 \
             --print-build-logs \
             .#kernel-wasm64
+          # Keep the build-only compiler reachable during the cache post-step GC.
+          nix build \
+            --out-link result-wasm64-cache \
+            .#llvm-toolchain-unwrapped \
+            .#llvm-toolchain-wasm64
       - name: Boot Memory64 kernel
         run: node scripts/smoke-memory64.mjs result-kernel-wasm64
       - name: Boot Memory64 kernel in stable browsers
