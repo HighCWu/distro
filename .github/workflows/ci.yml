@@ -38,6 +38,11 @@ jobs:
     steps:
       - uses: actions/checkout@v6
       - uses: nixbuild/nix-quick-install-action@v35
+      - uses: nix-community/cache-nix-action@v7
+        with:
+          primary-key: nix-${{ runner.os }}-${{ hashFiles('**/*.nix', 'flake.lock') }}
+          restore-prefixes-first-match: nix-${{ runner.os }}-
+          gc-max-store-size-linux: 9G
       - uses: cachix/cachix-action@v17
         with:
           name: linuxwasm
@@ -120,6 +125,11 @@ jobs:
         run: |
           nix build .#kernel --out-link result-kernel --print-build-logs
           nix build .#linux-guest --out-link result-linux-guest --print-build-logs
+          # Keep expensive build-only inputs reachable during the cache post-step GC.
+          nix build \
+            --out-link result-ci-cache \
+            .#llvm-toolchain-unwrapped \
+            .#linux
           mkdir npm-packages
           cp -L result-kernel/package.tgz npm-packages/kernel.tgz
           cp -L result-linux-guest/package.tgz npm-packages/linux-guest.tgz
@@ -143,6 +153,11 @@ jobs:
     steps:
       - uses: actions/checkout@v6
       - uses: nixbuild/nix-quick-install-action@v35
+      - uses: nix-community/cache-nix-action@v7
+        with:
+          primary-key: nix-${{ runner.os }}-${{ hashFiles('**/*.nix', 'flake.lock') }}
+          restore-prefixes-first-match: nix-${{ runner.os }}-
+          save: false
       - uses: cachix/cachix-action@v17
         with:
           name: linuxwasm

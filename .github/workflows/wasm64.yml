@@ -77,6 +77,11 @@ jobs:
           node-version: 24
           package-manager-cache: false
       - uses: nixbuild/nix-quick-install-action@v35
+      - uses: nix-community/cache-nix-action@v7
+        with:
+          primary-key: nix-${{ runner.os }}-${{ hashFiles('**/*.nix', 'flake.lock') }}
+          restore-prefixes-first-match: nix-${{ runner.os }}-
+          gc-max-store-size-linux: 9G
       - uses: cachix/cachix-action@v17
         with:
           name: linuxwasm
@@ -96,7 +101,7 @@ jobs:
             .#llvm-toolchain-wasm64 \
             .#toolchain-smoke-wasm64
           nix build \
-            --no-link \
+            --out-link result-toolchain-smoke-runtime-wasm64 \
             --print-build-logs \
             .#toolchain-smoke-runtime-wasm64
           nix build \
