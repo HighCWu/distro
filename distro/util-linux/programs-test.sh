@@ -69,6 +69,27 @@ wait_uuidd_ready() {
   [ "$i" -lt 100 ] || fail "uuidd did not create $socket and $pidfile"
 }
 
+dump_uuidd_state() {
+  pid=$1
+  label=$2
+  echo "uuidd diagnostic: $label pid=$pid"
+  if [ -r "/proc/$pid/status" ]; then
+    awk '/^(Name|State|Pid|PPid|Threads|SigQ|SigPnd|ShdPnd|SigBlk|SigIgn|SigCgt):/ { print }' \
+      "/proc/$pid/status" || true
+  else
+    echo "uuidd diagnostic: /proc/$pid/status is unavailable"
+  fi
+  if [ -r "/proc/$pid/wchan" ]; then
+    printf 'WChan:\t'
+    cat "/proc/$pid/wchan" || true
+    echo
+  fi
+  for fd in /proc/"$pid"/fd/*; do
+    [ -e "$fd" ] || continue
+    printf 'FD %s -> %s\n' "${fd##*/}" "$(readlink "$fd" 2>/dev/null)"
+  done
+}
+
 wait_uuidd_exit() {
   pid=$1
   label=$2
@@ -79,7 +100,25 @@ wait_uuidd_exit() {
     sleep .05
     i=$((i + 1))
   done
-  [ "$i" -lt 100 ] || fail "uuidd $label process $pid did not exit"
+  if [ "$i" -ge 100 ]; then
+    dump_uuidd_state "$pid" "$label exit timeout"
+    fail "uuidd $label process $pid did not exit"
+  fi
+}
+
+expect_uuidd_cleanup() {
+  socket=$1
+  pidfile=$2
+  pid=$3
+  label=$4
+
+  if [ -e "$socket" ] || [ -e "$pidfile" ]; then
+    printf 'uuidd diagnostic: socket=%s pidfile=%s\n' \
+      "$([ -e "$socket" ] && echo present || echo absent)" \
+      "$([ -e "$pidfile" ] && echo present || echo absent)"
+    dump_uuidd_state "$pid" "$label cleanup"
+    fail "uuidd $label did not clean socket and pidfile"
+  fi
 }
 
 reap_uuidd_foreground() {
@@ -240,8 +279,7 @@ check_uuid "$(timeout 5 uuidd -s "$uuidd_socket" -r)" 4
 kill -TERM "$uuidd_pid" || fail "signal uuidd SIGTERM"
 wait_uuidd_exit "$uuidd_pid" foreground-TERM
 reap_uuidd_foreground "$uuidd_launcher_pid" SIGTERM
-[ ! -e "$uuidd_socket" ] && [ ! -e "$uuidd_pidfile" ] ||
-  fail "uuidd SIGTERM did not clean socket and pidfile"
+expect_uuidd_cleanup "$uuidd_socket" "$uuidd_pidfile" "$uuidd_pid" SIGTERM
 
 # An asynchronously launched shell command inherits SIGHUP ignored in this
 # environment.  Use a normal daemon launch to exercise HUP with its real
@@ -255,8 +293,7 @@ wait_uuidd_ready "$uuidd_socket" "$uuidd_pidfile"
 uuidd_pid=$(awk '{ print $1 }' "$uuidd_pidfile")
 kill -HUP "$uuidd_pid" || fail "signal uuidd SIGHUP"
 wait_uuidd_exit "$uuidd_pid" daemon-HUP
-[ ! -e "$uuidd_socket" ] && [ ! -e "$uuidd_pidfile" ] ||
-  fail "uuidd SIGHUP did not clean socket and pidfile"
+expect_uuidd_cleanup "$uuidd_socket" "$uuidd_pidfile" "$uuidd_pid" SIGHUP
 
 uuidd_socket=/tmp/uuidd-ALRM.sock
 echo "uuidd phase: foreground ALRM"
@@ -269,8 +306,7 @@ uuidd_pid=$(awk '{ print $1 }' "$uuidd_pidfile")
 kill -ALRM "$uuidd_pid" || fail "signal uuidd SIGALRM"
 wait_uuidd_exit "$uuidd_pid" foreground-ALRM
 reap_uuidd_foreground "$uuidd_launcher_pid" SIGALRM
-[ ! -e "$uuidd_socket" ] && [ ! -e "$uuidd_pidfile" ] ||
-  fail "uuidd SIGALRM did not clean socket and pidfile"
+expect_uuidd_cleanup "$uuidd_socket" "$uuidd_pidfile" "$uuidd_pid" SIGALRM
 
 # An asynchronously launched shell command inherits SIGINT ignored, so test
 # INT on the normally launched daemon child, whose inherited disposition is
@@ -284,8 +320,7 @@ wait_uuidd_ready "$uuidd_socket" "$uuidd_pidfile"
 uuidd_pid=$(awk '{ print $1 }' "$uuidd_pidfile")
 kill -INT "$uuidd_pid" || fail "signal uuidd SIGINT"
 wait_uuidd_exit "$uuidd_pid" daemon-INT
-[ ! -e "$uuidd_socket" ] && [ ! -e "$uuidd_pidfile" ] ||
-  fail "uuidd SIGINT did not clean socket and pidfile"
+expect_uuidd_cleanup "$uuidd_socket" "$uuidd_pidfile" "$uuidd_pid" SIGINT
 
 # Inactivity is a normal clean shutdown. A timeout larger than poll(2)'s
 # millisecond range must retain its full duration rather than wrapping.
@@ -299,8 +334,7 @@ wait_uuidd_ready "$uuidd_socket" "$uuidd_pidfile"
 uuidd_pid=$(awk '{ print $1 }' "$uuidd_pidfile")
 wait_uuidd_exit "$uuidd_pid" foreground-inactivity
 reap_uuidd_foreground "$uuidd_launcher_pid" inactivity
-[ ! -e "$uuidd_socket" ] && [ ! -e "$uuidd_pidfile" ] ||
-  fail "uuidd inactivity did not clean socket and pidfile"
+expect_uuidd_cleanup "$uuidd_socket" "$uuidd_pidfile" "$uuidd_pid" inactivity
 uuidd_socket=/tmp/uuidd-long-timeout.sock
 echo "uuidd phase: foreground long timeout"
 uuidd_pidfile=/tmp/uuidd-long-timeout.pid
@@ -315,8 +349,7 @@ check_uuid "$(timeout 5 uuidd -s "$uuidd_socket" -r)" 4
 kill -TERM "$uuidd_pid" || fail "stop uuidd long-timeout service"
 wait_uuidd_exit "$uuidd_pid" foreground-long-timeout
 reap_uuidd_foreground "$uuidd_launcher_pid" long-timeout
-[ ! -e "$uuidd_socket" ] && [ ! -e "$uuidd_pidfile" ] ||
-  fail "uuidd long-timeout shutdown did not clean service files"
+expect_uuidd_cleanup "$uuidd_socket" "$uuidd_pidfile" "$uuidd_pid" long-timeout
 
 # Default daemon mode retains the double-fork topology: the final service is
 # reparented, is not its session leader, runs from / with /dev/null stdio, and
@@ -342,8 +375,7 @@ check_uuid "$(timeout 5 uuidd -s "$uuidd_socket" -r)" 4
 check_uuid "$(timeout 5 uuidd -s "$uuidd_socket" -t)" 1
 timeout 5 uuidd -k -s "$uuidd_socket" || fail "stop uuidd daemon"
 wait_uuidd_exit "$uuidd_pid" daemon-shutdown
-[ ! -e "$uuidd_socket" ] && [ ! -e "$uuidd_pidfile" ] ||
-  fail "uuidd daemon shutdown did not clean socket and pidfile"
+expect_uuidd_cleanup "$uuidd_socket" "$uuidd_pidfile" "$uuidd_pid" daemon-shutdown
 
 # Formatting swap images remains useful offline even though this kernel cannot
 # activate them.  Keep mkswap and verify the resulting image format.
