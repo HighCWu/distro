@@ -295,32 +295,46 @@ kill -HUP "$uuidd_pid" || fail "signal uuidd SIGHUP"
 wait_uuidd_exit "$uuidd_pid" daemon-HUP
 expect_uuidd_cleanup "$uuidd_socket" "$uuidd_pidfile" "$uuidd_pid" SIGHUP
 
-uuidd_socket=/tmp/uuidd-ALRM.sock
-echo "uuidd phase: foreground ALRM"
-uuidd_pidfile=/tmp/uuidd-ALRM.pid
-rm -f "$uuidd_socket" "$uuidd_pidfile"
-uuidd -F -s "$uuidd_socket" -p "$uuidd_pidfile" &
-uuidd_launcher_pid=$!
-wait_uuidd_ready "$uuidd_socket" "$uuidd_pidfile"
-uuidd_pid=$(awk '{ print $1 }' "$uuidd_pidfile")
-kill -ALRM "$uuidd_pid" || fail "signal uuidd SIGALRM"
-wait_uuidd_exit "$uuidd_pid" foreground-ALRM
-reap_uuidd_foreground "$uuidd_launcher_pid" SIGALRM
-expect_uuidd_cleanup "$uuidd_socket" "$uuidd_pidfile" "$uuidd_pid" SIGALRM
+# Repeat the externally generated signals across fresh service processes. This
+# keeps signalfd wakeup, process teardown, and ownership-file cleanup under
+# enough PID/worker churn to expose scheduler-sensitive failures.
+uuidd_signal_round=1
+while [ "$uuidd_signal_round" -le 24 ]; do
+  uuidd_socket=/tmp/uuidd-ALRM-$uuidd_signal_round.sock
+  echo "uuidd phase: foreground ALRM round $uuidd_signal_round"
+  uuidd_pidfile=/tmp/uuidd-ALRM-$uuidd_signal_round.pid
+  rm -f "$uuidd_socket" "$uuidd_pidfile"
+  uuidd -F -s "$uuidd_socket" -p "$uuidd_pidfile" &
+  uuidd_launcher_pid=$!
+  wait_uuidd_ready "$uuidd_socket" "$uuidd_pidfile"
+  uuidd_pid=$(awk '{ print $1 }' "$uuidd_pidfile")
+  kill -ALRM "$uuidd_pid" || fail "signal uuidd SIGALRM"
+  wait_uuidd_exit "$uuidd_pid" "foreground-ALRM-$uuidd_signal_round"
+  reap_uuidd_foreground "$uuidd_launcher_pid" "SIGALRM round $uuidd_signal_round"
+  expect_uuidd_cleanup "$uuidd_socket" "$uuidd_pidfile" "$uuidd_pid" \
+    "SIGALRM round $uuidd_signal_round"
+  uuidd_signal_round=$((uuidd_signal_round + 1))
+done
 
 # An asynchronously launched shell command inherits SIGINT ignored, so test
 # INT on the normally launched daemon child, whose inherited disposition is
 # the service's real startup disposition.
-uuidd_socket=/tmp/uuidd-int.sock
-echo "uuidd phase: daemon INT"
-uuidd_pidfile=/tmp/uuidd-int.pid
-rm -f "$uuidd_socket" "$uuidd_pidfile"
-uuidd -s "$uuidd_socket" -p "$uuidd_pidfile" || fail "launch uuidd for SIGINT"
-wait_uuidd_ready "$uuidd_socket" "$uuidd_pidfile"
-uuidd_pid=$(awk '{ print $1 }' "$uuidd_pidfile")
-kill -INT "$uuidd_pid" || fail "signal uuidd SIGINT"
-wait_uuidd_exit "$uuidd_pid" daemon-INT
-expect_uuidd_cleanup "$uuidd_socket" "$uuidd_pidfile" "$uuidd_pid" SIGINT
+uuidd_signal_round=1
+while [ "$uuidd_signal_round" -le 24 ]; do
+  uuidd_socket=/tmp/uuidd-INT-$uuidd_signal_round.sock
+  echo "uuidd phase: daemon INT round $uuidd_signal_round"
+  uuidd_pidfile=/tmp/uuidd-INT-$uuidd_signal_round.pid
+  rm -f "$uuidd_socket" "$uuidd_pidfile"
+  uuidd -s "$uuidd_socket" -p "$uuidd_pidfile" ||
+    fail "launch uuidd for SIGINT round $uuidd_signal_round"
+  wait_uuidd_ready "$uuidd_socket" "$uuidd_pidfile"
+  uuidd_pid=$(awk '{ print $1 }' "$uuidd_pidfile")
+  kill -INT "$uuidd_pid" || fail "signal uuidd SIGINT"
+  wait_uuidd_exit "$uuidd_pid" "daemon-INT-$uuidd_signal_round"
+  expect_uuidd_cleanup "$uuidd_socket" "$uuidd_pidfile" "$uuidd_pid" \
+    "SIGINT round $uuidd_signal_round"
+  uuidd_signal_round=$((uuidd_signal_round + 1))
+done
 
 # Inactivity is a normal clean shutdown. A timeout larger than poll(2)'s
 # millisecond range must retain its full duration rather than wrapping.
