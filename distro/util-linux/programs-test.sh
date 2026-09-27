@@ -322,6 +322,10 @@ while [ "$uuidd_signal_round" -le 24 ]; do
   uuidd_launcher_pid=$!
   wait_uuidd_ready "$uuidd_socket" "$uuidd_pidfile"
   uuidd_pid=$(awk '{ print $1 }' "$uuidd_pidfile")
+  # A completed request proves the server passed startup and entered the loop
+  # after blocking its signalfd-managed signals. Socket and pidfile creation
+  # alone happen earlier and are not a service-readiness boundary.
+  check_uuid "$(timeout 5 uuidd -s "$uuidd_socket" -r)" 4
   kill -ALRM "$uuidd_pid" || fail "signal uuidd SIGALRM"
   wait_uuidd_exit "$uuidd_pid" "foreground-ALRM-$uuidd_signal_round"
   reap_uuidd_foreground "$uuidd_launcher_pid" "SIGALRM round $uuidd_signal_round"
@@ -343,6 +347,7 @@ while [ "$uuidd_signal_round" -le 24 ]; do
     fail "launch uuidd for SIGINT round $uuidd_signal_round"
   wait_uuidd_ready "$uuidd_socket" "$uuidd_pidfile"
   uuidd_pid=$(awk '{ print $1 }' "$uuidd_pidfile")
+  check_uuid "$(timeout 5 uuidd -s "$uuidd_socket" -r)" 4
   kill -INT "$uuidd_pid" || fail "signal uuidd SIGINT"
   wait_uuidd_exit "$uuidd_pid" "daemon-INT-$uuidd_signal_round"
   expect_uuidd_cleanup "$uuidd_socket" "$uuidd_pidfile" "$uuidd_pid" \
