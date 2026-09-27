@@ -5,15 +5,11 @@
 # contains tests whose platform prerequisites are deliberately supported.
 #
 # The subset is everything in futex/functional that needs nothing this platform
-# lacks and that clears the futex_waitv port bug. The binaries left out, and why:
-#   * futex_wait_wouldblock } exercise futex_waitv, which returns EFAULT here
-#   * futex_wait_timeout    } instead of the expected EWOULDBLOCK/ETIMEDOUT
-#                             (their non-waitv assertions pass); see the
-#                             package comment and the report for the bug.
+# lacks. The binaries left out, and why:
 #   * futex_wait            - subtests use SysV shm (shmget) and a MAP_SHARED
 #                             file mmap; shm is not configured and mmap is
 #                             degraded here.
-#   * futex_waitv           - the futex_waitv syscall itself (see above).
+#   * futex_waitv           - its shared-waitv subtest requires SysV shm.
 #   * futex_wait_uninitialized_heap  - probes an mmap'd heap page.
 #   * futex_wait_private_mapped_file - file-backed mmap plus a signal.
 #   * futex_requeue         - assumes a waiter thread blocks within 10ms of
@@ -47,6 +43,8 @@ run() {
 # and a following FUTEX_WAKE releases the child. This exercises cross-thread
 # futex blocking, futex_wake, and the PI requeue validation path, and its
 # one-second settle tolerates this platform's web-worker thread-spawn latency.
+run futex_wait_wouldblock
+run futex_wait_timeout
 run futex_requeue_pi_mismatched_ops
 
 echo "::vm-test::pass"

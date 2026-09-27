@@ -1,9 +1,13 @@
-# futex/functional: chosen first because its core syscall is wired here
-# (CONFIG_FUTEX=y, CONFIG_FUTEX_PI=y). Only the binary the check runs is built;
-# the rest lean on mmap, SysV shm, signal-interrupted syscalls, or the tabled
-# futex_waitv EFAULT bug (see futex-test.sh for the per-binary rationale).
+# futex/functional: selected binaries cover the traditional futex syscall and
+# futex_waitv without relying on unsupported mmap, SysV shm, or preemptive
+# signal delivery. See futex-test.sh for the remaining exclusions.
 {
   dir = "tools/testing/selftests/futex/functional";
-  binaries = [ "futex_requeue_pi_mismatched_ops" ];
+  binaries = [
+    "futex_requeue_pi_mismatched_ops"
+    "futex_wait_timeout"
+    "futex_wait_wouldblock"
+  ];
+  userCFlags = "-DKSELFTEST_HARNESS_NO_FORK";
   run = ./futex-test.sh;
 }

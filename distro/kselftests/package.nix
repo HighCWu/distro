@@ -66,7 +66,7 @@ stdenv.mkDerivation (finalAttrs: {
           OUTPUT=. \
           CC="$CC" \
           KHDR_INCLUDES="-isystem ${linux.headers}/include" \
-          USERCFLAGS="-isystem ${linux.headers}/include" \
+          USERCFLAGS="-isystem ${linux.headers}/include ${suite.userCFlags or ""}" \
           ${toString (suite.makeFlags or [ ])} \
           ${lib.concatMapStringsSep " " (binary: "./${binary}") suite.binaries}
       '') checkedSuites
