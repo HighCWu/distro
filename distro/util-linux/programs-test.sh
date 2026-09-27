@@ -83,6 +83,13 @@ uuidd_state_summary() {
   if [ -r "/proc/$diagnostic_pid/wchan" ]; then
     printf 'WChan=%s,' "$(cat "/proc/$diagnostic_pid/wchan" 2>/dev/null)"
   fi
+  if [ -r "/proc/$diagnostic_pid/syscall" ]; then
+    printf 'Syscall=%s,' "$(cat "/proc/$diagnostic_pid/syscall" 2>/dev/null)"
+  fi
+  if [ -r "/proc/$diagnostic_pid/stack" ]; then
+    printf 'Stack=%s,' \
+      "$(tr '\n' ';' <"/proc/$diagnostic_pid/stack" 2>/dev/null)"
+  fi
   for diagnostic_fd in /proc/"$diagnostic_pid"/fd/*; do
     [ -e "$diagnostic_fd" ] || continue
     printf 'FD%s=%s,' "${diagnostic_fd##*/}" \
@@ -102,7 +109,14 @@ wait_uuidd_exit() {
   done
   if [ "$i" -ge 100 ]; then
     uuidd_diagnostic=$(uuidd_state_summary "$pid")
-    fail "uuidd $label process $pid did not exit [$uuidd_diagnostic]"
+    uuidd_socket_state=$([ -e "$uuidd_socket" ] && echo present || echo absent)
+    uuidd_pidfile_state=$([ -e "$uuidd_pidfile" ] && echo present || echo absent)
+    if timeout 1 uuidd -s "$uuidd_socket" -r >/tmp/uuidd-timeout-probe 2>&1; then
+      uuidd_probe_state=responsive
+    else
+      uuidd_probe_state=unresponsive
+    fi
+    fail "uuidd $label process $pid did not exit [socket=$uuidd_socket_state,pidfile=$uuidd_pidfile_state,probe=$uuidd_probe_state,$uuidd_diagnostic]"
   fi
 }
 
