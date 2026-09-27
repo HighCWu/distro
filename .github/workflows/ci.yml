@@ -8,6 +8,11 @@ on:
       - 'v*'
   pull_request:
   workflow_dispatch:
+    inputs:
+      heavy-check:
+        description: Run only this heavy check (leave empty for the full matrix)
+        required: false
+        type: string
 
 jobs:
   plan:
@@ -22,9 +27,20 @@ jobs:
       - uses: nixbuild/nix-quick-install-action@v35
       - id: plan
         name: Discover heavy checks
+        env:
+          REQUESTED_HEAVY_CHECK: ${{ inputs['heavy-check'] }}
         run: |
           checks=$(nix eval --json '.#ciJobs.x86_64-linux.heavyChecks' \
             --apply 'checks: builtins.attrNames checks')
+          if [[ -n "$REQUESTED_HEAVY_CHECK" ]]; then
+            checks=$(jq --compact-output --arg check "$REQUESTED_HEAVY_CHECK" '
+              if index($check) != null then
+                [$check]
+              else
+                error("unknown heavy check: " + $check)
+              end
+            ' <<< "$checks")
+          fi
           echo "heavy-checks=$(jq --compact-output '{check: .}' <<< "$checks")" \
             >> "$GITHUB_OUTPUT"
 
