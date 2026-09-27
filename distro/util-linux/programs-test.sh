@@ -69,24 +69,24 @@ wait_uuidd_ready() {
   [ "$i" -lt 100 ] || fail "uuidd did not create $socket and $pidfile"
 }
 
-dump_uuidd_state() {
-  pid=$1
-  label=$2
-  echo "uuidd diagnostic: $label pid=$pid"
-  if [ -r "/proc/$pid/status" ]; then
-    awk '/^(Name|State|Pid|PPid|Threads|SigQ|SigPnd|ShdPnd|SigBlk|SigIgn|SigCgt):/ { print }' \
-      "/proc/$pid/status" || true
+uuidd_state_summary() {
+  diagnostic_pid=$1
+  if [ -r "/proc/$diagnostic_pid/status" ]; then
+    awk '
+      /^(Name|State|Pid|PPid|Threads|SigQ|SigPnd|ShdPnd|SigBlk|SigIgn|SigCgt):/ {
+        printf "%s=%s,", $1, $2
+      }
+    ' "/proc/$diagnostic_pid/status" || true
   else
-    echo "uuidd diagnostic: /proc/$pid/status is unavailable"
+    printf 'status=unavailable,'
   fi
-  if [ -r "/proc/$pid/wchan" ]; then
-    printf 'WChan:\t'
-    cat "/proc/$pid/wchan" || true
-    echo
+  if [ -r "/proc/$diagnostic_pid/wchan" ]; then
+    printf 'WChan=%s,' "$(cat "/proc/$diagnostic_pid/wchan" 2>/dev/null)"
   fi
-  for fd in /proc/"$pid"/fd/*; do
-    [ -e "$fd" ] || continue
-    printf 'FD %s -> %s\n' "${fd##*/}" "$(readlink "$fd" 2>/dev/null)"
+  for diagnostic_fd in /proc/"$diagnostic_pid"/fd/*; do
+    [ -e "$diagnostic_fd" ] || continue
+    printf 'FD%s=%s,' "${diagnostic_fd##*/}" \
+      "$(readlink "$diagnostic_fd" 2>/dev/null)"
   done
 }
 
@@ -101,8 +101,8 @@ wait_uuidd_exit() {
     i=$((i + 1))
   done
   if [ "$i" -ge 100 ]; then
-    dump_uuidd_state "$pid" "$label exit timeout"
-    fail "uuidd $label process $pid did not exit"
+    uuidd_diagnostic=$(uuidd_state_summary "$pid")
+    fail "uuidd $label process $pid did not exit [$uuidd_diagnostic]"
   fi
 }
 
@@ -113,11 +113,11 @@ expect_uuidd_cleanup() {
   label=$4
 
   if [ -e "$socket" ] || [ -e "$pidfile" ]; then
-    printf 'uuidd diagnostic: socket=%s pidfile=%s\n' \
-      "$([ -e "$socket" ] && echo present || echo absent)" \
-      "$([ -e "$pidfile" ] && echo present || echo absent)"
-    dump_uuidd_state "$pid" "$label cleanup"
-    fail "uuidd $label did not clean socket and pidfile"
+    uuidd_socket_state=$([ -e "$socket" ] && echo present || echo absent)
+    uuidd_pidfile_state=$([ -e "$pidfile" ] && echo present || echo absent)
+    uuidd_diagnostic=$(uuidd_state_summary "$pid")
+    uuidd_cleanup_diagnostic="socket=$uuidd_socket_state,pidfile=$uuidd_pidfile_state,$uuidd_diagnostic"
+    fail "uuidd $label did not clean socket and pidfile [$uuidd_cleanup_diagnostic]"
   fi
 }
 
