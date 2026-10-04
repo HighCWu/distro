@@ -67,6 +67,7 @@ int main(void)
 	size_t length = 3 * page_size;
 	pthread_t threads[stress_threads];
 	unsigned char *fallback;
+	unsigned char *fixed;
 	unsigned char *hint_owner;
 	unsigned char *hinted;
 	unsigned char *mapping;
@@ -159,6 +160,7 @@ int main(void)
 		test_fail("free address hint was not adopted");
 	if (hinted[0] || hinted[page_size - 1])
 		test_fail("hinted mmap was not zero filled");
+	hinted[0] = 0x4d;
 
 	fallback = mmap(hint_owner, page_size, PROT_READ | PROT_WRITE,
 			MAP_PRIVATE | MAP_ANONYMOUS, -1, 0);
@@ -166,10 +168,41 @@ int main(void)
 		test_perror("conflicting address hint mmap");
 	if (fallback == hint_owner)
 		test_fail("conflicting address hint replaced a live mapping");
-	if (munmap(fallback, page_size) || munmap(hinted, page_size) ||
-	    munmap(hint_owner, page_size) ||
-	    munmap(hint_owner + 2 * page_size, page_size))
+	if (munmap(fallback, page_size) || munmap(hinted, page_size))
 		test_perror("address hint cleanup");
+
+	fixed = mmap(hint_owner + page_size, page_size,
+		     PROT_READ | PROT_WRITE,
+		     MAP_PRIVATE | MAP_ANONYMOUS | MAP_FIXED_NOREPLACE,
+		     -1, 0);
+	if (fixed == MAP_FAILED)
+		test_perror("MAP_FIXED_NOREPLACE free hole");
+	if (fixed != hint_owner + page_size)
+		test_fail("MAP_FIXED_NOREPLACE did not use the exact address");
+	if (fixed[0] || fixed[page_size - 1])
+		test_fail("MAP_FIXED_NOREPLACE mapping was not zero filled");
+
+	errno = 0;
+	expect_failure((long)mmap(hint_owner, page_size, PROT_READ | PROT_WRITE,
+			    MAP_PRIVATE | MAP_ANONYMOUS |
+			    MAP_FIXED_NOREPLACE, -1, 0),
+		       EEXIST, "MAP_FIXED_NOREPLACE conflict did not fail");
+	errno = 0;
+	expect_failure((long)mmap(hint_owner + 1, page_size,
+			    PROT_READ | PROT_WRITE,
+			    MAP_PRIVATE | MAP_ANONYMOUS |
+			    MAP_FIXED_NOREPLACE, -1, 0),
+		       EINVAL, "unaligned MAP_FIXED_NOREPLACE did not fail");
+	errno = 0;
+	expect_failure((long)mmap((void *)(uintptr_t)-page_size, page_size,
+			    PROT_READ | PROT_WRITE,
+			    MAP_PRIVATE | MAP_ANONYMOUS |
+			    MAP_FIXED_NOREPLACE, -1, 0),
+		       ENOMEM, "unreserved MAP_FIXED_NOREPLACE did not fail");
+
+	if (munmap(fixed, page_size) || munmap(hint_owner, page_size) ||
+	    munmap(hint_owner + 2 * page_size, page_size))
+		test_perror("MAP_FIXED_NOREPLACE cleanup");
 
 	for (uintptr_t i = 0; i < stress_threads; i++)
 		if (pthread_create(&threads[i], NULL, stress_mmap,
