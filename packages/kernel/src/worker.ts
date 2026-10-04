@@ -79,6 +79,7 @@ function user_imports({
   context: UserContext | null;
   prepare(): void;
   imports: Imports["user"];
+  imports_v2: Imports["user_v2"];
 } {
   const HALT_USER = Symbol("halt user");
 
@@ -400,6 +401,22 @@ function user_imports({
         return callback(addr, len) as WasmAddress;
       },
     },
+    imports_v2: {
+      mmap(addr, len, prot, flags, fd, pgoff) {
+        assert(instance);
+        const callback = instance.exports.__wasm_mmap_v2;
+        if (typeof callback === "function") {
+          return callback(addr, len, prot, flags, fd, pgoff) as WasmAddress;
+        }
+
+        // Old user modules only expose the length-only callback. Linux has
+        // already rejected semantics that callback cannot implement, so the
+        // fallback preserves the original direct anonymous subset.
+        const legacy_callback = instance.exports.__wasm_mmap;
+        if (typeof legacy_callback !== "function") return kernel_address === "i64" ? -38n : -38;
+        return legacy_callback(len) as WasmAddress;
+      },
+    },
   };
 }
 
@@ -463,6 +480,7 @@ function start({
       get_initramfs: unavailable,
     },
     user: user.imports,
+    user_v2: user.imports_v2,
     kernel: kernel_imports({
       address: kernel_address,
       is_worker: true,

@@ -237,6 +237,16 @@ export interface Imports {
     mmap(len: WasmAddress): WasmAddress;
     munmap(addr: WasmAddress, len: WasmAddress): WasmAddress;
   };
+  user_v2: {
+    mmap(
+      addr: WasmAddress,
+      len: WasmAddress,
+      prot: number,
+      flags: number,
+      fd: number,
+      pgoff: WasmAddress,
+    ): WasmAddress;
+  };
   virtio: {
     set_features(dev: number, features: bigint): void;
 

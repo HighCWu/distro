@@ -55,6 +55,7 @@ rec {
     # would otherwise extract its libc archive member.
     "--undefined=__wasm_mmap"
     "--export=__wasm_mmap"
+    "--export=__wasm_mmap_v2"
     "--export=__wasm_munmap"
     # clang's wasm-linux toolchain defaults the table base to 3, reserving
     # function-pointer values 1 and 2 for SIG_IGN and SIG_HOLD.
