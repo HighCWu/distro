@@ -66,11 +66,13 @@ int main(void)
 	size_t page_size = (size_t)sysconf(_SC_PAGESIZE);
 	size_t length = 3 * page_size;
 	pthread_t threads[stress_threads];
+	unsigned char *arena;
 	unsigned char *fallback;
 	unsigned char *fixed;
 	unsigned char *hint_owner;
 	unsigned char *hinted;
 	unsigned char *mapping;
+	unsigned char *neighbor;
 	unsigned char *raw;
 
 	if (page_size == (size_t)-1 || !page_size || (page_size & (page_size - 1)))
@@ -203,6 +205,30 @@ int main(void)
 	if (munmap(fixed, page_size) || munmap(hint_owner, page_size) ||
 	    munmap(hint_owner + 2 * page_size, page_size))
 		test_perror("MAP_FIXED_NOREPLACE cleanup");
+
+	arena = mmap(0, page_size, PROT_READ | PROT_WRITE,
+		     MAP_PRIVATE | MAP_ANONYMOUS, -1, 0);
+	if (arena == MAP_FAILED)
+		test_perror("direct arena mmap");
+	neighbor = mmap(0, page_size, PROT_READ | PROT_WRITE,
+			MAP_PRIVATE | MAP_ANONYMOUS, -1, 0);
+	if (neighbor == MAP_FAILED)
+		test_perror("direct arena neighbor mmap");
+	if (neighbor != arena + page_size)
+		test_fail("ordinary mmap did not reuse reserved direct arena");
+	fixed = mmap(arena + 3 * page_size, page_size,
+		     PROT_READ | PROT_WRITE,
+		     MAP_PRIVATE | MAP_ANONYMOUS | MAP_FIXED_NOREPLACE,
+		     -1, 0);
+	if (fixed == MAP_FAILED)
+		test_perror("reserved direct arena MAP_FIXED_NOREPLACE");
+	if (fixed != arena + 3 * page_size)
+		test_fail("reserved direct arena exact mapping moved");
+	if (fixed[0] || fixed[page_size - 1])
+		test_fail("reserved direct arena mapping was not zero filled");
+	if (munmap(fixed, page_size) || munmap(neighbor, page_size) ||
+	    munmap(arena, page_size))
+		test_perror("direct arena cleanup");
 
 	for (uintptr_t i = 0; i < stress_threads; i++)
 		if (pthread_create(&threads[i], NULL, stress_mmap,
