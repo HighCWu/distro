@@ -66,6 +66,9 @@ int main(void)
 	size_t page_size = (size_t)sysconf(_SC_PAGESIZE);
 	size_t length = 3 * page_size;
 	pthread_t threads[stress_threads];
+	unsigned char *fallback;
+	unsigned char *hint_owner;
+	unsigned char *hinted;
 	unsigned char *mapping;
 	unsigned char *raw;
 
@@ -139,6 +142,34 @@ int main(void)
 		test_perror("advisory-address mmap");
 	if (munmap(mapping, page_size))
 		test_perror("advisory-address munmap");
+
+	hint_owner = mmap(0, 3 * page_size, PROT_READ | PROT_WRITE,
+			  MAP_PRIVATE | MAP_ANONYMOUS, -1, 0);
+	if (hint_owner == MAP_FAILED)
+		test_perror("hint backing mmap");
+	hint_owner[page_size] = 0x7b;
+	if (munmap(hint_owner + page_size, page_size))
+		test_perror("hint hole munmap");
+	hinted = mmap(hint_owner + page_size + 17, page_size,
+		      PROT_READ | PROT_WRITE, MAP_PRIVATE | MAP_ANONYMOUS,
+		      -1, 0);
+	if (hinted == MAP_FAILED)
+		test_perror("free address hint mmap");
+	if (hinted != hint_owner + page_size)
+		test_fail("free address hint was not adopted");
+	if (hinted[0] || hinted[page_size - 1])
+		test_fail("hinted mmap was not zero filled");
+
+	fallback = mmap(hint_owner, page_size, PROT_READ | PROT_WRITE,
+			MAP_PRIVATE | MAP_ANONYMOUS, -1, 0);
+	if (fallback == MAP_FAILED)
+		test_perror("conflicting address hint mmap");
+	if (fallback == hint_owner)
+		test_fail("conflicting address hint replaced a live mapping");
+	if (munmap(fallback, page_size) || munmap(hinted, page_size) ||
+	    munmap(hint_owner, page_size) ||
+	    munmap(hint_owner + 2 * page_size, page_size))
+		test_perror("address hint cleanup");
 
 	for (uintptr_t i = 0; i < stress_threads; i++)
 		if (pthread_create(&threads[i], NULL, stress_mmap,
