@@ -1,10 +1,16 @@
 #define _GNU_SOURCE
 #include "test.h"
 
+#include <pthread.h>
 #include <stdint.h>
 #include <sys/mman.h>
 #include <sys/syscall.h>
 #include <unistd.h>
+
+enum {
+	stress_threads = 4,
+	stress_iterations = 32,
+};
 
 static void expect_failure(long result, int expected_errno, const char *message)
 {
@@ -12,10 +18,54 @@ static void expect_failure(long result, int expected_errno, const char *message)
 		test_fail(message);
 }
 
+static void *stress_mmap(void *argument)
+{
+	uintptr_t worker = (uintptr_t)argument;
+	size_t page_size = (size_t)sysconf(_SC_PAGESIZE);
+
+	for (size_t iteration = 0; iteration < stress_iterations; iteration++) {
+		size_t pages = 3 + ((worker + iteration) & 1);
+		size_t length = pages * page_size;
+		unsigned char expected = (unsigned char)(1 + worker + iteration);
+		unsigned char *mapping;
+		unsigned char *fresh;
+
+		mapping = mmap(0, length, PROT_READ | PROT_WRITE,
+			       MAP_PRIVATE | MAP_ANONYMOUS, -1, 0);
+		if (mapping == MAP_FAILED)
+			return "concurrent mmap failed";
+		for (size_t page = 0; page < pages; page++) {
+			if (mapping[page * page_size] != 0 ||
+			    mapping[(page + 1) * page_size - 1] != 0)
+				return "concurrent mmap was not zero filled";
+			mapping[page * page_size] = expected;
+			mapping[(page + 1) * page_size - 1] = expected;
+		}
+		if (munmap(mapping + page_size, page_size))
+			return "concurrent partial munmap failed";
+		if (munmap(mapping, page_size))
+			return "concurrent prefix munmap failed";
+		if (munmap(mapping + 2 * page_size, (pages - 2) * page_size))
+			return "concurrent suffix munmap failed";
+
+		fresh = mmap(0, page_size, PROT_READ | PROT_WRITE,
+			     MAP_PRIVATE | MAP_ANONYMOUS, -1, 0);
+		if (fresh == MAP_FAILED)
+			return "mmap after fragmented munmap failed";
+		if (fresh[0] != 0 || fresh[page_size - 1] != 0)
+			return "reallocated mmap was not zero filled";
+		if (munmap(fresh, page_size))
+			return "reallocated munmap failed";
+	}
+
+	return NULL;
+}
+
 int main(void)
 {
 	size_t page_size = (size_t)sysconf(_SC_PAGESIZE);
 	size_t length = 3 * page_size;
+	pthread_t threads[stress_threads];
 	unsigned char *mapping;
 	unsigned char *raw;
 
@@ -61,6 +111,11 @@ int main(void)
 			       MAP_PRIVATE | MAP_ANONYMOUS | MAP_FIXED, -1, 0),
 		       ENOMEM, "MAP_FIXED did not fail with ENOMEM");
 	errno = 0;
+	expect_failure(syscall(SYS_mmap, 0, page_size, PROT_READ | PROT_WRITE,
+			       MAP_PRIVATE | MAP_ANONYMOUS | MAP_FIXED_NOREPLACE,
+			       -1, 0),
+		       ENOMEM, "MAP_FIXED_NOREPLACE did not fail with ENOMEM");
+	errno = 0;
 	expect_failure(syscall(SYS_mmap, 0, page_size, PROT_READ,
 			       MAP_PRIVATE | MAP_ANONYMOUS, -1, 0),
 		       EINVAL, "unsupported protection did not fail with EINVAL");
@@ -68,6 +123,35 @@ int main(void)
 	expect_failure(syscall(SYS_mmap, 0, 0, PROT_READ | PROT_WRITE,
 			       MAP_PRIVATE | MAP_ANONYMOUS, -1, 0),
 		       EINVAL, "zero-length mapping did not fail with EINVAL");
+	errno = 0;
+	expect_failure(syscall(SYS_mmap, 0, (size_t)-1,
+			       PROT_READ | PROT_WRITE,
+			       MAP_PRIVATE | MAP_ANONYMOUS, -1, 0),
+		       ENOMEM, "overflowing mapping did not fail with ENOMEM");
+	errno = 0;
+	expect_failure(syscall(SYS_munmap, raw + 1, page_size), EINVAL,
+		       "unaligned munmap did not fail with EINVAL");
+
+	mapping = mmap((void *)(16 * page_size), page_size,
+		       PROT_READ | PROT_WRITE, MAP_PRIVATE | MAP_ANONYMOUS,
+		       -1, 0);
+	if (mapping == MAP_FAILED)
+		test_perror("advisory-address mmap");
+	if (munmap(mapping, page_size))
+		test_perror("advisory-address munmap");
+
+	for (uintptr_t i = 0; i < stress_threads; i++)
+		if (pthread_create(&threads[i], NULL, stress_mmap,
+				   (void *)i) != 0)
+			test_fail("mmap stress pthread_create failed");
+	for (size_t i = 0; i < stress_threads; i++) {
+		void *result;
+
+		if (pthread_join(threads[i], &result) != 0)
+			test_fail("mmap stress pthread_join failed");
+		if (result)
+			test_fail(result);
+	}
 
 	test_pass();
 }
