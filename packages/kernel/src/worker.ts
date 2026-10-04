@@ -2,6 +2,13 @@
 
 import { listen_endpoint, post_endpoint } from "./endpoint.ts";
 import { platform } from "./platform.ts";
+import {
+  settle_user_copy,
+  USER_COPY_COMPLETE,
+  USER_COPY_NO_MEMORY,
+  type UserCopyStatus,
+  wait_user_copy,
+} from "./user-copy.ts";
 import { assert } from "./util.ts";
 import { read_wasm_memories, user_memory_import } from "./wasm_binary.ts";
 import {
@@ -30,17 +37,19 @@ export interface InitMessage {
   kernel_address: WasmAddressType;
   user: UserContext | null;
   /** One-shot user-memory copy result: 0 pending, 1 complete, negative errno. */
-  user_copy_status: Int32Array<SharedArrayBuffer> | null;
+  user_copy_status: UserCopyStatus | null;
 }
 export interface ForwardedInitMessage {
   type: "forwarded_init";
   port: MessagePort;
+  user_copy_status: UserCopyStatus | null;
 }
 export type WorkerMessage =
   | {
       type: "spawn_worker";
       name: string;
       port: MessagePort;
+      user_copy_status: UserCopyStatus | null;
     }
   | { type: "boot_console_write"; message: ArrayBuffer }
   | { type: "boot_console_close" }
@@ -432,12 +441,8 @@ function start({
       if (!destination) throw new RangeError("invalid destination memory");
       destination.set(source);
       user_context = { module: user_context.module, ...copied };
-      Atomics.store(user_copy_status, 0, 1);
     } catch {
-      Atomics.store(user_copy_status, 0, -12);
-    }
-    Atomics.notify(user_copy_status, 0);
-    if (Atomics.load(user_copy_status, 0) < 0) {
+      settle_user_copy(user_copy_status, USER_COPY_NO_MEMORY);
       postMessage({ type: "worker_exit" });
       platform.quit();
       return;
@@ -464,15 +469,16 @@ function start({
       memory,
       spawn_worker(fn, arg, name, user, copy_user_memory) {
         const direct = new MessageChannel();
+        const user_copy_status = copy_user_memory ? new Int32Array(new SharedArrayBuffer(4)) : null;
         postMessage(
           {
             type: "spawn_worker",
             name,
             port: direct.port1,
+            user_copy_status,
           },
           [direct.port1],
         );
-        const user_copy_status = copy_user_memory ? new Int32Array(new SharedArrayBuffer(4)) : null;
         direct.port2.postMessage({
           type: "init",
           fn,
@@ -484,12 +490,8 @@ function start({
           user_copy_status,
         } satisfies InitMessage);
         if (!user_copy_status) return 0;
-        // If publication wins the race, wait returns "not-equal"; no wakeup
-        // is lost.
-        Atomics.wait(user_copy_status, 0, 0);
-        const result = Atomics.load(user_copy_status, 0);
-        assert(result === 1 || result < 0, "copy wait completed without a result");
-        return result === 1 ? 0 : result;
+        const result = wait_user_copy(user_copy_status);
+        return result === USER_COPY_COMPLETE ? 0 : result;
       },
       boot_console_write(message) {
         postMessage({ type: "boot_console_write", message });
@@ -522,6 +524,11 @@ function start({
 
   const instance = new WebAssembly.Instance(vmlinux, imports) as Instance;
   user.prepare();
+  if (user_copy_status && !settle_user_copy(user_copy_status, USER_COPY_COMPLETE)) {
+    postMessage({ type: "worker_exit" });
+    platform.quit();
+    return;
+  }
   try {
     wasm_table_get(instance.exports.__indirect_function_table, fn)!(arg);
   } catch (error) {

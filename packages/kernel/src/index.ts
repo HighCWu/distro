@@ -4,6 +4,7 @@ import { type DeviceTreeNode, generate_devicetree, section_properties } from "./
 import { platform, type WorkerHandle } from "./platform.ts";
 import { configure_machine, merge_device_tree, run_machine_booted } from "./plugin-internal.ts";
 import type { MachinePluginInput } from "./plugin.ts";
+import { settle_user_copy, USER_COPY_TRY_AGAIN } from "./user-copy.ts";
 import { assert, unreachable } from "./util.ts";
 import { read_wasm_memories, type WasmMemoryType } from "./wasm_binary.ts";
 import { close_virtio_device, virtio_device_description, virtio_imports } from "./virtio/core.ts";
@@ -317,7 +318,10 @@ export async function bootMachine(options: BootMachineOptions): Promise<Machine>
     let instance: Instance | undefined;
 
     const start_worker = (name: string, init: InitMessage | ForwardedInitMessage) => {
-      if (closed) return;
+      if (closed) {
+        settle_user_copy(init.user_copy_status, USER_COPY_TRY_AGAIN);
+        return;
+      }
       const worker = platform.spawn_worker(name, {
         on_message(raw) {
           const message = raw as WorkerMessage;
@@ -327,9 +331,12 @@ export async function bootMachine(options: BootMachineOptions): Promise<Machine>
                 start_worker(message.name, {
                   type: "forwarded_init",
                   port: message.port,
+                  user_copy_status: message.user_copy_status,
                 });
               } catch (error) {
-                void fail(error);
+                if (!settle_user_copy(message.user_copy_status, USER_COPY_TRY_AGAIN)) {
+                  void fail(error);
+                }
               }
               break;
             case "boot_console_write":
@@ -365,7 +372,14 @@ export async function bootMachine(options: BootMachineOptions): Promise<Machine>
               unreachable(message);
           }
         },
-        on_error: fail,
+        on_error(error) {
+          if (settle_user_copy(init.user_copy_status, USER_COPY_TRY_AGAIN)) {
+            workers.delete(worker);
+            void worker.terminate().catch(() => {});
+            return;
+          }
+          void fail(error);
+        },
       });
       workers.add(worker);
       worker.post(init, init.type === "forwarded_init" ? [init.port] : undefined);
