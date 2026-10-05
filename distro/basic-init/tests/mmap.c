@@ -2,6 +2,7 @@
 #include "test.h"
 
 #include <pthread.h>
+#include <stdatomic.h>
 #include <stdint.h>
 #include <sys/mman.h>
 #include <sys/syscall.h>
@@ -10,6 +11,14 @@
 enum {
 	stress_threads = 4,
 	stress_iterations = 32,
+	fixed_race_threads = 8,
+	fragmentation_iterations = 16,
+};
+
+struct fixed_race {
+	_Atomic int start;
+	unsigned char *target;
+	size_t page_size;
 };
 
 static void expect_failure(long result, int expected_errno, const char *message)
@@ -61,10 +70,63 @@ static void *stress_mmap(void *argument)
 	return NULL;
 }
 
+static void *race_fixed_noreplace(void *argument)
+{
+	struct fixed_race *race = argument;
+	void *mapping;
+
+	while (!atomic_load_explicit(&race->start, memory_order_acquire))
+		sched_yield();
+	errno = 0;
+	mapping = mmap(race->target, race->page_size,
+		       PROT_READ | PROT_WRITE,
+		       MAP_PRIVATE | MAP_ANONYMOUS | MAP_FIXED_NOREPLACE,
+		       -1, 0);
+	if (mapping == MAP_FAILED)
+		return errno == EEXIST ? NULL : "fixed race returned wrong error";
+	return mapping;
+}
+
+static void stress_fragmentation(size_t page_size)
+{
+	for (size_t iteration = 0; iteration < fragmentation_iterations;
+	     iteration++) {
+		unsigned char *mapping;
+
+		mapping = mmap(0, 8 * page_size, PROT_READ | PROT_WRITE,
+			       MAP_PRIVATE | MAP_ANONYMOUS, -1, 0);
+		if (mapping == MAP_FAILED)
+			test_perror("fragmentation mmap");
+		for (size_t page = 0; page < 8; page += 2) {
+			mapping[page * page_size] = 0x6d;
+			if (munmap(mapping + page * page_size, page_size))
+				test_perror("fragmentation munmap");
+		}
+		for (size_t page = 0; page < 8; page += 2) {
+			unsigned char *refill;
+
+			refill = mmap(mapping + page * page_size, page_size,
+				      PROT_READ | PROT_WRITE,
+				      MAP_PRIVATE | MAP_ANONYMOUS |
+				      MAP_FIXED_NOREPLACE, -1, 0);
+			if (refill == MAP_FAILED)
+				test_perror("fragmentation refill mmap");
+			if (refill != mapping + page * page_size)
+				test_fail("fragmentation refill moved");
+			if (refill[0] || refill[page_size - 1])
+				test_fail("fragmentation refill was not zero filled");
+		}
+		if (munmap(mapping, 8 * page_size))
+			test_perror("fragmentation cleanup");
+	}
+}
+
 int main(void)
 {
 	size_t page_size = (size_t)sysconf(_SC_PAGESIZE);
 	size_t length = 3 * page_size;
+	struct fixed_race race = { 0 };
+	pthread_t race_threads[fixed_race_threads];
 	pthread_t threads[stress_threads];
 	unsigned char *arena;
 	unsigned char *fallback;
@@ -229,6 +291,42 @@ int main(void)
 	if (munmap(fixed, page_size) || munmap(neighbor, page_size) ||
 	    munmap(arena, page_size))
 		test_perror("direct arena cleanup");
+
+	stress_fragmentation(page_size);
+
+	for (size_t i = 0; i < fixed_race_threads; i++)
+		if (pthread_create(&race_threads[i], NULL, race_fixed_noreplace,
+				   &race) != 0)
+			test_fail("fixed race pthread_create failed");
+	hint_owner = mmap(0, 3 * page_size, PROT_READ | PROT_WRITE,
+			  MAP_PRIVATE | MAP_ANONYMOUS, -1, 0);
+	if (hint_owner == MAP_FAILED)
+		test_perror("fixed race backing mmap");
+	if (munmap(hint_owner + page_size, page_size))
+		test_perror("fixed race hole munmap");
+	race.target = hint_owner + page_size;
+	race.page_size = page_size;
+	atomic_store_explicit(&race.start, 1, memory_order_release);
+	{
+		size_t winners = 0;
+
+		for (size_t i = 0; i < fixed_race_threads; i++) {
+			void *result;
+
+			if (pthread_join(race_threads[i], &result) != 0)
+				test_fail("fixed race pthread_join failed");
+			if (result == race.target)
+				winners++;
+			else if (result)
+				test_fail(result);
+		}
+		if (winners != 1)
+			test_fail("fixed race did not have exactly one winner");
+	}
+	if (munmap(race.target, page_size) ||
+	    munmap(hint_owner, page_size) ||
+	    munmap(hint_owner + 2 * page_size, page_size))
+		test_perror("fixed race cleanup");
 
 	for (uintptr_t i = 0; i < stress_threads; i++)
 		if (pthread_create(&threads[i], NULL, stress_mmap,
