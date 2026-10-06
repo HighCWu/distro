@@ -1,8 +1,30 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { LineDecoder, parseResult } from "./protocol.js";
+import { Writable } from "node:stream";
+import { LineDecoder, parseResult, writeConsoleChunk } from "./protocol.js";
 
 const encoder = new TextEncoder();
+
+test("queued console output survives reuse of borrowed shared-memory bytes", () => {
+  const borrowed = new Uint8Array(new SharedArrayBuffer(6));
+  borrowed.set(encoder.encode("hello\n"));
+  let complete;
+  let printed;
+  const output = new Writable({
+    write(chunk, _encoding, callback) {
+      complete = () => {
+        printed = Buffer.from(chunk).toString();
+        callback();
+      };
+    },
+  });
+
+  writeConsoleChunk(output, borrowed);
+  borrowed.fill(0);
+  complete();
+  assert.equal(printed, "hello\n");
+  output.end();
+});
 
 test("decodes records split across arbitrary chunks", () => {
   const decoder = new LineDecoder();

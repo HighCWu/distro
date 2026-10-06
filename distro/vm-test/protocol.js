@@ -1,6 +1,12 @@
 export const PASS = "::vm-test::pass";
 export const FAIL = "::vm-test::fail";
 
+// Virtio output borrows Wasm memory only until the console sink returns.
+// Node may retain an enqueued chunk after that point, so give it owned bytes.
+export function writeConsoleChunk(output, chunk) {
+  output.write(Uint8Array.from(chunk));
+}
+
 export class LineDecoder {
   #buffer = "";
   #decoder = new TextDecoder();
