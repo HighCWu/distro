@@ -1,0 +1,97 @@
+# SPDX-License-Identifier: MIT
+name: Paired mmap benchmark
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: mmap-benchmark-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  benchmark:
+    name: Paired wasm${{ matrix.bits }}
+    runs-on: ubuntu-24.04
+    timeout-minutes: 60
+    strategy:
+      fail-fast: false
+      max-parallel: 1
+      matrix:
+        bits: [32, 64]
+    steps:
+      - uses: actions/checkout@v6
+      - uses: actions/setup-node@v6
+        with:
+          node-version: 24
+          package-manager-cache: false
+      - uses: nixbuild/nix-quick-install-action@v35
+      - uses: nix-community/cache-nix-action@v7
+        with:
+          primary-key: nix-mmap-${{ matrix.bits }}-${{ runner.os }}-${{ hashFiles('**/*.nix', 'flake.lock') }}
+          restore-prefixes-first-match: |
+            nix-wasm64-v2-${{ runner.os }}-
+            nix-ci-${{ runner.os }}-
+          save: false
+      - uses: cachix/cachix-action@v17
+        with:
+          name: linuxwasm
+      - name: Formatting preflight
+        run: |
+          python3 -B scripts/test_mmap_benchmark.py
+          nix build --no-link --print-build-logs .#checks.x86_64-linux.formatting
+      - name: Build both modes without running cached benchmark checks
+        env:
+          BITS: ${{ matrix.bits }}
+        run: |
+          suffix=""
+          if [[ "$BITS" == 64 ]]; then suffix="-wasm64"; fi
+          nix build --print-build-logs --out-link result-on ".#mmap-benchmark$suffix"
+          nix build --print-build-logs --out-link result-off ".#mmap-benchmark-baseline$suffix"
+          nix build --print-build-logs --out-link result-kernel ".#kernel$suffix"
+          nix build --print-build-logs --out-link result-runner .#legacyPackages.x86_64-linux.vm-test.runner
+      - name: Fresh correctness boots and alternating paired trials
+        env:
+          BITS: ${{ matrix.bits }}
+        run: |
+          set -euo pipefail
+          mkdir results
+          {
+            printf 'revision=%s\npointer_bits=%s\ncpus=4\n' "$GITHUB_SHA" "$BITS"
+            node --version
+            uname -a
+            lscpu
+            for mode in on off; do
+              printf '%s artifacts: ' "$mode"
+              readlink -f "result-$mode"
+            done
+            nix path-info result-kernel
+            git show HEAD:distro/musl/package.nix
+            git show HEAD:distro/linux/package.nix
+            git show HEAD:distro/llvm-toolchain/unwrapped.nix
+          } > results/provenance.txt
+          for mode in on off; do
+            timeout --kill-after=5 300 node result-runner/run-test.js --cpus 4 \
+              result-kernel/dist/index.js "result-$mode/correctness.cpio" \
+              2>&1 | tee "results/correctness-$mode.log"
+          done
+          for trial in 1 2 3; do
+            modes=(off on)
+            if [[ "$trial" == 2 ]]; then modes=(on off); fi
+            for mode in "${modes[@]}"; do
+              timeout --kill-after=5 300 node result-runner/run-test.js --cpus 4 \
+                result-kernel/dist/index.js "result-$mode/benchmark.cpio" \
+                2>&1 | tee "results/trial-$trial-$mode.log"
+              python3 scripts/validate-mmap-benchmark.py "$BITS" \
+                < "results/trial-$trial-$mode.log" > "results/trial-$trial-$mode.csv"
+            done
+          done
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: mmap-paired-wasm${{ matrix.bits }}
+          path: results/
+          if-no-files-found: warn
+          retention-days: 7
