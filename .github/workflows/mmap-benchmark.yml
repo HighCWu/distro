@@ -67,7 +67,7 @@ jobs:
               printf '%s artifacts: ' "$mode"
               readlink -f "result-$mode"
             done
-            nix path-info result-kernel
+            readlink -f result-kernel
             git show HEAD:distro/musl/package.nix
             git show HEAD:distro/linux/package.nix
             git show HEAD:distro/llvm-toolchain/unwrapped.nix
