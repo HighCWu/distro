@@ -10,7 +10,7 @@ import {
   writeSync,
 } from "node:fs";
 import { pathToFileURL } from "node:url";
-import { LineDecoder, parseResult, writeConsoleChunk } from "./protocol.js";
+import { LineDecoder, parseResult, writeConsoleLines } from "./protocol.js";
 
 let cpus = 1;
 const positional = [];
@@ -113,11 +113,10 @@ function consoleOutput({ failWhenClosed }) {
   const decoder = new LineDecoder();
   return new WritableStream({
     write(chunk) {
-      writeConsoleChunk(process.stdout, chunk);
-      for (const line of decoder.write(chunk)) consumeLine(line);
+      writeConsoleLines(process.stdout, decoder.write(chunk), consumeLine);
     },
     close() {
-      for (const line of decoder.close()) consumeLine(line);
+      writeConsoleLines(process.stdout, decoder.close(), consumeLine);
       if (failWhenClosed) {
         finish({
           passed: false,

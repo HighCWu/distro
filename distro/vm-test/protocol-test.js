@@ -1,13 +1,15 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import { Writable } from "node:stream";
-import { LineDecoder, parseResult, writeConsoleChunk } from "./protocol.js";
+import { LineDecoder, parseResult, writeConsoleLines } from "./protocol.js";
 
 const encoder = new TextEncoder();
 
-test("queued console output survives reuse of borrowed shared-memory bytes", () => {
-  const borrowed = new Uint8Array(new SharedArrayBuffer(6));
-  borrowed.set(encoder.encode("hello\n"));
+test("queued console lines normalize TTY newlines and survive borrowed memory reuse", () => {
+  const borrowed = new Uint8Array(new SharedArrayBuffer(7));
+  borrowed.set(encoder.encode("hello\r\n"));
+  const decoder = new LineDecoder();
+  const consumed = [];
   let complete;
   let printed;
   const output = new Writable({
@@ -19,10 +21,11 @@ test("queued console output survives reuse of borrowed shared-memory bytes", () 
     },
   });
 
-  writeConsoleChunk(output, borrowed);
+  writeConsoleLines(output, decoder.write(borrowed), (line) => consumed.push(line));
   borrowed.fill(0);
   complete();
   assert.equal(printed, "hello\n");
+  assert.deepEqual(consumed, ["hello"]);
   output.end();
 });
 

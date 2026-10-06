@@ -1,10 +1,13 @@
 export const PASS = "::vm-test::pass";
 export const FAIL = "::vm-test::fail";
 
-// Virtio output borrows Wasm memory only until the console sink returns.
-// Node may retain an enqueued chunk after that point, so give it owned bytes.
-export function writeConsoleChunk(output, chunk) {
-  output.write(Uint8Array.from(chunk));
+// Owned decoded strings survive reuse of the Wasm buffers. Complete LF-ended
+// lines also prevent raw TTY carriage returns from erasing Nix log records.
+export function writeConsoleLines(output, lines, consumeLine) {
+  for (const line of lines) {
+    output.write(`${line}\n`);
+    consumeLine(line);
+  }
 }
 
 export class LineDecoder {
