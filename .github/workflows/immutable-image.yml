@@ -1,0 +1,53 @@
+# SPDX-License-Identifier: MIT
+name: Immutable image backing
+
+on:
+  push:
+    paths:
+      - .github/workflows/immutable-image.yml
+      - packages/kernel/src/immutable-image.ts
+      - packages/kernel/test/immutable-image.test.ts
+      - packages/kernel/src/virtio/**
+      - packages/bytes/**
+      - package.json
+      - pnpm-lock.yaml
+      - pnpm-workspace.yaml
+  pull_request:
+    paths:
+      - .github/workflows/immutable-image.yml
+      - packages/kernel/src/immutable-image.ts
+      - packages/kernel/test/immutable-image.test.ts
+      - packages/kernel/src/virtio/**
+      - packages/bytes/**
+      - package.json
+      - pnpm-lock.yaml
+      - pnpm-workspace.yaml
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  backing:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v6
+      - uses: actions/setup-node@v6
+        with:
+          node-version: 24
+          package-manager-cache: false
+      - uses: pnpm/action-setup@v4
+      - name: Install only kernel workspace dependencies and build binary helpers
+        run: |
+          pnpm install --filter '@lowland/kernel...' --frozen-lockfile
+          pnpm --filter @lowland/bytes build
+      - name: Type check and test snapshot backing, virtio and mmap contracts
+        run: |
+          pnpm --filter @lowland/kernel check
+          node --test packages/kernel/test/immutable-image.test.ts \
+            packages/kernel/test/wasm.test.ts \
+            packages/kernel/test/file-mmap-offset.test.ts \
+            packages/kernel/test/file-mmap-staging.test.ts \
+            packages/kernel/test/file-mmap-copy.test.ts \
+            packages/kernel/test/user-mmap.test.ts
