@@ -27,6 +27,7 @@ let
       ''
         mkdir -p $out
         clang ${compileFlags} ${../basic-init/tests/mmap.c} -o $out/correctness.wasm
+        clang ${compileFlags} ${../basic-init/tests/mmap-offsets.c} -o $out/offsets.wasm
         clang ${compileFlags} ${../basic-init/tests/mmap-benchmark.c} -o $out/benchmark.wasm
         chmod 0755 $out/*.wasm
       '';
@@ -45,6 +46,10 @@ pkgs.runCommand "mmap-benchmark-artifacts-${platform.wasmArch}"
       name = "mmap-correctness-${platform.wasmArch}";
       init = "${executables}/correctness.wasm";
       cpus = 4;
+    };
+    passthru.checks.offsets = vm-test.rawInitramfsTest {
+      name = "mmap-offsets-${platform.wasmArch}";
+      init = "${executables}/offsets.wasm";
     };
   }
   ''
