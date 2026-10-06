@@ -173,6 +173,11 @@ in
       malloc-thread = installedCheck { name = "malloc-thread"; };
       memory-abi = memoryAbiCheck;
       mmap = installedCheck { name = "mmap"; };
+      mmap-benchmark = installedCheck {
+        name = "mmap-benchmark";
+        extraFlags = "-O2 -Wall -Wextra -Werror";
+        cpus = 4;
+      };
       named-semaphore = namedSemaphoreCheck;
       proc-self-mem = installedCheck { name = "proc-self-mem"; };
       posix-spawn-stress = posixSpawnStressCheck;
