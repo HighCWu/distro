@@ -29,6 +29,7 @@ let
         clang ${compileFlags} ${../basic-init/tests/mmap.c} -o $out/correctness.wasm
         clang ${compileFlags} ${../basic-init/tests/mmap-offsets.c} -o $out/offsets.wasm
         clang ${compileFlags} ${../basic-init/tests/mmap-initialized.c} -o $out/initialized.wasm
+        clang ${compileFlags} -Wl,--export=__wasm_mmap_init_v1 ${../basic-init/tests/mmap-copy.c} -o $out/copy.wasm
         clang ${compileFlags} ${../basic-init/tests/mmap-benchmark.c} -o $out/benchmark.wasm
         chmod 0755 $out/*.wasm
       '';
@@ -56,6 +57,10 @@ pkgs.runCommand "mmap-benchmark-artifacts-${platform.wasmArch}"
       name = "mmap-initialized-${platform.wasmArch}";
       init = "${executables}/initialized.wasm";
       cpus = 2;
+    };
+    passthru.checks.copy = vm-test.rawInitramfsTest {
+      name = "mmap-copy-${platform.wasmArch}";
+      init = "${executables}/copy.wasm";
     };
   }
   ''
