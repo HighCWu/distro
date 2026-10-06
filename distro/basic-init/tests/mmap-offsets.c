@@ -23,6 +23,20 @@ static long raw_mmap(size_t length, int flags, int fd, uintptr_t offset)
 		       (long)fd, (long)offset);
 }
 
+static off_t raw_lseek(int fd, off_t offset, int whence)
+{
+#ifdef SYS__llseek
+	off_t result = -1;
+	long status = syscall(SYS__llseek, (long)fd,
+		(long)((uint64_t)offset >> 32), (long)(uint32_t)offset,
+		(long)(uintptr_t)&result, (long)whence, 0L);
+	return status == -1 ? -1 : result;
+#else
+	return syscall(SYS_lseek, (long)fd, (long)offset, (long)whence,
+		       0L, 0L, 0L);
+#endif
+}
+
 int main(void)
 {
 	const off_t byte_offsets[] = {
@@ -45,6 +59,14 @@ int main(void)
 	fd = open("/init", O_RDONLY);
 	if (fd < 0)
 		test_perror("open offset fixture");
+	/* Seek beyond 4 GiB without allocating a large file. This checks file
+ * offset transport, not large-file I/O or large linear-memory capacity. */
+	if (lseek(fd, ((off_t)1 << 33) + 7, SEEK_SET) != ((off_t)1 << 33) + 7 ||
+	    raw_lseek(fd, 0, SEEK_CUR) != ((off_t)1 << 33) + 7)
+		test_fail("libc large seek disagrees with raw file position");
+	if (raw_lseek(fd, ((off_t)1 << 32) + 3, SEEK_SET) != ((off_t)1 << 32) + 3 ||
+	    lseek(fd, 0, SEEK_CUR) != ((off_t)1 << 32) + 3)
+		test_fail("raw large seek disagrees with libc file position");
 	if (lseek(fd, 7, SEEK_SET) != 7)
 		test_perror("seek offset fixture");
 	sentinel = mmap(0, page_size, PROT_READ | PROT_WRITE,
