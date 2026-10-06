@@ -2,6 +2,7 @@
 
 import { listen_endpoint, post_endpoint } from "./endpoint.ts";
 import { platform } from "./platform.ts";
+import { user_mmap } from "./user-mmap.ts";
 import {
   settle_user_copy,
   USER_COPY_COMPLETE,
@@ -404,17 +405,7 @@ function user_imports({
     imports_v2: {
       mmap(addr, len, prot, flags, fd, pgoff) {
         assert(instance);
-        const callback = instance.exports.__wasm_mmap_v2;
-        if (typeof callback === "function") {
-          return callback(addr, len, prot, flags, fd, pgoff) as WasmAddress;
-        }
-
-        // Old user modules only expose the length-only callback. Linux has
-        // already rejected semantics that callback cannot implement, so the
-        // fallback preserves the original direct anonymous subset.
-        const legacy_callback = instance.exports.__wasm_mmap;
-        if (typeof legacy_callback !== "function") return kernel_address === "i64" ? -38n : -38;
-        return legacy_callback(len) as WasmAddress;
+        return user_mmap(instance.exports, kernel_address, addr, len, prot, flags, fd, pgoff);
       },
     },
   };
