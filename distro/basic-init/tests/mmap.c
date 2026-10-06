@@ -27,6 +27,21 @@ static void expect_failure(long result, int expected_errno, const char *message)
 		test_fail(message);
 }
 
+/* The public variadic syscall reads six longs. Wasm does not use the native
+ * register-slot convention that often hides int/long mismatches on LP64. */
+static long raw_mmap(void *address, size_t length, int prot, int flags,
+		     int fd, uintptr_t offset)
+{
+	return syscall(SYS_mmap, (long)(uintptr_t)address, (long)length,
+		       (long)prot, (long)flags, (long)fd, (long)offset);
+}
+
+static long raw_munmap(void *address, size_t length)
+{
+	return syscall(SYS_munmap, (long)(uintptr_t)address, (long)length,
+		       0L, 0L, 0L, 0L);
+}
+
 static void *stress_mmap(void *argument)
 {
 	uintptr_t worker = (uintptr_t)argument;
@@ -154,7 +169,7 @@ int main(void)
 	if (munmap(mapping, page_size))
 		test_perror("munmap");
 
-	raw = (void *)syscall(SYS_mmap, 0, length, PROT_READ | PROT_WRITE,
+	raw = (void *)raw_mmap(0, length, PROT_READ | PROT_WRITE,
 			      MAP_PRIVATE | MAP_ANONYMOUS, -1, 0);
 	if (raw == MAP_FAILED)
 		test_perror("raw SYS_mmap");
@@ -167,37 +182,37 @@ int main(void)
 	raw[page_size] = 0x22;
 	raw[length - 1] = 0x33;
 
-	if (syscall(SYS_munmap, raw + page_size, page_size))
+	if (raw_munmap(raw + page_size, page_size))
 		test_perror("raw partial SYS_munmap");
 	if (munmap(raw, page_size))
 		test_perror("partial munmap prefix");
-	if (syscall(SYS_munmap, raw + 2 * page_size, page_size))
+	if (raw_munmap(raw + 2 * page_size, page_size))
 		test_perror("raw partial SYS_munmap suffix");
 
 	errno = 0;
-	expect_failure(syscall(SYS_mmap, 0, page_size, PROT_READ | PROT_WRITE,
+	expect_failure(raw_mmap(0, page_size, PROT_READ | PROT_WRITE,
 			       MAP_PRIVATE | MAP_ANONYMOUS | MAP_FIXED, -1, 0),
 		       ENOMEM, "MAP_FIXED did not fail with ENOMEM");
 	errno = 0;
-	expect_failure(syscall(SYS_mmap, 0, page_size, PROT_READ | PROT_WRITE,
+	expect_failure(raw_mmap(0, page_size, PROT_READ | PROT_WRITE,
 			       MAP_PRIVATE | MAP_ANONYMOUS | MAP_FIXED_NOREPLACE,
 			       -1, 0),
 		       ENOMEM, "MAP_FIXED_NOREPLACE did not fail with ENOMEM");
 	errno = 0;
-	expect_failure(syscall(SYS_mmap, 0, page_size, PROT_READ,
+	expect_failure(raw_mmap(0, page_size, PROT_READ,
 			       MAP_PRIVATE | MAP_ANONYMOUS, -1, 0),
 		       EINVAL, "unsupported protection did not fail with EINVAL");
 	errno = 0;
-	expect_failure(syscall(SYS_mmap, 0, 0, PROT_READ | PROT_WRITE,
+	expect_failure(raw_mmap(0, 0, PROT_READ | PROT_WRITE,
 			       MAP_PRIVATE | MAP_ANONYMOUS, -1, 0),
 		       EINVAL, "zero-length mapping did not fail with EINVAL");
 	errno = 0;
-	expect_failure(syscall(SYS_mmap, 0, (size_t)-1,
+	expect_failure(raw_mmap(0, (size_t)-1,
 			       PROT_READ | PROT_WRITE,
 			       MAP_PRIVATE | MAP_ANONYMOUS, -1, 0),
 		       ENOMEM, "overflowing mapping did not fail with ENOMEM");
 	errno = 0;
-	expect_failure(syscall(SYS_munmap, raw + 1, page_size), EINVAL,
+	expect_failure(raw_munmap(raw + 1, page_size), EINVAL,
 		       "unaligned munmap did not fail with EINVAL");
 
 	mapping = mmap((void *)(16 * page_size), page_size,
