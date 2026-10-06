@@ -1,0 +1,38 @@
+# SPDX-License-Identifier: MIT
+name: File mmap contracts
+
+on:
+  push:
+    paths:
+      - .github/workflows/file-mmap-contract.yml
+      - packages/kernel/src/file-mmap-*.ts
+      - packages/kernel/test/file-mmap-*.test.ts
+      - packages/kernel/src/user-mmap.ts
+      - packages/kernel/test/user-mmap.test.ts
+  pull_request:
+    paths:
+      - .github/workflows/file-mmap-contract.yml
+      - packages/kernel/src/file-mmap-*.ts
+      - packages/kernel/test/file-mmap-*.test.ts
+      - packages/kernel/src/user-mmap.ts
+      - packages/kernel/test/user-mmap.test.ts
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  contracts:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v6
+      - uses: actions/setup-node@v6
+        with:
+          node-version: 24
+          package-manager-cache: false
+      - name: Offset, staging ownership and existing mmap bridge contracts
+        run: |
+          node --test packages/kernel/test/file-mmap-offset.test.ts \
+            packages/kernel/test/file-mmap-staging.test.ts \
+            packages/kernel/test/user-mmap.test.ts
