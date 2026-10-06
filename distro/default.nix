@@ -110,6 +110,13 @@ lib.makeScope (scope: lib.callPackageWith ({ inherit lib pkgs; } // scope)) (
     };
     bash = callPackage ./bash/package.nix { };
     basic-init = callPackage ./basic-init/package.nix { };
+    mmap-benchmark = callPackage ./mmap-benchmark/package.nix { };
+    mmap-benchmark-wasm64 = callPackage ./mmap-benchmark/package.nix {
+      platform = self.platform-wasm64;
+      llvm-toolchain = self.llvm-toolchain-wasm64;
+      sysroot = self.sysroot-wasm64;
+      vm-test = vmTestWasm64;
+    };
     busybox = callPackage ./busybox/package.nix { };
     bzip2 = callPackage ./bzip2/package.nix { };
     ca-certificates = callPackage ./ca-certificates/package.nix { };

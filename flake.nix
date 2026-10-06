@@ -34,6 +34,13 @@
         _name: value:
         lib.isDerivation value || (builtins.isAttrs value && lib.isDerivation (value.package or null));
       packageFrom = _name: value: if lib.isDerivation value then value else value.package;
+      mmapSearchBaseline =
+        wasmpkgs:
+        wasmpkgs.overrideScope (
+          _final: prev: {
+            musl = prev.musl.override { deduplicateMmapSearch = false; };
+          }
+        );
     in
     {
       # The package scope is the product. It contains owner-oriented package
@@ -52,7 +59,12 @@
       # flat flake interface, so `nix build .#site` remains the obvious command
       # while `legacyPackages.${system}.site.rootfs` stays navigable.
       packages = eachSystem (
-        { wasmpkgs, ... }: lib.mapAttrs packageFrom (lib.filterAttrs isPackage wasmpkgs)
+        { wasmpkgs, ... }:
+        lib.mapAttrs packageFrom (lib.filterAttrs isPackage wasmpkgs)
+        // {
+          mmap-benchmark-baseline = (mmapSearchBaseline wasmpkgs).mmap-benchmark;
+          mmap-benchmark-baseline-wasm64 = (mmapSearchBaseline wasmpkgs).mmap-benchmark-wasm64;
+        }
       );
 
       checks = eachSystem (
@@ -62,16 +74,13 @@
           formatter,
         }:
         let
-          mmapSearchBaseline = wasmpkgs.overrideScope (
-            _final: prev: {
-              musl = prev.musl.override { deduplicateMmapSearch = false; };
-            }
-          );
+          baseline = mmapSearchBaseline wasmpkgs;
         in
         import ./checks.nix { inherit lib; } wasmpkgs
         // {
-          mmap-search-baseline-correctness = mmapSearchBaseline.basic-init.checks.mmap;
-          mmap-search-baseline-benchmark = mmapSearchBaseline.basic-init.checks.mmap-benchmark;
+          mmap-search-baseline-correctness = baseline.basic-init.checks.mmap;
+          mmap-search-baseline-benchmark = baseline.basic-init.checks.mmap-benchmark;
+          mmap-search-baseline-correctness-wasm64 = baseline.mmap-benchmark-wasm64.checks.correctness;
           formatting = pkgs.runCommand "treefmt-check" { nativeBuildInputs = [ formatter ]; } ''
             cp -r ${self} tree
             chmod -R u+w tree
