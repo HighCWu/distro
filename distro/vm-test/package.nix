@@ -41,6 +41,8 @@ let
       disks ? [ ],
       cpus ? 1,
       heavy ? false,
+      snapshotFirstDisk ? false,
+      readOnlyDisks ? false,
     }:
     let
       allDisks = lib.optional (disk != null) disk ++ disks;
@@ -62,6 +64,8 @@ let
         set +e
         timeout --kill-after=5 300 node ${runner}/run-test.js \
           --cpus ${toString cpus} \
+          ${lib.optionalString snapshotFirstDisk "--snapshot-first-disk"} \
+          ${lib.optionalString readOnlyDisks "--readonly-disks"} \
           ${kernel}/dist/index.js \
           ${initramfs} \
           ${lib.concatMapStringsSep " " (diskCopy: diskCopy.name) diskCopies} \
@@ -162,9 +166,19 @@ let
       files ? { },
       cpus ? 1,
       heavy ? true,
+      disks ? [ ],
+      snapshotFirstDisk ? false,
+      readOnlyDisks ? false,
     }:
     bootInstalledSystem {
-      inherit cpus heavy name;
+      inherit
+        cpus
+        heavy
+        name
+        disks
+        snapshotFirstDisk
+        readOnlyDisks
+        ;
       initramfs = image.mkInitramfs {
         name = "${lib.replaceStrings [ "_" ] [ "-" ] name}-initramfs";
         inherit init contents files;

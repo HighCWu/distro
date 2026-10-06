@@ -34,6 +34,7 @@ let
         clang ${compileFlags} -Wl,--export=__wasm_mmap_init_v1 ${../basic-init/tests/mmap-staging.c} -o $out/staging.wasm
         clang ${compileFlags} ${../basic-init/tests/mmap-staging-legacy.c} -o $out/staging-legacy.wasm
         clang ${compileFlags} -Wl,--export=__wasm_mmap_init_v1 ${../basic-init/tests/mmap-vfs.c} -o $out/vfs.wasm
+        clang ${compileFlags} ${../basic-init/tests/mmap-provenance.c} -o $out/provenance.wasm
         clang ${compileFlags} ${../basic-init/tests/mmap-benchmark.c} -o $out/benchmark.wasm
         chmod 0755 $out/*.wasm
       '';
@@ -45,6 +46,16 @@ let
     name = "mmap-benchmark-${platform.wasmArch}";
     init = "${executables}/benchmark.wasm";
   };
+  provenanceImage =
+    pkgs.runCommand "mmap-provenance.erofs"
+      {
+        nativeBuildInputs = [ pkgs.erofs-utils ];
+      }
+      ''
+        mkdir root
+        printf 'snapshot-provenance\n' > root/data
+        mkfs.erofs --all-root -T 0 -x-1 "$out" root
+      '';
 in
 pkgs.runCommand "mmap-benchmark-artifacts-${platform.wasmArch}"
   {
@@ -69,6 +80,16 @@ pkgs.runCommand "mmap-benchmark-artifacts-${platform.wasmArch}"
     passthru.checks.vfs = vm-test-copy.rawInitramfsTest {
       name = "mmap-vfs-${platform.wasmArch}";
       init = "${executables}/vfs.wasm";
+    };
+    passthru.checks.provenance = vm-test-copy.rawInitramfsTest {
+      name = "mmap-provenance-${platform.wasmArch}";
+      init = "${executables}/provenance.wasm";
+      disks = [
+        provenanceImage
+        provenanceImage
+      ];
+      snapshotFirstDisk = true;
+      readOnlyDisks = true;
     };
     passthru.checks.staging =
       pkgs.runCommand "mmap-staging-checks-${platform.wasmArch}"

@@ -13,11 +13,17 @@ import { pathToFileURL } from "node:url";
 import { LineDecoder, parseResult, writeConsoleLines } from "./protocol.js";
 
 let cpus = 1;
+let snapshotFirstDisk = false;
+let readOnlyDisks = false;
 const positional = [];
 const args = process.argv.slice(2);
 for (let index = 0; index < args.length; index++) {
   if (args[index] === "--cpus") {
     cpus = Number(args[++index]);
+  } else if (args[index] === "--snapshot-first-disk") {
+    snapshotFirstDisk = true;
+  } else if (args[index] === "--readonly-disks") {
+    readOnlyDisks = true;
   } else {
     positional.push(args[index]);
   }
@@ -138,8 +144,15 @@ const devices = [
 ];
 
 const disks = [];
-for (const diskPath of diskPaths) {
-  const disk = openSync(diskPath, "r+");
+for (const [diskIndex, diskPath] of diskPaths.entries()) {
+  if (snapshotFirstDisk && diskIndex === 0) {
+    const { snapshot_block_device } = await import(
+      new URL("./immutable-image.js", pathToFileURL(linuxPath)).href
+    );
+    devices.push(snapshot_block_device(readFileSync(diskPath)));
+    continue;
+  }
+  const disk = openSync(diskPath, readOnlyDisks ? "r" : "r+");
   disks.push(disk);
   const { size } = fstatSync(disk);
   devices.push(
@@ -154,14 +167,16 @@ for (const diskPath of diskPaths) {
         }
         return read;
       },
-      write: async (offset, data) => {
-        let written = 0;
-        while (written < data.length) {
-          written += writeSync(disk, data, written, data.length - written, offset + written);
-        }
-        return written;
-      },
-      flush: async () => fsyncSync(disk),
+      write: readOnlyDisks
+        ? undefined
+        : async (offset, data) => {
+            let written = 0;
+            while (written < data.length) {
+              written += writeSync(disk, data, written, data.length - written, offset + written);
+            }
+            return written;
+          },
+      flush: readOnlyDisks ? undefined : async () => fsyncSync(disk),
     }),
   );
 }
