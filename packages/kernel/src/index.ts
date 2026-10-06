@@ -8,6 +8,7 @@ import { settle_user_copy, USER_COPY_TRY_AGAIN } from "./user-copy.ts";
 import { assert, unreachable } from "./util.ts";
 import { read_wasm_memories, type WasmMemoryType } from "./wasm_binary.ts";
 import { close_virtio_device, virtio_device_description, virtio_imports } from "./virtio/core.ts";
+import { snapshot_device_tree_properties } from "./immutable-image.ts";
 import {
   allocate_shared_memory,
   type Imports,
@@ -285,6 +286,7 @@ export async function bootMachine(options: BootMachineOptions): Promise<Machine>
         "virtio-device-id": device.device_id,
         features: device.features,
         config: device.config,
+        ...snapshot_device_tree_properties(dev),
       };
     }
     const memory_reservations: { address: number; size: number }[] = [];

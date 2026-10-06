@@ -6,6 +6,7 @@ on:
     paths:
       - .github/workflows/immutable-image.yml
       - packages/kernel/src/immutable-image.ts
+      - packages/kernel/src/index.ts
       - packages/kernel/test/immutable-image.test.ts
       - packages/kernel/src/virtio/**
       - packages/bytes/**
@@ -16,6 +17,7 @@ on:
     paths:
       - .github/workflows/immutable-image.yml
       - packages/kernel/src/immutable-image.ts
+      - packages/kernel/src/index.ts
       - packages/kernel/test/immutable-image.test.ts
       - packages/kernel/src/virtio/**
       - packages/bytes/**

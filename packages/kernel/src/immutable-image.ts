@@ -1,9 +1,11 @@
 // SPDX-License-Identifier: MIT
 
-import type { BlockDeviceStorage } from "./virtio/block.ts";
+import { blockDevice, type BlockDeviceStorage } from "./virtio/block.ts";
+import type { VirtioDevice } from "./virtio/core.ts";
 
 const copy_bytes = Uint8Array.prototype.set;
 const DEFAULT_MAXIMUM_BYTES = 64 * 1024 * 1024;
+const snapshot_devices = new WeakSet<VirtioDevice>();
 
 /** Experimental in-memory image backing, not a kernel file-mmap admission token.
  * Copies the input once; requires a sector-aligned image and a bounded allocation.
@@ -38,4 +40,34 @@ export function snapshot_block_storage(
       bytes = null;
     },
   });
+}
+
+/** Internal factory: provenance belongs to this exact local device object.
+ * Generic block devices and remote proxies do not inherit it from their config.
+ */
+export function snapshot_block_device(
+  image: Uint8Array,
+  maximum_bytes = DEFAULT_MAXIMUM_BYTES,
+): VirtioDevice {
+  const storage = snapshot_block_storage(image, maximum_bytes);
+  const device = blockDevice(
+    Object.freeze({
+      capacity: storage.capacity,
+      read: storage.read,
+      close() {
+        snapshot_devices.delete(device);
+        return storage.close?.();
+      },
+    }),
+  );
+  snapshot_devices.add(device);
+  return device;
+}
+
+/** Versioned boot provenance, not a generic read-only flag or mmap permission.
+ * Remains private to trusted host construction; it is not a malicious-host boundary.
+ * A device must still be live, and its kernel filesystem must be separately checked.
+ */
+export function snapshot_device_tree_properties(device: VirtioDevice): Record<string, number> {
+  return snapshot_devices.has(device) ? { "lowland,snapshot-image-v1": 1 } : {};
 }

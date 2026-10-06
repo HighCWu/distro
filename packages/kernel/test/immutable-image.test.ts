@@ -2,9 +2,20 @@
 
 import assert from "node:assert/strict";
 import test from "node:test";
-import { snapshot_block_storage } from "../src/immutable-image.ts";
+import {
+  snapshot_block_storage,
+  snapshot_block_device,
+  snapshot_device_tree_properties,
+} from "../src/immutable-image.ts";
 import { blockDevice } from "../src/virtio/block.ts";
-import { virtio_imports, close_virtio_device } from "../src/virtio/core.ts";
+import {
+  virtio_imports,
+  close_virtio_device,
+  virtio_device_description,
+  VirtioController,
+} from "../src/virtio/core.ts";
+import { serveDevice, workerDevice } from "../src/virtio/remote.ts";
+import { generate_devicetree } from "../src/devicetree.ts";
 
 test("snapshot copies a source subarray, retains capacity and exposes no writer", () => {
   const source = new Uint8Array(1024).fill(7);
@@ -83,13 +94,97 @@ test("close revokes reads and repeated close is harmless", () => {
   assert.equal(storage.capacity, 512);
 });
 
+test("boot provenance is bound to the exact factory device, not read-only storage or config", async () => {
+  const image = new Uint8Array(512).fill(7);
+  const snapshot = snapshot_block_device(image);
+  const ordinary = blockDevice(snapshot_block_storage(image));
+  const description = virtio_device_description(snapshot);
+  const lookalike = new VirtioController(
+    {
+      deviceId: description.device_id,
+      features: description.features,
+      config: description.config.slice(),
+    },
+    { queues: [() => {}] },
+  ).device;
+  try {
+    assert.deepEqual(snapshot_device_tree_properties(snapshot), { "lowland,snapshot-image-v1": 1 });
+    assert.deepEqual(snapshot_device_tree_properties(ordinary), {});
+    assert.deepEqual(snapshot_device_tree_properties(lookalike), {});
+    assert.deepEqual(snapshot_device_tree_properties({ ...snapshot }), {});
+    const properties = snapshot_device_tree_properties(snapshot);
+    properties["lowland,snapshot-image-v1"] = 99;
+    assert.equal(snapshot_device_tree_properties(snapshot)["lowland,snapshot-image-v1"], 1);
+    await close_virtio_device(snapshot);
+    assert.deepEqual(snapshot_device_tree_properties(snapshot), {});
+  } finally {
+    await Promise.all([snapshot, ordinary, lookalike].map(close_virtio_device));
+  }
+});
+
+test(
+  "remote ready descriptions do not transfer local snapshot provenance",
+  { timeout: 2000 },
+  async () => {
+    const local = snapshot_block_device(new Uint8Array(512));
+    const channel = new MessageChannel();
+    serveDevice(channel.port1, local);
+    const remote = await workerDevice(channel.port2);
+    try {
+      assert.equal(snapshot_device_tree_properties(local)["lowland,snapshot-image-v1"], 1);
+      assert.deepEqual(snapshot_device_tree_properties(remote), {});
+      await close_virtio_device(remote);
+      assert.deepEqual(snapshot_device_tree_properties(local), {});
+    } finally {
+      await close_virtio_device(remote);
+      channel.port1.close();
+      channel.port2.close();
+    }
+  },
+);
+
+test("boot provenance is encoded as a versioned u32 in either root cell width", async () => {
+  const device = snapshot_block_device(new Uint8Array(512));
+  try {
+    for (const cells of [1, 2]) {
+      const blob = generate_devicetree({
+        "#address-cells": cells,
+        "#size-cells": cells,
+        virtio2: { "host-id": 2, ...snapshot_device_tree_properties(device) },
+      });
+      const bytes = new Uint8Array(blob);
+      const view = new DataView(bytes.buffer, bytes.byteOffset, bytes.byteLength);
+      const strings_offset = view.getUint32(12);
+      const structure_offset = view.getUint32(8);
+      let found = false;
+      for (let offset = structure_offset; offset < strings_offset; offset += 4) {
+        if (view.getUint32(offset) !== 3) continue; // FDT_PROP
+        const length = view.getUint32(offset + 4);
+        const name_offset = strings_offset + view.getUint32(offset + 8);
+        const end = bytes.indexOf(0, name_offset);
+        if (
+          new TextDecoder().decode(bytes.subarray(name_offset, end)) !== "lowland,snapshot-image-v1"
+        )
+          continue;
+        assert.equal(length, 4);
+        assert.equal(view.getUint32(offset + 12), 1);
+        found = true;
+        break;
+      }
+      assert.equal(found, true);
+    }
+  } finally {
+    await close_virtio_device(device);
+  }
+});
+
 test(
   "real virtio block queue serves frozen bytes and refuses writes",
   { timeout: 2000 },
   async () => {
     const source = new Uint8Array(512).fill(0x5a);
     const memory = new WebAssembly.Memory({ initial: 1, maximum: 1, shared: true });
-    const device = blockDevice(snapshot_block_storage(source));
+    const device = snapshot_block_device(source);
     source.fill(0xa5);
     let completion = Promise.withResolvers<void>();
     const imports = virtio_imports({
@@ -147,5 +242,6 @@ test(
       true,
     );
     await close_virtio_device(device);
+    assert.deepEqual(snapshot_device_tree_properties(device), {});
   },
 );
