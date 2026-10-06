@@ -8,6 +8,18 @@
 #include <sys/syscall.h>
 #include <unistd.h>
 
+#if defined(__wasm__)
+#if __SIZEOF_LONG__ == 4
+#if !defined(SYS__llseek) || !defined(SYS_mmap2) || defined(SYS_lseek)
+#error "wasm32 must use llseek and mmap2 syscall layouts"
+#endif
+#else
+#if !defined(SYS_lseek) || defined(SYS__llseek) || defined(SYS_mmap2)
+#error "wasm64 must use lseek and byte-offset mmap syscall layouts"
+#endif
+#endif
+#endif
+
 /* This is a rejection preflight, not proof of successful file mapping or
  * offset normalization. Keep libc byte offsets distinct from raw ABI units. */
 static void rejected(long result, const char *operation)
@@ -55,12 +67,12 @@ int main(void)
 	if (page_size != 65536)
 		test_fail("unexpected mmap offset preflight page size");
 	/* /init exists in both raw initramfs profiles; use a real regular-file fd
- * so a bad descriptor cannot mask accidental file-mapping acceptance. */
+	 * so a bad descriptor cannot mask accidental file-mapping acceptance. */
 	fd = open("/init", O_RDONLY);
 	if (fd < 0)
 		test_perror("open offset fixture");
 	/* Seek beyond 4 GiB without allocating a large file. This checks file
- * offset transport, not large-file I/O or large linear-memory capacity. */
+	 * offset transport, not large-file I/O or large linear-memory capacity. */
 	if (lseek(fd, ((off_t)1 << 33) + 7, SEEK_SET) != ((off_t)1 << 33) + 7 ||
 	    raw_lseek(fd, 0, SEEK_CUR) != ((off_t)1 << 33) + 7)
 		test_fail("libc large seek disagrees with raw file position");
