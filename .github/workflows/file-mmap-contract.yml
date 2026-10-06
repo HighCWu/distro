@@ -31,8 +31,9 @@ jobs:
         with:
           node-version: 24
           package-manager-cache: false
-      - name: Offset, staging ownership and existing mmap bridge contracts
+      - name: Offset, staging ownership, scoped copy and existing mmap bridge contracts
         run: |
           node --test packages/kernel/test/file-mmap-offset.test.ts \
             packages/kernel/test/file-mmap-staging.test.ts \
+            packages/kernel/test/file-mmap-copy.test.ts \
             packages/kernel/test/user-mmap.test.ts

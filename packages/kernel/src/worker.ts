@@ -3,6 +3,7 @@
 import { listen_endpoint, post_endpoint } from "./endpoint.ts";
 import { platform } from "./platform.ts";
 import { user_mmap } from "./user-mmap.ts";
+import { FileMmapCopy } from "./file-mmap-copy.ts";
 import {
   settle_user_copy,
   USER_COPY_COMPLETE,
@@ -81,6 +82,7 @@ function user_imports({
   prepare(): void;
   imports: Imports["user"];
   imports_v2: Imports["user_v2"];
+  imports_mmap_init_v1: Imports["user_mmap_init_v1"];
 } {
   const HALT_USER = Symbol("halt user");
 
@@ -91,6 +93,7 @@ function user_imports({
   // One slot per nested SA_SIGINFO callback; null means its trampoline has
   // not requested the active signal payload yet.
   const siginfo_copy_results: (number | null)[] = [];
+  const mmap_copy = new FileMmapCopy(kernel_memory, kernel_address);
 
   function copy_bytes(
     destination_memory: WebAssembly.Memory,
@@ -141,6 +144,9 @@ function user_imports({
     const kernel_instance = get_kernel_instance();
     return new WebAssembly.Instance(context.module, {
       env: { memory: context.memory },
+      linux_mmap_init_v1: {
+        copy: (to: WasmAddress, length: WasmAddress) => mmap_copy.copy(context.memory, to, length),
+      },
       linux: {
         syscall: (
           nr: WasmAddress,
@@ -408,6 +414,12 @@ function user_imports({
         return user_mmap(instance.exports, kernel_address, addr, len, prot, flags, fd, pgoff);
       },
     },
+    imports_mmap_init_v1: {
+      map(rounded, source, length) {
+        assert(instance);
+        return mmap_copy.map(instance.exports, rounded, source, length);
+      },
+    },
   };
 }
 
@@ -472,6 +484,7 @@ function start({
     },
     user: user.imports,
     user_v2: user.imports_v2,
+    user_mmap_init_v1: user.imports_mmap_init_v1,
     kernel: kernel_imports({
       address: kernel_address,
       is_worker: true,

@@ -83,6 +83,7 @@ const supported_user_module_imports = new Set([
   "linux\0syscall\0function",
   "linux\0get_thread_area\0function",
   "linux\0copy_siginfo\0function",
+  "linux_mmap_init_v1\0copy\0function",
 ]);
 
 /** Whether every import can be supplied when a userspace module is instantiated. */
@@ -246,6 +247,10 @@ export interface Imports {
       fd: number,
       pgoff: WasmAddress,
     ): WasmAddress;
+  };
+  /** Experimental initialized-copy primitive, not file syscall admission. */
+  user_mmap_init_v1: {
+    map(rounded: WasmAddress, source: WasmAddress, length: WasmAddress): WasmAddress;
   };
   virtio: {
     set_features(dev: number, features: bigint): void;
