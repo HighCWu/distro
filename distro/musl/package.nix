@@ -3,12 +3,13 @@
   lib,
   debug,
   wasmBits ? 32,
+  deduplicateMmapSearch ? true,
   llvm-toolchain-unwrapped,
   src ? pkgs.fetchFromGitHub {
     owner = "HighCWu";
     repo = "musl";
-    rev = "d7c704856eaa0d5159e498e677dd0277020e2275";
-    hash = "sha256-DL15FodLuBOfm37ip0llcga7jweTSkaWr5kdep7PVwE=";
+    rev = "834a0890d2ce2616ef18fc6dc092266c9014535f";
+    hash = "sha256-nCvDzMNFp6f9q21PGr4kEaQUUBQP6DO6khWlF5nfVZU=";
   },
 }:
 
@@ -33,7 +34,7 @@ pkgs.stdenvNoCC.mkDerivation {
     WASM_BITS=${toString wasmBits}
     prefix=$out
     syslibdir=$out
-    CFLAGS=${lib.optionalString debug "-g"}
+    CFLAGS=${lib.optionalString debug "-g"}${lib.optionalString (!deduplicateMmapSearch) " -DWASM_MMAP_DEDUP_SEARCH=0"}
     EOF
 
     runHook postConfigure

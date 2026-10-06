@@ -61,8 +61,15 @@
           wasmpkgs,
           formatter,
         }:
+        let
+          mmapSearchBaseline = wasmpkgs.overrideScope (_final: prev: {
+            musl = prev.musl.override { deduplicateMmapSearch = false; };
+          });
+        in
         import ./checks.nix { inherit lib; } wasmpkgs
         // {
+          mmap-search-baseline-correctness = mmapSearchBaseline.basic-init.checks.mmap;
+          mmap-search-baseline-benchmark = mmapSearchBaseline.basic-init.checks.mmap-benchmark;
           formatting = pkgs.runCommand "treefmt-check" { nativeBuildInputs = [ formatter ]; } ''
             cp -r ${self} tree
             chmod -R u+w tree
