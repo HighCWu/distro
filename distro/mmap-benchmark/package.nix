@@ -33,6 +33,7 @@ let
         clang ${compileFlags} -Wl,--export=__wasm_mmap_init_v1 ${../basic-init/tests/mmap-copy.c} -o $out/copy.wasm
         clang ${compileFlags} -Wl,--export=__wasm_mmap_init_v1 ${../basic-init/tests/mmap-staging.c} -o $out/staging.wasm
         clang ${compileFlags} ${../basic-init/tests/mmap-staging-legacy.c} -o $out/staging-legacy.wasm
+        clang ${compileFlags} -Wl,--export=__wasm_mmap_init_v1 ${../basic-init/tests/mmap-vfs.c} -o $out/vfs.wasm
         clang ${compileFlags} ${../basic-init/tests/mmap-benchmark.c} -o $out/benchmark.wasm
         chmod 0755 $out/*.wasm
       '';
@@ -64,6 +65,10 @@ pkgs.runCommand "mmap-benchmark-artifacts-${platform.wasmArch}"
     passthru.checks.copy = vm-test.rawInitramfsTest {
       name = "mmap-copy-${platform.wasmArch}";
       init = "${executables}/copy.wasm";
+    };
+    passthru.checks.vfs = vm-test-copy.rawInitramfsTest {
+      name = "mmap-vfs-${platform.wasmArch}";
+      init = "${executables}/vfs.wasm";
     };
     passthru.checks.staging =
       pkgs.runCommand "mmap-staging-checks-${platform.wasmArch}"
