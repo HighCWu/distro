@@ -34,7 +34,9 @@ pkgs.stdenvNoCC.mkDerivation {
     WASM_BITS=${toString wasmBits}
     prefix=$out
     syslibdir=$out
-    CFLAGS=${lib.optionalString debug "-g"}${lib.optionalString (!deduplicateMmapSearch) " -DWASM_MMAP_DEDUP_SEARCH=0"}
+    CFLAGS=${lib.optionalString debug "-g"}${
+      lib.optionalString (!deduplicateMmapSearch) " -DWASM_MMAP_DEDUP_SEARCH=0"
+    }
     EOF
 
     runHook postConfigure

@@ -62,9 +62,11 @@
           formatter,
         }:
         let
-          mmapSearchBaseline = wasmpkgs.overrideScope (_final: prev: {
-            musl = prev.musl.override { deduplicateMmapSearch = false; };
-          });
+          mmapSearchBaseline = wasmpkgs.overrideScope (
+            _final: prev: {
+              musl = prev.musl.override { deduplicateMmapSearch = false; };
+            }
+          );
         in
         import ./checks.nix { inherit lib; } wasmpkgs
         // {
