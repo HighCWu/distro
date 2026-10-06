@@ -41,6 +41,16 @@
             musl = prev.musl.override { deduplicateMmapSearch = false; };
           }
         );
+      mmapSearchGenerations =
+        wasmpkgs: epochLimit:
+        wasmpkgs.overrideScope (
+          _final: prev: {
+            musl = prev.musl.override {
+              generationMmapSearch = true;
+              generationEpochLimit = epochLimit;
+            };
+          }
+        );
     in
     {
       # The package scope is the product. It contains owner-oriented package
@@ -64,6 +74,8 @@
         // {
           mmap-benchmark-baseline = (mmapSearchBaseline wasmpkgs).mmap-benchmark;
           mmap-benchmark-baseline-wasm64 = (mmapSearchBaseline wasmpkgs).mmap-benchmark-wasm64;
+          mmap-benchmark-generation = (mmapSearchGenerations wasmpkgs null).mmap-benchmark;
+          mmap-benchmark-generation-wasm64 = (mmapSearchGenerations wasmpkgs null).mmap-benchmark-wasm64;
         }
       );
 
@@ -75,12 +87,19 @@
         }:
         let
           baseline = mmapSearchBaseline wasmpkgs;
+          generation = mmapSearchGenerations wasmpkgs null;
+          wrap = mmapSearchGenerations wasmpkgs 3;
         in
         import ./checks.nix { inherit lib; } wasmpkgs
         // {
           mmap-search-baseline-correctness = baseline.basic-init.checks.mmap;
           mmap-search-baseline-benchmark = baseline.basic-init.checks.mmap-benchmark;
           mmap-search-baseline-correctness-wasm64 = baseline.mmap-benchmark-wasm64.checks.correctness;
+          mmap-search-generation-correctness = generation.mmap-benchmark.checks.correctness;
+          mmap-search-generation-correctness-wasm64 = generation.mmap-benchmark-wasm64.checks.correctness;
+          mmap-search-generation-wrap-correctness = wrap.mmap-benchmark.checks.correctness;
+          mmap-search-generation-wrap-correctness-wasm64 = wrap.mmap-benchmark-wasm64.checks.correctness;
+          mmap-search-generation-wrap-clone-no-vm = wrap.basic-init.checks.clone-no-vm;
           formatting = pkgs.runCommand "treefmt-check" { nativeBuildInputs = [ formatter ]; } ''
             cp -r ${self} tree
             chmod -R u+w tree

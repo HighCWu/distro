@@ -3,6 +3,14 @@ name: Paired mmap benchmark
 
 on:
   workflow_dispatch:
+    inputs:
+      comparison:
+        description: Controlled search-mode comparison
+        type: choice
+        default: reset-vs-disabled
+        options:
+          - reset-vs-disabled
+          - generation-vs-reset
 
 permissions:
   contents: read
@@ -21,6 +29,11 @@ jobs:
       max-parallel: 1
       matrix:
         bits: [32, 64]
+        include:
+          - bits: 32
+            cache-prefix: nix-ci
+          - bits: 64
+            cache-prefix: nix-wasm64-v2
     steps:
       - uses: actions/checkout@v6
       - uses: actions/setup-node@v6
@@ -32,6 +45,7 @@ jobs:
         with:
           primary-key: nix-mmap-${{ matrix.bits }}-${{ runner.os }}-${{ hashFiles('**/*.nix', 'flake.lock') }}
           restore-prefixes-first-match: |
+            ${{ matrix.cache-prefix }}-${{ runner.os }}-
             nix-wasm64-v2-${{ runner.os }}-
             nix-ci-${{ runner.os }}-
           save: false
@@ -45,21 +59,39 @@ jobs:
       - name: Build both modes without running cached benchmark checks
         env:
           BITS: ${{ matrix.bits }}
+          COMPARISON: ${{ inputs.comparison }}
         run: |
           suffix=""
           if [[ "$BITS" == 64 ]]; then suffix="-wasm64"; fi
-          nix build --print-build-logs --out-link result-on ".#mmap-benchmark$suffix"
-          nix build --print-build-logs --out-link result-off ".#mmap-benchmark-baseline$suffix"
+          on="mmap-benchmark$suffix"
+          off="mmap-benchmark-baseline$suffix"
+          if [[ "$COMPARISON" == generation-vs-reset ]]; then
+            on="mmap-benchmark-generation$suffix"
+            off="mmap-benchmark$suffix"
+            nix build --no-link --print-build-logs ".#checks.x86_64-linux.mmap-search-generation-wrap-correctness$suffix"
+            if [[ "$BITS" == 32 ]]; then
+              nix build --no-link --print-build-logs .#checks.x86_64-linux.mmap-search-generation-wrap-clone-no-vm
+            fi
+          fi
+          nix build --print-build-logs --out-link result-on ".#$on"
+          nix build --print-build-logs --out-link result-off ".#$off"
           nix build --print-build-logs --out-link result-kernel ".#kernel$suffix"
           nix build --print-build-logs --out-link result-runner .#legacyPackages.x86_64-linux.vm-test.runner
       - name: Fresh correctness boots and alternating paired trials
         env:
           BITS: ${{ matrix.bits }}
+          COMPARISON: ${{ inputs.comparison }}
         run: |
           set -euo pipefail
           mkdir results
           {
             printf 'revision=%s\npointer_bits=%s\ncpus=4\n' "$GITHUB_SHA" "$BITS"
+            printf 'comparison=%s\n' "$COMPARISON"
+            if [[ "$COMPARISON" == generation-vs-reset ]]; then
+              printf 'off=reset-dedup\non=generation-dedup\n'
+            else
+              printf 'off=disabled-dedup\non=reset-dedup\n'
+            fi
             node --version
             uname -a
             lscpu
@@ -91,7 +123,7 @@ jobs:
       - uses: actions/upload-artifact@v4
         if: always()
         with:
-          name: mmap-paired-wasm${{ matrix.bits }}
+          name: mmap-paired-${{ inputs.comparison }}-wasm${{ matrix.bits }}
           path: results/
           if-no-files-found: warn
           retention-days: 7

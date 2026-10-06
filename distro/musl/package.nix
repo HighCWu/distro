@@ -4,12 +4,14 @@
   debug,
   wasmBits ? 32,
   deduplicateMmapSearch ? true,
+  generationMmapSearch ? false,
+  generationEpochLimit ? null,
   llvm-toolchain-unwrapped,
   src ? pkgs.fetchFromGitHub {
     owner = "HighCWu";
     repo = "musl";
-    rev = "834a0890d2ce2616ef18fc6dc092266c9014535f";
-    hash = "sha256-nCvDzMNFp6f9q21PGr4kEaQUUBQP6DO6khWlF5nfVZU=";
+    rev = "fe9e88b15b18d04aa6661e0c8e19b66b99cbc833";
+    hash = "sha256-CIKZ59v6rl9ll38Zb2fZtTFd/c0uuM3xYjZkq6H3GGg=";
   },
 }:
 
@@ -17,6 +19,15 @@ assert builtins.elem wasmBits [
   32
   64
 ];
+assert !generationMmapSearch || deduplicateMmapSearch;
+assert
+  generationEpochLimit == null
+  || (
+    generationMmapSearch
+    && builtins.isInt generationEpochLimit
+    && generationEpochLimit > 0
+    && (wasmBits != 32 || generationEpochLimit <= 4294967295)
+  );
 
 pkgs.stdenvNoCC.mkDerivation {
   name = "musl-wasm${toString wasmBits}";
@@ -36,6 +47,10 @@ pkgs.stdenvNoCC.mkDerivation {
     syslibdir=$out
     CFLAGS=${lib.optionalString debug "-g"}${
       lib.optionalString (!deduplicateMmapSearch) " -DWASM_MMAP_DEDUP_SEARCH=0"
+    }${lib.optionalString generationMmapSearch " -DWASM_MMAP_SEARCH_GENERATIONS=1"}${
+      lib.optionalString (
+        generationEpochLimit != null
+      ) " -DWASM_MMAP_SEARCH_EPOCH_MAX=${toString generationEpochLimit}"
     }
     EOF
 
