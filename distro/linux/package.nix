@@ -7,12 +7,13 @@
   lib,
   debug,
   wasmBits ? 32,
+  mmapCopyTest ? false,
   llvm-toolchain-unwrapped,
   src ? pkgs.fetchFromGitHub {
     owner = "HighCWu";
     repo = "linux";
-    rev = "4cf13832724fc0e4d895a6123869716e1c3c893e";
-    hash = "sha256-OU+2BsGz+PvRLGgaFsmXXrPZQlZt+foj314WX9RPf5U=";
+    rev = "c8d1ed15ffa5067217f95cbaf1612a070ade6bb7";
+    hash = "sha256-xDfDoILiw31SdTqJdazci7F3vFsQPVkzaBLigUrg+GA=";
   },
 }:
 
@@ -57,6 +58,10 @@ pkgs.stdenvNoCC.mkDerivation {
     mkdir -p $out
 
     make wasm${toString wasmBits}_defconfig ${lib.optionalString debug "debug.config"}
+    ${lib.optionalString mmapCopyTest ''
+      scripts/config --enable WASM_MMAP_COPY_TEST
+      make olddefconfig
+    ''}
 
     make vmlinux.wasm
 

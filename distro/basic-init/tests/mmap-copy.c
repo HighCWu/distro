@@ -13,6 +13,10 @@ int main(void)
 	size_t page = (size_t)sysconf(_SC_PAGESIZE);
 	unsigned char *live;
 	if (page != 65536) test_fail("unexpected copy mmap page size");
+	/* The staging fixture must not be exposed by the normal release config. */
+	errno = 0;
+	if (syscall(253, (unsigned long)0) != -1 || errno != ENOSYS)
+		test_fail("staging test syscall enabled in default kernel");
 	if (__wasm_mmap_init_v1(0, 0) != -EINVAL ||
 	    __wasm_mmap_init_v1(page - 1, 0) != -EINVAL ||
 	    __wasm_mmap_init_v1(page, page + 1) != -EINVAL)
