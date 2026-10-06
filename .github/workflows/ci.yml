@@ -193,11 +193,10 @@ jobs:
       - name: Build isolated check
         run: |
           installable=".#ciJobs.x86_64-linux.heavyChecks.${{ matrix.check }}"
-          installables=("$installable")
           if [[ "${{ needs.plan.outputs.targeted }}" == true ]]; then
-            installables+=(".#checks.x86_64-linux.formatting")
+            nix build --no-link --print-build-logs .#checks.x86_64-linux.formatting
           fi
-          nix build --no-link --print-build-logs "${installables[@]}"
+          nix build --no-link --print-build-logs "$installable"
 
   deploy-site:
     name: Deploy site
