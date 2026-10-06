@@ -184,7 +184,9 @@ jobs:
       - uses: nix-community/cache-nix-action@v7
         with:
           primary-key: nix-ci-${{ runner.os }}-${{ hashFiles('**/*.nix', 'flake.lock') }}
-          restore-prefixes-first-match: nix-ci-${{ runner.os }}-
+          restore-prefixes-first-match: |
+            ${{ contains(matrix.check, 'wasm64') && format('nix-wasm64-v2-{0}-', runner.os) || format('nix-ci-{0}-', runner.os) }}
+            nix-ci-${{ runner.os }}-
           save: false
       - uses: cachix/cachix-action@v17
         with:
