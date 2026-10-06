@@ -2,13 +2,13 @@
 
 import { type DeviceTreeNode, generate_devicetree, section_properties } from "./devicetree.ts";
 import { platform, type WorkerHandle } from "./platform.ts";
-import { configure_machine, merge_device_tree, run_machine_booted } from "./plugin-internal.ts";
+import { configure_machine, run_machine_booted } from "./plugin-internal.ts";
 import type { MachinePluginInput } from "./plugin.ts";
 import { settle_user_copy, USER_COPY_TRY_AGAIN } from "./user-copy.ts";
 import { assert, unreachable } from "./util.ts";
 import { read_wasm_memories, type WasmMemoryType } from "./wasm_binary.ts";
 import { close_virtio_device, virtio_device_description, virtio_imports } from "./virtio/core.ts";
-import { snapshot_device_tree_properties } from "./immutable-image.ts";
+import { merge_snapshot_device_tree } from "./immutable-image.ts";
 import {
   allocate_shared_memory,
   type Imports,
@@ -286,7 +286,6 @@ export async function bootMachine(options: BootMachineOptions): Promise<Machine>
         "virtio-device-id": device.device_id,
         features: device.features,
         config: device.config,
-        ...snapshot_device_tree_properties(dev),
       };
     }
     const memory_reservations: { address: number; size: number }[] = [];
@@ -309,7 +308,7 @@ export async function bootMachine(options: BootMachineOptions): Promise<Machine>
       sections,
       memory_type.address === "i64" ? 2 : 1,
     );
-    merge_device_tree(devicetree, configured.deviceTree);
+    merge_snapshot_device_tree(devicetree, configured.deviceTree, devices);
 
     const generated_devicetree = generate_devicetree(devicetree, {
       memory_reservations,

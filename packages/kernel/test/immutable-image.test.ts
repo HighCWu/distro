@@ -6,6 +6,7 @@ import {
   snapshot_block_storage,
   snapshot_block_device,
   snapshot_device_tree_properties,
+  merge_snapshot_device_tree,
 } from "../src/immutable-image.ts";
 import { blockDevice } from "../src/virtio/block.ts";
 import {
@@ -16,6 +17,65 @@ import {
 } from "../src/virtio/core.ts";
 import { serveDevice, workerDevice } from "../src/virtio/remote.ts";
 import { generate_devicetree } from "../src/devicetree.ts";
+import type { DeviceTreeNode } from "../src/devicetree.ts";
+
+test("plugin merge cannot forge provenance or redirect a snapshot transport", async () => {
+  const snapshot = snapshot_block_device(new Uint8Array(512));
+  const ordinary = blockDevice(snapshot_block_storage(new Uint8Array(512)));
+  const devices = [snapshot, ordinary];
+  const tree = (): DeviceTreeNode =>
+    Object.fromEntries(
+      devices.map((device, i) => {
+        const description = virtio_device_description(device);
+        return [
+          `virtio${i}`,
+          {
+            compatible: "virtio,wasm",
+            "host-id": i,
+            "virtio-device-id": description.device_id,
+            features: description.features,
+            config: description.config,
+          },
+        ];
+      }),
+    );
+  try {
+    for (const fragment of [
+      { virtio1: { "lowland,snapshot-image-v1": 1 } },
+      { added: { nested: { "lowland,snapshot-image-v1": 1 } } },
+      { virtio0: { "lowland,snapshot-image-v1": undefined } },
+      ...["compatible", "host-id", "virtio-device-id", "features", "config"].map((key) => ({
+        virtio0: { [key]: 1 },
+      })),
+      { virtio0: undefined },
+      { virtio0: "replacement" },
+    ] as DeviceTreeNode[]) {
+      const target = tree();
+      const before = structuredClone(target);
+      assert.throws(
+        () => merge_snapshot_device_tree(target, fragment, devices),
+        /reserved|identity/,
+      );
+      assert.deepEqual(target, before); // no partially applied configuration
+    }
+    const target = tree();
+    merge_snapshot_device_tree(
+      target,
+      { virtio0: { status: "okay" }, custom: { value: 9 } },
+      devices,
+    );
+    assert.equal((target.virtio0 as DeviceTreeNode)["lowland,snapshot-image-v1"], 1);
+    assert.equal((target.virtio1 as DeviceTreeNode)["lowland,snapshot-image-v1"], undefined);
+    assert.equal((target.virtio0 as DeviceTreeNode)["host-id"], 0);
+    assert.equal((target.custom as DeviceTreeNode).value, 9);
+    await close_virtio_device(snapshot);
+    const closed = tree();
+    merge_snapshot_device_tree(closed, {}, devices);
+    assert.equal((closed.virtio0 as DeviceTreeNode)["lowland,snapshot-image-v1"], undefined);
+  } finally {
+    await Promise.all(devices.map(close_virtio_device));
+  }
+});
 
 test("snapshot copies a source subarray, retains capacity and exposes no writer", () => {
   const source = new Uint8Array(1024).fill(7);

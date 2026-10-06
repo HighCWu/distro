@@ -2,6 +2,8 @@
 
 import { blockDevice, type BlockDeviceStorage } from "./virtio/block.ts";
 import type { VirtioDevice } from "./virtio/core.ts";
+import type { DeviceTreeNode } from "./devicetree.ts";
+import { merge_device_tree } from "./plugin-internal.ts";
 
 const copy_bytes = Uint8Array.prototype.set;
 const DEFAULT_MAXIMUM_BYTES = 64 * 1024 * 1024;
@@ -70,4 +72,42 @@ export function snapshot_block_device(
  */
 export function snapshot_device_tree_properties(device: VirtioDevice): Record<string, number> {
   return snapshot_devices.has(device) ? { "lowland,snapshot-image-v1": 1 } : {};
+}
+
+/** Merge configuration before issuing provenance. Reserved properties cannot be
+ * supplied by plugins, and a registered device's transport identity is fixed.
+ * The tree must contain the virtio nodes generated from this same device array.
+ */
+export function merge_snapshot_device_tree(
+  tree: DeviceTreeNode,
+  fragment: DeviceTreeNode,
+  devices: readonly VirtioDevice[],
+): void {
+  const is_node = (value: unknown): value is DeviceTreeNode =>
+    typeof value === "object" && value?.constructor === Object;
+  const validate = (node: DeviceTreeNode) => {
+    for (const [name, value] of Object.entries(node)) {
+      if (name === "lowland,snapshot-image-v1")
+        throw new Error("snapshot provenance is reserved for host device construction");
+      if (is_node(value)) validate(value);
+    }
+  };
+  validate(fragment);
+  for (const [i, device] of devices.entries()) {
+    if (!snapshot_devices.has(device)) continue;
+    const override = fragment[`virtio${i}`];
+    if (override === undefined && !Object.hasOwn(fragment, `virtio${i}`)) continue;
+    if (
+      !is_node(override) ||
+      ["compatible", "host-id", "virtio-device-id", "features", "config"].some((key) =>
+        Object.hasOwn(override, key),
+      )
+    )
+      throw new Error("snapshot device transport identity cannot be overridden");
+  }
+  merge_device_tree(tree, fragment);
+  for (const [i, device] of devices.entries()) {
+    const node = tree[`virtio${i}`];
+    if (is_node(node)) Object.assign(node, snapshot_device_tree_properties(device));
+  }
 }
