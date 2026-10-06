@@ -29,7 +29,7 @@ def fixture(bits=32):
 class BenchmarkValidation(unittest.TestCase):
     def test_profiles(self):
         for bits in (32, 64):
-            self.assertEqual(len(benchmark.extract(fixture(bits), bits).splitlines()), 46)
+            self.assertEqual(len(benchmark.extract(fixture(bits), bits).splitlines()), 47)
 
     def test_invalid_results(self):
         valid = fixture()

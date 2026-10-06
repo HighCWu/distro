@@ -41,7 +41,7 @@ def extract(log, bits):
         samples[key].add(sample)
     if set(samples) != set(expected) or any(value != {1, 2, 3} for value in samples.values()):
         raise ValueError("incomplete sample matrix")
-    return "\n".join(lines) + "\n"
+    return "# SPDX-License-Identifier: MIT\n" + "\n".join(lines) + "\n"
 
 
 if __name__ == "__main__":
