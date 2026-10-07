@@ -36,9 +36,15 @@ globalThis.runErofsCopies = async () => {
       }
     };
     return new WritableStream({
-      write(chunk) { consume(decoder.write(chunk)); },
-      close() { consume(decoder.close()); },
-      abort(error) { rejectResult(new Error(`console failed: ${error}`)); },
+      write(chunk) {
+        consume(decoder.write(chunk));
+      },
+      close() {
+        consume(decoder.close());
+      },
+      abort(error) {
+        rejectResult(new Error(`console failed: ${error}`));
+      },
     });
   };
   try {
@@ -58,14 +64,22 @@ globalThis.runErofsCopies = async () => {
         machine = await bootMachine({
           cpus: 4,
           initcpio,
-          plugins: [consoleDevice(input.readable, consoleOutput()), entropyDevice(),
-            snapshot_block_device(image), ordinary],
+          plugins: [
+            consoleDevice(input.readable, consoleOutput()),
+            entropyDevice(),
+            snapshot_block_device(image),
+            ordinary,
+          ],
         });
         // A boot that finishes after the watchdog must not leak its Workers.
-        if (finished) { machine.close(); return; }
+        if (finished) {
+          machine.close();
+          return;
+        }
         void machine.bootConsole.pipeTo(consoleOutput()).catch(rejectResult);
         void machine.closed.then(
-          () => rejectResult(new Error("machine closed before test completion")), rejectResult,
+          () => rejectResult(new Error("machine closed before test completion")),
+          rejectResult,
         );
         await completion;
       })(),
@@ -86,7 +100,9 @@ globalThis.runErofsCopies = async () => {
             closeTimeout = setTimeout(() => reject(new Error("machine close timed out")), 10_000);
           }),
         ]);
-      } finally { clearTimeout(closeTimeout); }
+      } finally {
+        clearTimeout(closeTimeout);
+      }
     }
   }
   return { passed: true, output, machineClosed: true };

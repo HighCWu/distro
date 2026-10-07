@@ -1,7 +1,10 @@
 // SPDX-License-Identifier: MIT
 import { expect, test } from "@playwright/test";
 
-test("EROFS copies survive clone, exit, concurrent reads and source unmount", async ({ page, browser }) => {
+test("EROFS copies survive clone, exit, concurrent reads and source unmount", async ({
+  page,
+  browser,
+}) => {
   test.setTimeout(300_000);
   console.log(`browser version: ${browser.version()}`);
   page.on("console", (message) => console.log(`[browser] ${message.text()}`));
