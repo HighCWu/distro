@@ -5,6 +5,7 @@
 #include <stdint.h>
 #include <sys/mman.h>
 #include <unistd.h>
+#include "mmap-vfs-stats.h"
 
 /* Private fixture slots in the opt-in test kernel, never application UAPI.
  * Offset is split explicitly so the test contract retains 64 bits on wasm32. */
@@ -26,6 +27,7 @@ static void rejected(int fd, size_t length, uint64_t offset, int expected)
 
 int main(void)
 {
+	mmap_stats_start();
 	size_t page = (size_t)sysconf(_SC_PAGESIZE);
 	if (page != 65536) test_fail("unexpected VFS mapping page size");
 	int ordinary = open("/init", O_RDONLY);
@@ -34,11 +36,15 @@ int main(void)
 	if (close(ordinary)) test_perror("close ordinary file");
 	rejected(-1, page, 0, EBADF);
 	for (int mode = 0; mode <= 3; mode++) {
+		mmap_stats_wait(0, 0, 0);
 		int fd = (int)syscall(FILE_CREATE_TEST_NR, (unsigned long)mode);
 		if (fd < 0) test_perror("create immutable fixture");
 		if (lseek(fd, 23, SEEK_SET) != 23) test_perror("set fixture position");
 		if (mode) {
-			for (int i = 0; i < 16; i++) rejected(fd, page, 0, mode == 3 ? EINTR : EIO);
+			for (int i = 0; i < 16; i++) {
+				rejected(fd, page, 0, mode == 3 ? EINTR : EIO);
+				mmap_stats_expect(0, 0, 1);
+			}
 			if (lseek(fd, 0, SEEK_CUR) != 23) test_fail("failed read changed file position");
 			if (close(fd)) test_perror("close failed fixture");
 			int recovery = (int)syscall(FILE_CREATE_TEST_NR, (unsigned long)0);
@@ -80,5 +86,6 @@ int main(void)
 		if (munmap(bytes, 2 * page) || munmap(last, page)) test_perror("VFS mapping cleanup");
 		if (close(replacement)) test_perror("close replacement fixture");
 	}
+	mmap_stats_wait(0, 0, 0);
 	test_pass();
 }

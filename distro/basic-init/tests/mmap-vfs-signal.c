@@ -7,6 +7,7 @@
 #include <sys/ioctl.h>
 #include <sys/mman.h>
 #include <unistd.h>
+#include "mmap-vfs-stats.h"
 
 /* Private fixtures only. This checks actual signal delivery, not mode 3's
  * injected EINTR. The handler deliberately does not use SA_RESTART. */
@@ -74,6 +75,7 @@ static void check_mapping(int fd, size_t page)
 
 int main(void)
 {
+	mmap_stats_start();
 	size_t page = (size_t)sysconf(_SC_PAGESIZE);
 	struct sigaction action = { .sa_handler = handler, .sa_flags = 0 };
 	if (page != 65536) test_fail("unexpected signal fixture page size");
@@ -91,10 +93,12 @@ int main(void)
 			pthread_t thread;
 			if (pthread_create(&thread, NULL, reader, &request)) test_fail("start signal reader");
 			if (ioctl(fd, WAIT_ENTERED, 0UL)) test_perror("wait for signal read barrier");
+			mmap_stats_expect(1, 1, 1);
 			if (pthread_kill(thread, SIGUSR1)) test_fail("signal blocked reader");
 			/* Do not release the completion: only signal interruption can
 			 * let the blocked read return. The runner watchdog bounds hangs. */
 			if (pthread_join(thread, NULL)) test_fail("join interrupted reader");
+			mmap_stats_expect(0, 0, 1);
 			if (request.result != -1 || request.error != EINTR || request.signals != 1)
 				test_fail("real signal did not abort mapping with exactly EINTR");
 			if (lseek(fd, 0, SEEK_CUR) != 23) test_fail("interrupted read changed file position");
@@ -111,6 +115,7 @@ int main(void)
 			int recovery = create(0);
 			check_mapping(recovery, page);
 			if (close(recovery)) test_perror("close signal recovery fixture");
+			mmap_stats_wait(0, 0, 0);
 		}
 	}
 	if (handled) test_fail("reader signal was delivered to controller thread");

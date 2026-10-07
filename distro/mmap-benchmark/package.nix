@@ -166,6 +166,42 @@ pkgs.runCommand "mmap-benchmark-artifacts-${platform.wasmArch}"
       init = "${executables}/vfs-last-fd.wasm";
       cpus = 2;
     };
+    passthru.checks.vfs-resources =
+      pkgs.runCommand "mmap-vfs-resources-${platform.wasmArch}"
+        {
+          passthru.ci.heavy = true;
+          normal = vm-test-copy.rawInitramfsTest {
+            name = "mmap-vfs-${platform.wasmArch}";
+            init = "${executables}/vfs.wasm";
+          };
+          signal = vm-test-copy.rawInitramfsTest {
+            name = "mmap-vfs-signal-${platform.wasmArch}";
+            init = "${executables}/vfs-signal.wasm";
+            cpus = 2;
+          };
+          exit = vm-test-copy.rawInitramfsTest {
+            name = "mmap-vfs-exit-${platform.wasmArch}";
+            init = "${executables}/vfs-exit.wasm";
+            cpus = 2;
+          };
+          lastFd = vm-test-copy.rawInitramfsTest {
+            name = "mmap-vfs-last-fd-${platform.wasmArch}";
+            init = "${executables}/vfs-last-fd.wasm";
+            cpus = 2;
+          };
+          releaseConfig = vm-test.rawInitramfsTest {
+            name = "mmap-copy-${platform.wasmArch}";
+            init = "${executables}/copy.wasm";
+          };
+        }
+        ''
+          mkdir $out
+          ln -s "$normal" $out/normal
+          ln -s "$signal" $out/signal
+          ln -s "$exit" $out/exit
+          ln -s "$lastFd" $out/last-fd
+          ln -s "$releaseConfig" $out/release-config
+        '';
     passthru.checks.erofs = vm-test-copy.rawInitramfsTest {
       name = "mmap-erofs-${platform.wasmArch}";
       init = "${executables}/erofs.wasm";

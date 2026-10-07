@@ -9,6 +9,7 @@
 #include <sys/mman.h>
 #include <sys/wait.h>
 #include <unistd.h>
+#include "mmap-vfs-stats.h"
 
 /* Private fixtures under CONFIG_WASM_MMAP_COPY_TEST, never application UAPI. */
 #define FILE_CREATE_TEST_NR 254
@@ -52,6 +53,7 @@ static void content(const unsigned char *bytes, size_t page)
 
 int main(void)
 {
+	mmap_stats_start();
 	const size_t stack_size = 64 * 1024;
 	size_t page = (size_t)sysconf(_SC_PAGESIZE);
 	char *stack = malloc(stack_size);
@@ -74,7 +76,9 @@ int main(void)
 				CLONE_VM | CLONE_FILES | SIGCHLD, request);
 			if (pid == -1) test_perror("clone shared-files reader");
 			if (ioctl(fd, WAIT_ENTERED, 0UL)) test_perror("wait last-fd read barrier");
+			mmap_stats_expect(1, 1, 1);
 			if (close(fd)) test_perror("close sole source descriptor");
+			mmap_stats_expect(1, 1, 1);
 			int replacement = create(0);
 			if (replacement != fd) test_fail("closed source fd was not reused");
 			errno = 0;
@@ -87,9 +91,11 @@ int main(void)
 			if (result == -1) test_perror("map replacement before child exit");
 			unsigned char *bytes = (void *)(uintptr_t)result;
 			content(bytes, page);
+			mmap_stats_expect(1, 1, 2);
 			if (kill(pid, SIGKILL)) test_perror("kill reader without external source fd");
 			int status;
 			if (waitpid(pid, &status, 0) != pid) test_perror("reap last-fd reader");
+			mmap_stats_wait(0, 0, 1);
 			if (!WIFSIGNALED(status) || WTERMSIG(status) != SIGKILL)
 				test_fail("last-fd reader did not exit through SIGKILL");
 			if (atomic_load(&request->returned)) test_fail("killed last-fd request returned to callback");
@@ -107,6 +113,7 @@ int main(void)
 			if (after[0] != 11) test_fail("replacement private copies alias");
 			if (munmap(bytes, page) || munmap(after, page) || close(replacement))
 				test_perror("last-fd recovery cleanup");
+			mmap_stats_wait(0, 0, 0);
 		}
 	}
 	for (size_t i = 0; i < sizeof(requests) / sizeof(requests[0]); i++)

@@ -9,6 +9,7 @@
 #include <sys/mman.h>
 #include <sys/wait.h>
 #include <unistd.h>
+#include "mmap-vfs-stats.h"
 
 /* Private fixture slots only; clone uses the existing callback convention. */
 #define FILE_CREATE_TEST_NR 254
@@ -59,6 +60,7 @@ static void check_mapping(int fd, size_t page)
 
 int main(void)
 {
+	mmap_stats_start();
 	const size_t stack_size = 64 * 1024;
 	size_t page = (size_t)sysconf(_SC_PAGESIZE);
 	char *stack = malloc(stack_size);
@@ -82,11 +84,13 @@ int main(void)
 				CLONE_VM | SIGCHLD, request);
 			if (pid == -1) test_perror("clone doomed reader");
 			if (ioctl(fd, WAIT_ENTERED, 0UL)) test_perror("wait exit read barrier");
+			mmap_stats_expect(1, 1, 1);
 			if (kill(pid, SIGKILL)) test_perror("kill blocked reader");
 			/* No PROCEED before waitpid: only fatal signal delivery can end
 			 * the pending read. The runner's watchdog bounds stuck exits. */
 			int status;
 			if (waitpid(pid, &status, 0) != pid) test_perror("reap killed reader");
+			mmap_stats_wait(0, 0, 1);
 			if (!WIFSIGNALED(status) || WTERMSIG(status) != SIGKILL)
 				test_fail("blocked reader did not exit through SIGKILL");
 			if (atomic_load(&request->returned)) test_fail("killed read returned to user callback");
@@ -107,6 +111,7 @@ int main(void)
 			int recovery = create(0);
 			check_mapping(recovery, page);
 			if (close(recovery)) test_perror("close exit recovery fixture");
+			mmap_stats_wait(0, 0, 0);
 		}
 	}
 	for (size_t i = 0; i < sizeof(requests) / sizeof(requests[0]); i++)
