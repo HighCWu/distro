@@ -62,7 +62,11 @@ publication, concurrent copies, fd reuse and survival after source unmount.
 The browser watchdog bounds execution; a delayed boot is closed if it completes
 after the timeout. These suites do not enable test features in the ordinary
 browser checks and do not prove safety of cancellation during actual device I/O.
-Standard file mmap remains unsupported. Initial browser CI results are pending.
+Standard file mmap remains unsupported. The initial four-engine/profile CI
+matrix passed after the harness formatting correction. Separate Node
+`mmap-benchmark[-wasm64]-check-erofs-errors` checks test real read failures from
+an intentionally out-of-range EROFS data address; those are not yet included in
+the browser suite.
 
 The engine versions are pinned by nixpkgs and the matching Playwright driver.
 No experimental browser feature flags are set by this suite; a pass does not
