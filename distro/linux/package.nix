@@ -12,8 +12,8 @@
   src ? pkgs.fetchFromGitHub {
     owner = "HighCWu";
     repo = "linux";
-    rev = "2ee52fc40fe2f99d33f3cf1b4ff1b5601fe75f8b";
-    hash = "sha256-UgQIyrPVX5I8M5wybxXud/nZ5yaBH6sgQYQWETkqB0w=";
+    rev = "83df39cb39375ac0e017a804c20cbfc3ef7e5e20";
+    hash = "sha256-z8LRscnYmaMIOXp02N+Rnpmq1/+algI0et59+H5IV+A=";
   },
 }:
 
