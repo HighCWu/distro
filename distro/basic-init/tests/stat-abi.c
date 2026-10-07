@@ -81,6 +81,28 @@ int main(void)
 	errno = 0;
 	if (fstat(-1, &actual) != -1 || errno != EBADF)
 		test_fail("invalid fd did not return EBADF");
+	const struct timespec path_times[2] = {
+		{ .tv_sec = 2200000003LL, .tv_nsec = 234567891 },
+		{ .tv_sec = 0, .tv_nsec = UTIME_OMIT },
+	};
+	if (utimensat(dir, "hard", path_times, 0))
+		test_perror("utimensat relative path with omitted mtime");
+	if (fstat(fd, &actual)) test_perror("fstat after path timestamp update");
+	if (actual.st_atim.tv_sec != path_times[0].tv_sec ||
+	    actual.st_atim.tv_nsec != path_times[0].tv_nsec ||
+	    actual.st_mtim.tv_sec != expected.st_mtim.tv_sec ||
+	    actual.st_mtim.tv_nsec != expected.st_mtim.tv_nsec)
+		test_fail("path timestamp update lost time64 or UTIME_OMIT");
+	const struct timespec invalid_times[2] = {
+		{ .tv_sec = 2200000004LL, .tv_nsec = 1000000000 },
+		{ .tv_sec = 0, .tv_nsec = UTIME_OMIT },
+	};
+	errno = 0;
+	if (futimens(fd, invalid_times) != -1 || errno != EINVAL)
+		test_fail("invalid timestamp nanoseconds did not return EINVAL");
+	struct stat after_invalid;
+	if (fstat(fd, &after_invalid)) test_perror("fstat after rejected timestamp");
+	same_metadata(&actual, &after_invalid);
 	if (unlinkat(dir, "file", 0)) test_perror("unlink first hard link");
 	if (fstat(fd, &actual)) test_perror("fstat one remaining link");
 	if (actual.st_nlink != 1 || actual.st_ino != expected.st_ino)
