@@ -2,11 +2,13 @@
 #define _GNU_SOURCE
 #include "test.h"
 #include <fcntl.h>
+#include <pthread.h>
 #include <stdint.h>
 #include <sys/mman.h>
 #include <sys/mount.h>
 #include <sys/stat.h>
 #include <unistd.h>
+#include "mmap-vfs-stats.h"
 
 /* Private test-kernel slot; not mmap UAPI or an SDK interface. */
 #define FILE_READ_TEST_NR 255
@@ -22,6 +24,7 @@ static void rejected(int fd, size_t length, uint64_t offset, int expected)
 	errno = 0;
 	if (read_mapping(fd, length, offset) != -1 || errno != expected)
 		test_fail("EROFS test mapping refusal mismatch");
+	mmap_stats_expect(0, 0, 0);
 }
 
 static unsigned char *mapped(int fd, size_t length, uint64_t offset)
@@ -41,8 +44,76 @@ static void check_bytes(const unsigned char *bytes, size_t rounded,
 	}
 }
 
+#define READERS 4
+#define ROUNDS 8
+
+struct reader {
+	int fd;
+	unsigned int index;
+	size_t page;
+	pthread_barrier_t *barrier;
+};
+
+static void rendezvous(pthread_barrier_t *barrier)
+{
+	int result = pthread_barrier_wait(barrier);
+	if (result && result != PTHREAD_BARRIER_SERIAL_THREAD)
+		test_fail("EROFS reader barrier");
+}
+
+static void *concurrent_reader(void *arg)
+{
+	struct reader *reader = arg;
+	size_t page = reader->page;
+	for (int round = 0; round < ROUNDS; round++) {
+		/* Synchronize before each batch, not inside kernel_read. This does
+		 * not claim deterministic overlap of real device I/O. */
+		rendezvous(reader->barrier);
+		unsigned char *bytes = mapped(reader->fd, 2 * page, page);
+		rendezvous(reader->barrier);
+		check_bytes(bytes, 2 * page, page, 2 * page + 7);
+		/* All copies must exist and be checked before any is modified. */
+		rendezvous(reader->barrier);
+		bytes[0] = (unsigned char)(0x80 + reader->index);
+		rendezvous(reader->barrier);
+		if (bytes[0] != (unsigned char)(0x80 + reader->index))
+			test_fail("concurrent EROFS copies alias");
+		check_bytes(bytes + 1, 2 * page - 1, page + 1, 2 * page + 7);
+		/* No thread unmaps until every thread finishes reading its copy. */
+		rendezvous(reader->barrier);
+		if (munmap(bytes, 2 * page)) test_perror("concurrent EROFS unmap");
+		rendezvous(reader->barrier);
+	}
+	return NULL;
+}
+
+static void concurrent_copies(int fd, size_t page)
+{
+	pthread_barrier_t barrier;
+	pthread_t threads[READERS];
+	struct reader readers[READERS];
+	if (pthread_barrier_init(&barrier, NULL, READERS))
+		test_fail("initialize EROFS reader barrier");
+	for (unsigned int i = 0; i < READERS; i++) {
+		readers[i] = (struct reader){ fd, i, page, &barrier };
+		if (pthread_create(&threads[i], NULL, concurrent_reader, &readers[i]))
+			test_fail("start EROFS reader");
+	}
+	for (unsigned int i = 0; i < READERS; i++)
+		if (pthread_join(threads[i], NULL)) test_fail("join EROFS reader");
+	if (pthread_barrier_destroy(&barrier)) test_fail("destroy EROFS reader barrier");
+	/* Gauge selectors are separate reads: query only after all requests end.
+	 * File gauge counts controlled anon-inodes, not real EROFS file objects. */
+	mmap_stats_wait(0, 0, 0);
+	if (lseek(fd, 0, SEEK_CUR) != 23) test_fail("concurrent reads changed file position");
+	unsigned char original;
+	if (pread(fd, &original, 1, page) != 1 || original != 11)
+		test_fail("concurrent private copies wrote back to EROFS");
+}
+
 int main(void)
 {
+	mmap_stats_start();
 	size_t page = (size_t)sysconf(_SC_PAGESIZE);
 	if (page != 65536) test_fail("unexpected EROFS test page size");
 	if (mkdir("/dev", 0755) && errno != EEXIST) test_perror("mkdir dev");
@@ -81,6 +152,7 @@ int main(void)
 	if (lseek(fd, 23, SEEK_SET) != 23) test_perror("set EROFS file position");
 	unsigned char *full = mapped(fd, 2 * page, page);
 	unsigned char *tail = mapped(fd, 1, 2 * page);
+	mmap_stats_expect(0, 0, 0);
 	if (lseek(fd, 0, SEEK_CUR) != 23) test_fail("mapping read changed EROFS file position");
 	check_bytes(full, 2 * page, page, 2 * page + 7);
 	check_bytes(tail, page, 2 * page, 2 * page + 7);
@@ -92,6 +164,10 @@ int main(void)
 	if (pread(fd, &original, 1, page) != 1 || original != 11)
 		test_fail("private copy wrote back to EROFS source");
 	full[0] ^= 0xff;
+	concurrent_copies(fd, page);
+	check_bytes(full, 2 * page, page, 2 * page + 7);
+	check_bytes(tail, page, 2 * page, 2 * page + 7);
+	check_bytes(fresh, page, page, 2 * page + 7);
 	if (close(fd)) test_perror("close EROFS source");
 	int replacement = open("/ordinary/pattern", O_RDONLY);
 	if (replacement != fd) test_fail("EROFS source fd was not reused");
@@ -105,5 +181,6 @@ int main(void)
 	check_bytes(fresh, page, page, 2 * page + 7);
 	if (munmap(full, 2 * page) || munmap(tail, page) || munmap(fresh, page))
 		test_perror("unmap EROFS private copies");
+	mmap_stats_wait(0, 0, 0);
 	test_pass();
 }

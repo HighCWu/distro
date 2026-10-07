@@ -205,6 +205,7 @@ pkgs.runCommand "mmap-benchmark-artifacts-${platform.wasmArch}"
     passthru.checks.erofs = vm-test-copy.rawInitramfsTest {
       name = "mmap-erofs-${platform.wasmArch}";
       init = "${executables}/erofs.wasm";
+      cpus = 4;
       disks = [
         provenanceImage
         provenanceImage
