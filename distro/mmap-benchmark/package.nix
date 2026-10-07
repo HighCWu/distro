@@ -39,6 +39,7 @@ let
         clang ${compileFlags} -Wl,--export=__wasm_mmap_init_v1 ${../basic-init/tests/mmap-vfs-restart.c} -o $out/vfs-restart.wasm
         clang ${compileFlags} -Wl,--export=__wasm_mmap_init_v1 ${../basic-init/tests/mmap-vfs-clone.c} -o $out/vfs-clone.wasm
         clang ${compileFlags} -Wl,--export=__wasm_mmap_init_v1 ${../basic-init/tests/mmap-vfs-exit.c} -o $out/vfs-exit.wasm
+        clang ${compileFlags} -Wl,--export=__wasm_mmap_init_v1 ${../basic-init/tests/mmap-vfs-last-fd.c} -o $out/vfs-last-fd.wasm
         clang ${compileFlags} ${../basic-init/tests/mmap-provenance.c} -o $out/provenance.wasm
         clang ${compileFlags} -Wl,--export=__wasm_mmap_init_v1 ${../basic-init/tests/mmap-erofs.c} -o $out/erofs.wasm
         clang ${compileFlags} ${../basic-init/tests/mmap-benchmark.c} -o $out/benchmark.wasm
@@ -158,6 +159,11 @@ pkgs.runCommand "mmap-benchmark-artifacts-${platform.wasmArch}"
     passthru.checks.vfs-exit = vm-test-copy.rawInitramfsTest {
       name = "mmap-vfs-exit-${platform.wasmArch}";
       init = "${executables}/vfs-exit.wasm";
+      cpus = 2;
+    };
+    passthru.checks.vfs-last-fd = vm-test-copy.rawInitramfsTest {
+      name = "mmap-vfs-last-fd-${platform.wasmArch}";
+      init = "${executables}/vfs-last-fd.wasm";
       cpus = 2;
     };
     passthru.checks.erofs = vm-test-copy.rawInitramfsTest {
