@@ -70,6 +70,13 @@ let
 in
 pkgs.runCommand "mmap-benchmark-artifacts-${platform.wasmArch}"
   {
+    passthru.erofsBrowserAssets = {
+      initramfs = image.mkInitramfs {
+        name = "mmap-erofs-browser-${platform.wasmArch}";
+        init = "${executables}/erofs.wasm";
+      };
+      disk = provenanceImage;
+    };
     passthru.checks.correctness = vm-test.rawInitramfsTest {
       name = "mmap-correctness-${platform.wasmArch}";
       init = "${executables}/correctness.wasm";

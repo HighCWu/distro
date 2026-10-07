@@ -5,6 +5,10 @@
   lib,
   kernel,
   kernel-wasm64,
+  linux,
+  linux-wasm64,
+  mmap-benchmark,
+  mmap-benchmark-wasm64,
   linux-guest,
   pkgs,
   playwright,
@@ -62,6 +66,7 @@ let
     checks = lib.optionalAttrs pkgs.stdenv.hostPlatform.isLinux (
       (lib.genAttrs projects check)
       // (lib.genAttrs memory64Projects memory64Check)
+      // (lib.genAttrs erofsProjects erofsCheck)
       // {
         site-live = siteCheck;
         service-worker = serviceWorkerCheck;
@@ -94,6 +99,47 @@ let
       name = "browser-tests-${name}";
       suite = memory64Suite;
       project = lib.removePrefix "memory64-" name;
+    };
+
+  erofsProjects = [
+    "erofs-wasm32-chromium"
+    "erofs-wasm32-firefox"
+    "erofs-wasm64-chromium"
+    "erofs-wasm64-firefox"
+  ];
+
+  erofsSuite =
+    bits:
+    let
+      assets = (if bits == 32 then mmap-benchmark else mmap-benchmark-wasm64).erofsBrowserAssets;
+      testKernel = (if bits == 32 then kernel else kernel-wasm64).override {
+        linux = (if bits == 32 then linux else linux-wasm64).override { mmapCopyTest = true; };
+      };
+    in
+    pkgs.runCommand "erofs-wasm${toString bits}-browser-tests" { } ''
+      mkdir -p $out/node_modules/@lowland/bytes $out/node_modules/@lowland/kernel $out/tests
+      ${playwright.linkRuntime "$out"}
+      cp ${source}/erofs-app.js $out/app.js
+      cp ${source}/memory64-index.html $out/index.html
+      cp ${source}/playwright.config.js $out/playwright.config.js
+      cp ${source}/server.js $out/server.js
+      cp ${source}/erofs-tests/erofs.spec.js $out/tests/
+      cp ${../vm-test/protocol.js} $out/protocol.js
+      cp ${assets.initramfs} $out/erofs.cpio
+      cp ${assets.disk} $out/erofs.img
+      cp -r ${bytes}/. $out/node_modules/@lowland/bytes/
+      cp -r ${testKernel}/. $out/node_modules/@lowland/kernel/
+    '';
+
+  erofsCheck =
+    name:
+    let
+      bits = if lib.hasInfix "wasm64" name then 64 else 32;
+    in
+    playwright.mkCheck {
+      name = "browser-tests-${name}";
+      suite = erofsSuite bits;
+      project = if lib.hasSuffix "chromium" name then "chromium" else "firefox";
     };
 
   siteSuite = pkgs.runCommand "site-browser-tests" { } ''
