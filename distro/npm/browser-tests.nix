@@ -127,6 +127,8 @@ let
       cp ${../vm-test/protocol.js} $out/protocol.js
       cp ${assets.initramfs} $out/erofs.cpio
       cp ${assets.disk} $out/erofs.img
+      cp ${assets.errors.initramfs} $out/erofs-errors.cpio
+      cp ${assets.errors.disk} $out/erofs-errors.img
       cp -r ${bytes}/. $out/node_modules/@lowland/bytes/
       cp -r ${testKernel}/. $out/node_modules/@lowland/kernel/
     '';

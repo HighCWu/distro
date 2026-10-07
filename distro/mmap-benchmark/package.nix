@@ -85,6 +85,13 @@ pkgs.runCommand "mmap-benchmark-artifacts-${platform.wasmArch}"
         init = "${executables}/erofs.wasm";
       };
       disk = provenanceImage;
+      errors = {
+        initramfs = image.mkInitramfs {
+          name = "mmap-erofs-errors-browser-${platform.wasmArch}";
+          init = "${executables}/erofs-errors.wasm";
+        };
+        disk = readErrorImage;
+      };
     };
     passthru.checks.correctness = vm-test.rawInitramfsTest {
       name = "mmap-correctness-${platform.wasmArch}";

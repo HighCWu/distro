@@ -9,7 +9,10 @@ async function load(path) {
   return new Uint8Array(await response.arrayBuffer());
 }
 
-globalThis.runErofsCopies = async () => {
+globalThis.runErofsCopies = async (scenario = "copies") => {
+  if (scenario !== "copies" && scenario !== "errors")
+    throw new RangeError("unknown EROFS test scenario");
+  const asset = scenario === "errors" ? "erofs-errors" : "erofs";
   let machine;
   let finished = false;
   let timeout;
@@ -50,7 +53,10 @@ globalThis.runErofsCopies = async () => {
   try {
     await Promise.race([
       (async () => {
-        const [initcpio, image] = await Promise.all([load("/erofs.cpio"), load("/erofs.img")]);
+        const [initcpio, image] = await Promise.all([
+          load(`/${asset}.cpio`),
+          load(`/${asset}.img`),
+        ]);
         if (finished) return;
         const input = new TransformStream();
         const ordinary = blockDevice({
@@ -68,7 +74,7 @@ globalThis.runErofsCopies = async () => {
             consoleDevice(input.readable, consoleOutput()),
             entropyDevice(),
             snapshot_block_device(image),
-            ordinary,
+            ...(scenario === "copies" ? [ordinary] : []),
           ],
         });
         // A boot that finishes after the watchdog must not leak its Workers.
@@ -105,5 +111,5 @@ globalThis.runErofsCopies = async () => {
       }
     }
   }
-  return { passed: true, output, machineClosed: true };
+  return { scenario, passed: true, output, machineClosed: true };
 };
