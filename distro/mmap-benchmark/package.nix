@@ -71,6 +71,9 @@ let
   readErrorImage =
     pkgs.runCommand "mmap-erofs-read-error.img" { nativeBuildInputs = [ pkgs.python3 ]; }
       ''
+        cp ${../../scripts/make-erofs-read-error.py} make-erofs-read-error.py
+        cp ${../../scripts/test_erofs_read_error.py} test_erofs_read_error.py
+        python3 -B test_erofs_read_error.py
         python3 ${../../scripts/make-erofs-read-error.py} "$out"
       '';
 in

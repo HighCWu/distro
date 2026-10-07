@@ -11,9 +11,23 @@
 
 extern long __wasm_mmap_init_v1(size_t, size_t);
 
-static long mapping(int fd, size_t page)
+static long mapping(int fd, size_t length)
 {
-	return syscall(255, (unsigned long)fd, (unsigned long)page, 0UL, 0UL);
+	return syscall(255, (unsigned long)fd, (unsigned long)length, 0UL, 0UL);
+}
+
+static void failed_mapping(int fd, size_t length, size_t page,
+		const unsigned char *sentinel)
+{
+	errno = 0;
+	if (mapping(fd, length) != -1 || errno != EIO)
+		test_fail("real EROFS read error did not propagate as EIO");
+	mmap_stats_expect(0, 0, 0);
+	if (__wasm_mmap_init_v1(page, 0) != -EPERM)
+		test_fail("failed real read retained copy authorization");
+	if (lseek(fd, 0, SEEK_CUR) != 23) test_fail("failed read changed file position");
+	for (size_t i = 0; i < page; i++)
+		if (sentinel[i] != 0x5a) test_fail("failed read damaged live mapping");
 }
 
 int main(void)
@@ -29,26 +43,41 @@ int main(void)
 		test_perror("mount error snapshot");
 	int bad = open("/snapshot/bad", O_RDONLY);
 	int good = open("/snapshot/good", O_RDONLY);
-	if (bad < 0 || good < 0) test_perror("open error snapshot files");
+	int partial = open("/snapshot/partial", O_RDONLY);
+	if (bad < 0 || good < 0 || partial < 0) test_perror("open error snapshot files");
 	struct stat stat;
 	if (fstat(bad, &stat) || !S_ISREG(stat.st_mode) || stat.st_size != (off_t)page)
 		test_fail("invalid readable metadata for bad file");
 	if (syscall(256, (unsigned long)bad) != 1) test_fail("bad source not a snapshot");
-	if (lseek(bad, 23, SEEK_SET) != 23) test_perror("set bad source position");
+	if (fstat(partial, &stat) || !S_ISREG(stat.st_mode) || stat.st_size != (off_t)(2 * page))
+		test_fail("invalid readable metadata for partial file");
+	if (syscall(256, (unsigned long)partial) != 1) test_fail("partial source not a snapshot");
+	if (lseek(bad, 23, SEEK_SET) != 23 || lseek(partial, 23, SEEK_SET) != 23)
+		test_perror("set error source position");
 	unsigned char *sentinel = mmap(0, page, PROT_READ | PROT_WRITE,
 		MAP_PRIVATE | MAP_ANONYMOUS, -1, 0);
 	if (sentinel == MAP_FAILED) test_perror("error sentinel mmap");
 	memset(sentinel, 0x5a, page);
+	unsigned char *prefix = mmap(0, 2 * page, PROT_READ | PROT_WRITE,
+		MAP_PRIVATE | MAP_ANONYMOUS, -1, 0);
+	if (prefix == MAP_FAILED) test_perror("partial read buffer mmap");
+	memset(prefix, 0xa5, 2 * page);
+	/* Establish real buffered-read progress and warm the valid first page.
+	 * No private fixture mode forces this return value. */
+	if (pread(partial, prefix, 2 * page, 0) != (ssize_t)page)
+		test_fail("partial EROFS pread did not return exactly the valid prefix");
+	for (size_t i = 0; i < page; i++) {
+		if (prefix[i] != (unsigned char)(i * 37 + 11) || prefix[page + i] != 0xa5)
+			test_fail("partial pread content or untouched tail mismatch");
+	}
+	unsigned char byte;
+	errno = 0;
+	if (pread(partial, &byte, 1, (off_t)page) != -1 || errno != EIO)
+		test_fail("partial file second page did not return EIO");
+	if (lseek(partial, 0, SEEK_CUR) != 23) test_fail("partial pread changed file position");
 	for (int round = 0; round < 8; round++) {
-		errno = 0;
-		if (mapping(bad, page) != -1 || errno != EIO)
-			test_fail("real EROFS read error did not propagate as EIO");
-		mmap_stats_expect(0, 0, 0);
-		if (__wasm_mmap_init_v1(page, 0) != -EPERM)
-			test_fail("failed real read retained copy authorization");
-		if (lseek(bad, 0, SEEK_CUR) != 23) test_fail("failed read changed file position");
-		for (size_t i = 0; i < page; i++)
-			if (sentinel[i] != 0x5a) test_fail("failed read damaged live mapping");
+		failed_mapping(bad, page, page, sentinel);
+		failed_mapping(partial, 2 * page, page, sentinel);
 		long result = mapping(good, page);
 		if (result == -1) test_perror("healthy read after real EIO");
 		unsigned char *bytes = (void *)(uintptr_t)result;
@@ -58,11 +87,11 @@ int main(void)
 		if (munmap(bytes, page)) test_perror("healthy recovery unmap");
 		mmap_stats_expect(0, 0, 0);
 	}
-	unsigned char byte;
 	errno = 0;
 	if (pread(bad, &byte, 1, 0) != -1 || errno != EIO)
 		test_fail("ordinary pread did not observe bad file EIO");
-	if (close(bad) || close(good) || umount("/snapshot") || munmap(sentinel, page))
+	if (close(bad) || close(good) || close(partial) || umount("/snapshot") ||
+	    munmap(sentinel, page) || munmap(prefix, 2 * page))
 		test_perror("error snapshot cleanup");
 	mmap_stats_wait(0, 0, 0);
 	test_pass();
