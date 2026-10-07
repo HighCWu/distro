@@ -64,6 +64,12 @@ int main(void)
 			/* No sleeps: the kernel signals only after the mapping request
 			 * owns its file reference and staging, and reaches read_iter. */
 			if (ioctl(control, WAIT_ENTERED, 0UL)) test_perror("wait for read barrier");
+			unsigned char *temporary = mmap(0, page, PROT_READ | PROT_WRITE,
+				MAP_PRIVATE | MAP_ANONYMOUS, -1, 0);
+			if (temporary == MAP_FAILED) test_perror("anonymous allocation during read");
+			temporary[0] = 0x5a;
+			temporary[page - 1] = 0xa5;
+			if (munmap(temporary, page)) test_perror("anonymous unmap during read");
 			if (close(fd)) test_perror("close in-flight source fd");
 			/* Opposite outcome makes accidental re-lookup of the reused fd
 			 * detectable: EINTR source for success, healthy source for EIO. */
