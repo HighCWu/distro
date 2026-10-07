@@ -42,6 +42,7 @@ let
         clang ${compileFlags} -Wl,--export=__wasm_mmap_init_v1 ${../basic-init/tests/mmap-vfs-last-fd.c} -o $out/vfs-last-fd.wasm
         clang ${compileFlags} ${../basic-init/tests/mmap-provenance.c} -o $out/provenance.wasm
         clang ${compileFlags} -Wl,--export=__wasm_mmap_init_v1 ${../basic-init/tests/mmap-erofs.c} -o $out/erofs.wasm
+        clang ${compileFlags} -Wl,--export=__wasm_mmap_init_v1 ${../basic-init/tests/mmap-erofs-errors.c} -o $out/erofs-errors.wasm
         clang ${compileFlags} ${../basic-init/tests/mmap-benchmark.c} -o $out/benchmark.wasm
         chmod 0755 $out/*.wasm
       '';
@@ -66,6 +67,11 @@ let
         printf 'snapshot-provenance\n' > root/data
         python3 -c 'from pathlib import Path; Path("root/pattern").write_bytes(bytes((i * 37 + 11) & 255 for i in range(2 * 65536 + 7))); Path("root/empty").touch()'
         mkfs.erofs --all-root -T 0 -x-1 "$out" root
+      '';
+  readErrorImage =
+    pkgs.runCommand "mmap-erofs-read-error.img" { nativeBuildInputs = [ pkgs.python3 ]; }
+      ''
+        python3 ${../../scripts/make-erofs-read-error.py} "$out"
       '';
 in
 pkgs.runCommand "mmap-benchmark-artifacts-${platform.wasmArch}"
@@ -217,6 +223,13 @@ pkgs.runCommand "mmap-benchmark-artifacts-${platform.wasmArch}"
         provenanceImage
         provenanceImage
       ];
+      snapshotFirstDisk = true;
+      readOnlyDisks = true;
+    };
+    passthru.checks.erofs-errors = vm-test-copy.rawInitramfsTest {
+      name = "mmap-erofs-errors-${platform.wasmArch}";
+      init = "${executables}/erofs-errors.wasm";
+      disks = [ readErrorImage ];
       snapshotFirstDisk = true;
       readOnlyDisks = true;
     };
