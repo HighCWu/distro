@@ -46,10 +46,16 @@ int main(void)
 	int partial = open("/snapshot/partial", O_RDONLY);
 	if (bad < 0 || good < 0 || partial < 0) test_perror("open error snapshot files");
 	struct stat stat;
-	if (fstat(bad, &stat) || !S_ISREG(stat.st_mode) || stat.st_size != (off_t)page)
+	if (fstat(bad, &stat)) test_perror("fstat bad file");
+	if (!S_ISREG(stat.st_mode) || stat.st_size != (off_t)page || stat.st_nlink != 1 ||
+	    stat.st_uid != 0 || stat.st_gid != 0 || stat.st_blksize != 4096 ||
+	    stat.st_blocks != (blkcnt_t)(page / 512))
 		test_fail("invalid readable metadata for bad file");
 	if (syscall(256, (unsigned long)bad) != 1) test_fail("bad source not a snapshot");
-	if (fstat(partial, &stat) || !S_ISREG(stat.st_mode) || stat.st_size != (off_t)(2 * page))
+	if (fstat(partial, &stat)) test_perror("fstat partial file");
+	if (!S_ISREG(stat.st_mode) || stat.st_size != (off_t)(2 * page) ||
+	    stat.st_nlink != 1 || stat.st_blksize != 4096 ||
+	    stat.st_blocks != (blkcnt_t)(2 * page / 512))
 		test_fail("invalid readable metadata for partial file");
 	if (syscall(256, (unsigned long)partial) != 1) test_fail("partial source not a snapshot");
 	if (lseek(bad, 23, SEEK_SET) != 23 || lseek(partial, 23, SEEK_SET) != 23)
