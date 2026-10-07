@@ -8,8 +8,8 @@
   src ? pkgs.fetchFromGitHub {
     owner = "HighCWu";
     repo = "musl";
-    rev = "7c45461e5f34ad629a3bed0314b66d6a42c19d86";
-    hash = "sha256-FWmU3PzUjKz+3QYgQMJdw9UTu4TWYHZvJX8yngQGk0g=";
+    rev = "1a4641256199a515f580375b94cbf5e960337243";
+    hash = "sha256-I9DmTmLFNa53xkKpVuW/O/u/LQ03qixDYIZiAbwFYC8=";
   },
 }:
 
