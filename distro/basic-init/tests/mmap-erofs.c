@@ -3,10 +3,13 @@
 #include "test.h"
 #include <fcntl.h>
 #include <pthread.h>
+#include <signal.h>
 #include <stdint.h>
+#include <stdlib.h>
 #include <sys/mman.h>
 #include <sys/mount.h>
 #include <sys/stat.h>
+#include <sys/wait.h>
 #include <unistd.h>
 #include "mmap-vfs-stats.h"
 
@@ -46,6 +49,93 @@ static void check_bytes(const unsigned char *bytes, size_t rounded,
 
 #define READERS 4
 #define ROUNDS 8
+
+struct child_copies {
+	unsigned char *full, *tail, *fresh;
+	size_t page;
+	int source, ready[2], hold[2];
+	int fatal;
+};
+
+static int copy_child(void *opaque)
+{
+	struct child_copies *copies = opaque;
+	size_t page = copies->page;
+	if (close(copies->ready[0]) || close(copies->hold[1]) || close(copies->source))
+		return 1;
+	check_bytes(copies->full, 2 * page, page, 2 * page + 7);
+	check_bytes(copies->tail, page, 2 * page, 2 * page + 7);
+	check_bytes(copies->fresh, page, page, 2 * page + 7);
+	copies->full[0] ^= 0xff;
+	copies->tail[0] ^= 0xff;
+	copies->fresh[0] ^= 0xff;
+	if (munmap(copies->full, 2 * page) || munmap(copies->tail, page) ||
+	    munmap(copies->fresh, page)) return 2;
+	int fd = open("/snapshot/pattern", O_RDONLY);
+	if (fd < 0) return 3;
+	long result = read_mapping(fd, 2 * page, page);
+	if (result == -1 || close(fd)) return 4;
+	unsigned char *bytes = (void *)(uintptr_t)result;
+	check_bytes(bytes, 2 * page, page, 2 * page + 7);
+	bytes[0] = 0xa5;
+	/* Normal exit cleans explicitly; fatal exit intentionally leaves a
+	 * published user mapping to the private-mm teardown path. */
+	if (!copies->fatal && munmap(bytes, 2 * page)) return 5;
+	char marker = 'R';
+	if (write(copies->ready[1], &marker, 1) != 1) return 6;
+	if (copies->fatal) {
+		/* SIGKILL happens after publication, while waiting on this pipe,
+		 * not during kernel_read or an asynchronous device operation. */
+		(void)read(copies->hold[0], &marker, 1);
+		return 7;
+	}
+	return 0;
+}
+
+static void private_copy_lifetime(int fd, size_t page, unsigned char *full,
+		unsigned char *tail, unsigned char *fresh)
+{
+	const size_t stack_size = 64 * 1024;
+	char *stack = malloc(stack_size);
+	if (!stack) test_perror("allocate EROFS callback stack");
+	/* Run before creating pthreads; join alone is not a proof that shared-mm
+	 * task teardown is complete enough for a private callback snapshot. */
+	for (int fatal = 0; fatal <= 1; fatal++) {
+		for (int round = 0; round < ROUNDS; round++) {
+			struct child_copies copies = {
+				.full = full, .tail = tail, .fresh = fresh,
+				.page = page, .source = fd, .fatal = fatal,
+			};
+			if (pipe(copies.ready) || pipe(copies.hold)) test_perror("EROFS child pipes");
+			pid_t pid = clone(copy_child, stack + stack_size, SIGCHLD, &copies);
+			if (pid < 0) test_perror("clone EROFS private copies");
+			if (close(copies.ready[1]) || close(copies.hold[0]))
+				test_perror("close parent unused pipe ends");
+			char marker;
+			if (read(copies.ready[0], &marker, 1) != 1 || marker != 'R')
+				test_fail("EROFS child did not confirm completed copy");
+			if (fatal && kill(pid, SIGKILL)) test_perror("kill EROFS copy child");
+			int status;
+			if (waitpid(pid, &status, 0) != pid) test_perror("reap EROFS copy child");
+			if (fatal ? (!WIFSIGNALED(status) || WTERMSIG(status) != SIGKILL) :
+			    (!WIFEXITED(status) || WEXITSTATUS(status)))
+				test_fail("EROFS copy child exit mismatch");
+			if (close(copies.ready[0]) || close(copies.hold[1]))
+				test_perror("close parent child pipes");
+			mmap_stats_wait(0, 0, 0);
+			check_bytes(full, 2 * page, page, 2 * page + 7);
+			check_bytes(tail, page, 2 * page, 2 * page + 7);
+			check_bytes(fresh, page, page, 2 * page + 7);
+			if (lseek(fd, 0, SEEK_CUR) != 23)
+				test_fail("EROFS child disturbed parent fd position");
+			unsigned char *recovery = mapped(fd, page, page);
+			check_bytes(recovery, page, page, 2 * page + 7);
+			if (munmap(recovery, page)) test_perror("parent post-child recovery unmap");
+			mmap_stats_expect(0, 0, 0);
+		}
+	}
+	free(stack);
+}
 
 struct reader {
 	int fd;
@@ -164,6 +254,7 @@ int main(void)
 	if (pread(fd, &original, 1, page) != 1 || original != 11)
 		test_fail("private copy wrote back to EROFS source");
 	full[0] ^= 0xff;
+	private_copy_lifetime(fd, page, full, tail, fresh);
 	concurrent_copies(fd, page);
 	check_bytes(full, 2 * page, page, 2 * page + 7);
 	check_bytes(tail, page, 2 * page, 2 * page + 7);
