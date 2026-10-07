@@ -29,6 +29,7 @@ let
         mkdir -p $out
         clang ${compileFlags} ${../basic-init/tests/mmap.c} -o $out/correctness.wasm
         clang ${compileFlags} ${../basic-init/tests/mmap-offsets.c} -o $out/offsets.wasm
+        clang ${compileFlags} ${../basic-init/tests/stat-abi.c} -o $out/stat-abi.wasm
         clang ${compileFlags} ${../basic-init/tests/mmap-initialized.c} -o $out/initialized.wasm
         clang ${compileFlags} -Wl,--export=__wasm_mmap_init_v1 ${../basic-init/tests/mmap-copy.c} -o $out/copy.wasm
         clang ${compileFlags} -Wl,--export=__wasm_mmap_init_v1 ${../basic-init/tests/mmap-staging.c} -o $out/staging.wasm
@@ -101,6 +102,11 @@ pkgs.runCommand "mmap-benchmark-artifacts-${platform.wasmArch}"
     passthru.checks.offsets = vm-test.rawInitramfsTest {
       name = "mmap-offsets-${platform.wasmArch}";
       init = "${executables}/offsets.wasm";
+    };
+    # Ordinary Linux APIs on the default kernel, not the mmap-copy test kernel.
+    passthru.checks.stat = vm-test.rawInitramfsTest {
+      name = "stat-abi-${platform.wasmArch}";
+      init = "${executables}/stat-abi.wasm";
     };
     passthru.checks.initialized = vm-test.rawInitramfsTest {
       name = "mmap-initialized-${platform.wasmArch}";
