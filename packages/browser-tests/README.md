@@ -54,7 +54,10 @@ nix build .#checks.x86_64-linux.browser-tests-check-erofs-wasm64-chromium -L
 nix build .#checks.x86_64-linux.browser-tests-check-erofs-wasm64-firefox -L
 ```
 
-They boot four CPUs with one snapshot disk and one ordinary read-only disk,
+Each check runs two independent boots: the copy-lifecycle scenario uses one
+snapshot disk and one ordinary read-only disk; the read-error scenario uses
+a deliberately damaged snapshot with an out-of-range data address and a file
+with one valid page followed by one invalid page. Both boot four CPUs,
 wait for the C program's pass/fail marker (not just a startup banner), record
 the browser version and require machine shutdown. The program checks source
 admission, content/zero tails, private callback clone, normal/fatal exit after
@@ -62,11 +65,12 @@ publication, concurrent copies, fd reuse and survival after source unmount.
 The browser watchdog bounds execution; a delayed boot is closed if it completes
 after the timeout. These suites do not enable test features in the ordinary
 browser checks and do not prove safety of cancellation during actual device I/O.
-Standard file mmap remains unsupported. The initial four-engine/profile CI
-matrix passed after the harness formatting correction. Separate Node
-`mmap-benchmark[-wasm64]-check-erofs-errors` checks test real read failures from
-an intentionally out-of-range EROFS data address; those are not yet included in
-the browser suite.
+Standard file mmap remains unsupported. The initial copy-only four-engine/profile
+CI matrix passed after the harness formatting correction. The expanded matrix,
+including real EIO, valid-prefix rollback and fstat metadata checks, is pending.
+The same error C program also runs in separate Node
+`mmap-benchmark[-wasm64]-check-erofs-errors` checks. Node and browser results are
+recorded separately; a pass in one host does not establish coverage in the other.
 
 The engine versions are pinned by nixpkgs and the matching Playwright driver.
 No experimental browser feature flags are set by this suite; a pass does not
