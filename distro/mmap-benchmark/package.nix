@@ -34,6 +34,7 @@ let
         clang ${compileFlags} -Wl,--export=__wasm_mmap_init_v1 ${../basic-init/tests/mmap-staging.c} -o $out/staging.wasm
         clang ${compileFlags} ${../basic-init/tests/mmap-staging-legacy.c} -o $out/staging-legacy.wasm
         clang ${compileFlags} -Wl,--export=__wasm_mmap_init_v1 ${../basic-init/tests/mmap-vfs.c} -o $out/vfs.wasm
+        clang ${compileFlags} -Wl,--export=__wasm_mmap_init_v1 ${../basic-init/tests/mmap-vfs-lifetime.c} -o $out/vfs-lifetime.wasm
         clang ${compileFlags} ${../basic-init/tests/mmap-provenance.c} -o $out/provenance.wasm
         clang ${compileFlags} -Wl,--export=__wasm_mmap_init_v1 ${../basic-init/tests/mmap-erofs.c} -o $out/erofs.wasm
         clang ${compileFlags} ${../basic-init/tests/mmap-benchmark.c} -o $out/benchmark.wasm
@@ -86,6 +87,25 @@ pkgs.runCommand "mmap-benchmark-artifacts-${platform.wasmArch}"
       name = "mmap-vfs-${platform.wasmArch}";
       init = "${executables}/vfs.wasm";
     };
+    passthru.checks.vfs-lifetime =
+      pkgs.runCommand "mmap-vfs-lifetime-checks-${platform.wasmArch}"
+        {
+          passthru.ci.heavy = true;
+          lifetime = vm-test-copy.rawInitramfsTest {
+            name = "mmap-vfs-lifetime-${platform.wasmArch}";
+            init = "${executables}/vfs-lifetime.wasm";
+            cpus = 2;
+          };
+          regression = vm-test-copy.rawInitramfsTest {
+            name = "mmap-vfs-${platform.wasmArch}";
+            init = "${executables}/vfs.wasm";
+          };
+        }
+        ''
+          mkdir $out
+          ln -s "$lifetime" $out/lifetime
+          ln -s "$regression" $out/regression
+        '';
     passthru.checks.provenance = vm-test-copy.rawInitramfsTest {
       name = "mmap-provenance-${platform.wasmArch}";
       init = "${executables}/provenance.wasm";
