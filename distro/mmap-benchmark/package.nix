@@ -35,6 +35,7 @@ let
         clang ${compileFlags} ${../basic-init/tests/mmap-staging-legacy.c} -o $out/staging-legacy.wasm
         clang ${compileFlags} -Wl,--export=__wasm_mmap_init_v1 ${../basic-init/tests/mmap-vfs.c} -o $out/vfs.wasm
         clang ${compileFlags} ${../basic-init/tests/mmap-provenance.c} -o $out/provenance.wasm
+        clang ${compileFlags} -Wl,--export=__wasm_mmap_init_v1 ${../basic-init/tests/mmap-erofs.c} -o $out/erofs.wasm
         clang ${compileFlags} ${../basic-init/tests/mmap-benchmark.c} -o $out/benchmark.wasm
         chmod 0755 $out/*.wasm
       '';
@@ -49,11 +50,15 @@ let
   provenanceImage =
     pkgs.runCommand "mmap-provenance.erofs"
       {
-        nativeBuildInputs = [ pkgs.erofs-utils ];
+        nativeBuildInputs = [
+          pkgs.erofs-utils
+          pkgs.python3
+        ];
       }
       ''
         mkdir root
         printf 'snapshot-provenance\n' > root/data
+        python3 -c 'from pathlib import Path; Path("root/pattern").write_bytes(bytes((i * 37 + 11) & 255 for i in range(2 * 65536 + 7))); Path("root/empty").touch()'
         mkfs.erofs --all-root -T 0 -x-1 "$out" root
       '';
 in
@@ -84,6 +89,16 @@ pkgs.runCommand "mmap-benchmark-artifacts-${platform.wasmArch}"
     passthru.checks.provenance = vm-test-copy.rawInitramfsTest {
       name = "mmap-provenance-${platform.wasmArch}";
       init = "${executables}/provenance.wasm";
+      disks = [
+        provenanceImage
+        provenanceImage
+      ];
+      snapshotFirstDisk = true;
+      readOnlyDisks = true;
+    };
+    passthru.checks.erofs = vm-test-copy.rawInitramfsTest {
+      name = "mmap-erofs-${platform.wasmArch}";
+      init = "${executables}/erofs.wasm";
       disks = [
         provenanceImage
         provenanceImage
