@@ -40,9 +40,29 @@ nix build .#checks.x86_64-linux.browser-tests-check-memory64-firefox -L
 These currently check kernel startup through its Linux version banner; they
 do not execute the wasm32 userspace suite or the experimental EROFS initialized
 copy tests. Passing a banner smoke test is not evidence of browser coverage for
-file reads, mapping lifecycle, signals or process teardown. The EROFS tests
-currently run under Node in separate `mmap-benchmark[-wasm64]-check-erofs`
-checks, using an opt-in test kernel. Standard file mmap remains unsupported.
+file reads, mapping lifecycle, signals or process teardown.
+
+## Experimental EROFS copy lifecycle
+
+Independent suites use the opt-in test kernel and the same C test/initramfs
+and EROFS image as the Node `mmap-benchmark[-wasm64]-check-erofs` checks:
+
+```console
+nix build .#checks.x86_64-linux.browser-tests-check-erofs-wasm32-chromium -L
+nix build .#checks.x86_64-linux.browser-tests-check-erofs-wasm32-firefox -L
+nix build .#checks.x86_64-linux.browser-tests-check-erofs-wasm64-chromium -L
+nix build .#checks.x86_64-linux.browser-tests-check-erofs-wasm64-firefox -L
+```
+
+They boot four CPUs with one snapshot disk and one ordinary read-only disk,
+wait for the C program's pass/fail marker (not just a startup banner), record
+the browser version and require machine shutdown. The program checks source
+admission, content/zero tails, private callback clone, normal/fatal exit after
+publication, concurrent copies, fd reuse and survival after source unmount.
+The browser watchdog bounds execution; a delayed boot is closed if it completes
+after the timeout. These suites do not enable test features in the ordinary
+browser checks and do not prove safety of cancellation during actual device I/O.
+Standard file mmap remains unsupported. Initial browser CI results are pending.
 
 The engine versions are pinned by nixpkgs and the matching Playwright driver.
 No experimental browser feature flags are set by this suite; a pass does not
