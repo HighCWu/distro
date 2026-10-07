@@ -24,9 +24,29 @@ The generic check discovery in `checks.nix` exposes these checks and the
 generic CI build matrix runs them. There is no separate browser-test app or CI
 job.
 
-The suite is a boot smoke test: `guestAgent` + `bootMachine` → `exec uname` → clean
-`machine.closed`, once per engine. It catches SAB/COOP/COEP/worker/
-module-loading regressions that only show up on a real browser engine.
+The wasm32 suite covers packaged runtime boot, `uname`, clean shutdown,
+Worker scheduler handoff, spawn, private-memory snapshots, OPFS storage and
+virtio-fs. It catches SAB/COOP/COEP/Worker/module-loading regressions that only
+show up on a real browser engine. Site/service-worker integration checks are
+separate checks rather than part of every engine's suite.
+
+Memory64 has separate Chromium and Firefox checks:
+
+```console
+nix build .#checks.x86_64-linux.browser-tests-check-memory64-chromium -L
+nix build .#checks.x86_64-linux.browser-tests-check-memory64-firefox -L
+```
+
+These currently check kernel startup through its Linux version banner; they
+do not execute the wasm32 userspace suite or the experimental EROFS initialized
+copy tests. Passing a banner smoke test is not evidence of browser coverage for
+file reads, mapping lifecycle, signals or process teardown. The EROFS tests
+currently run under Node in separate `mmap-benchmark[-wasm64]-check-erofs`
+checks, using an opt-in test kernel. Standard file mmap remains unsupported.
+
+The engine versions are pinned by nixpkgs and the matching Playwright driver.
+No experimental browser feature flags are set by this suite; a pass does not
+establish compatibility with every browser vendor's latest distribution.
 
 ## Headless graphics
 
