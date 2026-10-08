@@ -8,7 +8,10 @@
 struct fixture {
 	pthread_mutex_t mutex;
 	pthread_cond_t cond;
+	pthread_cond_t handshake;
+	clockid_t clock;
 	int ready;
+	int cleanup_count;
 };
 
 static void checked(int status, const char *operation)
@@ -33,9 +36,62 @@ static void owns_mutex(struct fixture *fixture)
 	checked(pthread_mutex_lock(&fixture->mutex), "relock after ownership check");
 }
 
+static void cancellation_cleanup(void *argument)
+{
+	struct fixture *fixture = argument;
+	fixture->cleanup_count++;
+	checked(pthread_mutex_unlock(&fixture->mutex), "cancel cleanup did not own mutex");
+}
+
+static void *cancel_waiter(void *argument)
+{
+	struct fixture *fixture = argument;
+	checked(pthread_setcanceltype(PTHREAD_CANCEL_DEFERRED, NULL), "deferred cancellation");
+	checked(pthread_mutex_lock(&fixture->mutex), "cancel worker mutex lock");
+	struct timespec future;
+	if (clock_gettime(fixture->clock, &future)) test_perror("cancel condition deadline");
+	if (future.tv_sec > 6000000000LL) test_fail("clock too large for cancel fixture");
+	future.tv_sec += 3000000000LL;
+	pthread_cleanup_push(cancellation_cleanup, fixture);
+	fixture->ready = 1;
+	checked(pthread_cond_signal(&fixture->handshake), "cancel worker handshake");
+	/* There is no producer for cond in this phase. Spurious wakes are legal;
+	 * the only expected way out is deferred cancellation and cleanup. */
+	for (;;)
+		checked(pthread_cond_timedwait(&fixture->cond, &fixture->mutex, &future),
+			"cancel worker long timedwait");
+	pthread_cleanup_pop(1);
+	return NULL;
+}
+
+static void test_cancellation(struct fixture *fixture)
+{
+	for (int round = 0; round < 8; round++) {
+		checked(pthread_mutex_lock(&fixture->mutex), "cancel main mutex lock");
+		fixture->ready = 0;
+		fixture->cleanup_count = 0;
+		pthread_t worker;
+		checked(pthread_create(&worker, NULL, cancel_waiter, fixture), "create cancel worker");
+		while (!fixture->ready)
+			checked(pthread_cond_wait(&fixture->handshake, &fixture->mutex),
+				"wait cancel handshake");
+		/* Owning this mutex after ready proves the worker has released it in
+		 * timedwait. It does not prove enrollment in the kernel futex queue. */
+		checked(pthread_cancel(worker), "cancel timed waiter");
+		checked(pthread_mutex_unlock(&fixture->mutex), "release mutex for cancel cleanup");
+		void *result = NULL;
+		checked(pthread_join(worker, &result), "join cancelled waiter");
+		if (result != PTHREAD_CANCELED) test_fail("timed waiter was not cancelled");
+		checked(pthread_mutex_lock(&fixture->mutex), "reuse mutex after cancellation");
+		if (fixture->cleanup_count != 1) test_fail("cancel cleanup did not execute exactly once");
+		checked(pthread_cond_signal(&fixture->cond), "reuse condition after cancellation");
+		checked(pthread_mutex_unlock(&fixture->mutex), "unlock reused cancel mutex");
+	}
+}
+
 static void test_clock(clockid_t clock)
 {
-	struct fixture fixture = { .ready = 0 };
+	struct fixture fixture = { .clock = clock, .ready = 0 };
 	pthread_mutexattr_t mutexattr;
 	pthread_condattr_t condattr;
 	checked(pthread_mutexattr_init(&mutexattr), "mutexattr init");
@@ -45,6 +101,7 @@ static void test_clock(clockid_t clock)
 	checked(pthread_condattr_init(&condattr), "condattr init");
 	checked(pthread_condattr_setclock(&condattr, clock), "condattr clock");
 	checked(pthread_cond_init(&fixture.cond, &condattr), "condition init");
+	checked(pthread_cond_init(&fixture.handshake, &condattr), "handshake condition init");
 	checked(pthread_condattr_destroy(&condattr), "condattr destroy");
 	for (int round = 0; round < 8; round++) {
 		checked(pthread_mutex_lock(&fixture.mutex), "main mutex lock");
@@ -69,6 +126,7 @@ static void test_clock(clockid_t clock)
 		checked(pthread_join(worker, &result), "join condition worker");
 		if (result != &fixture) test_fail("condition worker result mismatch");
 	}
+	test_cancellation(&fixture);
 	checked(pthread_mutex_lock(&fixture.mutex), "timeout mutex lock");
 	struct timespec deadline;
 	if (clock_gettime(clock, &deadline)) test_perror("short condition deadline");
@@ -90,6 +148,7 @@ static void test_clock(clockid_t clock)
 	owns_mutex(&fixture);
 	checked(pthread_mutex_unlock(&fixture.mutex), "final mutex unlock");
 	checked(pthread_cond_destroy(&fixture.cond), "condition destroy");
+	checked(pthread_cond_destroy(&fixture.handshake), "handshake condition destroy");
 	checked(pthread_mutex_destroy(&fixture.mutex), "mutex destroy");
 }
 
@@ -98,6 +157,6 @@ int main(void)
 	_Static_assert(sizeof(time_t) == 8, "thread deadlines require 64-bit time_t");
 	test_clock(CLOCK_REALTIME);
 	test_clock(CLOCK_MONOTONIC);
-	puts("thread time ABI: long condition wakeups, timeouts and mutex ownership verified");
+	puts("thread time ABI: wakeups, cancellation, timeouts and mutex ownership verified");
 	test_pass();
 }
