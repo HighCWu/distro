@@ -31,6 +31,7 @@ let
         clang ${compileFlags} ${../basic-init/tests/mmap-offsets.c} -o $out/offsets.wasm
         clang ${compileFlags} ${../basic-init/tests/stat-abi.c} -o $out/stat-abi.wasm
         clang ${compileFlags} ${../basic-init/tests/time-abi.c} -o $out/time-abi.wasm
+        clang ${compileFlags} -pthread ${../basic-init/tests/thread-time-abi.c} -o $out/thread-time-abi.wasm
         clang ${compileFlags} ${../basic-init/tests/mmap-initialized.c} -o $out/initialized.wasm
         clang ${compileFlags} -Wl,--export=__wasm_mmap_init_v1 ${../basic-init/tests/mmap-copy.c} -o $out/copy.wasm
         clang ${compileFlags} -Wl,--export=__wasm_mmap_init_v1 ${../basic-init/tests/mmap-staging.c} -o $out/staging.wasm
@@ -112,6 +113,11 @@ pkgs.runCommand "mmap-benchmark-artifacts-${platform.wasmArch}"
     passthru.checks.time = vm-test.rawInitramfsTest {
       name = "time-abi-${platform.wasmArch}";
       init = "${executables}/time-abi.wasm";
+    };
+    passthru.checks.thread-time = vm-test.rawInitramfsTest {
+      name = "thread-time-abi-${platform.wasmArch}";
+      init = "${executables}/thread-time-abi.wasm";
+      cpus = 2;
     };
     passthru.checks.initialized = vm-test.rawInitramfsTest {
       name = "mmap-initialized-${platform.wasmArch}";
