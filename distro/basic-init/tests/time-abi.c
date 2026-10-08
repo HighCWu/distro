@@ -34,6 +34,65 @@ static void unchanged_timeout(const struct timespec *value)
 		test_fail("libc wait modified the caller timeout");
 }
 
+static void absolute_timers(clockid_t clock)
+{
+	struct timespec now;
+	if (clock_gettime(clock, &now)) test_perror("absolute timer clock");
+	/* Under Linux's signed nanosecond ktime limit, with ample room for the
+	 * current epoch. Reject an unsuitable clock instead of overflowing it. */
+	if (now.tv_sec > 6000000000LL) test_fail("clock too large for long absolute fixture");
+	struct itimerspec future = {
+		.it_interval = { .tv_sec = LONG_SECONDS, .tv_nsec = 123456789 },
+		.it_value = { .tv_sec = now.tv_sec + LONG_SECONDS, .tv_nsec = now.tv_nsec },
+	};
+	struct itimerspec state, old;
+	const struct itimerspec disarm = { 0 };
+	struct itimerspec invalid = future;
+	invalid.it_value.tv_nsec = 1000000000;
+	int fd = timerfd_create(clock, TFD_CLOEXEC | TFD_NONBLOCK);
+	if (fd < 0) test_perror("absolute timerfd_create");
+	if (timerfd_settime(fd, TFD_TIMER_ABSTIME, &future, NULL) ||
+	    timerfd_gettime(fd, &state)) test_perror("absolute timerfd set/get");
+	long_timer(&state);
+	errno = 0;
+	if (timerfd_settime(fd, TFD_TIMER_ABSTIME, &invalid, NULL) != -1 || errno != EINVAL)
+		test_fail("timerfd accepted invalid absolute nanoseconds");
+	if (timerfd_gettime(fd, &state)) test_perror("timerfd after invalid update");
+	long_timer(&state);
+	if (timerfd_settime(fd, 0, &disarm, &old)) test_perror("absolute timerfd disarm");
+	long_timer(&old);
+	timer_t timer;
+	struct sigevent event = { .sigev_notify = SIGEV_NONE };
+	if (timer_create(clock, &event, &timer)) test_perror("absolute timer_create");
+	if (timer_settime(timer, TIMER_ABSTIME, &future, NULL) ||
+	    timer_gettime(timer, &state)) test_perror("absolute POSIX timer set/get");
+	long_timer(&state);
+	errno = 0;
+	if (timer_settime(timer, TIMER_ABSTIME, &invalid, NULL) != -1 || errno != EINVAL)
+		test_fail("POSIX timer accepted invalid absolute nanoseconds");
+	if (timer_gettime(timer, &state)) test_perror("POSIX timer after invalid update");
+	long_timer(&state);
+	if (timer_settime(timer, 0, &disarm, &old)) test_perror("absolute POSIX timer disarm");
+	long_timer(&old);
+	if (timer_delete(timer)) test_perror("absolute timer_delete");
+	/* Nonzero and already expired: zero would disarm, not expire a timerfd. */
+	const struct itimerspec past = { .it_value = { .tv_nsec = 1 } };
+	if (timerfd_settime(fd, TFD_TIMER_ABSTIME, &past, NULL))
+		test_perror("past absolute timerfd");
+	struct pollfd ready = { .fd = fd, .events = POLLIN };
+	const struct timespec bounded = { .tv_sec = 5 };
+	if (ppoll(&ready, 1, &bounded, NULL) != 1 || ready.revents != POLLIN)
+		test_fail("past absolute timerfd did not become readable");
+	uint64_t count = 0;
+	if (read(fd, &count, sizeof(count)) != sizeof(count) || count != 1)
+		test_fail("past absolute timerfd count was not one");
+	if (clock_nanosleep(clock, TIMER_ABSTIME, &past.it_value, NULL))
+		test_fail("past absolute clock_nanosleep did not return success");
+	if (clock_nanosleep(clock, TIMER_ABSTIME, &invalid.it_value, NULL) != EINVAL)
+		test_fail("clock_nanosleep did not return EINVAL directly");
+	if (close(fd)) test_perror("close absolute timerfd");
+}
+
 int main(void)
 {
 	_Static_assert(sizeof(time_t) == 8, "time ABI requires 64-bit time_t");
@@ -111,6 +170,8 @@ int main(void)
 	int status = clock_nanosleep(CLOCK_MONOTONIC, 0, &zero, NULL);
 	if (status) { errno = status; test_perror("zero clock_nanosleep"); }
 	if (close(fd)) test_perror("close timerfd");
-	puts("time ABI: long timers, expiration and ready-fd waits verified");
+	for (size_t i = 0; i < sizeof(clocks) / sizeof(clocks[0]); i++)
+		absolute_timers(clocks[i]);
+	puts("time ABI: relative/absolute timers, expiration and ready-fd waits verified");
 	test_pass();
 }
