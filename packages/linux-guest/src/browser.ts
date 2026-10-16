@@ -504,9 +504,9 @@ export class BrowserFS implements FS<Node, Handle> {
     newName = valid_name(newName);
     const old_parent = this.#as_node(oldParent);
     const new_parent = this.#as_node(newParent);
-    if (old_parent === new_parent && oldName === newName) return;
     const source = await this.lookup(old_parent, oldName);
     if (!source) throw new FSError("ENOENT");
+    if (old_parent === new_parent && oldName === newName) return;
     const source_node = this.#as_node(source);
     const old_parts = [...old_parent.parts, oldName];
     const new_parts = [...new_parent.parts, newName];

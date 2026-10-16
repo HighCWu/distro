@@ -3,6 +3,32 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import { BrowserFS } from "../src/browser.ts";
 
+test("BrowserFS same-path rename still requires the source to exist", async () => {
+  let exists = false;
+  const root = {
+    kind: "directory",
+    async getDirectoryHandle() {
+      throw new DOMException("missing", "NotFoundError");
+    },
+    async getFileHandle() {
+      if (!exists) throw new DOMException("missing", "NotFoundError");
+      return { kind: "file" };
+    },
+    async removeEntry() {
+      assert.fail("same-path rename must not remove data");
+    },
+  } as unknown as FileSystemDirectoryHandle;
+  const fs = new BrowserFS(root);
+  await assert.rejects(fs.rename(fs.root, "entry", fs.root, "entry"), {
+    name: "FSError",
+    errno: 2,
+  });
+  exists = true;
+  const node = await fs.lookup(fs.root, "entry");
+  await fs.rename(fs.root, "entry", fs.root, "entry");
+  assert.equal(await fs.lookup(fs.root, "entry"), node);
+});
+
 for (const operation of ["flush", "fsync"] as const) {
   test(`BrowserFS ${operation} waits for an earlier write to commit`, async () => {
     const closing = Promise.withResolvers<void>();
