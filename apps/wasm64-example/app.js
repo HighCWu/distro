@@ -2,14 +2,18 @@
 import { blockDevice, bootMachine, consoleDevice, entropyDevice } from "@lowland/kernel";
 import { guestAgent } from "@lowland/guest";
 import { assertBrowserSupport } from "./browser-support.js";
+import { outputTail, runProgram } from "./program.js";
 
 const element = (id) => document.getElementById(id);
 let session;
 let busy = false;
+let programController;
 function state(message) {
   element("state").textContent = message;
   element("start").disabled = busy || !!session;
-  for (const id of ["stop", "uname", "file", "read"]) element(id).disabled = busy || !session;
+  for (const id of ["stop", "uname", "file", "read", "run-program"])
+    element(id).disabled = busy || !session;
+  element("cancel-program").disabled = !programController || programController.signal.aborted;
 }
 function consoleOutput() {
   const decoder = new TextDecoder();
@@ -138,3 +142,34 @@ element("read").addEventListener("click", () =>
   action(() => command(["/bin/cat", "/root/example.txt"])),
 );
 state("stopped");
+
+element("run-program").addEventListener("click", () =>
+  action(async () => {
+    if (!session) throw new Error("Linux is not running");
+    const controller = new AbortController();
+    programController = controller;
+    element("result").textContent = "";
+    state("running application");
+    try {
+      const status = await runProgram(
+        session.agent,
+        element("program").files[0],
+        element("arguments").value,
+        {
+          signal: controller.signal,
+          onOutput(_name, text) {
+            element("result").textContent = outputTail(element("result").textContent, text);
+          },
+        },
+      );
+      if (!status.success) throw new Error(`native application failed: ${JSON.stringify(status)}`);
+      return "running";
+    } finally {
+      if (programController === controller) programController = undefined;
+    }
+  }),
+);
+element("cancel-program").addEventListener("click", () => {
+  programController?.abort(new DOMException("application cancelled", "AbortError"));
+  element("cancel-program").disabled = true;
+});

@@ -41,6 +41,35 @@ test("embeds native wasm64 Linux using the standalone example controls", async (
   await expect(state).toHaveText("running");
   await expect(page.locator("#result")).toHaveText(text);
   expect(await page.locator("#result").textContent()).toBe(text);
+  // Import a separately SDK-built executable through the actual file picker,
+  // not a program installed into the default root or a JavaScript callback.
+  const binary = await page.request.get("/upload-program.wasm");
+  expect(binary.ok()).toBe(true);
+  await page.locator("#program").setInputFiles({
+    name: "developer-program.wasm",
+    mimeType: "application/wasm",
+    buffer: await binary.body(),
+  });
+  await page.locator("#arguments").fill('["literal $HOME → wasm64"]');
+  await page.locator("#run-program").click();
+  await expect(state).toHaveText("running");
+  await expect(page.locator("#result")).toContainText(
+    "uploaded application: literal $HOME → wasm64\n",
+  );
+  await expect(page.locator("#result")).toContainText("uploaded application stderr\n");
+  await page.locator("#arguments").fill('["fail"]');
+  await page.locator("#run-program").click();
+  await expect(state).toContainText('"code":37');
+  await expect(page.locator("#result")).toContainText("uploaded application expected failure");
+  await page.locator("#arguments").fill('["wait"]');
+  await page.locator("#run-program").click();
+  await expect(page.locator("#result")).toContainText("uploaded application waiting");
+  await page.locator("#cancel-program").click();
+  await expect(state).toContainText("application cancelled");
+  await expect(page.locator("#cancel-program")).toBeDisabled();
+  await page.locator("#uname").click();
+  await expect(state).toHaveText("running");
+  await expect(page.locator("#result")).toContainText("Linux ");
   await page.locator("#stop").click();
   await expect(state).toHaveText("stopped");
   await expect(page.locator("#uname")).toBeDisabled();

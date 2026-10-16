@@ -333,6 +333,8 @@ let
     cp ${../../apps/wasm64-example}/server.mjs $out/server.js
     cp ${source}/playwright.config.js $out/playwright.config.js
     cp ${source}/agent-tests/wasm64-example.spec.js $out/tests/
+    ${sdk-wasm64}/bin/wasm-linux-cc -Wall -Wextra -Werror \
+      ${../../apps/wasm64-example}/program-check.c -o $out/upload-program.wasm
   '';
 
   agentSystemRootSuite =

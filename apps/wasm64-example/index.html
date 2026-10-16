@@ -41,6 +41,28 @@ Hello from native Linux wasm64.</textarea>
     </p>
     <button id="file" disabled>Write file and run native cat</button>
     <button id="read" disabled>Run cat on the existing file</button>
+    <h2>Run your own Linux wasm64 program</h2>
+    <p>
+      Select a static executable built with the matching Linux wasm64 SDK, not WASI, wasm32, or a
+      native ELF binary (at most 16 MiB). The file is copied only into this temporary Linux disk,
+      not uploaded to the server. Only run programs you trust: they can access or damage this Linux
+      instance and its files.
+    </p>
+    <p>
+      <label>Program <input id="program" type="file" accept=".wasm,application/wasm" /></label>
+    </p>
+    <p>
+      <label
+        >Arguments as a JSON string array
+        <input id="arguments" value="[]" maxlength="8192" size="60"
+      /></label>
+    </p>
+    <button id="run-program" disabled>Import and run program</button>
+    <button id="cancel-program" disabled>Cancel application</button>
+    <p>
+      Standard input receives EOF. Recent output is limited to 65,536 characters; stdout/stderr
+      interleaving is not deterministic.
+    </p>
     <h2>Command output</h2>
     <pre id="result" aria-live="polite"></pre>
     <h2>Recent boot console</h2>
