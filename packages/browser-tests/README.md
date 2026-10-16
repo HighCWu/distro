@@ -170,12 +170,17 @@ nix build .#checks.x86_64-linux.browser-tests-check-agent-public-userland-wasm64
 nix build .#checks.x86_64-linux.browser-tests-check-agent-public-userland-wasm64-firefox -L
 ```
 
-The Node and browser checks share the same four-case corpus and boot disk/root
+The Node and browser checks share the same five-case corpus and boot disk/root
 assets, not another check's successful result. In addition to the three public
 API cases, `run()` starts `/bin/sh` and requires correct cwd, quoted argv and
 environment, pipelines, command substitution, file operations, nonzero child
 status and background-child wait. The exact output, zero stderr, successful
-status, four completed cases and machine closure are required. Missing shell
+status, five completed cases and machine closure are required. The additional
+`exec()` case streams 256 KiB + 17 binary bytes (including NULs) through a native
+`tee | cat` pipeline, drains stdout and stderr concurrently with stdin, and
+requires byte-for-byte equality on both outputs, success and temporary-file
+removal. This checks real userland pipes through the public streaming API, not
+just a single-purpose C fixture or a small collected text command. Missing shell
 assets or execution failures are errors, not fallback to the minimal C program.
 No external initramfs, manual boot arguments or session trace flag is supplied.
 
