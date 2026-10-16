@@ -3,6 +3,48 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import { hostFetchNetwork } from "../src/host-fetch-network.ts";
 
+test("an already aborted connection never invokes the Fetch callback", async () => {
+  const abort = new AbortController();
+  const reason = new Error("already disconnected");
+  abort.abort(reason);
+  let calls = 0;
+  const network = hostFetchNetwork({
+    fetch() {
+      calls++;
+      return new Response("must not send");
+    },
+  });
+  const readable = new ReadableStream<Uint8Array>({
+    start(controller) {
+      controller.enqueue(
+        new TextEncoder().encode(
+          "POST /change HTTP/1.1\r\nHost: example.test\r\nContent-Length: 0\r\n\r\n",
+        ),
+      );
+      controller.close();
+    },
+  });
+  const writable = new WritableStream<Uint8Array>({
+    write() {
+      assert.fail("must not reply");
+    },
+  });
+  await assert.rejects(
+    Promise.resolve(
+      network.connectTcp!({
+        target: { hostname: "198.18.0.1", port: 80 },
+        signal: abort.signal,
+        readable,
+        writable,
+      }),
+    ),
+    (error) => error === reason,
+  );
+  assert.equal(calls, 0);
+  assert.equal(readable.locked, false);
+  assert.equal(writable.locked, false);
+});
+
 test("a response returned after disconnect is cancelled without writing an HTTP reply", async () => {
   const abort = new AbortController();
   const reason = new Error("closed while fetching");

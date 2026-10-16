@@ -77,7 +77,9 @@ async function exchange(
   }
   try {
     try {
+      abort.signal.throwIfAborted();
       const head = await reader.head();
+      abort.signal.throwIfAborted();
       if (!head) return;
       const { method, target } = parse_request_line(head.line);
       if (method === "CONNECT" || head.headers.has("upgrade")) {
@@ -119,6 +121,7 @@ async function exchange(
       } as RequestInit);
       let response: Response;
       try {
+        abort.signal.throwIfAborted();
         response = await do_fetch(request);
       } catch (error) {
         if (abort.signal.aborted) throw error;
