@@ -1,13 +1,48 @@
 import { expect, test } from "@playwright/test";
 
+test("rejects invalid CPU counts before configuring devices or fetching the kernel", async ({
+  page,
+}) => {
+  let kernelRequests = 0;
+  await page.route("**/vmlinux.wasm", async (route) => {
+    kernelRequests++;
+    await route.abort();
+  });
+  await page.goto("/");
+  const outcomes = await page.evaluate(async () => {
+    const { bootMachine } = await import("@lowland/kernel");
+    let configured = false;
+    const failures = [];
+    for (const cpus of [0, -1, 1.5, NaN, Infinity, 0x100000000]) {
+      try {
+        await bootMachine({
+          cpus,
+          plugins: [
+            {
+              configure() {
+                configured = true;
+              },
+            },
+          ],
+        });
+        failures.push("unexpected success");
+      } catch (error) {
+        failures.push(error.name);
+      }
+    }
+    return { configured, failures };
+  });
+  expect(outcomes.configured).toBe(false);
+  expect(outcomes.failures).toEqual(Array(6).fill("RangeError"));
+  expect(kernelRequests).toBe(0);
+});
+
 test("runs musl allocation, mmap, threads, TLS and signals", async ({ page }) => {
   page.on("console", (message) => console.log(`[browser] ${message.text()}`));
   page.on("pageerror", (error) => console.error(`[browser] ${error.stack ?? error}`));
 
   await page.goto("/");
-  await expect
-    .poll(() => page.evaluate(() => typeof globalThis.bootRuntimeSmoke))
-    .toBe("function");
+  await expect.poll(() => page.evaluate(() => typeof globalThis.bootRuntimeSmoke)).toBe("function");
   const output = await page.evaluate(() => globalThis.bootRuntimeSmoke());
 
   expect(output).toContain("::vm-test::pass");
@@ -32,9 +67,7 @@ test("retries a failed kernel download in the same page with a generic MIME type
     });
   });
   await page.goto("/");
-  await expect
-    .poll(() => page.evaluate(() => typeof globalThis.bootRuntimeSmoke))
-    .toBe("function");
+  await expect.poll(() => page.evaluate(() => typeof globalThis.bootRuntimeSmoke)).toBe("function");
   const failure = await page.evaluate(async () => {
     try {
       await globalThis.bootRuntimeSmoke();

@@ -3,6 +3,7 @@
 import { type DeviceTreeNode, generate_devicetree, section_properties } from "./devicetree.ts";
 import { platform, type WorkerHandle } from "./platform.ts";
 import { cache_successful_load } from "./resource-cache.ts";
+import { checked_cpu_count } from "./boot-options.ts";
 import { configure_machine, run_machine_booted } from "./plugin-internal.ts";
 import type { MachinePluginInput } from "./plugin.ts";
 import { settle_user_copy, USER_COPY_TRY_AGAIN } from "./user-copy.ts";
@@ -67,7 +68,7 @@ type MaybePromise<T> = T | PromiseLike<T>;
 
 /** The resources and boot configuration of a Linux machine. */
 export interface BootMachineOptions {
-  /** Virtual CPUs to boot, one Web Worker each. */
+  /** Positive uint32 CPU request; the kernel caps it at its configured maximum. */
   cpus: number;
   /** Kernel command-line arguments, appended after `console=hvc0`. */
   args?: readonly string[];
@@ -184,6 +185,7 @@ function kernel_initial_pages(memory: WasmMemoryType, initcpio_size: number): nu
  * ```
  */
 export async function bootMachine(options: BootMachineOptions): Promise<Machine> {
+  const cpus = checked_cpu_count(options.cpus);
   const configured = await configure_machine(options.args ?? [], options.plugins ?? []);
   const { devices, plugins } = configured;
   const workers = new Set<WorkerHandle>();
@@ -261,7 +263,7 @@ export async function bootMachine(options: BootMachineOptions): Promise<Machine>
       chosen: {
         "rng-seed": crypto.getRandomValues(new Uint8Array(64)),
         bootargs: `console=hvc0 ${configured.args.join(" ")}`,
-        ncpus: options.cpus,
+        ncpus: cpus,
       },
       aliases: {},
       memory: {
