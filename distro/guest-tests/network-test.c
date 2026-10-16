@@ -1,4 +1,5 @@
 #include <arpa/inet.h>
+#include <errno.h>
 #include <netdb.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -10,6 +11,32 @@ static void die(const char *operation)
 {
 	perror(operation);
 	exit(1);
+}
+
+static ssize_t read_retry(int fd, void *buffer, size_t length)
+{
+	ssize_t result;
+	do {
+		result = read(fd, buffer, length);
+	} while (result < 0 && errno == EINTR);
+	return result;
+}
+
+static void write_all(int fd, const void *buffer, size_t length)
+{
+	const unsigned char *bytes = buffer;
+	while (length) {
+		ssize_t written = write(fd, bytes, length);
+		if (written < 0 && errno == EINTR)
+			continue;
+		if (written <= 0) {
+			if (written == 0)
+				errno = EIO;
+			die("write");
+		}
+		bytes += written;
+		length -= written;
+	}
 }
 
 static unsigned short port(const char *text)
@@ -52,13 +79,12 @@ static void echo_tcp(unsigned short value, int notify_ready)
 	if (fd < 0)
 		die("accept");
 	for (;;) {
-		ssize_t length = read(fd, buffer, sizeof(buffer));
+		ssize_t length = read_retry(fd, buffer, sizeof(buffer));
 		if (length < 0)
 			die("read");
 		if (length == 0)
 			break;
-		if (write(fd, buffer, length) != length)
-			die("write");
+		write_all(fd, buffer, length);
 	}
 	close(fd);
 	close(listener);
@@ -94,10 +120,8 @@ static void send_tcp(unsigned short value, size_t length)
 			chunk = sizeof(buffer);
 		for (size_t index = 0; index < chunk; index++)
 			buffer[index] = (offset + index) & 0xff;
-		ssize_t written = write(fd, buffer, chunk);
-		if (written < 0)
-			die("write");
-		offset += written;
+		write_all(fd, buffer, chunk);
+		offset += chunk;
 	}
 	close(fd);
 	close(listener);
@@ -118,7 +142,7 @@ static void receive_tcp(unsigned short value, size_t length,
 		size_t chunk = length - offset;
 		if (chunk > sizeof(buffer))
 			chunk = sizeof(buffer);
-		ssize_t received = read(fd, buffer, chunk);
+		ssize_t received = read_retry(fd, buffer, chunk);
 		if (received < 0)
 			die("read");
 		if (received == 0)
@@ -183,16 +207,14 @@ static void request(const char *hostname, unsigned short value,
 	int fd = connect_tcp(hostname, value);
 	size_t length = strlen(message);
 	size_t received = 0;
-	if (write(fd, message, length) != (ssize_t)length)
-		die("write");
+	write_all(fd, message, length);
 	while (received < length) {
-		ssize_t read_length = read(fd, buffer, sizeof(buffer));
+		ssize_t read_length = read_retry(fd, buffer, sizeof(buffer));
 		if (read_length < 0)
 			die("read");
 		if (read_length == 0)
 			die("unexpected eof");
-		if (write(STDOUT_FILENO, buffer, read_length) != read_length)
-			die("stdout");
+		write_all(STDOUT_FILENO, buffer, read_length);
 		received += read_length;
 	}
 	close(fd);
