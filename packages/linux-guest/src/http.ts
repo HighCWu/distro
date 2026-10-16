@@ -77,7 +77,10 @@ export class ByteReader {
       }
       if (value.byteLength === 0) continue;
       if (this.#buffer.byteLength === 0) {
-        this.#buffer = value;
+        // The producer may reuse its slab on its next pull. Own bytes before
+        // keeping leftovers or returning views to downstream consumers. Use
+        // the constructor: Buffer.slice() would still retain a borrowed view.
+        this.#buffer = new Uint8Array(value);
       } else {
         const merged = new Uint8Array(this.#buffer.byteLength + value.byteLength);
         merged.set(this.#buffer);
