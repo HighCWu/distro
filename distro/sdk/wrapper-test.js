@@ -50,3 +50,47 @@ test("response files are forwarded unchanged for Clang to expand", () => {
     "@flags with spaces.rsp",
   ]);
 });
+
+test("empty arguments and shell metacharacters remain literal compiler arguments", () => {
+  const args = [
+    "",
+    "*.cc",
+    "$SDK_TEST_LITERAL",
+    "$(false)",
+    "a;b",
+    "quote'\".cc",
+    "line\nbreak.cc",
+  ];
+  const result = run(args);
+  assert.equal(result.status, 0, result.stderr);
+  assert.deepEqual(result.stdout.split("\0").slice(0, -1), [
+    "--config=/sdk with spaces/profile.cfg",
+    ...args,
+  ]);
+});
+
+test("compiler failure preserves its exit status and separate diagnostic streams", () => {
+  const failing = template
+    .replaceAll(
+      "@compiler@",
+      `bash -c 'printf "compiler-output\\n"; printf "compiler-error\\n" >&2; exit 42' compiler`,
+    )
+    .replaceAll("@configArgument@", "'--config=/sdk/profile.cfg'");
+  const result = spawnSync("bash", ["-c", failing, "sdk", "bad.cc"], { encoding: "utf8" });
+  assert.equal(result.error, undefined);
+  assert.equal(result.status, 42);
+  assert.equal(result.stdout, "compiler-output\n");
+  assert.equal(result.stderr, "compiler-error\n");
+});
+
+test("stdin source bytes reach the compiler unchanged", () => {
+  const passthrough = template
+    .replaceAll("@compiler@", "bash -c 'cat' compiler")
+    .replaceAll("@configArgument@", "'--config=/sdk/profile.cfg'");
+  const input = Buffer.from("// stdin source\r\nint value = 42;\n");
+  const result = spawnSync("bash", ["-c", passthrough, "sdk", "-x", "c", "-"], { input });
+  assert.equal(result.error, undefined);
+  assert.equal(result.status, 0);
+  assert.deepEqual(result.stdout, input);
+  assert.equal(result.stderr.length, 0);
+});
