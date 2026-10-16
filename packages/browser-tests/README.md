@@ -182,6 +182,27 @@ wired checks still require actual runtime results. Six mock-host regressions
 check initialization, readback without replacement, and failure cleanup; they
 do not substitute for actual OPFS or Linux execution.
 
+### Native SQLite application root
+
+The explicit SQLite profile installs `sqlite3-wasm64` in a separate ext4 root,
+not the minimal default root. Its two shared Node/browser cases execute the
+installed upstream CLI directly: DELETE/FULL transaction commit and rollback,
+then fresh-instance read-only integrity, row count, exact 64-bit integer and
+BLOB verification. Writes and metadata are synchronized before closure.
+
+```console
+nix build .#checks.x86_64-linux.guest-agent-check-sqlite-root-wasm64 -L
+nix build .#checks.x86_64-linux.browser-tests-check-agent-sqlite-root-wasm64-chromium -L
+nix build .#checks.x86_64-linux.browser-tests-check-agent-sqlite-root-wasm64-firefox -L
+```
+
+The browser gate requires both internal case names, machine closure, and the
+exact successful outer report without skips/retries. Run heavy builds in public
+CI; newly wired checks still need target results. These cases preserve host
+block bytes, not OPFS state, and do not establish crash recovery, WAL, or
+physical durability. Native host SQLite command regressions reject missing,
+corrupt, or wrong-field databases but cannot prove Wasm execution.
+
 ### Public plugin and GPT boot disk
 
 The public API has separate checks, using the same assertions as

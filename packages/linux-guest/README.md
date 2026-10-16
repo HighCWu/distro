@@ -174,6 +174,13 @@ The browser profile additionally checks reopening that ext4 image through the
 existing OPFS disk worker after page reload, with no template fetch on readback.
 See the browser-tests README for its distinct scope and required runtime checks.
 
+For a separate application root with the installed native SQLite CLI, select
+`guest-agent.nativeWasm64.rootfsSqliteExt4`. Its dedicated check is
+`guest-agent-check-sqlite-root-wasm64`; it verifies transactions, rollback,
+sync and exact database readback across fresh instances with retained blocks.
+The default minimal roots are unchanged. This profile is not an OPFS or WAL
+test; see `distro/sqlite3/README.md` for package flags and licensing boundaries.
+
 Pass `"lowland.root.overlay=tmpfs"` as a kernel argument to mount the system
 image read-only beneath a temporary writable OverlayFS:
 
