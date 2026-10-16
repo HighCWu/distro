@@ -3,6 +3,9 @@
   stdenv,
   pkgs,
   kernel,
+  kernel-wasm64,
+  image,
+  node-workspace,
   sdk-wasm64,
 }:
 
@@ -57,4 +60,14 @@ package
 // {
   checks.abi = abi;
   checks.abi-wasm64 = import ./abi-wasm64.nix { inherit bytes pkgs sdk-wasm64; };
+  checks.runtime-wasm64 = import ./runtime-wasm64.nix {
+    inherit
+      bytes
+      pkgs
+      sdk-wasm64
+      image
+      node-workspace
+      ;
+    kernel = kernel-wasm64;
+  };
 }
