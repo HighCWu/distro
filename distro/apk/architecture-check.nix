@@ -14,14 +14,15 @@ let
   };
   evaluate =
     arch: packageArch:
-    builtins.tryEval (
-      (apk.mkSystem {
+    let
+      system = apk.mkSystem {
         name = "architecture-fixture";
         inherit arch;
         repositories = [ (repository arch) ];
         packages = [ (fixturePackage packageArch) ];
-      }).drvPath
-    );
+      };
+    in
+    builtins.tryEval system.drvPath;
 in
 assert (evaluate "wasm32" "wasm32").success;
 assert (evaluate "wasm64" "wasm64").success;
