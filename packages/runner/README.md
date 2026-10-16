@@ -29,7 +29,7 @@ node --test packages/runner/tests/disk-storage.test.ts
 ```
 
 They cover initialization cleanup, read-only fallback, short I/O, sync/close
-failure ordering, and real-file reopen. The separate `runner-check-tests` Nix
+failure ordering, and real-file reopen. The separate `runner-package-check-tests` Nix
 check builds the packaged runner and runs the complete Linux integration tests
 in public CI; host-only results do not establish that integration has passed.
 
