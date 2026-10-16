@@ -60,3 +60,33 @@ BusyBox's corresponding-source obligations as well as the applicable musl and
 LLVM runtime notices. License metadata alone is not a source-delivery mechanism.
 The project's own build and test infrastructure follows the repository's MIT
 license; that does not change the licenses of packaged software.
+
+## Selected source and build materials
+
+Both widths expose a separate `buildMaterials` output containing the final
+BusyBox `.config`, license, recipe, ABI validator and selected build-input
+identities. It is not part of the APK payload or installed system root.
+The opt-in `sourceBundle` archives the selected BusyBox source tree together
+with those materials, preserving source links and stable archive headers.
+It also supplies `BINARY_SHA256SUMS` for the final installed executable after
+strip/fixup, separately from the compressed archive's `SHA256SUMS`.
+
+```console
+nix build .#busybox-wasm64.buildMaterials -L
+nix build .#busybox-wasm64.sourceBundle -L
+nix build .#checks.x86_64-linux.busybox-wasm64-check-source-bundle -L
+nix build .#checks.x86_64-linux.busybox-check-source-bundle -L
+node --test distro/busybox/source-bundle.test.js
+```
+
+Keep target builds in public CI. The explicit source-bundle checks compare
+archived configuration/license bytes, check both sets of checksums and the
+final executable's memory ABI, and require NOMMU/hush configuration. Successful
+CI collects a three-day artifact for inspection, not a durable release source
+publication. Exposing these checks is not evidence they have passed.
+
+Configured patches are rejected rather than silently omitted. Custom hooks
+need their own audit. Read the bundle's README for exclusions: notably it is
+not an offline rebuild environment, full linked-runtime source inventory,
+SBOM, or proof of complete corresponding-source delivery. Actual release
+source availability and dependency obligations remain distributor work.
