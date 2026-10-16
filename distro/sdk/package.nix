@@ -47,6 +47,34 @@ let
         ]
         (builtins.readFile ./pkg-config.sh);
   };
+  configure = pkgs.writeShellApplication {
+    name = "wasm-linux-configure";
+    text =
+      builtins.replaceStrings
+        [
+          "@cc@"
+          "@cxx@"
+          "@ar@"
+          "@ranlib@"
+          "@nm@"
+          "@pkgConfig@"
+          "@shell@"
+          "@build@"
+          "@host@"
+        ]
+        (map lib.escapeShellArg [
+          "${cc}/bin/wasm-linux-cc"
+          "${cxx}/bin/wasm-linux-c++"
+          "${llvm-toolchain}/bin/llvm-ar"
+          "${llvm-toolchain}/bin/llvm-ranlib"
+          "${llvm-toolchain}/bin/llvm-nm"
+          "${pkgConfig}/bin/wasm-linux-pkg-config"
+          "${pkgs.bash}/bin/bash"
+          pkgs.stdenv.buildPlatform.config
+          platform.targetTriple
+        ])
+        (builtins.readFile ./configure.sh);
+  };
   cmakeToolchain = pkgs.replaceVars ./linux-wasm.cmake.in {
     inherit (platform) wasmArch;
     cc = "${cc}/bin/wasm-linux-cc";
@@ -66,6 +94,7 @@ let
       cc
       cxx
       pkgConfig
+      configure
       cmakeFiles
       llvm-toolchain
     ];
@@ -99,6 +128,10 @@ let
       zlib-runtime = vm-test.rawInitramfsTest {
         name = "sdk-zlib-runtime-${platform.wasmArch}";
         init = "${zlibPrograms}/sdk-zlib.wasm";
+      };
+      autoconf-runtime = vm-test.rawInitramfsTest {
+        name = "sdk-autoconf-runtime-${platform.wasmArch}";
+        init = "${autoconfPrograms}/sdk-autoconf.wasm";
       };
     };
   };
@@ -163,6 +196,22 @@ let
           SDK_TEST_OUTPUT_DIRECTORY=$out \
           node --test ${./.}/zlib-consumer-test.js
         chmod 0755 $out/sdk-zlib.wasm
+      '';
+  autoconfPrograms =
+    pkgs.runCommand "sdk-autoconf-consumer-${platform.wasmArch}"
+      {
+        nativeBuildInputs = [
+          pkgs.autoconf
+          pkgs.gnumake
+          pkgs.nodejs
+        ];
+      }
+      ''
+        mkdir $out
+        SDK_TEST_CONFIGURE=${sdk}/bin/wasm-linux-configure \
+          SDK_TEST_OUTPUT_DIRECTORY=$out \
+          node --test ${./.}/autoconf-consumer-test.js
+        chmod 0755 $out/sdk-autoconf.wasm
       '';
 in
 sdk

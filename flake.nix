@@ -131,6 +131,7 @@
           sdk = pkgs.mkShellNoCC {
             packages = [
               wasmpkgs.sdk
+              pkgs.autoconf
               pkgs.gnumake
               pkgs.cmake
               pkgs.ninja
@@ -148,6 +149,7 @@
           sdk-wasm64 = pkgs.mkShellNoCC {
             packages = [
               wasmpkgs.sdk-wasm64
+              pkgs.autoconf
               pkgs.gnumake
               pkgs.cmake
               pkgs.ninja
