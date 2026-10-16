@@ -159,6 +159,32 @@ plugin identity symbol. These checks do not change default wasm32 image selectio
 or establish full distribution support. Their browser results must be verified
 independently of the earlier successful Node public-plugin check.
 
+### Native shell through the public plugin
+
+An additional profile installs matching wasm64 BusyBox in the system root,
+without changing the default wasm32 distribution or the minimal public profile:
+
+```console
+nix build .#checks.x86_64-linux.guest-agent-check-public-userland-wasm64 -L
+nix build .#checks.x86_64-linux.browser-tests-check-agent-public-userland-wasm64-chromium -L
+nix build .#checks.x86_64-linux.browser-tests-check-agent-public-userland-wasm64-firefox -L
+```
+
+The Node and browser checks share the same four-case corpus and boot disk/root
+assets, not another check's successful result. In addition to the three public
+API cases, `run()` starts `/bin/sh` and requires correct cwd, quoted argv and
+environment, pipelines, command substitution, file operations, nonzero child
+status and background-child wait. The exact output, zero stderr, successful
+status, four completed cases and machine closure are required. Missing shell
+assets or execution failures are errors, not fallback to the minimal C program.
+No external initramfs, manual boot arguments or session trace flag is supplied.
+
+BusyBox remains GPL-2.0-only and its package architecture is wasm64. These test
+images are not a full distribution release or a change to users' software
+licenses; any redistributed image must satisfy its components' license and
+corresponding-source obligations. Exposing these checks is not itself evidence
+that their browser runs have passed.
+
 ## Experimental EROFS copy lifecycle
 
 Independent suites use the opt-in test kernel and the same C test/initramfs
