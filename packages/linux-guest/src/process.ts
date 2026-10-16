@@ -127,6 +127,7 @@ export class ChildProcess implements AsyncDisposable {
 
   #close?: Promise<void>;
   #aborted = false;
+  #reaped = false;
   #abort_reason: unknown;
   #remove_abort = () => {};
   #stdin_tail: Promise<void> = Promise.resolve();
@@ -220,6 +221,7 @@ export class ChildProcess implements AsyncDisposable {
   async #reap(release: () => void): Promise<CommandStatus> {
     try {
       const status = await reap(this.#session, this.pid);
+      this.#reaped = true;
       if (this.#aborted) throw this.#abort_reason;
       const code = WEXITSTATUS(status);
       const signal = WIFSIGNALED(status)
@@ -266,13 +268,18 @@ export class ChildProcess implements AsyncDisposable {
     // read already in flight on it, but the child dying EOFs the pipe. The
     // reap is intentionally NOT cancelled: it must complete to free the
     // agent's process-table slot.
-    await kill(this.#session, this.pid, SIG.KILL).catch(() => {});
+    // Once reap returned, this PID may already belong to another process.
+    // Do not knowingly signal a recycled numeric PID during normal disposal.
+    if (!this.#reaped) await kill(this.#session, this.pid, SIG.KILL).catch(() => {});
     await this.#stdin_tail;
     const closes = await Promise.allSettled([
       this.#stdin.close(),
       this.#stdout.close(),
       this.#stderr.close(),
     ]);
+    // Reap owns slot release. Even failed/aborted status must settle before
+    // disposal returns; its rejection remains observable through `status`.
+    await this.status.catch(() => {});
     const failed = closes.find((result) => result.status === "rejected");
     if (failed) throw failed.reason;
   }

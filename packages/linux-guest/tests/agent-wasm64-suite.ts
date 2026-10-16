@@ -305,7 +305,16 @@ export async function runAgentWasm64Suite(
           assert.deepEqual(status, { success: false, code: 0, signal: "SIGTERM" });
         });
       }
-      assert.equal(releases, 2);
+      {
+        await with_close(await start("wait"), async (child) => {
+          await child.stdin.close();
+          await expect_ready_message(child.stdout, "ready\n");
+          await child.close();
+          assert.equal(releases, 3);
+          assert.deepEqual(await child.status, { success: false, code: 0, signal: "SIGKILL" });
+        });
+      }
+      assert.equal(releases, 3);
     });
 
     await t.test(

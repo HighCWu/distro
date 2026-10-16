@@ -151,6 +151,10 @@ guest_test("processes", async (t, fixture) => {
         await input.write(large.subarray(offset, offset + 32 * 1024));
       }
       await stopped.close();
+      // close must not return while its original wait record still owns a
+      // process slot. The status is already settled when disposal completes.
+      const settled = Symbol("unsettled");
+      assert.notEqual(await Promise.race([stopped.status, Promise.resolve(settled)]), settled);
 
       const replacement = await guest.exec(["cat"]);
       const output = collect(replacement.stdout);
