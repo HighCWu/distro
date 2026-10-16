@@ -3,6 +3,60 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import { BrowserFS } from "../src/browser.ts";
 
+test("BrowserFS validates all timestamps before truncation or metadata changes", async () => {
+  let streams = 0;
+  const fs = new BrowserFS({
+    kind: "directory",
+    async getDirectoryHandle() {
+      throw new DOMException("file", "TypeMismatchError");
+    },
+    async getFileHandle() {
+      return {
+        kind: "file",
+        async getFile() {
+          return new Blob(["original"]);
+        },
+        async createWritable() {
+          streams++;
+          throw new Error("invalid timestamps must not open a stream");
+        },
+      };
+    },
+  } as unknown as FileSystemDirectoryHandle);
+  const { node } = await fs.create(fs.root, "file", 2, { mode: 0o600, uid: 1, gid: 2 });
+  const timestamp = { seconds: -1n, nanoseconds: 500_000_000 };
+  await fs.setattr(node, { atime: timestamp, mtime: timestamp, ctime: timestamp });
+  const before = await fs.getattr(node);
+  timestamp.nanoseconds = -1;
+  assert.deepEqual(await fs.getattr(node), before, "caller must not retain a metadata reference");
+  for (const field of ["atime", "mtime", "ctime"] as const) {
+    for (const nanoseconds of [-1, 1_000_000_000, 0.5, NaN, Infinity]) {
+      await assert.rejects(
+        fs.setattr(node, {
+          size: 0n,
+          mode: 0o777,
+          uid: 99,
+          gid: 99,
+          [field]: { seconds: 1n, nanoseconds },
+        }),
+        { errno: 22 },
+      );
+      assert.deepEqual(await fs.getattr(node), before);
+    }
+  }
+  assert.equal(streams, 0);
+  const wide = { seconds: 9_007_199_254_740_993n };
+  await fs.setattr(node, { atime: wide, mtime: wide, ctime: wide });
+  const attrs = await fs.getattr(node);
+  for (const field of ["atime", "mtime", "ctime"] as const) {
+    assert.deepEqual(attrs[field], { ...wide, nanoseconds: 0 });
+  }
+  await fs.setattr(node, { atime: "now", mtime: "now" });
+  const current = await fs.getattr(node);
+  assert.equal(typeof current.mtime!.seconds, "bigint");
+  assert.ok(current.mtime!.nanoseconds! >= 0 && current.mtime!.nanoseconds! < 1_000_000_000);
+});
+
 test("BrowserFS serializes exclusive creation and recovers its namespace queue after rejection", async () => {
   const entries = new Map<string, { kind: "file" | "directory" }>();
   let created = 0;

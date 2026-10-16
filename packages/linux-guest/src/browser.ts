@@ -94,6 +94,15 @@ function checked_range(offset: bigint, length: number) {
   return { start, end: start + length };
 }
 
+function checked_timestamp(timestamp: FSTimestamp): FSTimestamp {
+  const nanoseconds = timestamp.nanoseconds ?? 0;
+  if (!Number.isInteger(nanoseconds) || nanoseconds < 0 || nanoseconds >= 1_000_000_000) {
+    throw new FSError("EINVAL", "invalid timestamp nanoseconds");
+  }
+  // Keep bigint seconds intact, including negative and wide timestamps.
+  return { seconds: timestamp.seconds, nanoseconds };
+}
+
 async function commit_opfs_write(
   writable: FileSystemWritableFileStream,
   operation: () => Promise<unknown>,
@@ -312,6 +321,17 @@ export class BrowserFS implements FS<Node, Handle> {
 
   async setattr(node: Node, changes: FSSetAttributes) {
     const current = this.#as_node(node);
+    // Validate every timestamp before truncating or changing any metadata.
+    // Snapshot explicit values so later caller changes cannot mutate metadata.
+    const atime =
+      changes.atime === undefined || changes.atime === "now"
+        ? changes.atime
+        : checked_timestamp(changes.atime);
+    const mtime =
+      changes.mtime === undefined || changes.mtime === "now"
+        ? changes.mtime
+        : checked_timestamp(changes.mtime);
+    const ctime = changes.ctime === undefined ? undefined : checked_timestamp(changes.ctime);
     return await this.#mutate(current, async () => {
       this.#as_node(current);
       if (changes.size !== undefined) {
@@ -336,14 +356,14 @@ export class BrowserFS implements FS<Node, Handle> {
       }
       if (changes.uid !== undefined) current.metadata.uid = changes.uid;
       if (changes.gid !== undefined) current.metadata.gid = changes.gid;
-      if (changes.atime !== undefined) {
-        current.metadata.atime = changes.atime === "now" ? now() : changes.atime;
+      if (atime !== undefined) {
+        current.metadata.atime = atime === "now" ? now() : atime;
       }
-      if (changes.mtime !== undefined) {
-        current.metadata.mtime = changes.mtime === "now" ? now() : changes.mtime;
+      if (mtime !== undefined) {
+        current.metadata.mtime = mtime === "now" ? now() : mtime;
         current.metadata.mtimeOverride = true;
       }
-      if (changes.ctime !== undefined) current.metadata.ctime = changes.ctime;
+      if (ctime !== undefined) current.metadata.ctime = ctime;
       else current.metadata.ctime = now();
       return await this.getattr(current);
     });
