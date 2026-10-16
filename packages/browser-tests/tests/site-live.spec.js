@@ -1,5 +1,40 @@
 import { expect, test } from "@playwright/test";
 
+test("missing cross-origin isolation stops before disk access or kernel startup", async ({
+  page,
+}) => {
+  const errors = [];
+  const kernelRequests = [];
+  page.on("pageerror", (error) => errors.push(error.message));
+  page.on("request", (request) => {
+    if (new URL(request.url()).pathname.endsWith("/vmlinux.wasm"))
+      kernelRequests.push(request.url());
+  });
+  await page.addInitScript(() => {
+    globalThis.storageAccessAttempts = 0;
+    navigator.storage.getDirectory = async () => {
+      globalThis.storageAccessAttempts++;
+      throw new Error("disk must not be accessed without isolation");
+    };
+  });
+  await page.route("**/*", async (route) => {
+    if (!route.request().isNavigationRequest()) return route.continue();
+    const response = await route.fetch();
+    const headers = { ...response.headers() };
+    delete headers["cross-origin-opener-policy"];
+    delete headers["cross-origin-embedder-policy"];
+    await route.fulfill({ response, headers });
+  });
+  await page.goto("/?webgl=0");
+  await expect(page.locator(".xterm-rows")).toContainText("cross-origin isolation is required");
+  await expect
+    .poll(() => errors.some((message) => message.includes("Cannot start Linux")))
+    .toBe(true);
+  expect(await page.evaluate(() => globalThis.crossOriginIsolated)).toBe(false);
+  expect(await page.evaluate(() => globalThis.storageAccessAttempts)).toBe(0);
+  expect(kernelRequests).toEqual([]);
+});
+
 async function waitForGuest(page) {
   const terminal = page.locator(".xterm-rows");
   await expect(terminal).toContainText("root@lowland", { timeout: 30_000 });

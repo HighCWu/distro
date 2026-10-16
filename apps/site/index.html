@@ -139,7 +139,10 @@
       }
 
       if (!window.crossOriginIsolated) {
-        term.write("Error: not cross origin isolated\n");
+        const message =
+          "Cannot start Linux: cross-origin isolation is required. Serve this page with COOP: same-origin and COEP: require-corp over HTTPS or localhost.";
+        term.write(`${message}\n`);
+        throw new Error(message);
       }
 
       let opfs;
