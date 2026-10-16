@@ -6,6 +6,7 @@
 
 import { listen_endpoint, post_endpoint, type EmitterEndpoint, type Endpoint } from "./endpoint.ts";
 import { assert } from "./util.ts";
+import { compile_web_wasm } from "./web-wasm.ts";
 
 export interface WorkerHandle {
   post(message: unknown, transfer?: Transferable[]): void;
@@ -47,11 +48,7 @@ function worker_handle(
 
 const web: Platform = {
   async load_wasm(url) {
-    const response = await fetch(url);
-    // native code caching is only supported with the *Streaming functions, so use it:
-    const module = await WebAssembly.compileStreaming(response.clone());
-    const bytes = new Uint8Array(await response.arrayBuffer());
-    return { bytes, module };
+    return compile_web_wasm(await fetch(url));
   },
   spawn_worker(name, handlers) {
     const worker = new Worker(new URL("./worker.js", import.meta.url), {
