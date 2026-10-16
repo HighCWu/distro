@@ -3,6 +3,56 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import { hostFetchNetwork } from "../src/host-fetch-network.ts";
 
+test(
+  "disconnect while waiting for request headers cancels the input",
+  { timeout: 1000 },
+  async () => {
+    const abort = new AbortController();
+    const reason = new Error("partial request disconnected");
+    let cancelled: unknown;
+    let pulled!: () => void;
+    const ready = new Promise<void>((resolve) => {
+      pulled = resolve;
+    });
+    const readable = new ReadableStream<Uint8Array>({
+      start(controller) {
+        controller.enqueue(new TextEncoder().encode("GET / HTTP/1.1\r\nHost:"));
+      },
+      pull() {
+        pulled();
+      },
+      cancel(value) {
+        cancelled = value;
+      },
+    });
+    const writable = new WritableStream<Uint8Array>({
+      write() {
+        assert.fail("must not reply after abort");
+      },
+    });
+    const network = hostFetchNetwork({
+      fetch() {
+        assert.fail("incomplete request must not dispatch");
+      },
+    });
+    const handled = Promise.resolve(
+      network.connectTcp!({
+        target: { hostname: "198.18.0.1", port: 80 },
+        signal: abort.signal,
+        readable,
+        writable,
+      }),
+    );
+    const rejected = assert.rejects(handled, (error) => error === reason);
+    await ready;
+    abort.abort(reason);
+    await rejected;
+    assert.equal(cancelled, reason);
+    assert.equal(readable.locked, false);
+    assert.equal(writable.locked, false);
+  },
+);
+
 test("an already aborted connection never invokes the Fetch callback", async () => {
   const abort = new AbortController();
   const reason = new Error("already disconnected");

@@ -63,6 +63,8 @@ async function exchange(
   let response_reader: ReadableStreamDefaultReader<Uint8Array> | undefined;
   const stop = () => {
     abort.abort(session.signal.reason);
+    // Also unblock request parsing when the sender disconnects mid-header.
+    void reader.cancel(session.signal.reason).catch(() => {});
     // Custom Fetch callbacks may return streams unrelated to Request.signal.
     // Cancel the owned reader to unblock an outstanding read on disconnect.
     void response_reader?.cancel(session.signal.reason).catch(() => {});
