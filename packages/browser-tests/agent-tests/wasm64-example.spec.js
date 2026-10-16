@@ -64,8 +64,8 @@ test("embeds native wasm64 Linux using the standalone example controls", async (
   await expect(state).toHaveText("running");
   await expect(page.locator("#result")).toHaveText(standardInput);
   expect(await page.locator("#result").textContent()).toBe(standardInput);
-  // More input bytes than a Linux pipe can hold, but the filter reads only a
-  // prefix and exits successfully. EPIPE from the producer is not its status.
+  // A filter reads only a prefix of substantial input and exits successfully.
+  // Producer EPIPE, if observed, must not replace that real exit status.
   await page.locator("#stdin").fill("中".repeat(65536));
   await page.locator("#arguments").fill('["prefix"]');
   await page.locator("#run-program").click();

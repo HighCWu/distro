@@ -89,8 +89,15 @@ are at most 64 NUL-free strings in 8192 JSON characters. These are UI/resource
 bounds, not ABI or security validation. The binary must use this Linux SDK's
 wasm64 ABI, not WASI, wasm32 or ELF; the native loader reports incompatible
 programs rather than translating them. The minimal root does not provide
-arbitrary dependencies or dynamic libraries. Standard input receives EOF;
-interactive terminal input is not implemented here. Stdout and stderr are
+arbitrary dependencies or dynamic libraries. Standard input receives the text
+from the page's optional UTF-8 input field followed by EOF. Input is limited to
+65,536 characters before any import or launch, and sending it runs concurrently
+with draining both outputs to avoid pipe-filter deadlock. Empty input retains
+the previous immediate-EOF behavior. A filter may intentionally close stdin
+after a prefix: producer `EPIPE` is tolerated, but its actual exit status and
+both output streams are still required; other input errors or cancellation
+remain failures. This is finite text input, not binary-file streaming, an
+interactive terminal, or a process input quota. Stdout and stderr are
 decoded separately as UTF-8; their displayed interleaving is nondeterministic,
 and older output is discarded rather than retained invisibly.
 
@@ -113,14 +120,16 @@ This still depends on the runtime's machine-close contract; it is not a hard
 browser deadline, graceful filesystem shutdown, or persistence guarantee.
 Five mock-host UI regressions cover these ownership/stop/restart races, including
 delayed machine closure. Together with the other example/packaging host checks,
-23 tests pass. The real browser case now stops a waiting imported program and
+28 tests pass. The real browser case now stops a waiting imported program and
 restarts Linux; that extended behavior still requires public CI verification.
 
-Nine host regressions verify import/argument validation, executable mode,
-literal argv, UTF-8 streams, nonzero status, cancellation and failure cleanup.
+Fourteen host regressions verify import/argument validation, executable mode,
+literal argv, UTF-8 input/output, nonzero status, cancellation and failure cleanup,
+including stdin limits, producer EPIPE, and concurrent input/output progress.
 They do not prove Linux execution. The browser check separately compiles a
 small MIT C program with the SDK, selects that file through the actual input,
-checks literal Unicode arguments and both streams, a nonzero exit, cancellation
+checks literal Unicode arguments and both streams, exact Unicode stdin round-trip,
+prefix-only reading of substantial input, a nonzero exit, cancellation
 after an execution marker, and native `uname` after cleanup. This program is a
 test-only input, not installed into or shipped with the minimal application
 root. The extended real browser check still requires public CI results.
