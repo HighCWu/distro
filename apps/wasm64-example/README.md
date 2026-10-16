@@ -31,6 +31,12 @@ not silently fall back from OPFS. The 64 MiB image, kernel and per-process
 memories consume additional browser resources. Memory64 and shared-memory
 browser support are required; there is no wasm32 fallback or transpiler here.
 Runtime errors remain visible and are not converted to compatibility success.
+Before downloading either disk, Start checks cross-origin isolation,
+SharedArrayBuffer availability, and actual instantiation of a standard shared
+memory64 module. The probe allocates just one 64 KiB page and verifies the
+BigInt memory-growth API; it does not promise that enough memory is available
+to boot Linux or reserve the kernel's configured maximum. Unsupported engines
+are not silently routed through wasm32.
 
 The example only executes bounded commands; `run()` collects their outputs in
 memory. The displayed recent boot console is capped at 64 KiB. Use `exec()` and
@@ -46,6 +52,11 @@ the old file, and recovery after native `cat` reports failure. The exact outer
 case must pass without skips/retries. Newly added checks require actual CI
 results; the local server test and esbuild success do not establish browser
 Linux execution.
+The page check also removes COEP from the document response, verifies the
+visible isolation diagnostic without disk downloads, then restores normal
+hosting and continues the Linux controls check. Host probe tests distinguish
+unsupported features, allocation failure, and an incorrect memory32 result;
+they are not browser execution evidence.
 
 The application, build recipe and local server are MIT. Included Linux and
 BusyBox retain GPL terms, and other components retain their licenses. The
