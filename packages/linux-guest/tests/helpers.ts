@@ -15,7 +15,31 @@ export function console_output() {
 }
 
 export async function collect(stream: ReadableStream<Uint8Array>) {
-  return new Uint8Array(await new Response(stream).arrayBuffer());
+  // A readiness reader may already have disturbed the stream. Response's
+  // BodyInit rejects that state even after the reader releases its lock;
+  // reading the remaining bytes through a new reader is still valid.
+  const reader = stream.getReader();
+  const chunks: Uint8Array[] = [];
+  let length = 0;
+  try {
+    while (true) {
+      const chunk = await reader.read();
+      if (chunk.done) break;
+      // Preserve bytes even if a producer reuses a Buffer or backing slab.
+      const bytes = new Uint8Array(chunk.value);
+      chunks.push(bytes);
+      length += bytes.byteLength;
+    }
+  } finally {
+    reader.releaseLock();
+  }
+  const result = new Uint8Array(length);
+  let offset = 0;
+  for (const chunk of chunks) {
+    result.set(chunk, offset);
+    offset += chunk.byteLength;
+  }
+  return result;
 }
 
 export async function expect_ready_message(
