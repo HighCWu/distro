@@ -4,7 +4,7 @@
 
 import type { VsockDevice } from "@lowland/kernel";
 import { AT, DT, E, O, parse_dirents, SystemError } from "./abi.ts";
-import { GuestSession } from "./conn.ts";
+import { GuestSession, type AgentAbi } from "./conn.ts";
 import {
   CHUNK,
   fchmodat,
@@ -287,22 +287,26 @@ class GuestClient {
   #processes = 0;
   #process_waiters: (() => void)[] = [];
   private readonly vsock: VsockDevice;
+  private readonly abi: AgentAbi | undefined;
 
-  constructor(vsock: VsockDevice) {
+  constructor(vsock: VsockDevice, abi?: AgentAbi) {
+    if (abi !== undefined && abi !== "wasm32" && abi !== "wasm64") {
+      throw new RangeError("unsupported agent ABI");
+    }
     this.vsock = vsock;
+    this.abi = abi;
   }
 
   // Lazy, memoized connect; cleared on failure so the next call retries. This
   // is what machine.ts's readiness loop depends on.
   #connect(timeoutMs?: number): Promise<GuestSession> {
     if (!this.#session) {
-      const attempt = GuestSession.connect(
-        this.vsock,
-        timeoutMs !== undefined ? { timeoutMs } : undefined,
-      ).catch((error: unknown) => {
-        if (this.#session === attempt) this.#session = null;
-        throw error;
-      });
+      const attempt = GuestSession.connect(this.vsock, { abi: this.abi, timeoutMs }).catch(
+        (error: unknown) => {
+          if (this.#session === attempt) this.#session = null;
+          throw error;
+        },
+      );
       this.#session = attempt;
     }
     return this.#session;
@@ -583,8 +587,12 @@ class GuestClient {
   }
 }
 
-export function create_guest_client(vsock: VsockDevice): GuestClientCapabilities {
-  const client = new GuestClient(vsock);
+/** @internal Explicit ABI selection requires a matching executor and system root. */
+export function create_guest_client(
+  vsock: VsockDevice,
+  options: { abi?: AgentAbi } = {},
+): GuestClientCapabilities {
+  const client = new GuestClient(vsock, options.abi);
   return {
     ping: client.ping.bind(client),
     fs: {

@@ -15,6 +15,7 @@ test("runs native wasm64 agent sessions, files, processes and cleanup", async ({
     "native program receives argv, cwd, env and streams binary stdio",
     "native nonzero exit and SIGTERM have distinct wait statuses",
     "closing a native session kills and reaps its running program before reconnect",
+    "native high-level client preserves file offsets, metadata and process status",
   ]);
   expect(result.closed).toBe(true);
 });

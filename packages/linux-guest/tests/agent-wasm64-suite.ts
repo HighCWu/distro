@@ -9,6 +9,8 @@ import {
 } from "@lowland/kernel";
 import { O, ProtocolError, S_IF, SystemError } from "../src/abi.ts";
 import { GuestSession } from "../src/conn.ts";
+import { create_guest_client } from "../src/client.ts";
+import { SeekMode } from "../src/file.ts";
 import { statToInfo } from "../src/file.ts";
 import { ChildProcess } from "../src/process.ts";
 import {
@@ -319,6 +321,43 @@ export async function runAgentWasm64Suite(
         assert.equal(
           (await fstatat64(session, "/bin/agent-runtime-child", 0)).st_mode & 0o111,
           0o111,
+        );
+      },
+    );
+    await t.test(
+      "native high-level client preserves file offsets, metadata and process status",
+      async () => {
+        // The executor admits one session at a time. Transfer ownership rather
+        // than opening a second session alongside the raw protocol checks.
+        session?.close();
+        session = undefined;
+        const client = create_guest_client(vsock, { abi: "wasm64" });
+        await client.ping(3000);
+        const path = "/tmp/native-client";
+        await client.fs.writeTextFile(path, "native-client-data");
+        assert.equal(await client.fs.readTextFile(path), "native-client-data");
+        assert.equal((await client.fs.stat(path)).size, 18);
+        await with_close(await client.fs.open(path, { read: true, write: true }), async (file) => {
+          assert.equal(await file.seek((1n << 32n) + 9n, SeekMode.Start), 2 ** 32 + 9);
+          assert.equal(await file.seek(-9, SeekMode.Current), 2 ** 32);
+        });
+        await client.fs.truncate(path, 6);
+        assert.equal(await client.fs.readTextFile(path), "native");
+        await with_close(await client.exec(["agent-runtime-child", "exit"]), async (child) => {
+          await child.stdin.close();
+          const [stdout, stderr, status] = await Promise.all([
+            collect(child.stdout),
+            collect(child.stderr),
+            child.status,
+          ]);
+          assert.equal(stdout.byteLength, 0);
+          assert.equal(stderr.byteLength, 0);
+          assert.deepEqual(status, { success: false, code: 23, signal: null });
+        });
+        await client.fs.remove(path);
+        await assert.rejects(
+          client.fs.stat(path),
+          (error) => error instanceof SystemError && error.code === "ENOENT",
         );
       },
     );
