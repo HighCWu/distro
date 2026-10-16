@@ -218,7 +218,14 @@ export interface FS<TNode, THandle> {
     handle: THandle;
   }>;
   read?(node: TNode, handle: THandle, offset: bigint, length: number): MaybePromise<Uint8Array>;
-  write?(node: TNode, handle: THandle, offset: bigint, data: Uint8Array): MaybePromise<number>;
+  // Current FUSE open flags, including changes made through F_SETFL.
+  write?(
+    node: TNode,
+    handle: THandle,
+    offset: bigint,
+    data: Uint8Array,
+    flags?: number,
+  ): MaybePromise<number>;
   flush?(node: TNode, handle: THandle): MaybePromise<void>;
   fsync?(node: TNode, handle: THandle, dataOnly: boolean): MaybePromise<void>;
   release?(node: TNode, handle: THandle): MaybePromise<void>;
@@ -1064,6 +1071,7 @@ export function fileSystemDevice<TNode extends object, THandle, T extends FS<TNo
           handle.handle,
           request.offset,
           data,
+          request.flags,
         );
         if (!Number.isInteger(written) || written < 0 || written > request.size) {
           throw new FSError("EIO", "filesystem returned an invalid write size");

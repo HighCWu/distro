@@ -18,6 +18,7 @@ const FileType = {
 const OpenFlags = {
   EXCLUSIVE: 0x80,
   TRUNCATE: 0x200,
+  APPEND: 0x400,
 } as const;
 
 interface Metadata {
@@ -129,9 +130,11 @@ class Node {
 
 class Handle {
   readonly node: Node;
+  readonly append: boolean;
 
-  constructor(node: Node) {
+  constructor(node: Node, append = false) {
     this.node = node;
+    this.append = append;
   }
 }
 
@@ -351,7 +354,7 @@ export class BrowserFS implements FS<Node, Handle> {
     if (flags & OpenFlags.TRUNCATE) {
       await this.setattr(current, { size: 0n });
     }
-    return new Handle(current);
+    return new Handle(current, Boolean(flags & OpenFlags.APPEND));
   }
 
   async create(parent: Node, name: string, flags: number, context: FSCreateContext) {
@@ -375,7 +378,7 @@ export class BrowserFS implements FS<Node, Handle> {
       node.metadata.gid = context.gid;
     }
     if (flags & OpenFlags.TRUNCATE) await this.setattr(node, { size: 0n });
-    return { node, handle: new Handle(node) };
+    return { node, handle: new Handle(node, Boolean(flags & OpenFlags.APPEND)) };
   }
 
   async read(node: Node, handle: Handle, offset: bigint, length: number) {
@@ -389,14 +392,23 @@ export class BrowserFS implements FS<Node, Handle> {
     return new Uint8Array(await opfs_call(file.slice(start, end).arrayBuffer()));
   }
 
-  async write(node: Node, handle: Handle, offset: bigint, data: Uint8Array) {
+  async write(node: Node, handle: Handle, offset: bigint, data: Uint8Array, flags?: number) {
     const current = this.#open_handle(node, handle);
-    const { start } = checked_range(offset, data.byteLength);
+    const range = checked_range(offset, data.byteLength);
+    const append = flags === undefined ? handle.append : Boolean(flags & OpenFlags.APPEND);
     return await this.#mutate(current, async () => {
       this.#open_handle(node, handle);
       if (current.handle.kind !== "file") {
         throw new FSError("EISDIR");
       }
+      // Resolve EOF inside the mutation queue, after earlier writes commit.
+      // Portable OPFS has no atomic append across independent adapters.
+      const start = append
+        ? checked_range(
+            BigInt((await opfs_call((current.handle as FileSystemFileHandle).getFile())).size),
+            data.byteLength,
+          ).start
+        : range.start;
       const writable = await opfs_call(
         (current.handle as FileSystemFileHandle).createWritable({
           keepExistingData: true,

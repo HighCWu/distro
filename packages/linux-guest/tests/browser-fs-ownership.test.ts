@@ -3,6 +3,58 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import { BrowserFS } from "../src/browser.ts";
 
+test("BrowserFS append handles resolve EOF after earlier queued commits", async () => {
+  let content = "base";
+  const file = {
+    kind: "file",
+    async getFile() {
+      return new Blob([content]);
+    },
+    async createWritable() {
+      let staged = content,
+        position = 0;
+      return {
+        async seek(offset: number) {
+          position = offset;
+        },
+        async write(data: ArrayBuffer) {
+          const text = new TextDecoder().decode(data);
+          staged = staged.slice(0, position) + text + staged.slice(position + text.length);
+        },
+        async close() {
+          content = staged;
+        },
+      };
+    },
+  };
+  const fs = new BrowserFS({
+    kind: "directory",
+    async getDirectoryHandle() {
+      throw new DOMException("file", "TypeMismatchError");
+    },
+    async getFileHandle() {
+      return file;
+    },
+  } as unknown as FileSystemDirectoryHandle);
+  const { node, handle } = await fs.create(fs.root, "file", 0x402, { mode: 0o600, uid: 0, gid: 0 });
+  const other = await fs.open(node, 0x402);
+  assert.deepEqual(
+    await Promise.all([
+      fs.write(node, handle, 0n, new TextEncoder().encode("A")),
+      fs.write(node, other, 0n, new TextEncoder().encode("B")),
+    ]),
+    [1, 1],
+  );
+  assert.equal(content, "baseAB");
+  const positioned = await fs.open(node, 2);
+  await fs.write(node, positioned, 0n, new TextEncoder().encode("Z"));
+  assert.equal(content, "ZaseAB", "ordinary handles retain positioned writes");
+  await fs.write(node, handle, 0n, new TextEncoder().encode("X"), 2);
+  assert.equal(content, "XaseAB", "current flags can disable append on an append handle");
+  await fs.write(node, positioned, 0n, new TextEncoder().encode("C"), 0x402);
+  assert.equal(content, "XaseABC", "current flags can enable append on a positioned handle");
+});
+
 test("BrowserFS rejects invalid I/O ranges before touching storage", async () => {
   let reads = 0;
   let writes = 0;
