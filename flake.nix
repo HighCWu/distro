@@ -131,6 +131,7 @@
           sdk = pkgs.mkShellNoCC {
             packages = [
               wasmpkgs.sdk
+              pkgs.meson
               pkgs.autoconf
               pkgs.gnumake
               pkgs.cmake
@@ -138,17 +139,22 @@
             ];
             env = {
               CC = "${wasmpkgs.sdk}/bin/wasm-linux-cc";
+              CC_FOR_BUILD = "${pkgs.stdenv.cc}/bin/cc";
+              CXX_FOR_BUILD = "${pkgs.stdenv.cc}/bin/c++";
+              PKG_CONFIG_FOR_BUILD = "${pkgs.pkg-config}/bin/pkg-config";
               CXX = "${wasmpkgs.sdk}/bin/wasm-linux-c++";
               PKG_CONFIG = "${wasmpkgs.sdk}/bin/wasm-linux-pkg-config";
               AR = "${wasmpkgs.llvm-toolchain}/bin/llvm-ar";
               RANLIB = "${wasmpkgs.llvm-toolchain}/bin/llvm-ranlib";
               sysroot = "${wasmpkgs.sysroot}";
               WASM_CMAKE_TOOLCHAIN_FILE = "${wasmpkgs.sdk}/share/cmake/linux-wasm.cmake";
+              WASM_MESON_CROSS_FILE = "${wasmpkgs.sdk}/share/meson/linux-wasm.ini";
             };
           };
           sdk-wasm64 = pkgs.mkShellNoCC {
             packages = [
               wasmpkgs.sdk-wasm64
+              pkgs.meson
               pkgs.autoconf
               pkgs.gnumake
               pkgs.cmake
@@ -156,12 +162,16 @@
             ];
             env = {
               CC = "${wasmpkgs.sdk-wasm64}/bin/wasm-linux-cc";
+              CC_FOR_BUILD = "${pkgs.stdenv.cc}/bin/cc";
+              CXX_FOR_BUILD = "${pkgs.stdenv.cc}/bin/c++";
+              PKG_CONFIG_FOR_BUILD = "${pkgs.pkg-config}/bin/pkg-config";
               CXX = "${wasmpkgs.sdk-wasm64}/bin/wasm-linux-c++";
               PKG_CONFIG = "${wasmpkgs.sdk-wasm64}/bin/wasm-linux-pkg-config";
               AR = "${wasmpkgs.llvm-toolchain-wasm64}/bin/llvm-ar";
               RANLIB = "${wasmpkgs.llvm-toolchain-wasm64}/bin/llvm-ranlib";
               sysroot = "${wasmpkgs.sysroot-wasm64}";
               WASM_CMAKE_TOOLCHAIN_FILE = "${wasmpkgs.sdk-wasm64}/share/cmake/linux-wasm.cmake";
+              WASM_MESON_CROSS_FILE = "${wasmpkgs.sdk-wasm64}/share/meson/linux-wasm.ini";
             };
           };
 

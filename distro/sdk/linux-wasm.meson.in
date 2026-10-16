@@ -1,0 +1,21 @@
+# SPDX-License-Identifier: MIT
+[binaries]
+c = '@cc@'
+cpp = '@cxx@'
+ar = '@ar@'
+strip = '@strip@'
+pkg-config = '@pkgConfig@'
+
+[host_machine]
+system = 'linux'
+cpu_family = '@wasmArch@'
+cpu = '@wasmArch@'
+endian = 'little'
+
+[properties]
+sys_root = '@sysroot@'
+needs_exe_wrapper = true
+
+[built-in options]
+default_library = 'static'
+b_staticpic = false

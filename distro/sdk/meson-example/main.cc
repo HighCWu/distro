@@ -1,0 +1,27 @@
+// SPDX-License-Identifier: MIT
+#include "answer.h"
+#include <cstdio>
+#include <cstdlib>
+#include <thread>
+#ifdef __wasm__
+#include <sched.h>
+#endif
+
+int main()
+{
+    int answer = 0;
+    std::thread worker([&answer] { answer = SDK_GENERATED_ANSWER; });
+    worker.join();
+    if (answer != 42) {
+        std::puts("::vm-test::fail: Meson generated header or thread result");
+        return EXIT_FAILURE;
+    }
+    std::puts("SDK Meson: build-machine generator and target C++ thread verified");
+    std::puts("::vm-test::pass");
+    std::fflush(stdout);
+#ifdef __wasm__
+    for (;;) sched_yield();
+#else
+    return EXIT_SUCCESS;
+#endif
+}

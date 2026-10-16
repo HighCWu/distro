@@ -88,6 +88,19 @@ let
     mkdir -p $out/share/cmake
     cp ${cmakeToolchain} $out/share/cmake/linux-wasm.cmake
   '';
+  mesonCrossFile = pkgs.replaceVars ./linux-wasm.meson.in {
+    inherit (platform) wasmArch;
+    cc = "${cc}/bin/wasm-linux-cc";
+    cxx = "${cxx}/bin/wasm-linux-c++";
+    ar = "${llvm-toolchain}/bin/llvm-ar";
+    strip = "${llvm-toolchain}/bin/llvm-strip";
+    pkgConfig = "${pkgConfig}/bin/wasm-linux-pkg-config";
+    sysroot = "${sysroot}";
+  };
+  mesonFiles = pkgs.runCommand "sdk-meson-${platform.wasmArch}" { } ''
+    mkdir -p $out/share/meson
+    cp ${mesonCrossFile} $out/share/meson/linux-wasm.ini
+  '';
   sdk = pkgs.symlinkJoin {
     name = "linux-wasm-sdk-${platform.wasmArch}";
     paths = [
@@ -96,6 +109,7 @@ let
       pkgConfig
       configure
       cmakeFiles
+      mesonFiles
       llvm-toolchain
     ];
     passthru.checks = {
@@ -132,6 +146,11 @@ let
       autoconf-runtime = vm-test.rawInitramfsTest {
         name = "sdk-autoconf-runtime-${platform.wasmArch}";
         init = "${autoconfPrograms}/sdk-autoconf.wasm";
+      };
+      meson-runtime = vm-test.rawInitramfsTest {
+        name = "sdk-meson-runtime-${platform.wasmArch}";
+        init = "${mesonPrograms}/sdk-meson.wasm";
+        cpus = 2;
       };
     };
   };
@@ -212,6 +231,24 @@ let
           SDK_TEST_OUTPUT_DIRECTORY=$out \
           node --test ${./.}/autoconf-consumer-test.js
         chmod 0755 $out/sdk-autoconf.wasm
+      '';
+  mesonPrograms =
+    pkgs.runCommand "sdk-meson-consumer-${platform.wasmArch}"
+      {
+        nativeBuildInputs = [
+          pkgs.meson
+          pkgs.ninja
+          pkgs.nodejs
+        ];
+        CC_FOR_BUILD = "${pkgs.stdenv.cc}/bin/cc";
+        CXX_FOR_BUILD = "${pkgs.stdenv.cc}/bin/c++";
+      }
+      ''
+        mkdir $out
+        SDK_TEST_MESON_CROSS_FILE=${sdk}/share/meson/linux-wasm.ini \
+          SDK_TEST_OUTPUT_DIRECTORY=$out \
+          node --test ${./.}/meson-consumer-test.js
+        chmod 0755 $out/sdk-meson.wasm
       '';
 in
 sdk
