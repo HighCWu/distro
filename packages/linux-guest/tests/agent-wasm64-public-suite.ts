@@ -193,6 +193,10 @@ export async function runPublicAgentWasm64Suite(
           assert.deepEqual(new Uint8Array(stderr), payload);
           assert.deepEqual(status, { success: true, code: 0, signal: null });
           await assert.rejects(
+            child.kill("SIGTERM"),
+            (error) => error instanceof SystemError && error.code === "ESRCH",
+          );
+          await assert.rejects(
             agent.fs.stat("/tmp/public-stream-copy"),
             (error) => error instanceof SystemError && error.code === "ENOENT",
           );

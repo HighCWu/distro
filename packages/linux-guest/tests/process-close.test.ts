@@ -2,7 +2,7 @@
 import assert from "node:assert/strict";
 import { setImmediate } from "node:timers/promises";
 import test from "node:test";
-import { NR } from "../src/abi.ts";
+import { NR, SystemError } from "../src/abi.ts";
 import type { AgentAbi, GuestSession } from "../src/conn.ts";
 import { ChildProcess } from "../src/process.ts";
 import { GuestFd } from "../src/syscalls.ts";
@@ -107,6 +107,51 @@ for (const abi of ["wasm32", "wasm64"] as const) {
     await f.child.close();
     assert.equal(f.kills, 0);
     assert.equal(f.releases, 1);
+  });
+
+  test(`public kill rejects confirmed reaped handles without signalling reusable PIDs (${abi})`, async () => {
+    const f = fixture(undefined, abi);
+    f.finish(0);
+    await f.child.status;
+    try {
+      for (const signal of [undefined, "SIGTERM", "SIGKILL", "SIGUSR1"] as const) {
+        await assert.rejects(
+          f.child.kill(signal),
+          (error) => error instanceof SystemError && error.code === "ESRCH",
+        );
+      }
+      assert.equal(f.kills, 0);
+    } finally {
+      await f.child.close();
+    }
+  });
+
+  test(`public kill still signals a live process and preserves its exit status (${abi})`, async () => {
+    const f = fixture(undefined, abi);
+    try {
+      await f.child.kill("SIGTERM");
+      assert.equal(f.kills, 1);
+    } finally {
+      f.finish(15);
+      await f.child.close();
+    }
+    assert.deepEqual(await f.child.status, { success: false, code: 0, signal: "SIGTERM" });
+  });
+
+  test(`public kill also rejects an aborted handle after confirmed reap (${abi})`, async () => {
+    const controller = new AbortController();
+    const reason = new Error("caller abort");
+    const f = fixture(controller.signal, abi);
+    controller.abort(reason);
+    f.finish();
+    await assert.rejects(f.child.status, (error) => error === reason);
+    await f.child.close();
+    const previousKills = f.kills;
+    await assert.rejects(
+      f.child.kill("SIGUSR2"),
+      (error) => error instanceof SystemError && error.code === "ESRCH",
+    );
+    assert.equal(f.kills, previousKills);
   });
 
   test(`aborted status retains its reason while close waits for release (${abi})`, async () => {

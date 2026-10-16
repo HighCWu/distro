@@ -74,6 +74,19 @@ guest_test("processes", async (t, fixture) => {
       });
     });
 
+    await t.test("rejects public signals after a process is confirmed reaped", async () => {
+      const exited = await guest.exec(["true"]);
+      try {
+        assert.equal((await exited.status).success, true);
+        await assert.rejects(
+          exited.kill("SIGTERM"),
+          (error) => error instanceof SystemError && error.code === "ESRCH",
+        );
+      } finally {
+        await exited.close();
+      }
+    });
+
     await t.test("isolates user module traps to the offending process", async () => {
       const survivor = await guest.exec(["cat"]);
       const survivor_output = collect(survivor.stdout);

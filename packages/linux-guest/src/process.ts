@@ -240,6 +240,9 @@ export class ChildProcess implements AsyncDisposable {
   /**
    * Sends a signal, defaulting to `SIGTERM`. `status` then resolves with
    * the signal set.
+   * Rejects with `ESRCH` without sending a syscall after this handle's reap
+   * has completed. This guard is not a pidfd: exit/reap can still race a
+   * signal request made while the handle is not yet known to be reaped.
    *
    * @example Stop a runaway process
    * ```ts
@@ -250,6 +253,7 @@ export class ChildProcess implements AsyncDisposable {
    * ```
    */
   async kill(signal: Signal = "SIGTERM") {
+    if (this.#reaped) throw new SystemError(E.SRCH);
     await kill(this.#session, this.pid, signal_numbers[signal]);
   }
 
