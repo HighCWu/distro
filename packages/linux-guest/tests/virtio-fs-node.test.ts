@@ -36,6 +36,56 @@ await mkdir(shared);
 await mkdir(outside);
 after(() => rm(temporary, { recursive: true, force: true }));
 
+test("node virtio-fs rejects invalid ranges before allocating or issuing I/O", async () => {
+  const fs = new NodeFS(shared);
+  const { node, handle } = await fs.create(fs.root, "range-check", linux_open.readwrite, {
+    mode: 0o100600,
+    uid: process.getuid!(),
+    gid: process.getgid!(),
+  });
+  try {
+    await fs.write(node, handle, 0n, new TextEncoder().encode("original"));
+    let reads = 0,
+      writes = 0;
+    const file = handle.file!;
+    const read = file.read;
+    const write = file.write;
+    file.read = (...args: unknown[]) => {
+      reads++;
+      return Reflect.apply(read, file, args);
+    };
+    file.write = (...args: unknown[]) => {
+      writes++;
+      return Reflect.apply(write, file, args);
+    };
+    const max = BigInt(Number.MAX_SAFE_INTEGER);
+    for (const [offset, length] of [
+      [-1n, 1],
+      [max + 1n, 0],
+      [0n, -1],
+      [0n, 0.5],
+      [0n, NaN],
+      [0n, Infinity],
+      [0n, Number.MAX_SAFE_INTEGER + 1],
+      [max, 1],
+    ] as const) {
+      await assert.rejects(fs.read(node, handle, offset, length), { errno: 22 });
+    }
+    for (const offset of [-1n, max, max + 1n]) {
+      await assert.rejects(fs.write(node, handle, offset, Uint8Array.of(42)), { errno: 22 });
+    }
+    assert.equal(reads, 0);
+    assert.equal(writes, 0);
+    assert.equal(new TextDecoder().decode(await fs.read(node, handle, 1n, 3)), "rig");
+    assert.equal((await fs.read(node, handle, 100n, 3)).byteLength, 0);
+    assert.equal((await fs.read(node, handle, 0n, 0)).byteLength, 0);
+    assert.equal(await fs.write(node, handle, 0n, Uint8Array.of(79)), 1);
+    assert.equal(new TextDecoder().decode(await fs.read(node, handle, 0n, 8)), "Original");
+  } finally {
+    await fs.release(node, handle);
+  }
+});
+
 test("node virtio-fs binds nodes and handles to their adapter and file", async () => {
   const left = new NodeFS(shared);
   const right = new NodeFS(outside);

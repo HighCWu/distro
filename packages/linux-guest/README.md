@@ -123,6 +123,12 @@ file descriptor remains usable after unlink or replacement rename; validating
 ownership does not retarget it to a new file at the same pathname. These checks
 prevent adapter mix-ups, not hostile host namespace races.
 
+Node reads and writes validate the complete offset/length range before buffer
+allocation or host I/O. Negative, fractional, non-finite or unsafe-integer ranges
+return EINVAL. Valid reads beyond EOF remain short reads; these numeric checks
+are not a memory quota or a guarantee that every representable request can be
+allocated.
+
 `BrowserFS` accepts OPFS and user-selected `FileSystemDirectoryHandle` values.
 The browser API has no Unix inode metadata or atomic portable rename, so the
 adapter synthesizes metadata and implements rename as copy-then-remove. A

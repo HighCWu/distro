@@ -111,6 +111,14 @@ function checked_offset(value: bigint) {
   return result;
 }
 
+function checked_range(offset: bigint, length: number) {
+  const start = checked_offset(offset);
+  if (!Number.isSafeInteger(length) || length < 0 || length > Number.MAX_SAFE_INTEGER - start) {
+    throw new FSError("EINVAL", "I/O range exceeds JavaScript's integer range");
+  }
+  return start;
+}
+
 // The guest uses asm-generic Linux open flags. Translate them rather than
 // relying on their values happening to match the host's node:fs constants.
 const linux_open = {
@@ -476,17 +484,17 @@ export class NodeFS implements FS<Node, Handle> {
 
   async read(node: Node, handle: Handle, offset: bigint, length: number) {
     const file = this.#file(node, handle);
+    const start = checked_range(offset, length);
     const buffer = new Uint8Array(length);
-    const { bytesRead } = await node_call(file.read(buffer, 0, length, checked_offset(offset)));
+    const { bytesRead } = await node_call(file.read(buffer, 0, length, start));
     return buffer.subarray(0, bytesRead);
   }
 
   async write(node: Node, handle: Handle, offset: bigint, data: Uint8Array) {
     this.#writable();
     const file = this.#file(node, handle);
-    const { bytesWritten } = await node_call(
-      file.write(data, 0, data.byteLength, checked_offset(offset)),
-    );
+    const start = checked_range(offset, data.byteLength);
+    const { bytesWritten } = await node_call(file.write(data, 0, data.byteLength, start));
     return bytesWritten;
   }
 
