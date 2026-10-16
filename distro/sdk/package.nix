@@ -8,23 +8,27 @@
   vm-test,
 }:
 let
+  profileConfig = pkgs.writeText "linux-${platform.wasmArch}.cfg" (
+    lib.concatMapStringsSep "\n" lib.escapeShellArg (
+      [
+        "--target=${platform.targetTriple}"
+        "--sysroot=${sysroot}"
+      ]
+      ++ platform.compilerFlags
+      ++ map (flag: "$-Wl,${flag}") platform.linkerFlags
+    )
+    + "\n"
+  );
   wrapper =
     name: compiler:
     pkgs.writeShellApplication {
       inherit name;
       text =
         builtins.replaceStrings
-          [ "@compiler@" "@compileFlags@" "@linkFlags@" ]
+          [ "@compiler@" "@configArgument@" ]
           [
             (lib.escapeShellArg "${llvm-toolchain}/bin/${compiler}")
-            (lib.escapeShellArgs (
-              [
-                "--target=${platform.targetTriple}"
-                "--sysroot=${sysroot}"
-              ]
-              ++ platform.compilerFlags
-            ))
-            (lib.escapeShellArgs (map (flag: "-Wl,${flag}") platform.linkerFlags))
+            (lib.escapeShellArg "--config=${profileConfig}")
           ]
           (builtins.readFile ./compiler.sh);
     };
@@ -69,13 +73,25 @@ let
       };
     };
   };
-  programs = pkgs.runCommand "sdk-consumer-${platform.wasmArch}" { nativeBuildInputs = [ sdk ]; } ''
-    mkdir $out
-    # Separate compilation is part of the public consumer contract.
-    wasm-linux-c++ -std=c++17 -O2 -pthread -Werror -c ${../toolchain-smoke/runtime-cxx.cc} -o runtime.o
-    wasm-linux-c++ -pthread -Wl,--fatal-warnings runtime.o -o $out/runtime-cxx.wasm
-    chmod 0755 $out/runtime-cxx.wasm
-  '';
+  programs =
+    pkgs.runCommand "sdk-consumer-${platform.wasmArch}"
+      {
+        nativeBuildInputs = [
+          sdk
+          pkgs.nodejs
+        ];
+      }
+      ''
+        cp ${./compiler.sh} compiler.sh
+        cp ${./config-driver-test.js} config-driver-test.js
+        SDK_TEST_CLANG=${llvm-toolchain}/bin/clang \
+          SDK_TEST_TARGET=${pkgs.stdenv.hostPlatform.config} node --test config-driver-test.js
+        mkdir $out
+        # Separate compilation is part of the public consumer contract.
+        wasm-linux-c++ -std=c++17 -O2 -pthread -Werror -c ${../toolchain-smoke/runtime-cxx.cc} -o runtime.o
+        wasm-linux-c++ -pthread -Wl,--fatal-warnings runtime.o -o $out/runtime-cxx.wasm
+        chmod 0755 $out/runtime-cxx.wasm
+      '';
   cmakePrograms =
     pkgs.runCommand "sdk-cmake-consumer-${platform.wasmArch}"
       {
@@ -85,13 +101,14 @@ let
         ];
       }
       ''
-        cmake -S ${./cmake-example} -B build -G Ninja \
-          -DCMAKE_TOOLCHAIN_FILE=${sdk}/share/cmake/linux-wasm.cmake \
-          -DCMAKE_BUILD_TYPE=Release
-        cmake --build build --verbose
-        mkdir $out
-        cp build/sdk-example.wasm $out/
-        chmod 0755 $out/sdk-example.wasm
+          cmake -S ${./cmake-example} -B build -G Ninja \
+            -DCMAKE_TOOLCHAIN_FILE=${sdk}/share/cmake/linux-wasm.cmake \
+        -DCMAKE_NINJA_FORCE_RESPONSE_FILE=ON \
+            -DCMAKE_BUILD_TYPE=Release
+          cmake --build build --verbose
+          mkdir $out
+          cp build/sdk-example.wasm $out/
+          chmod 0755 $out/sdk-example.wasm
       '';
 in
 sdk
