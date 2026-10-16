@@ -104,6 +104,31 @@ source flake. Its end-to-end public API check is
 `guest-agent-check-public-wasm64`. These are bring-up paths, not a claim that
 all system packages or browsers support wasm64.
 
+For a system root without the test executable or test markers, the source
+flake exposes `guest-agent.nativeWasm64.rootfs`. It installs only the matching
+wasm64 BusyBox package (including its license texts) and minimal filesystem
+configuration, with the `LOWLAND_ROOT` label and the private-network resolver
+address. It does not use the default wasm32 package repository.
+
+Build heavy artifacts in public CI; these explicit source-flake targets select
+the matching boot disk, system root and kernel package:
+
+```sh
+nix build .#legacyPackages.x86_64-linux.guest-agent.nativeWasm64.bootDisk
+nix build .#legacyPackages.x86_64-linux.guest-agent.nativeWasm64.rootfs
+nix build .#kernel-wasm64
+nix build .#checks.x86_64-linux.guest-agent-check-minimal-root-wasm64
+```
+
+Attach the root bytes with `blockDevice()` as in the usage example and supply
+the boot disk to `guestAgent({ abi: "wasm64", image })`. A separate explicit
+Node check verifies this actual minimal root rather than substituting the
+fixture root. Adding the check does not establish it has passed; browser,
+full shell, networking and a larger package set still need their own results.
+The default npm assets remain wasm32. This experimental root is not a complete
+distribution release: BusyBox remains GPL-2.0-only, and its included license
+texts do not replace corresponding-source delivery or a full release inventory.
+
 Pass `"lowland.root.overlay=tmpfs"` as a kernel argument to mount the system
 image read-only beneath a temporary writable OverlayFS:
 
