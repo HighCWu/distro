@@ -146,6 +146,8 @@ let
       llvm-toolchain
     ];
     passthru.meson = meson;
+    # Reuse the exact SDK-built consumer in real-browser runtime checks.
+    passthru.sqliteProgram = "${sqlitePrograms}/sdk-sqlite.wasm";
     passthru.checks = {
       profile = profileCheck;
       wrapper =

@@ -13,6 +13,8 @@
   pkgs,
   playwright,
   repository,
+  sdk,
+  sdk-wasm64,
   site,
   toolchain-smoke-wasm64,
   toolchain-smoke,
@@ -24,6 +26,7 @@ let
     "rejects invalid CPU counts before configuring devices or fetching the kernel"
     "runs musl allocation, mmap, threads, TLS and signals"
     "runs C++ containers, exceptions, cross-thread exception_ptr cleanup and TLS"
+    "runs SDK SQLite transactions and file reopen through Linux"
     "retries a failed kernel download in the same page with a generic MIME type"
   ];
 
@@ -68,6 +71,10 @@ let
         name = "wasm${toString bits}-browser-runtime-cxx";
         init = "${programs}/runtime-cxx.wasm";
       };
+      sqliteInitramfs = image.mkInitramfs {
+        name = "wasm${toString bits}-browser-runtime-sqlite";
+        init = (if bits == 64 then sdk-wasm64 else sdk).sqliteProgram;
+      };
     in
     pkgs.runCommand "wasm${toString bits}-runtime-browser-tests" { } ''
       mkdir -p \
@@ -80,6 +87,7 @@ let
       cp ${../vm-test/protocol.js} $out/protocol.js
       cp ${initramfs} $out/runtime.cpio
       cp ${cxxInitramfs} $out/runtime-cxx.cpio
+      cp ${sqliteInitramfs} $out/runtime-sqlite.cpio
       cp ${source}/memory64-index.html $out/index.html
       cp ${source}/playwright.config.js $out/playwright.config.js
       cp ${source}/server.js $out/server.js

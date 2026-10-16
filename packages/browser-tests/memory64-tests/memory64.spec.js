@@ -71,6 +71,20 @@ test("runs C++ containers, exceptions, cross-thread exception_ptr cleanup and TL
   expect(output).not.toContain("::vm-test::fail");
 });
 
+test("runs SDK SQLite transactions and file reopen through Linux", async ({ page }) => {
+  page.on("console", (message) => console.log(`[browser] ${message.text()}`));
+  page.on("pageerror", (error) => console.error(`[browser] ${error.stack ?? error}`));
+  await page.goto("/");
+  await expect
+    .poll(() => page.evaluate(() => typeof globalThis.bootSqliteRuntimeSmoke))
+    .toBe("function");
+  const output = await page.evaluate(() => globalThis.bootSqliteRuntimeSmoke());
+  expect(output).toContain("SDK SQLite: in-memory bindings and rollback verified");
+  expect(output).toContain("SDK SQLite: file commit, rollback, reopen and integrity verified");
+  expect(output).toContain("::vm-test::pass");
+  expect(output).not.toContain("::vm-test::fail");
+});
+
 test("retries a failed kernel download in the same page with a generic MIME type", async ({
   page,
 }) => {
