@@ -95,6 +95,8 @@ static int exercise(int writer, int reader)
     REQUIRE(memcmp(buffer, payload, sizeof(buffer)) == 0);
     REQUIRE(epoll_wait(epoll, &event, 1, 0) == 0);
     REQUIRE(shutdown(writer, SHUT_WR) == 0);
+    errno = 0;
+    REQUIRE(send(writer, payload, sizeof(payload), MSG_NOSIGNAL) == -1 && errno == EPIPE);
     REQUIRE(epoll_wait(epoll, &event, 1, 5000) == 1);
     REQUIRE(event.data.u64 == identity && (event.events & EPOLLRDHUP) != 0);
     REQUIRE(ready(reader, POLLIN));
@@ -110,6 +112,77 @@ static int exercise(int writer, int reader)
     result = 1;
 done:
     if (epoll >= 0) close(epoll);
+    return result;
+}
+
+static int exercise_udp(void)
+{
+    const unsigned char payload[] = {0, 255, 42, 0, 128, 1, 2};
+    unsigned char buffer[sizeof(payload)], prefix[3] = {99, 99, 99};
+    int sender = -1, receiver = -1, result = 0;
+    struct sockaddr_in destination = {
+        .sin_family = AF_INET, .sin_port = 0,
+        .sin_addr.s_addr = htonl(INADDR_LOOPBACK),
+    }, source = destination, peer = {0};
+    socklen_t length = sizeof(destination);
+    sender = socket(AF_INET, SOCK_DGRAM | SOCK_NONBLOCK | SOCK_CLOEXEC, 0);
+    receiver = socket(AF_INET, SOCK_DGRAM | SOCK_NONBLOCK | SOCK_CLOEXEC, 0);
+    REQUIRE(sender >= 0 && receiver >= 0);
+    REQUIRE(bind(receiver, (struct sockaddr *)&destination, sizeof(destination)) == 0);
+    REQUIRE(getsockname(receiver, (struct sockaddr *)&destination, &length) == 0);
+    REQUIRE(length == sizeof(destination) && destination.sin_port != 0);
+    REQUIRE(bind(sender, (struct sockaddr *)&source, sizeof(source)) == 0);
+    length = sizeof(source);
+    REQUIRE(getsockname(sender, (struct sockaddr *)&source, &length) == 0);
+    REQUIRE(length == sizeof(source) && source.sin_port != 0);
+    errno = 0;
+    REQUIRE(recv(receiver, buffer, sizeof(buffer), 0) == -1 &&
+            (errno == EAGAIN || errno == EWOULDBLOCK));
+    struct iovec pieces[] = {
+        { .iov_base = (void *)payload, .iov_len = 2 },
+        { .iov_base = (void *)(payload + 2), .iov_len = sizeof(payload) - 2 },
+    };
+    struct msghdr outgoing = {
+        .msg_name = &destination, .msg_namelen = sizeof(destination),
+        .msg_iov = pieces, .msg_iovlen = 2,
+    };
+    REQUIRE(sendmsg(sender, &outgoing, MSG_NOSIGNAL) == (ssize_t)sizeof(payload));
+    REQUIRE(ready(receiver, POLLIN));
+    struct iovec short_buffer = { .iov_base = prefix, .iov_len = sizeof(prefix) };
+    struct msghdr peek = {
+        .msg_name = &peer, .msg_namelen = sizeof(peer),
+        .msg_iov = &short_buffer, .msg_iovlen = 1,
+    };
+    /* MSG_TRUNC reports the original record length, not the buffer length;
+     * MSG_PEEK must leave that whole record queued for the next receive. */
+    REQUIRE(recvmsg(receiver, &peek, MSG_PEEK | MSG_TRUNC) == (ssize_t)sizeof(payload));
+    REQUIRE((peek.msg_flags & MSG_TRUNC) != 0 && peek.msg_namelen == sizeof(peer));
+    REQUIRE(peer.sin_family == AF_INET && peer.sin_port == source.sin_port &&
+            peer.sin_addr.s_addr == source.sin_addr.s_addr);
+    REQUIRE(memcmp(prefix, payload, sizeof(prefix)) == 0);
+    length = sizeof(peer);
+    REQUIRE(recvfrom(receiver, buffer, sizeof(buffer), 0,
+                     (struct sockaddr *)&peer, &length) == (ssize_t)sizeof(payload));
+    REQUIRE(length == sizeof(peer) && peer.sin_port == source.sin_port &&
+            peer.sin_addr.s_addr == source.sin_addr.s_addr);
+    REQUIRE(memcmp(buffer, payload, sizeof(buffer)) == 0);
+    struct pollfd pending = { .fd = receiver, .events = POLLIN };
+    REQUIRE(poll(&pending, 1, 0) == 0);
+    REQUIRE(sendto(sender, payload, 0, MSG_NOSIGNAL,
+                   (struct sockaddr *)&destination, sizeof(destination)) == 0);
+    REQUIRE(sendto(sender, payload, sizeof(payload), MSG_NOSIGNAL,
+                   (struct sockaddr *)&destination, sizeof(destination)) == (ssize_t)sizeof(payload));
+    REQUIRE(ready(receiver, POLLIN));
+    REQUIRE(recv(receiver, buffer, sizeof(buffer), 0) == 0);
+    /* Zero bytes above means an empty UDP record, not end-of-stream. */
+    REQUIRE(ready(receiver, POLLIN));
+    REQUIRE(recv(receiver, buffer, sizeof(buffer), 0) == (ssize_t)sizeof(payload));
+    REQUIRE(memcmp(buffer, payload, sizeof(buffer)) == 0);
+    REQUIRE(poll(&pending, 1, 0) == 0);
+    result = 1;
+done:
+    if (receiver >= 0) close(receiver);
+    if (sender >= 0) close(sender);
     return result;
 }
 
@@ -152,6 +225,8 @@ int main(void)
     REQUIRE(server >= 0);
     REQUIRE(exercise(client, server));
     puts("SDK sockets: TCP loopback nonblocking, poll/epoll and half-close verified");
+    REQUIRE(exercise_udp());
+    puts("SDK sockets: UDP scatter/gather, peek, truncation and empty records verified");
     result = EXIT_SUCCESS;
 done:
     if (server >= 0) close(server);

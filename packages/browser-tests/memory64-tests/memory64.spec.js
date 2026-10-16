@@ -101,6 +101,9 @@ test("runs SDK Unix and TCP socket readiness and half-close through Linux", asyn
   expect(output).toContain(
     "SDK sockets: TCP loopback nonblocking, poll/epoll and half-close verified",
   );
+  expect(output).toContain(
+    "SDK sockets: UDP scatter/gather, peek, truncation and empty records verified",
+  );
   expect(output).toContain("::vm-test::pass");
   expect(output).not.toContain("::vm-test::fail");
 });
