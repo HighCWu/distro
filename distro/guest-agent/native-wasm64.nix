@@ -1,6 +1,8 @@
 # SPDX-License-Identifier: MIT
 {
   apk,
+  apk-wasm64,
+  busybox-wasm64,
   image,
   platform-wasm64,
   pkgs,
@@ -60,6 +62,18 @@ in
 agent
 // {
   inherit bootFilesystem;
+  # A real minimal system root, without runtime-child or test marker files.
+  # Keep it independent of the default wasm32 distribution repository.
+  rootfs = import ../npm/linux-guest/rootfs.nix {
+    inherit image pkgs;
+    apk = apk-wasm64;
+    busybox = busybox-wasm64;
+    repository = apk-wasm64.mkRepository {
+      name = "native-wasm64-minimal";
+      arch = platform-wasm64.apkArch;
+      packages.busybox = busybox-wasm64;
+    };
+  };
   # Native PID 1 directly; no wasm32 shell or BusyBox in this boot image.
   bootDisk = image.mkGptDisk {
     name = "native-agent-wasm64.img";

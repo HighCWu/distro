@@ -7,17 +7,19 @@
   pkgs,
   userland ? false,
   networking ? false,
-}:
-assert !networking || userland;
-pkgs.stdenvNoCC.mkDerivation {
-  pname = "linux-agent-public${
+  profile ? "public${
     if networking then
       "-network"
     else if userland then
       "-userland"
     else
       ""
-  }-wasm64";
+  }",
+  testFile ? "agent-wasm64-public-runtime.ts",
+}:
+assert !networking || userland;
+pkgs.stdenvNoCC.mkDerivation {
+  pname = "linux-agent-${profile}-wasm64";
   version = "0.0.0";
   src = ../..;
   passthru.ci.heavy = true;
@@ -41,7 +43,7 @@ pkgs.stdenvNoCC.mkDerivation {
     cp -rT ${bytes}/dist packages/bytes/dist
     pnpm --filter=@lowland/guest-tests check
     timeout --kill-after=5 180 pnpm --filter=@lowland/guest-tests exec \
-      node --test agent-wasm64-public-runtime.ts
+      node --test ${pkgs.lib.escapeShellArg testFile}
     runHook postBuild
   '';
   installPhase = ''

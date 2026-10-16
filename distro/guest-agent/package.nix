@@ -17,6 +17,8 @@ let
   nativeWasm64 = import ./native-wasm64.nix {
     inherit
       apk
+      apk-wasm64
+      busybox-wasm64
       image
       pkgs
       sdk-wasm64
@@ -123,6 +125,16 @@ package
     inherit bytes pkgs node-workspace;
     kernel = kernel-wasm64;
     assets = bootDiskCheck;
+  };
+  checks.minimal-root-wasm64 = import ./public-wasm64.nix {
+    inherit bytes pkgs node-workspace;
+    kernel = kernel-wasm64;
+    assets = {
+      runtimeBootDisk = nativeWasm64.bootDisk;
+      runtimeRootfs = nativeWasm64.rootfs;
+    };
+    profile = "minimal-root";
+    testFile = "agent-wasm64-minimal-root-runtime.ts";
   };
   checks.public-userland-wasm64 = import ./public-wasm64.nix {
     inherit bytes pkgs node-workspace;
