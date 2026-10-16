@@ -219,6 +219,7 @@ let
   autoconfPrograms =
     pkgs.runCommand "sdk-autoconf-consumer-${platform.wasmArch}"
       {
+        CC_FOR_BUILD = "${pkgs.stdenv.cc}/bin/cc";
         nativeBuildInputs = [
           pkgs.autoconf
           pkgs.gnumake

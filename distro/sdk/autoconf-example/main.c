@@ -1,6 +1,10 @@
 /* SPDX-License-Identifier: MIT */
 #include <stdio.h>
 #include <stdlib.h>
+#include "generated.h"
+#if SDK_GENERATED_SIZE != 64
+#error incorrect build-time generated header
+#endif
 #ifdef __wasm__
 #include <sched.h>
 #endif
@@ -14,7 +18,7 @@
 
 int main(void)
 {
-    volatile unsigned char *buffer = malloc(64);
+    volatile unsigned char *buffer = malloc(SDK_GENERATED_SIZE);
     if (!buffer) {
         puts("::vm-test::fail: Autoconf consumer allocation");
         return EXIT_FAILURE;

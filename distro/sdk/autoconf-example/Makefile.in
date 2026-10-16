@@ -1,5 +1,7 @@
 # SPDX-License-Identifier: MIT
 CC = @CC@
+CC_FOR_BUILD = @CC_FOR_BUILD@
+CFLAGS_FOR_BUILD = @CFLAGS_FOR_BUILD@
 CPPFLAGS = @CPPFLAGS@
 CFLAGS = @CFLAGS@
 LDFLAGS = @LDFLAGS@
@@ -11,8 +13,14 @@ EXEEXT = @EXEEXT@
 .PHONY: all
 all: sdk-autoconf$(EXEEXT)
 
-main.o: $(srcdir)/main.c
-	$(CC) $(DEFS) $(CPPFLAGS) $(CFLAGS) -c $(srcdir)/main.c -o $@
+sdk-generator: $(srcdir)/generator.c
+	$(CC_FOR_BUILD) $(CFLAGS_FOR_BUILD) $(srcdir)/generator.c -o $@
+
+generated.h: sdk-generator
+	./sdk-generator > $@.tmp && mv $@.tmp $@
+
+main.o: $(srcdir)/main.c generated.h
+	$(CC) $(DEFS) $(CPPFLAGS) $(CFLAGS) -I. -c $(srcdir)/main.c -o $@
 
 sdk-autoconf$(EXEEXT): main.o
 	$(CC) $(CFLAGS) $(LDFLAGS) main.o $(LIBS) -o $@

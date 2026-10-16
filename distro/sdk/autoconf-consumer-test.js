@@ -27,7 +27,13 @@ test("Autoconf SDK entry point separates build and host without executing target
     // An inherited host site file must not supply false target capabilities.
     const hostSite = join(root, "host.site");
     writeFileSync(hostSite, "echo HOST_SITE_WAS_LOADED >&2\nexit 93\n");
-    const env = { ...process.env, CONFIG_SITE: hostSite, WASM_CONFIG_SITE: "" };
+    const env = {
+      ...process.env,
+      CONFIG_SITE: hostSite,
+      WASM_CONFIG_SITE: "",
+      CC_FOR_BUILD: process.env.CC_FOR_BUILD || "cc",
+      CFLAGS_FOR_BUILD: "-O2 -Wall -Wextra -Werror",
+    };
     const run = (command, args, cwd = build, overrides = {}) => {
       const result = spawnSync(command, args, {
         cwd,
@@ -67,6 +73,7 @@ test("Autoconf SDK entry point separates build and host without executing target
     assert.match(configured.stdout, /SDK runtime probe deferred to the target environment/);
     assert.doesNotMatch(configured.stdout + configured.stderr, /HOST_SITE_WAS_LOADED/);
     run("make", ["-j2", "CFLAGS=-O2 -Wall -Wextra -Werror"]);
+    assert.match(readFileSync(join(build, "generated.h"), "utf8"), /SDK_GENERATED_SIZE 64/);
     if (installedWrapper) {
       assert.ok(process.env.SDK_TEST_OUTPUT_DIRECTORY, "target checks require an output directory");
       copyFileSync(
