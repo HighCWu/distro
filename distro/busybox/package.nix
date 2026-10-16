@@ -21,7 +21,7 @@ let
   buildMetadata = pkgs.writeText "busybox-build.json" (
     builtins.toJSON {
       schemaVersion = 1;
-      addressBits = platform.addressBits;
+      inherit (platform) addressBits;
       inherit debug;
       sourceIdentity = identity src;
       muslSourceIdentity = identity musl.src;
@@ -40,8 +40,10 @@ stdenv.mkDerivation (finalAttrs: {
     "out"
     "buildMaterials"
   ];
-  meta.license = lib.licenses.gpl2Only;
-  meta.outputsToInstall = [ "out" ];
+  meta = {
+    license = lib.licenses.gpl2Only;
+    outputsToInstall = [ "out" ];
+  };
 
   # busybox builds host tools with HOSTCC during the target build.
   depsBuildBuild = [ pkgs.stdenv.cc ];
@@ -165,8 +167,7 @@ stdenv.mkDerivation (finalAttrs: {
   passthru.sourceBundle = import ./source-bundle.nix {
     inherit pkgs;
     busybox = finalAttrs.finalPackage;
-    addressBits = platform.addressBits;
-    maximumMemoryBytes = platform.maximumMemoryBytes;
+    inherit (platform) addressBits maximumMemoryBytes;
   };
 
   passthru.checks =

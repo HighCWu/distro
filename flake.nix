@@ -81,13 +81,25 @@
           mmap-search-baseline-correctness = baseline.basic-init.checks.mmap;
           mmap-search-baseline-benchmark = baseline.basic-init.checks.mmap-benchmark;
           mmap-search-baseline-correctness-wasm64 = baseline.mmap-benchmark-wasm64.checks.correctness;
-          formatting = pkgs.runCommand "treefmt-check" { nativeBuildInputs = [ formatter ]; } ''
-            cp -r ${self} tree
-            chmod -R u+w tree
-            cd tree
-            treefmt --ci
-            touch $out
-          '';
+          formatting =
+            pkgs.runCommand "treefmt-check"
+              {
+                nativeBuildInputs = [
+                  formatter
+                  pkgs.diffutils
+                ];
+              }
+              ''
+                cp -r ${self} tree
+                chmod -R u+w tree
+                cd tree
+                if ! treefmt --ci; then
+                  # Include the actual formatter changes, not just their paths.
+                  diff --recursive --unified ${self} . || true
+                  exit 1
+                fi
+                touch $out
+              '';
         }
       );
 
