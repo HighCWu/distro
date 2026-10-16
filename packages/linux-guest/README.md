@@ -118,7 +118,8 @@ copy, immutable snapshot, path-confinement guarantee or rollback on I/O failure;
 a newly created destination can remain after a failed operation. Eight added
 dual-width protocol cases cover stale paths, exact identity, short writes and
 cleanup, with 85 related host tests passing. Native ordinary-copy and symlink
-alias assertions are included but require execution at the updated revision.
+alias assertions have passed in Node at `f973002` and Firefox at `09e1ea8`.
+Those native cases use stable aliases, not a real rename-race stress test.
 
 Linux C-string arguments (paths, symlink targets, mount source/type/options)
 reject embedded NUL with `TypeError` before the syscall is sent. They are not
@@ -128,7 +129,8 @@ does not normalize paths, confine access or make multi-operation filesystem
 methods transactional. Dual-width protocol tests cover 16 argument positions
 with leading/interior/trailing NUL and continued valid I/O (87 related host
 tests pass). Native write/remove/rename preservation assertions are included;
-their updated target execution remains separate from host validation.
+they passed in Node at `f973002` and Firefox at `09e1ea8`, separately from host
+validation. Neither result includes later streaming or binary-input changes.
 
 Process admission is capped at eight live SDK children so blocked process I/O
 does not consume every syscall lane. An `exec()` waiting for capacity is
@@ -150,7 +152,9 @@ native exec can still return errors such as `E2BIG`. Four added dual-width host
 cases verify rejection and exact byte/count boundaries (91 related host tests
 pass); CI also checks that SDK constants match the native parser and the
 largest permitted body fits its frame. Updated native oversized-input and
-subsequent-execution assertions still require target CI results.
+subsequent-execution assertions have passed in Node at `f973002`: seven tests,
+zero failures/cancellations/skips. This does not validate later streaming or
+example binary-input revisions, nor a browser run of the spawn preflight change.
 
 For larger inputs, `exec(argv, { stdinMode: "streaming", signal })` makes each
 stdin write wait for native pipe acceptance and propagates that write's error.
