@@ -16,13 +16,14 @@ export function settle_user_copy(status: UserCopyStatus | null, result: number):
 
 /** Wait for a child worker to finish its private-memory snapshot. */
 export function wait_user_copy(status: UserCopyStatus, timeout_ms = 30_000): number {
-  const deadline = Date.now() + timeout_ms;
+  // A system clock adjustment must not extend or shorten a pending snapshot.
+  const deadline = performance.now() + timeout_ms;
 
   for (;;) {
     const result = Atomics.load(status, 0);
     if (result !== 0) return result;
 
-    const remaining = deadline - Date.now();
+    const remaining = deadline - performance.now();
     if (remaining <= 0 || Atomics.wait(status, 0, 0, remaining) === "timed-out") {
       settle_user_copy(status, USER_COPY_TRY_AGAIN);
       return Atomics.load(status, 0);
