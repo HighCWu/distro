@@ -127,6 +127,31 @@ The minimal root includes the native test program, not a full distribution or
 system init. Passing Node production tests alone does not establish browser
 production support.
 
+### Public plugin and GPT boot disk
+
+The public API has separate checks, using the same assertions as
+`guest-agent-check-public-wasm64`:
+
+```console
+nix build .#checks.x86_64-linux.browser-tests-check-agent-public-wasm64-chromium -L
+nix build .#checks.x86_64-linux.browser-tests-check-agent-public-wasm64-firefox -L
+```
+
+They create `guestAgent({ abi: "wasm64", image })`, attach a separate system root
+before the GPT agent disk, and pass neither an external initramfs nor manual boot
+arguments. Assets come from the native disk check, not from its successful result.
+The three required cases cover root pivot and read-only root, public file APIs
+including seek beyond 4 GiB, and `run()` exit status plus argv/env/cwd forwarding.
+The result must contain exactly these completed cases and machine closure; the
+report gate requires one successful test with no skips or retries. Downloads
+must succeed; neither another ABI nor the internal client is a fallback.
+
+The shared suite externalizes the kernel and its plugin entry point. The import
+map must resolve both to the same installed kernel package, preserving the
+plugin identity symbol. These checks do not change default wasm32 image selection
+or establish full distribution support. Their browser results must be verified
+independently of the earlier successful Node public-plugin check.
+
 ## Experimental EROFS copy lifecycle
 
 Independent suites use the opt-in test kernel and the same C test/initramfs
