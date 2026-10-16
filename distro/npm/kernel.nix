@@ -48,6 +48,8 @@ pkgs.stdenvNoCC.mkDerivation (finalAttrs: {
         nativeBuildInputs = [ pkgs.nodejs ];
       }
       ''
+        # Share one Linux build while also enforcing its source-side profile check.
+        test -e ${linux.checks.build-materials}
         node ${./check-kernel-package.mjs} ${finalAttrs.finalPackage}/package.tgz \
           ${linux} ${../../packages/kernel/package.json} ${../../packages/kernel/LICENSE}
         touch $out
