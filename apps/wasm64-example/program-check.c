@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: MIT
 #include <stdio.h>
+#include <inttypes.h>
 #include <string.h>
 #include <unistd.h>
 
@@ -27,6 +28,22 @@ int main(int argc, char **argv)
         int byte = getchar();
         if (byte == EOF) return 6;
         printf("prefix byte: %u\n", (unsigned int)(unsigned char)byte);
+        return 0;
+    }
+    if (!strcmp(argv[1], "checksum") || !strcmp(argv[1], "pattern")) {
+        int pattern = !strcmp(argv[1], "pattern");
+        unsigned char buffer[4096];
+        uint64_t count = 0, sum = 0;
+        size_t size;
+        while ((size = fread(buffer, 1, sizeof(buffer), stdin))) {
+            for (size_t i = 0; i < size; i++) {
+                if (pattern && buffer[i] != (unsigned char)((count + i) * 37 + 11)) return 7;
+                sum += buffer[i];
+            }
+            count += size;
+        }
+        if (ferror(stdin)) return 5;
+        printf("input bytes: %" PRIu64 ", sum: %" PRIu64 "\n", count, sum);
         return 0;
     }
     if (getchar() != EOF) return 3;

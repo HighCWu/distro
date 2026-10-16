@@ -181,6 +181,10 @@ element("run-program").addEventListener("click", () =>
         {
           signal: controller.signal,
           inputText: element("stdin").value,
+          inputFile:
+            element("stdin-source").value === "file"
+              ? (element("stdin-file").files[0] ?? null)
+              : undefined,
           onOutput(_name, text) {
             if (session === active && !stopping)
               element("result").textContent = outputTail(element("result").textContent, text);

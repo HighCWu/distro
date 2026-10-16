@@ -60,15 +60,28 @@ Hello from native Linux wasm64.</textarea>
     <button id="run-program" disabled>Import and run program</button>
     <p>
       <label
+        >Standard-input source
+        <select id="stdin-source">
+          <option value="text">UTF-8 text</option>
+          <option value="file">Local binary file</option>
+        </select>
+      </label>
+      <label>Input file <input id="stdin-file" type="file" /></label>
+    </p>
+    <p>
+      <label
         >UTF-8 standard input (at most 65,536 characters)<br />
         <textarea id="stdin" maxlength="65536" rows="4" cols="60"></textarea>
       </label>
     </p>
     <button id="cancel-program" disabled>Cancel application</button>
     <p>
-      Standard input receives the text above followed by EOF. Recent output is limited to 65,536
-      characters; stdout/stderr interleaving is not deterministic. Stop Linux remains available
-      while an application runs; it stops the whole instance and discards the temporary disk, unlike
+      Standard input receives the selected source followed by EOF. File mode streams exact bytes
+      without uploading to the server or loading the whole input into JS memory, and ignores the
+      text field. Text mode ignores the file selection. Large files can take time; use Cancel
+      application or Stop Linux if needed. Recent output is limited to 65,536 characters;
+      stdout/stderr interleaving is not deterministic. Stop Linux remains available while an
+      application runs; it stops the whole instance and discards the temporary disk, unlike
       cancelling one application.
     </p>
     <h2>Command output</h2>

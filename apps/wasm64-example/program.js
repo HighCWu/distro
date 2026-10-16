@@ -22,10 +22,23 @@ export function programArguments(text) {
 }
 
 /** Import only into this ephemeral Linux root, never onto the HTTP server. */
-export async function runProgram(agent, file, argumentText, { signal, onOutput, inputText = "" }) {
+export async function runProgram(
+  agent,
+  file,
+  argumentText,
+  { signal, onOutput, inputText = "", inputFile },
+) {
   signal?.throwIfAborted();
   const args = programArguments(argumentText);
-  if (typeof inputText !== "string" || inputText.length > maximumInputCharacters)
+  if (inputFile !== undefined) {
+    if (
+      !inputFile ||
+      !Number.isSafeInteger(inputFile.size) ||
+      inputFile.size < 0 ||
+      typeof inputFile.stream !== "function"
+    )
+      throw new Error("select a standard-input file");
+  } else if (typeof inputText !== "string" || inputText.length > maximumInputCharacters)
     throw new Error("standard input must be text of at most 65536 characters");
   if (
     !file ||
@@ -69,9 +82,16 @@ export async function runProgram(agent, file, argumentText, { signal, onOutput, 
   };
   const pending = [];
   const input = async () => {
-    const writer = child.stdin.getWriter();
+    let writer;
     try {
       signal?.throwIfAborted();
+      if (inputFile !== undefined) {
+        // Stream bytes unchanged with pipe backpressure; do not arrayBuffer()
+        // the file, decode text or store another copy in the Linux root.
+        await inputFile.stream().pipeTo(child.stdin, { signal });
+        return;
+      }
+      writer = child.stdin.getWriter();
       if (inputText.length) await writer.write(new TextEncoder().encode(inputText));
       signal?.throwIfAborted();
       await writer.close();
@@ -81,13 +101,13 @@ export async function runProgram(agent, file, argumentText, { signal, onOutput, 
       // Still require its real exit status and drain both outputs below.
       if (error?.code !== "EPIPE") throw error;
     } finally {
-      writer.releaseLock();
+      writer?.releaseLock();
     }
   };
   let failed = false;
   let primary;
   try {
-    // Send bounded input followed by EOF while draining both outputs.
+    // Send bounded text or a streamed file followed by EOF, draining outputs.
     // Waiting for stdin before reading output can deadlock a pipe filter.
     // Unlike run(), no full-output buffer is retained for arbitrary programs.
     pending.push(child.status, input(), pump(child.stdout, "stdout"), pump(child.stderr, "stderr"));

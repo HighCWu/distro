@@ -71,6 +71,39 @@ test("embeds native wasm64 Linux using the standalone example controls", async (
   await page.locator("#run-program").click();
   await expect(state).toHaveText("running");
   await expect(page.locator("#result")).toHaveText("prefix byte: 228\n");
+  await page.locator("#stdin-source").selectOption("file");
+  await page.locator("#run-program").click();
+  await expect(state).toContainText("select a standard-input file");
+  const inputBytes = Buffer.from(
+    Uint8Array.from({ length: 512 * 1024 + 17 }, (_, i) => (i * 37 + 11) & 255),
+  );
+  const sum = inputBytes.reduce((total, byte) => total + byte, 0);
+  await page
+    .locator("#stdin-file")
+    .setInputFiles({ name: "input.bin", mimeType: "application/octet-stream", buffer: inputBytes });
+  await page.locator("#arguments").fill('["pattern"]');
+  await page.locator("#run-program").click();
+  await expect(state).toHaveText("running");
+  await expect(page.locator("#result")).toHaveText(
+    `input bytes: ${inputBytes.length}, sum: ${sum}\n`,
+  );
+  // A prefix consumer must cancel the remaining file source, not fail launch.
+  await page.locator("#arguments").fill('["prefix"]');
+  await page.locator("#run-program").click();
+  await expect(state).toHaveText("running");
+  await expect(page.locator("#result")).toHaveText("prefix byte: 11\n");
+  await page
+    .locator("#stdin-file")
+    .setInputFiles({
+      name: "empty.bin",
+      mimeType: "application/octet-stream",
+      buffer: Buffer.alloc(0),
+    });
+  await page.locator("#arguments").fill('["pattern"]');
+  await page.locator("#run-program").click();
+  await expect(state).toHaveText("running");
+  await expect(page.locator("#result")).toHaveText("input bytes: 0, sum: 0\n");
+  await page.locator("#stdin-source").selectOption("text");
   await page.locator("#stdin").fill("");
   await page.locator("#arguments").fill('["fail"]');
   await page.locator("#run-program").click();

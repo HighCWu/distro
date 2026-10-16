@@ -57,6 +57,130 @@ function harness({
   return { agent, calls };
 }
 
+test("binary stdin streams exact chunks without arrayBuffer or text conversion", async () => {
+  const { agent, calls } = harness();
+  const chunks = [Uint8Array.of(0, 255), Uint8Array.of(128, 1, 0, 254)];
+  const inputFile = {
+    size: 6,
+    stream: () => stream(chunks),
+    arrayBuffer() {
+      throw new Error("must stream input");
+    },
+  };
+  await runProgram(agent, file, "[]", { inputFile, inputText: null, onOutput() {} });
+  assert.deepEqual(
+    calls.filter((entry) => entry[0] === "stdin-write").map((entry) => entry[1]),
+    chunks,
+  );
+  assert.equal(calls.filter((entry) => entry[0] === "write").length, 1); // executable only
+  assert.ok(calls.includes("stdin-eof"));
+  assert.equal(calls.at(-1), "child-close");
+});
+
+test("empty binary stdin sends EOF and does not use text fallback", async () => {
+  const { agent, calls } = harness();
+  await runProgram(agent, file, "[]", {
+    inputFile: new Blob([]),
+    inputText: "ignored",
+    onOutput() {},
+  });
+  assert.equal(calls.filter((entry) => entry[0] === "stdin-write").length, 0);
+  assert.ok(calls.includes("stdin-eof"));
+});
+
+test("missing or invalid binary input rejects before program import", async () => {
+  const { agent, calls } = harness();
+  for (const inputFile of [
+    null,
+    {},
+    { size: -1, stream() {} },
+    { size: 2 ** 53, stream() {} },
+    { size: 1 },
+  ])
+    await assert.rejects(
+      runProgram(agent, file, "[]", { inputFile, onOutput() {} }),
+      /standard-input file/,
+    );
+  assert.deepEqual(calls, []);
+});
+
+test("binary input source failure is reported after child cleanup", async () => {
+  const { agent, calls } = harness();
+  const reason = new Error("input file read failed");
+  const inputFile = {
+    size: 1,
+    stream: () =>
+      new ReadableStream({
+        start(controller) {
+          controller.error(reason);
+        },
+      }),
+  };
+  await assert.rejects(
+    runProgram(agent, file, "[]", { inputFile, onOutput() {} }),
+    (error) => error === reason,
+  );
+  assert.equal(calls.at(-1), "child-close");
+});
+
+test("binary prefix EPIPE cancels the file source while retaining the real status", async () => {
+  const reason = Object.assign(new Error("filter consumed a prefix"), { code: "EPIPE" });
+  const { agent, calls } = harness({ inputFailure: reason });
+  let cancelled;
+  const inputFile = {
+    size: 2,
+    stream: () =>
+      new ReadableStream(
+        {
+          pull(controller) {
+            controller.enqueue(Uint8Array.of(255));
+          },
+          cancel(error) {
+            cancelled = error;
+          },
+        },
+        { highWaterMark: 0 },
+      ),
+  };
+  const status = await runProgram(agent, file, "[]", { inputFile, onOutput() {} });
+  assert.equal(status.success, true);
+  assert.equal(cancelled, reason);
+  assert.equal(calls.at(-1), "child-close");
+});
+
+test("cancelling a waiting binary input cancels its source and disposes the child", async () => {
+  const { agent, calls } = harness();
+  const controller = new AbortController();
+  const started = Promise.withResolvers();
+  let cancelled;
+  const inputFile = {
+    size: 1,
+    stream() {
+      started.resolve();
+      return new ReadableStream({
+        pull() {
+          return new Promise(() => {});
+        },
+        cancel(reason) {
+          cancelled = reason;
+        },
+      });
+    },
+  };
+  const reason = new Error("stop file input");
+  const running = runProgram(agent, file, "[]", {
+    inputFile,
+    signal: controller.signal,
+    onOutput() {},
+  });
+  const rejected = assert.rejects(running, (error) => error === reason);
+  await started.promise;
+  controller.abort(reason);
+  await rejected;
+  assert.equal(cancelled, reason);
+  assert.equal(calls.at(-1), "child-close");
+});
+
 test("program arguments use literal JSON strings, bounded size and no NULs", () => {
   assert.deepEqual(programArguments('["hello world", "$(not-a-shell)", "中文"]'), [
     "hello world",

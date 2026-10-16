@@ -115,6 +115,31 @@ test("Stop Linux remains usable during an application and old output cannot affe
   await h.click("stop");
 });
 
+test("input source choice forwards a file or explicit missing-file value without text fallback", async () => {
+  const h = harness();
+  await h.click("start");
+  h.nodes("stdin-source").value = "file";
+  const selected = { size: 100, stream() {} };
+  h.nodes("stdin-file").files = [selected];
+  const running = h.click("run-program");
+  assert.equal(h.applications[0].options.inputFile, selected);
+  h.applications[0].result.resolve(success.status);
+  await running;
+  h.nodes("stdin-file").files = [];
+  const missing = h.click("run-program");
+  assert.equal(h.applications[1].options.inputFile, null);
+  h.applications[1].result.reject(new Error("select a standard-input file"));
+  await missing;
+  assert.match(h.nodes("state").textContent, /standard-input file/);
+  h.nodes("stdin-source").value = "text";
+  h.nodes("stdin-file").files = [selected];
+  const text = h.click("run-program");
+  assert.equal(h.applications[2].options.inputFile, undefined);
+  h.applications[2].result.resolve(success.status);
+  await text;
+  await h.click("stop");
+});
+
 test("a stopped file operation never runs cat in a replacement machine", async () => {
   const h = harness();
   await h.click("start");
