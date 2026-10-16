@@ -38,12 +38,16 @@ static int bind_socket(int type, unsigned short value)
 	return fd;
 }
 
-static void echo_tcp(unsigned short value)
+static void echo_tcp(unsigned short value, int notify_ready)
 {
 	char buffer[4096];
 	int listener = bind_socket(SOCK_STREAM, value);
 	if (listen(listener, 1) < 0)
 		die("listen");
+	if (notify_ready) {
+		if (puts("listening") == EOF || fflush(stdout) != 0)
+			die("ready");
+	}
 	int fd = accept(listener, NULL, NULL);
 	if (fd < 0)
 		die("accept");
@@ -198,7 +202,10 @@ int main(int argc, char **argv)
 {
 	if (argc == 4 && strcmp(argv[1], "listen") == 0 &&
 	    strcmp(argv[2], "tcp") == 0)
-		echo_tcp(port(argv[3]));
+		echo_tcp(port(argv[3]), 0);
+	else if (argc == 4 && strcmp(argv[1], "listen-ready") == 0 &&
+		 strcmp(argv[2], "tcp") == 0)
+		echo_tcp(port(argv[3]), 1);
 	else if (argc == 5 && strcmp(argv[1], "listen") == 0 &&
 		 strcmp(argv[2], "tcp") == 0)
 		send_tcp(port(argv[3]), byte_count(argv[4]));
@@ -214,6 +221,7 @@ int main(int argc, char **argv)
 	else {
 		fprintf(stderr,
 			"usage: network-test listen tcp PORT [BYTES] | "
+			"listen-ready tcp PORT | "
 			"receive tcp PORT BYTES DELAY_SECONDS | "
 			"listen udp PORT | "
 			"connect HOST PORT MESSAGE\n");

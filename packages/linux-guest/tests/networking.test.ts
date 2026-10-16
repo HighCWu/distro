@@ -172,10 +172,21 @@ guest_test("networking", async (t, fixture) => {
 
   await t.test("connects between guests", async () => {
     const second = await fixture.spawn();
-    const server = await guest.exec(["/tmp/network-test", "listen", "tcp", "12003"]);
-    const server_output = collect(server.stdout);
+    const server = await guest.exec(["/tmp/network-test", "listen-ready", "tcp", "12003"]);
     const server_error = collect(server.stderr);
-    await new Promise((resolve) => setTimeout(resolve, 25));
+    const readiness = server.stdout.getReader();
+    let announced = "";
+    try {
+      while (!announced.includes("\n")) {
+        const chunk = await readiness.read();
+        assert.equal(chunk.done, false, "TCP server exited before announcing readiness");
+        announced += new TextDecoder().decode(chunk.value);
+      }
+      assert.equal(announced, "listening\n");
+    } finally {
+      readiness.releaseLock();
+    }
+    const server_output = collect(server.stdout);
     const client = await second.exec([
       "/tmp/network-test",
       "connect",
