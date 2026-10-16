@@ -3,6 +3,30 @@ import { expect, test } from "@playwright/test";
 
 test("embeds native wasm64 Linux using the standalone example controls", async ({ page }) => {
   page.on("pageerror", (error) => console.error(error.stack ?? error));
+  // A missing hosting prerequisite is reported before downloading either disk.
+  const diskRequests = [];
+  const observeDisk = (request) => {
+    if (/\/(agent-boot\.img|root\.ext4)$/.test(new URL(request.url()).pathname))
+      diskRequests.push(request.url());
+  };
+  const withoutIsolation = async (route) => {
+    const response = await route.fetch();
+    const headers = response.headers();
+    delete headers["cross-origin-embedder-policy"];
+    await route.fulfill({ response, headers });
+  };
+  page.on("request", observeDisk);
+  await page.route("**/", withoutIsolation);
+  await page.goto("/");
+  expect(await page.evaluate(() => crossOriginIsolated)).toBe(false);
+  await page.locator("#start").click();
+  await expect(page.locator("#state")).toContainText(
+    "COOP/COEP cross-origin isolation is required",
+  );
+  await expect(page.locator("#start")).toBeEnabled();
+  expect(diskRequests).toEqual([]);
+  await page.unroute("**/", withoutIsolation);
+  page.off("request", observeDisk);
   await page.goto("/");
   expect(await page.evaluate(() => crossOriginIsolated)).toBe(true);
   const state = page.locator("#state");

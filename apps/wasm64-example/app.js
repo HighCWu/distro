@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: MIT
 import { blockDevice, bootMachine, consoleDevice, entropyDevice } from "@lowland/kernel";
 import { guestAgent } from "@lowland/guest";
+import { assertBrowserSupport } from "./browser-support.js";
 
 const element = (id) => document.getElementById(id);
 let session;
@@ -46,7 +47,7 @@ async function action(operation) {
 }
 element("start").addEventListener("click", () =>
   action(async () => {
-    if (!crossOriginIsolated) throw new Error("COOP/COEP cross-origin isolation is required");
+    assertBrowserSupport();
     element("console").textContent = "";
     element("result").textContent = "";
     const [boot, root] = await Promise.all([image("/agent-boot.img"), image("/root.ext4")]);
