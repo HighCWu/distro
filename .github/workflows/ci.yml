@@ -228,7 +228,9 @@ jobs:
         if: ${{ !cancelled() && steps.retained.outputs.ready == 'true' }}
         uses: nix-community/cache-nix-action/save@v7
         with:
-          primary-key: ${{ steps.heavy-cache.outputs.primary-key }}
+          # Pass the same key explicitly: the restore step returned an empty
+          # primary-key output in the save:false job, despite declaring it.
+          primary-key: nix-targeted-v1-${{ runner.os }}-${{ contains(matrix.check, 'wasm64') && 'wasm64' || 'wasm32' }}-${{ hashFiles('distro/llvm-toolchain/**', 'distro/llvm-runtimes/**', 'distro/platform.nix', 'flake.lock') }}
           gc-max-store-size-linux: 9G
 
   deploy-site:
