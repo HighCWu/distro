@@ -10,6 +10,8 @@ export async function runRuntimeSmoke({
 }) {
   let machine;
   let finished = false;
+  let failed = false;
+  let phase = "user runtime";
   let timer;
   let output = "";
   let resolveResult;
@@ -45,6 +47,9 @@ export async function runRuntimeSmoke({
       },
     });
   };
+  const watchdog = new Promise((_, reject) => {
+    timer = setTimeout(() => reject(new Error(`${phase} timed out:\n${output}`)), timeoutMs);
+  });
   try {
     await Promise.race([
       (async () => {
@@ -68,20 +73,26 @@ export async function runRuntimeSmoke({
         );
         await result;
       })(),
-      new Promise((_, reject) => {
-        timer = setTimeout(
-          () => reject(new Error(`user runtime timed out:\n${output}`)),
-          timeoutMs,
-        );
-      }),
+      watchdog,
     ]);
     return output;
+  } catch (error) {
+    failed = true;
+    throw error;
   } finally {
     finished = true;
-    clearTimeout(timer);
-    if (machine) {
-      machine.close();
-      await machine.closed.catch(() => {});
+    try {
+      if (machine) {
+        if (!failed) phase = "runtime shutdown";
+        machine.close();
+        await Promise.race([machine.closed, watchdog]);
+      }
+    } catch (error) {
+      // A program pass is provisional until device flush/close completes.
+      // Preserve an earlier program failure or timeout if cleanup also fails.
+      if (!failed) throw error;
+    } finally {
+      clearTimeout(timer);
     }
   }
 }

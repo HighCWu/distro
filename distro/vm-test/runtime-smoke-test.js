@@ -11,11 +11,16 @@ const { runRuntimeSmoke } = await import(
   `data:text/javascript;base64,${Buffer.from(source).toString("base64")}`
 );
 
-function fixture(lines, { bootDelay = false, closeConsole = false, bootLines = [] } = {}) {
+function fixture(
+  lines,
+  { bootDelay = false, closeConsole = false, bootLines = [], closeError, closeDelay = false } = {},
+) {
   let writer;
   let closed = false;
   let releaseBoot;
   let resolveClosed;
+  let rejectClosed;
+  const finishClose = () => (closeError ? rejectClosed(closeError) : resolveClosed());
   const machine = {
     bootConsole: new ReadableStream({
       start(controller) {
@@ -23,15 +28,17 @@ function fixture(lines, { bootDelay = false, closeConsole = false, bootLines = [
         controller.close();
       },
     }),
-    closed: new Promise((resolve) => {
+    closed: new Promise((resolve, reject) => {
       resolveClosed = resolve;
+      rejectClosed = reject;
     }),
     close() {
       closed = true;
-      resolveClosed();
+      if (!closeDelay) finishClose();
     },
   };
   return {
+    finishClose,
     get closed() {
       return closed;
     },
@@ -68,6 +75,59 @@ test("requires a complete user-program pass marker, not the kernel banner", asyn
   const bannerOnly = fixture(["Linux version test\n"]);
   await assert.rejects(runRuntimeSmoke(bannerOnly.options), /timed out/);
   assert.equal(bannerOnly.closed, true);
+});
+
+test("a user-program pass waits for successful device shutdown", async () => {
+  const state = fixture(["::vm-test::pass\n"], { closeDelay: true });
+  let settled = false;
+  const check = runRuntimeSmoke(state.options).finally(() => {
+    settled = true;
+  });
+  await new Promise((resolve) => setImmediate(resolve));
+  assert.equal(state.closed, true, "shutdown must have started");
+  assert.equal(settled, false, "a pass cannot bypass pending storage shutdown");
+  state.finishClose();
+  assert.match(await check, /::vm-test::pass/);
+});
+
+test("a shutdown rejection overrides a user-program pass", async () => {
+  const closeError = new Error("storage flush failed");
+  const state = fixture(["::vm-test::pass\n"], { closeError });
+  await assert.rejects(runRuntimeSmoke(state.options), (error) => error === closeError);
+  assert.equal(state.closed, true);
+});
+
+test("the watchdog also bounds a pending shutdown after a program pass", async () => {
+  const state = fixture(["::vm-test::pass\n"], { closeDelay: true });
+  await assert.rejects(runRuntimeSmoke(state.options), /runtime shutdown timed out/);
+  assert.equal(state.closed, true);
+  state.finishClose();
+});
+
+test("a stuck shutdown cannot indefinitely postpone a program failure", async () => {
+  const state = fixture(["::vm-test::fail: original failure\n"], { closeDelay: true });
+  await assert.rejects(runRuntimeSmoke(state.options), /original failure/);
+  assert.equal(state.closed, true);
+  state.finishClose();
+});
+
+test("shutdown failure does not hide a program failure or watchdog timeout", async () => {
+  for (const [lines, expected] of [
+    [["::vm-test::fail: database recovery failed\n"], /database recovery failed/],
+    [[], /timed out/],
+  ]) {
+    const state = fixture(lines, { closeError: new Error("cleanup also failed") });
+    await assert.rejects(runRuntimeSmoke(state.options), expected);
+    assert.equal(state.closed, true);
+  }
+});
+
+test("a late machine shutdown rejection cannot replace the watchdog failure", async () => {
+  const state = fixture([], { bootDelay: true, closeError: new Error("late close failed") });
+  await assert.rejects(runRuntimeSmoke(state.options), /timed out/);
+  state.release();
+  await new Promise((resolve) => setImmediate(resolve));
+  assert.equal(state.closed, true);
 });
 
 test("boot-console result markers cannot substitute for user-program completion", async () => {
