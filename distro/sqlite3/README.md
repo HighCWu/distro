@@ -69,8 +69,8 @@ the corrected application-root Node build and runtime have passed, as has the
 separate installed-library consumer. Firefox has also passed the original
 retained-memory root check, with both SQL phases and no skips/retries; the
 additional OPFS page-reload check has now passed in Chromium at distro
-`041b82c`: both browser cases executed, with no skips/retries. Firefox OPFS
-verification remains pending. This does not establish crash recovery or WAL.
+`041b82c` and Firefox at `02ce485`: both browser cases executed in each engine,
+with no skips/retries. This does not establish crash recovery or WAL.
 
 SQLite's upstream public-domain declaration is retained in the installed
 `share/licenses/sqlite3/sqlite3.h`. Static musl and compiler-rt license texts are

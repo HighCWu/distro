@@ -205,10 +205,9 @@ are blocked during readback, and the test removes only its own disk afterward.
 The matching memory64 disk worker uses the production startup helper without
 capacity reinitialization, so reopening does not truncate the filesystem.
 
-The Node application-root check and original retained-memory Firefox case have
-passed; the additional OPFS case still requires public CI verification.
-Chromium has subsequently passed both browser cases at distro `041b82c`,
-including OPFS page reload, without skips/retries; Firefox OPFS remains pending.
+The Node application-root check has passed. Chromium at distro `041b82c` and
+Firefox at `02ce485` have each passed both browser cases, including OPFS page
+reload, without skips/retries.
 These checks do not establish
 browser process restart, crash recovery, WAL, or physical durability. Four mock
 host orchestration regressions cover existing-byte readback, input validation,
