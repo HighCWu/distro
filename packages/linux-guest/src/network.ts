@@ -12,6 +12,7 @@ import {
 } from "@lowland/kernel/plugin";
 import { Bytes, FixedArray, Struct, U16BE, U32BE, U8 } from "@lowland/bytes";
 import { wait_for_agent, type GuestAgent } from "./agent.ts";
+import { createPortAllocator } from "./network-ports.ts";
 
 const GATEWAY_ADDRESS = "192.0.2.1";
 const GATEWAY_IP = ipv4_number(GATEWAY_ADDRESS);
@@ -619,18 +620,9 @@ export function createNetwork({ connectTcp, resolveDns }: NetworkOptions): Netwo
   const udp_flows = new Map<string, UdpFlow>();
   const ip_reassemblies = new Map<string, IpReassembly>();
   let next_address = 2;
-  let next_port = 49152;
+  const allocate_port = createPortAllocator();
   let ip_identifier = 0;
   let closed = false;
-
-  function allocate_port(in_use: (port: number) => boolean) {
-    for (let attempts = 0; attempts < 65535 - 49152; attempts++) {
-      const port = next_port;
-      next_port = port === 65535 ? 49152 : port + 1;
-      if (!in_use(port)) return port;
-    }
-    throw new Error("no network ports available");
-  }
 
   function ip_packet(
     destination_mac: MacAddress,
