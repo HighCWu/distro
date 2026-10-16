@@ -4,10 +4,10 @@
 private boot filesystem and vsock transport to an `@lowland/kernel` machine and
 exposes processes, files, mounts, and networking through the returned agent.
 
-The default packaged agent image and public startup path currently use wasm32.
-Internal native wasm64 executor checks use an explicit v4 ABI handshake and
-exercise the file/process client, but do not select or publish a full wasm64
-agent/system image. Kernel/SDK checks alone do not establish support for that
+The default packaged agent image and default startup path currently use wasm32.
+A custom native wasm64 agent image can be selected explicitly, as described
+below; this does not publish a full wasm64 agent/system distribution.
+Kernel/SDK checks alone do not establish support for that
 image or system root. Keep these assets matched when booting;
 do not combine the default agent image with a wasm64 kernel merely because
 both packages expose the same JavaScript API.
@@ -56,6 +56,36 @@ agent then requires exactly one attached EROFS or ext4 filesystem labeled
 `LOWLAND_ROOT`, pivots into it, and unmounts its private boot filesystem.
 Missing and duplicate system roots fail `bootMachine()` through the plugin
 readiness hook.
+
+### Explicit custom agent images
+
+`guestAgent()` preserves the packaged wasm32 image and legacy v3 handshake.
+For native bring-up, supply a matching GPT-wrapped agent image and ABI:
+
+```js
+const response = await fetch("/native-agent-wasm64.img");
+if (!response.ok) throw new Error(`agent download failed: ${response.status}`);
+const guest = guestAgent({
+  abi: "wasm64",
+  image: new Uint8Array(await response.arrayBuffer()),
+});
+```
+
+This requires a matching wasm64 build of `@lowland/kernel` and a separate
+wasm64 `LOWLAND_ROOT` system disk, not the default wasm32 package/root image.
+Do not pass an overriding `initcpio` that bypasses the agent boot disk.
+The plugin still contributes its boot arguments, vsock and readiness hook;
+file/process capabilities use the explicit v4 ABI without automatic fallback.
+Image bytes are copied when the agent is created, including only the supplied
+view. Custom images require an explicit ABI and a positive whole number of
+512-byte sectors. Those shape checks do not validate the executable or prove
+that its ABI matches the selected kernel: boot/handshake validation remains
+required. Selecting wasm64 without a custom image fails before boot.
+
+The native artifact is built from `guest-agent.nativeWasm64.bootDisk` in the
+source flake. Its end-to-end public API check is
+`guest-agent-check-public-wasm64`. These are bring-up paths, not a claim that
+all system packages or browsers support wasm64.
 
 Pass `"lowland.root.overlay=tmpfs"` as a kernel argument to mount the system
 image read-only beneath a temporary writable OverlayFS:
