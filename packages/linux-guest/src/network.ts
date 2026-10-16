@@ -13,6 +13,7 @@ import {
 import { Bytes, FixedArray, Struct, U16BE, U32BE, U8 } from "@lowland/bytes";
 import { wait_for_agent, type GuestAgent } from "./agent.ts";
 import { createPortAllocator } from "./network-ports.ts";
+import { parseIpv4Frame, type ParsedIpPacket, type ParsedIpFragment } from "./network-ipv4.ts";
 
 const GATEWAY_ADDRESS = "192.0.2.1";
 const GATEWAY_IP = ipv4_number(GATEWAY_ADDRESS);
@@ -361,20 +362,6 @@ function valid_port(port: number) {
   return Number.isInteger(port) && port > 0 && port <= 65535;
 }
 
-interface ParsedIpPacket {
-  source: number;
-  destination: number;
-  protocol: number;
-  payload: Uint8Array;
-}
-
-interface ParsedIpFragment extends ParsedIpPacket {
-  identification: number;
-  header_length: number;
-  offset: number;
-  more_fragments: boolean;
-}
-
 interface IpFragment {
   offset: number;
   payload: Uint8Array;
@@ -461,37 +448,6 @@ function tcp_key(guest_ip: number, guest_port: number, peer_ip: number, peer_por
 
 function udp_key(guest_ip: number, guest_port: number, host_port: number) {
   return `${guest_ip}:${guest_port}:${host_port}`;
-}
-
-function parse_ip(frame: Uint8Array): ParsedIpFragment | undefined {
-  if (frame.byteLength < EthernetHeader.size + Ipv4Header.size) return;
-  if (new EthernetHeader(frame).type !== EthernetType.IPv4) return;
-  const bytes = frame.subarray(EthernetHeader.size);
-  const header = new Ipv4Header(bytes);
-  const header_length = (header.version_and_header_length & 0x0f) * 4;
-  if (
-    header.version_and_header_length >>> 4 !== 4 ||
-    header_length < Ipv4Header.size ||
-    header_length > bytes.byteLength
-  )
-    return;
-  if (header.total_length < header_length || header.total_length > bytes.byteLength) return;
-  const payload = bytes.subarray(header_length, header.total_length);
-  const offset = (header.flags_and_fragment_offset & 0x1fff) * 8;
-  const more_fragments = (header.flags_and_fragment_offset & 0x2000) !== 0;
-  if ((offset !== 0 || more_fragments) && payload.byteLength === 0) return;
-  if (more_fragments && payload.byteLength % 8 !== 0) return;
-  if (offset + payload.byteLength > MAX_IP_PAYLOAD) return;
-  return {
-    source: header.source,
-    destination: header.destination,
-    protocol: header.protocol,
-    payload,
-    identification: header.identification,
-    header_length,
-    offset,
-    more_fragments,
-  };
 }
 
 function parse_tcp(payload: Uint8Array): ParsedTcpSegment | undefined {
@@ -1292,7 +1248,7 @@ export function createNetwork({ connectTcp, resolveDns }: NetworkOptions): Netwo
 
   function receive_frame(frame: Uint8Array) {
     receive_arp(frame);
-    const fragment = parse_ip(frame);
+    const fragment = parseIpv4Frame(frame);
     if (!fragment) return;
     const ip = reassemble_ip(fragment);
     if (!ip) return;
