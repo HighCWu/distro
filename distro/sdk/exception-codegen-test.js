@@ -23,6 +23,7 @@ test("C++ configuration preserves Wasm exception handlers", (context) => {
     fileURLToPath(new URL("../llvm-toolchain/clang++.cfg", import.meta.url));
   const source = fileURLToPath(new URL("./exception-probe.cc", import.meta.url));
   const destructorSource = fileURLToPath(new URL("./destructor-probe.cc", import.meta.url));
+  const threadLocalSource = fileURLToPath(new URL("./thread-local-probe.cc", import.meta.url));
   assert.match(
     readFileSync(config, "utf8"),
     /^-fc\+\+-abi=webassembly$/m,
@@ -82,6 +83,31 @@ test("C++ configuration preserves Wasm exception handlers", (context) => {
           `${target}: destructor return type must match libc++abi's indirect call`,
         );
       }
+      const tls = spawnSync(
+        compiler,
+        [
+          `--config=${config}`,
+          `--target=${target}`,
+          "-matomics",
+          "-mbulk-memory",
+          "-std=c++17",
+          "-S",
+          "-emit-llvm",
+          "-O0",
+          threadLocalSource,
+          "-o",
+          "-",
+        ],
+        { encoding: "utf8" },
+      );
+      assert.equal(tls.status, 0, tls.stderr);
+      const registration = tls.stdout.match(/call i32 @__cxa_thread_atexit\(ptr @([^,]+),/);
+      assert.ok(registration, `${target}: TLS destructor registration missing`);
+      const callback = tls.stdout
+        .split("\n")
+        .find((line) => line.startsWith("define ") && line.includes(`@${registration[1]}(`));
+      assert.ok(callback, `${target}: TLS destructor callback definition missing`);
+      assert.match(callback, /\bvoid @/, `${target}: libc++abi expects a void TLS callback`);
     }
   } finally {
     rmSync(root, { recursive: true, force: true });
