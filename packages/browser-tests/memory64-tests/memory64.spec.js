@@ -49,6 +49,25 @@ test("runs musl allocation, mmap, threads, TLS and signals", async ({ page }) =>
   expect(output).not.toContain("::vm-test::fail");
 });
 
+test("runs C++ containers, exceptions, cross-thread exception_ptr cleanup and TLS", async ({
+  page,
+}) => {
+  page.on("console", (message) => console.log(`[browser] ${message.text()}`));
+  page.on("pageerror", (error) => console.error(`[browser] ${error.stack ?? error}`));
+
+  await page.goto("/");
+  await expect
+    .poll(() => page.evaluate(() => typeof globalThis.bootCxxRuntimeSmoke))
+    .toBe("function");
+  const output = await page.evaluate(() => globalThis.bootCxxRuntimeSmoke());
+
+  expect(output).toContain("C++ runtime: typed catch and RAII cleanup passed");
+  expect(output).toContain("C++ runtime: retained cross-thread exception cleanup passed");
+  expect(output).toContain("C++ runtime: containers, RAII, exception_ptr, thread and TLS verified");
+  expect(output).toContain("::vm-test::pass");
+  expect(output).not.toContain("::vm-test::fail");
+});
+
 test("retries a failed kernel download in the same page with a generic MIME type", async ({
   page,
 }) => {

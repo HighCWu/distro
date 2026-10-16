@@ -2,14 +2,17 @@
 import { bootMachine, consoleDevice, entropyDevice } from "@lowland/kernel";
 import { runRuntimeSmoke } from "./runtime-smoke.js";
 
-globalThis.bootRuntimeSmoke = () =>
+const bootRuntime = (initramfsPath) =>
   runRuntimeSmoke({
     bootMachine,
     consoleDevice,
     entropyDevice,
     async loadInitramfs() {
-      const response = await fetch("/runtime.cpio");
+      const response = await fetch(initramfsPath);
       if (!response.ok) throw new Error(`runtime initramfs load failed: ${response.status}`);
       return new Uint8Array(await response.arrayBuffer());
     },
   });
+
+globalThis.bootRuntimeSmoke = () => bootRuntime("/runtime.cpio");
+globalThis.bootCxxRuntimeSmoke = () => bootRuntime("/runtime-cxx.cpio");

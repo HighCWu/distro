@@ -58,6 +58,10 @@ let
         name = "wasm${toString bits}-browser-runtime";
         init = "${programs}/smoke-c.wasm";
       };
+      cxxInitramfs = image.mkInitramfs {
+        name = "wasm${toString bits}-browser-runtime-cxx";
+        init = "${programs}/runtime-cxx.wasm";
+      };
     in
     pkgs.runCommand "wasm${toString bits}-runtime-browser-tests" { } ''
       mkdir -p \
@@ -69,6 +73,7 @@ let
       cp ${source}/runtime-smoke.js $out/runtime-smoke.js
       cp ${../vm-test/protocol.js} $out/protocol.js
       cp ${initramfs} $out/runtime.cpio
+      cp ${cxxInitramfs} $out/runtime-cxx.cpio
       cp ${source}/memory64-index.html $out/index.html
       cp ${source}/playwright.config.js $out/playwright.config.js
       cp ${source}/server.js $out/server.js
