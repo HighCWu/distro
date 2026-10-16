@@ -41,6 +41,8 @@ pkgs.stdenvNoCC.mkDerivation (finalAttrs: {
 
     runHook postInstall
   '';
+  passthru.sourceBundle = import ../linux/source-bundle.nix { inherit pkgs linux; };
+  passthru.checks.source-bundle = finalAttrs.finalPackage.sourceBundle.check;
   passthru.checks.build-materials =
     pkgs.runCommand "npm-kernel-build-materials-check"
       {

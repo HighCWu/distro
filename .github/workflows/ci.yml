@@ -205,6 +205,25 @@ jobs:
             nix build --no-link --print-build-logs .#checks.x86_64-linux.formatting
           fi
           nix build --show-trace --no-link --print-build-logs "$installable"
+      - name: Collect the validated kernel source bundle
+        if: ${{ success() && startsWith(matrix.check, 'kernel') && endsWith(matrix.check, '-check-source-bundle') }}
+        env:
+          WASM64_CHECK: ${{ contains(matrix.check, 'wasm64') }}
+        run: |
+          package=kernel
+          if [[ "$WASM64_CHECK" == true ]]; then package=kernel-wasm64; fi
+          bundle=$(nix eval --raw ".#$package.sourceBundle.outPath")
+          nix path-info "$bundle"
+          mkdir source-bundle
+          cp "$bundle/linux-source.tar.gz" "$bundle/README.md" "$bundle/SHA256SUMS" source-bundle/
+      - uses: actions/upload-artifact@v4
+        if: ${{ success() && startsWith(matrix.check, 'kernel') && endsWith(matrix.check, '-check-source-bundle') }}
+        with:
+          name: kernel-source-${{ matrix.check }}-${{ github.sha }}
+          path: source-bundle/
+          if-no-files-found: error
+          compression-level: 0
+          retention-days: 3
       - name: Retain completed toolchain outputs after targeted checks
         id: retained
         if: ${{ !cancelled() && needs.plan.outputs.targeted == 'true' && steps.heavy-cache.outcome == 'success' && steps.heavy-cache.outputs.hit-primary-key != 'true' }}
