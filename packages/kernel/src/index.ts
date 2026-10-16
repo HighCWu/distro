@@ -4,6 +4,7 @@ import { type DeviceTreeNode, generate_devicetree, section_properties } from "./
 import { platform, type WorkerHandle } from "./platform.ts";
 import { cache_successful_load } from "./resource-cache.ts";
 import { checked_cpu_count } from "./boot-options.ts";
+import { post_worker_init } from "./worker-start.ts";
 import { configure_machine, run_machine_booted } from "./plugin-internal.ts";
 import type { MachinePluginInput } from "./plugin.ts";
 import { settle_user_copy, USER_COPY_TRY_AGAIN } from "./user-copy.ts";
@@ -384,8 +385,17 @@ export async function bootMachine(options: BootMachineOptions): Promise<Machine>
           void fail(error);
         },
       });
-      workers.add(worker);
-      worker.post(init, init.type === "forwarded_init" ? [init.port] : undefined);
+      try {
+        post_worker_init(
+          workers,
+          worker,
+          init,
+          init.type === "forwarded_init" ? [init.port] : undefined,
+        );
+      } catch (error) {
+        if (init.type === "forwarded_init") init.port.close();
+        throw error;
+      }
     };
 
     const spawn_worker = (
