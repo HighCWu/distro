@@ -4,7 +4,7 @@ import { type DeviceTreeNode, generate_devicetree, section_properties } from "./
 import { platform, type WorkerHandle } from "./platform.ts";
 import { cache_successful_load } from "./resource-cache.ts";
 import { checked_cpu_count } from "./boot-options.ts";
-import { post_worker_init } from "./worker-start.ts";
+import { post_worker_init, terminate_workers } from "./worker-start.ts";
 import { configure_machine, run_machine_booted } from "./plugin-internal.ts";
 import type { MachinePluginInput } from "./plugin.ts";
 import { settle_user_copy, USER_COPY_TRY_AGAIN } from "./user-copy.ts";
@@ -221,7 +221,7 @@ export async function bootMachine(options: BootMachineOptions): Promise<Machine>
         }
       }
       try {
-        await Promise.all(Array.from(workers, (worker) => worker.terminate()));
+        await terminate_workers(workers);
       } catch (termination_error) {
         if (!failed) {
           failed = true;

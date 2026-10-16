@@ -3,7 +3,61 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import { Worker } from "node:worker_threads";
 import type { WorkerHandle } from "../src/platform.ts";
-import { post_worker_init } from "../src/worker-start.ts";
+import { post_worker_init, terminate_workers } from "../src/worker-start.ts";
+
+test("shutdown waits for remaining workers after a termination rejection", async () => {
+  const failure = new Error("termination failed");
+  let release!: () => void;
+  const slow = new Promise<void>((resolve) => {
+    release = resolve;
+  });
+  let settled = false;
+  const shutdown = terminate_workers([
+    {
+      post() {},
+      terminate: async () => {
+        throw failure;
+      },
+    },
+    { post() {}, terminate: () => slow },
+  ]);
+  void shutdown.then(
+    () => {
+      settled = true;
+    },
+    () => {
+      settled = true;
+    },
+  );
+  await new Promise((resolve) => setImmediate(resolve));
+  assert.equal(settled, false);
+  release();
+  await assert.rejects(shutdown, (error) => error === failure);
+});
+
+test("synchronous termination errors do not skip subsequent workers", async () => {
+  const failure = new Error("synchronous termination failure");
+  let attempted = false;
+  await assert.rejects(
+    terminate_workers([
+      {
+        post() {},
+        terminate() {
+          throw failure;
+        },
+      },
+      {
+        post() {},
+        async terminate() {
+          attempted = true;
+        },
+      },
+    ]),
+    (error) => error === failure,
+  );
+  assert.equal(attempted, true);
+  await terminate_workers([]);
+});
 
 const flush = () => new Promise((resolve) => setImmediate(resolve));
 

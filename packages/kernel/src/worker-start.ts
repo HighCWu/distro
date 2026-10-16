@@ -1,6 +1,16 @@
 // SPDX-License-Identifier: MIT
 import type { WorkerHandle } from "./platform.ts";
 
+export async function terminate_workers(workers: Iterable<WorkerHandle>): Promise<void> {
+  const outcomes = await Promise.allSettled(
+    Array.from(workers, (worker) => Promise.resolve().then(() => worker.terminate())),
+  );
+  // Report the first error only after every worker has finished its attempt.
+  for (const outcome of outcomes) {
+    if (outcome.status === "rejected") throw outcome.reason;
+  }
+}
+
 export function post_worker_init(
   workers: Set<WorkerHandle>,
   worker: WorkerHandle,
