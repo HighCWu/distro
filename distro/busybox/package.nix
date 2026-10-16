@@ -4,6 +4,8 @@
   lib,
   debug,
   linux,
+  musl,
+  llvm-toolchain,
   platform,
   src ? pkgs.fetchFromGitHub {
     owner = "tombl";
@@ -124,6 +126,12 @@ stdenv.mkDerivation (finalAttrs: {
   installPhase = ''
     runHook preInstall
     make -j$NIX_BUILD_CORES CC="$CC" HOSTCC="$CC_FOR_BUILD" CFLAGS_busybox="$linkerFlags" CONFIG_PREFIX=$out install
+    notices=$out/share/licenses/busybox
+    mkdir -p "$notices"
+    cp LICENSE "$notices/LICENSE"
+    cp ${musl.src}/COPYRIGHT "$notices/musl-COPYRIGHT"
+    cp ${llvm-toolchain.licenseSource}/compiler-rt/LICENSE.TXT "$notices/compiler-rt-LICENSE.TXT"
+    cp ${./notices.md} "$notices/README.md"
     runHook postInstall
   '';
 

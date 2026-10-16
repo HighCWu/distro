@@ -7,6 +7,13 @@ fail() {
 }
 
 word=world
+
+# Notices must survive package assembly into the installed root, not just
+# exist as metadata on the build host.
+for notice in LICENSE musl-COPYRIGHT compiler-rt-LICENSE.TXT README.md; do
+  [ -s "/share/licenses/busybox/$notice" ] || fail "missing BusyBox notice: $notice"
+done
+
 [ "hello $word" = "hello world" ] || fail "shell expansion failed"
 [ "$((6 * 7))" -eq 42 ] || fail "shell arithmetic failed"
 

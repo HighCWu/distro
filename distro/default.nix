@@ -158,6 +158,8 @@ lib.makeScope (scope: lib.callPackageWith ({ inherit lib pkgs; } // scope)) (
     busybox = callPackage ./busybox/package.nix { };
     busybox-wasm64 = self.busybox.override {
       stdenv = self.stdenv-wasm64;
+      musl = self.musl-wasm64;
+      llvm-toolchain = self.llvm-toolchain-wasm64;
       platform = self.platform-wasm64;
       linux = self.linux-wasm64;
       vm-test = vmTestWasm64;
