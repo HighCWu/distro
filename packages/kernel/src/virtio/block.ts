@@ -46,7 +46,7 @@ export interface BlockDeviceStorage {
   flush?(): MaybePromise<void>;
   /** Releases storage resources when the device closes. */
   close?(): MaybePromise<void>;
-  /** Total size in bytes. */
+  /** Total bytes: a nonnegative safe integer multiple of 512, snapshotted at creation. */
   capacity: number;
 }
 
@@ -66,8 +66,12 @@ export interface BlockDeviceStorage {
  * ```
  */
 export function blockDevice(storage: BlockDeviceStorage): VirtioDevice {
+  const capacity = storage.capacity;
+  if (!Number.isSafeInteger(capacity) || capacity < 0 || capacity % 512 !== 0) {
+    throw new RangeError("block capacity must be a nonnegative safe integer multiple of 512");
+  }
   const config = new Uint8Array(BlockDeviceConfig.size);
-  new BlockDeviceConfig(config).capacity = BigInt(storage.capacity / 512);
+  new BlockDeviceConfig(config).capacity = BigInt(capacity / 512);
   let features = 0n;
   if (storage.flush) features |= BlockDeviceFeatures.FLUSH;
   if (!storage.write) features |= BlockDeviceFeatures.RO;
@@ -95,7 +99,20 @@ export function blockDevice(storage: BlockDeviceStorage): VirtioDevice {
       }
 
       let n = 0;
-      let offset = Number(request.sector) * 512;
+      const byteOffset = request.sector * 512n;
+      if (
+        request.type === BlockDeviceRequestType.IN ||
+        request.type === BlockDeviceRequestType.OUT
+      ) {
+        const length = data.reduce((sum, desc) => sum + BigInt(desc.array.byteLength), 0n);
+        if (byteOffset + length > BigInt(capacity)) {
+          set_status(BlockDeviceStatus.IOERR);
+          chain.release(0);
+          continue;
+        }
+      }
+      // Read/write offsets are exact only after the full BigInt range check.
+      let offset = Number(byteOffset);
       switch (request.type) {
         case BlockDeviceRequestType.IN: {
           let ok = true;
