@@ -4,9 +4,11 @@
 private boot filesystem and vsock transport to an `@lowland/kernel` machine and
 exposes processes, files, mounts, and networking through the returned agent.
 
-The packaged agent and its syscall wire ABI currently use wasm32. Separate
-wasm64 kernel/SDK user-program checks do not establish wasm64 support for this
-agent image, protocol or system root. Keep these assets matched when booting;
+The default packaged agent image and public startup path currently use wasm32.
+Internal native wasm64 executor checks use an explicit v4 ABI handshake and
+exercise the file/process client, but do not select or publish a full wasm64
+agent/system image. Kernel/SDK checks alone do not establish support for that
+image or system root. Keep these assets matched when booting;
 do not combine the default agent image with a wasm64 kernel merely because
 both packages expose the same JavaScript API.
 

@@ -85,7 +85,7 @@ file mmap); process-exit recovery is not a browser crash or power-loss test.
 
 ## Native wasm64 agent bring-up
 
-Independent Chromium and Firefox checks use the same minimal initramfs and six
+Independent Chromium and Firefox checks use the same minimal initramfs and seven
 runtime cases as `guest-agent-check-runtime-wasm64`. They cover ABI identity,
 seek beyond 4 GiB, small-file truncate/stat, detached descriptors, native program
 arguments/environment/cwd, binary standard streams, exit status, SIGTERM and
@@ -97,7 +97,10 @@ nix build .#checks.x86_64-linux.browser-tests-check-agent-wasm64-chromium -L
 nix build .#checks.x86_64-linux.browser-tests-check-agent-wasm64-firefox -L
 ```
 
-The browser test requires the exact six completed case names and machine closure.
+The browser test requires the exact seven completed case names and machine closure.
+The final case uses the internal high-level client with an explicit wasm64 ABI:
+file read/write/stat/truncate/remove, seek beyond 4 GiB, and a native process's
+exit status. These are required runtime assertions, not build-only checks.
 Its report gate requires one successful test with no skips or retries. No engine
 feature flags or unsupported-engine skips are used. This is an internal bring-up
 fixture, not a public wasm64 image selector or a full distro boot: production root
