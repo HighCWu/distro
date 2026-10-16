@@ -3,6 +3,7 @@
 #include <cstdint>
 #include <cstdio>
 #include <cstdlib>
+#include <exception>
 #include <memory>
 #include <numeric>
 #include <sched.h>
@@ -24,6 +25,40 @@ struct Guard {
     int &destroyed;
     ~Guard() { ++destroyed; }
 };
+
+struct RetainedException {
+    int *destroyed;
+    ~RetainedException() { ++*destroyed; }
+};
+
+static void retained_exception_probe()
+{
+    int destroyed = 0;
+    std::exception_ptr retained;
+    try {
+        throw RetainedException{&destroyed};
+    } catch (const RetainedException &) {
+        retained = std::current_exception();
+    }
+    if (!retained || destroyed != 0)
+        fail("exception_ptr did not retain the thrown object");
+    bool caught = false;
+    std::thread worker([&] {
+        try {
+            std::rethrow_exception(retained);
+        } catch (const RetainedException &error) {
+            caught = error.destroyed == &destroyed;
+        } catch (...) {
+            fail("exception_ptr changed exception type across threads");
+        }
+    });
+    worker.join();
+    if (!caught || destroyed != 0)
+        fail("cross-thread exception_ptr rethrow or lifetime");
+    retained = nullptr;
+    if (destroyed != 1)
+        fail("retained exception destructor must run exactly once");
+}
 
 [[gnu::noinline]] static void unwind_probe(int &destroyed)
 {
@@ -51,6 +86,12 @@ int main()
         if (!caught || destroyed != 1)
             fail("typed exception catch or RAII unwinding");
 
+        std::puts("C++ runtime: typed catch and RAII cleanup passed");
+        std::fflush(stdout);
+        retained_exception_probe();
+        std::puts("C++ runtime: retained cross-thread exception cleanup passed");
+        std::fflush(stdout);
+
         tls_value = 17;
         std::uint64_t result = 0;
         std::thread worker([&result] {
@@ -70,7 +111,7 @@ int main()
     } catch (...) {
         fail("unexpected main exception");
     }
-    std::puts("C++ runtime: containers, RAII exceptions, thread and TLS verified");
+    std::puts("C++ runtime: containers, RAII, exception_ptr, thread and TLS verified");
     std::puts("::vm-test::pass");
     std::fflush(stdout);
 #if defined(__wasm__)
