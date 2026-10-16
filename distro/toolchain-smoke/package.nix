@@ -172,6 +172,10 @@ let
           init = "${programs}/runtime-cxx.wasm";
           cpus = 2;
         };
+        passthru.checks.c-runtime = vm-test.rawInitramfsTest {
+          name = "toolchain-c-runtime-${platform.wasmArch}";
+          init = "${programs}/smoke-c.wasm";
+        };
         nativeBuildInputs = [
           llvm-toolchain
           pkgs.wabt

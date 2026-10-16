@@ -92,20 +92,14 @@ lib.makeScope (scope: lib.callPackageWith ({ inherit lib pkgs; } // scope)) (
       sysroot = self.sysroot-wasm64;
       vm-test = vmTestWasm64;
     };
-    toolchain-smoke-runtime = self.vm-test.rawInitramfsTest {
-      name = "toolchain-smoke-runtime";
-      init = "${self.toolchain-smoke}/smoke-c.wasm";
-    };
+    toolchain-smoke-runtime = self.toolchain-smoke.checks.c-runtime;
     toolchain-smoke-wasm64 = callPackage ./toolchain-smoke/package.nix {
       platform = self.platform-wasm64;
       llvm-toolchain = self.llvm-toolchain-wasm64;
       sysroot = self.sysroot-wasm64;
       vm-test = vmTestWasm64;
     };
-    toolchain-smoke-runtime-wasm64 = vmTestWasm64.rawInitramfsTest {
-      name = "toolchain-smoke-runtime-wasm64";
-      init = "${self.toolchain-smoke-wasm64}/smoke-c.wasm";
-    };
+    toolchain-smoke-runtime-wasm64 = self.toolchain-smoke-wasm64.checks.c-runtime;
 
     # The wasm stdenv: nixpkgs' generic stdenv with a cc-wrapped fork toolchain
     # and wasm32-unknown-linux-musl as the host platform. Everything below here
