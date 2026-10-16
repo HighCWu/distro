@@ -1,6 +1,14 @@
 // SPDX-License-Identifier: MIT
 // The pinned NOMMU hush implements errexit but not nounset. Keep explicit
 // value assertions; do not use `set -u` as a substitute for testing them.
+// This hush also resets $? when skipping a failed condition's THEN branch.
+// Capture directly in an OR list, not after entering ELSE.
+export const publicChildStatusScript = String.raw`
+status=0
+/bin/sh -c 'exit 7' || status=$?
+[ "$status" -eq 7 ] || fail child-status "$status"
+`;
+
 export const publicShellScript = String.raw`
 set -e
 fail() {
@@ -17,8 +25,7 @@ printf '%s\n' "$AGENT_RUNTIME_VALUE" > /tmp/public-shell-source || fail source-w
 cp /tmp/public-shell-source /tmp/public-shell-copy || fail copy "$?"
 copy=$(cat /tmp/public-shell-copy) || fail copy-read "$?"
 [ "$copy" = 'public shell env' ] || fail copy-content "$copy"
-if /bin/sh -c 'exit 7'; then fail child-exit 0; else status=$?; fi
-[ "$status" -eq 7 ] || fail child-status "$status"
+${publicChildStatusScript}
 sleep 0.01 &
 child=$!
 wait "$child" || fail child-wait "$?"

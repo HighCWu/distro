@@ -7,6 +7,7 @@ import { join } from "node:path";
 import test from "node:test";
 import {
   publicAbortScript,
+  publicChildStatusScript,
   publicShellScript,
   publicStreamScript,
 } from "./agent-wasm64-userland-commands.ts";
@@ -21,6 +22,37 @@ test("public userland scripts retain fail-fast checks without unsupported hush n
   assert.ok(publicShellScript.includes('[ "$PWD" = /tmp ]'));
   assert.ok(publicShellScript.includes("[ \"$1\" = 'public shell arg' ]"));
   assert.ok(publicShellScript.includes("[ \"$AGENT_RUNTIME_VALUE\" = 'public shell env' ]"));
+});
+
+test("public shell captures the exact child exit status before conditional branches", () => {
+  const run = (script: string) =>
+    spawnSync(
+      "/bin/sh",
+      [
+        "-c",
+        String.raw`
+set -e
+fail() { printf '%s [%s]\n' "$1" "$2" >&2; exit 1; }
+${script}
+printf '%s\n' "$status"
+`,
+      ],
+      { encoding: "utf8", timeout: 5000 },
+    );
+  assert.ok(publicShellScript.includes(publicChildStatusScript));
+  const expected = run(publicChildStatusScript);
+  assert.ifError(expected.error);
+  assert.equal(expected.status, 0, expected.stderr);
+  assert.equal(expected.stdout, "7\n");
+  assert.equal(expected.stderr, "");
+  // A successful child or a different nonzero status must still fail.
+  for (const status of [0, 23]) {
+    const unexpected = run(publicChildStatusScript.replace("exit 7", `exit ${status}`));
+    assert.ifError(unexpected.error);
+    assert.equal(unexpected.status, 1);
+    assert.equal(unexpected.stdout, "");
+    assert.equal(unexpected.stderr, `child-status [${status}]\n`);
+  }
 });
 
 test("public binary pipeline script preserves bytes, separates streams and removes its copy on the host", () => {
