@@ -115,6 +115,10 @@ let
         cp ${./config-driver-test.js} config-driver-test.js
         SDK_TEST_CLANG=${llvm-toolchain}/bin/clang \
           SDK_TEST_TARGET=${pkgs.stdenv.hostPlatform.config} node --test config-driver-test.js
+        SDK_TEST_CLANG=${llvm-toolchain}/bin/clang++ \
+          SDK_TEST_TARGET=${platform.targetTriple} \
+          SDK_TEST_CXX_CONFIG=${llvm-toolchain}/bin/clang++.cfg \
+          node --test ${./.}/exception-codegen-test.js
         mkdir $out
         # Separate compilation is part of the public consumer contract.
         wasm-linux-c++ -std=c++17 -O2 -pthread -Werror -c ${../toolchain-smoke/runtime-cxx.cc} -o runtime.o

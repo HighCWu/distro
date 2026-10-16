@@ -15,7 +15,9 @@
 
 let
   llvmMajorVersion = lib.versions.major llvm-toolchain-unwrapped.version;
-  wasmCompileFlags = "--sysroot=${sysroot-base} ${toString platform.compilerFlags} -mexception-handling";
+  # The instruction feature alone does not preserve C++ catch/cleanup handlers.
+  # Use the same exception lowering mode as application clang++ invocations.
+  wasmCompileFlags = "--sysroot=${sysroot-base} ${toString platform.compilerFlags} -fwasm-exceptions";
 
   cmakeFlags = [
     "-DCMAKE_BUILD_TYPE=Release"
