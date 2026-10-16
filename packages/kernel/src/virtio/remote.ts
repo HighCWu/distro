@@ -98,23 +98,41 @@ const deserialize_error = ({ name, message, stack }: SerializedError) => {
  * devices from one worker. Closing the device closes this protocol and its
  * driver; ownership of the Worker or MessagePort remains with the caller. The
  * caller must keep that endpoint alive until `device.closed` settles.
+ * An optional signal cancels only the wait for readiness, preserving its abort
+ * reason and releasing startup listeners. It neither terminates the endpoint
+ * nor closes a device that has already become ready.
  *
  * @example
  * ```ts
  * const device = await workerDevice(new Worker("./disk-worker.js", { type: "module" }));
  * ```
  */
-export function workerDevice(endpoint: Endpoint): Promise<VirtioDevice> {
-  endpoint.start?.();
-
+export function workerDevice(
+  endpoint: Endpoint,
+  options: { signal?: AbortSignal } = {},
+): Promise<VirtioDevice> {
   return new Promise((resolve, reject) => {
-    let cleanup = () => {};
-    const fail = (error: Error) => {
+    const { signal } = options;
+    if (signal?.aborted) {
+      reject(signal.reason);
+      return;
+    }
+    let settled = false;
+    let remove_endpoint_listeners = () => {};
+    const cleanup = () => {
+      remove_endpoint_listeners();
+      signal?.removeEventListener("abort", aborted);
+    };
+    const fail = (error: unknown) => {
+      if (settled) return;
+      settled = true;
       cleanup();
       reject(error);
     };
-    cleanup = listen_endpoint(endpoint, {
+    const aborted = () => fail(signal?.reason);
+    remove_endpoint_listeners = listen_endpoint(endpoint, {
       message(value) {
+        if (settled) return;
         const message = value as WorkerMessage;
         if (message?.type === "error") {
           fail(deserialize_error(message.error));
@@ -123,12 +141,28 @@ export function workerDevice(endpoint: Endpoint): Promise<VirtioDevice> {
         if (message?.type !== "ready") return;
         // Install the device's lifetime listeners before removing the startup
         // listeners. No worker failure can fall between ready and attachment.
-        const device = create_remote_device(endpoint, message);
-        cleanup();
-        resolve(device);
+        try {
+          const device = create_remote_device(endpoint, message);
+          settled = true;
+          cleanup();
+          resolve(device);
+        } catch (error) {
+          fail(error);
+        }
       },
       error: fail,
     });
+    signal?.addEventListener("abort", aborted, { once: true });
+    if (signal?.aborted) {
+      aborted();
+      return;
+    }
+    try {
+      // Install listeners before start(), including for synchronous endpoints.
+      endpoint.start?.();
+    } catch (error) {
+      fail(error);
+    }
   });
 }
 
