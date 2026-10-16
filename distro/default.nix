@@ -183,7 +183,12 @@ lib.makeScope (scope: lib.callPackageWith ({ inherit lib pkgs; } // scope)) (
     apk-checks = callPackage ./apk/checks.nix { };
     repository = (callPackage ./repository.nix { bootFiles = self.site.bootFiles; }) // {
       checks = {
-        inherit (self.apk-checks) install store-references userland;
+        inherit (self.apk-checks)
+          architecture
+          install
+          store-references
+          userland
+          ;
       };
     };
 

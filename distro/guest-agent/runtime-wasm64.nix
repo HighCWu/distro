@@ -6,6 +6,9 @@
   node-workspace,
   pkgs,
   sdk-wasm64,
+  apk ? null,
+  platform-wasm64 ? null,
+  production ? null,
 }:
 let
   program = pkgs.runCommand "agent-runtime-init-wasm64" { } ''
@@ -15,19 +18,56 @@ let
     ${sdk-wasm64}/bin/wasm-linux-cc -Wall -Wextra -Werror \
       ${./runtime-child.c} -o $out/child.wasm
   '';
-  initramfs = image.mkInitramfs {
+  fixtureInitramfs = image.mkInitramfs {
     name = "agent-runtime-wasm64";
     init = "${program}/init.wasm";
     files."/bin/agent-runtime-child" = "${program}/child.wasm";
   };
+  childPayload = pkgs.runCommand "native-agent-root-payload" { } ''
+    mkdir -p $out/bin
+    cp ${program}/child.wasm $out/bin/agent-runtime-child
+    mkdir -p $out/share/licenses/agent-runtime-child
+    cp ${../../license.md} $out/share/licenses/agent-runtime-child/MIT.txt
+    cp ${sdk-wasm64}/share/linux-wasm-sdk/licenses/musl/COPYRIGHT \
+      $out/share/licenses/agent-runtime-child/musl-COPYRIGHT
+    cp ${sdk-wasm64}/share/linux-wasm-sdk/licenses/llvm-runtimes/compiler-rt-LICENSE.TXT \
+      $out/share/licenses/agent-runtime-child/compiler-rt-LICENSE.TXT
+  '';
+  childPackage = apk.mkPackage {
+    name = "agent-runtime-child";
+    version = "0-r0";
+    arch = platform-wasm64.apkArch;
+    license = "MIT";
+    payload = childPayload;
+  };
+  childRepository = apk.mkRepository {
+    name = "native-agent-runtime";
+    arch = platform-wasm64.apkArch;
+    packages.child = childPackage;
+  };
+  rootfs = image.mkFilesystem {
+    name = "native-agent-runtime-root";
+    root = apk.mkSystem {
+      name = "native-agent-runtime";
+      arch = platform-wasm64.apkArch;
+      repositories = [ childRepository ];
+      packages = [ childPackage ];
+      files."/etc/agent-runtime-root" = pkgs.writeText "agent-runtime-root-marker" "native-wasm64-root\n";
+    };
+  };
+  initramfs = if production == null then fixtureInitramfs else production.bootInitramfs;
 in
 pkgs.stdenvNoCC.mkDerivation {
-  pname = "linux-agent-runtime-wasm64";
+  pname =
+    if production == null then "linux-agent-runtime-wasm64" else "linux-agent-production-wasm64";
   version = "0.0.0";
   src = ../..;
   passthru.ci.heavy = true;
   passthru.runtimeInitramfs = initramfs;
+  passthru.runtimeRootfs = if production == null then null else rootfs;
   env.CI = "true";
+  env.AGENT_WASM64_INITRAMFS = initramfs;
+  env.AGENT_WASM64_ROOTFS = if production == null then "" else rootfs;
   pnpmDeps = node-workspace.deps;
   nativeBuildInputs = [
     pkgs.nodejs
@@ -40,8 +80,7 @@ pkgs.stdenvNoCC.mkDerivation {
     cp -rT ${kernel}/dist packages/kernel/dist
     cp -rT ${bytes}/dist packages/bytes/dist
     pnpm --filter=@lowland/guest-tests check
-    AGENT_WASM64_INITRAMFS=${initramfs} \
-      timeout --kill-after=5 180 pnpm --filter=@lowland/guest-tests exec \
+    timeout --kill-after=5 180 pnpm --filter=@lowland/guest-tests exec \
       node --test agent-wasm64-runtime.ts
     runHook postBuild
   '';

@@ -43,12 +43,14 @@ let
       name,
       repositories,
       packages,
+      arch ? platform.apkArch,
       allowUntrusted ? true,
       files ? { },
       links ? { },
     }:
     let
       apkPackages = map package.packageFrom packages;
+      mismatchedPackages = builtins.filter (p: p.arch != arch && p.arch != "noarch") apkPackages;
       invalidRepositories = builtins.filter (
         repository: !(builtins.isAttrs repository && (repository.isApkRepository or false))
       ) repositories;
@@ -74,6 +76,12 @@ let
     assert lib.assertMsg (invalidRepositories == [ ]) "apk.mkSystem received a non-APK repository";
     assert lib.assertMsg (apkPackages != [ ]) "apk.mkSystem requires at least one package";
     assert lib.assertMsg (
+      builtins.match "[A-Za-z0-9_+-]+" arch != null
+    ) "apk.mkSystem requires a valid architecture";
+    assert lib.assertMsg (
+      mismatchedPackages == [ ]
+    ) "apk.mkSystem package architecture does not match ${arch}";
+    assert lib.assertMsg (
       invalidPaths == [ ]
     ) "APK system paths must be absolute and normalized: ${lib.concatStringsSep ", " invalidPaths}";
     assert lib.assertMsg (
@@ -90,14 +98,14 @@ let
         ];
         passthru = {
           isApkSystem = true;
-          inherit apkPackages repositories;
+          inherit arch apkPackages repositories;
         };
       }
       ''
         mkdir -p $out
         fakeroot apk \
           --root $out \
-          --arch ${platform.apkArch} \
+          --arch ${lib.escapeShellArg arch} \
           ${lib.optionalString allowUntrusted "--allow-untrusted"} \
           ${repositoryArgs} \
           add --initdb ${packageArgs}

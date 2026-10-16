@@ -103,4 +103,5 @@ in
     ];
   };
   store-references = storeReferences;
+  architecture = import ./architecture-check.nix { inherit apk pkgs; };
 }

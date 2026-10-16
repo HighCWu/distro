@@ -7,9 +7,12 @@
   image,
   node-workspace,
   sdk-wasm64,
+  apk,
+  platform-wasm64,
 }:
 
 let
+  nativeWasm64 = import ./native-wasm64.nix { inherit image pkgs sdk-wasm64; };
   package = stdenv.mkDerivation {
     pname = "linux-guest-agent";
     version = "0.0.0";
@@ -58,6 +61,7 @@ let
 in
 package
 // {
+  inherit nativeWasm64;
   checks.abi = abi;
   checks.abi-wasm64 = import ./abi-wasm64.nix { inherit bytes pkgs sdk-wasm64; };
   checks.runtime-wasm64 = import ./runtime-wasm64.nix {
@@ -69,5 +73,18 @@ package
       node-workspace
       ;
     kernel = kernel-wasm64;
+  };
+  checks.production-wasm64 = import ./runtime-wasm64.nix {
+    inherit
+      bytes
+      pkgs
+      sdk-wasm64
+      image
+      node-workspace
+      apk
+      platform-wasm64
+      ;
+    kernel = kernel-wasm64;
+    production = nativeWasm64;
   };
 }

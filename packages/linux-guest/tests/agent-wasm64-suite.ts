@@ -1,7 +1,13 @@
 // SPDX-License-Identifier: MIT
 // Shared by Node and browser bring-up checks; no Node-only runtime imports.
-import { bootMachine, consoleDevice, entropyDevice, vsockDevice } from "@lowland/kernel";
-import { O, ProtocolError, SystemError } from "../src/abi.ts";
+import {
+  bootMachine,
+  consoleDevice,
+  entropyDevice,
+  vsockDevice,
+  type BootMachineOptions,
+} from "@lowland/kernel";
+import { O, ProtocolError, S_IF, SystemError } from "../src/abi.ts";
 import { GuestSession } from "../src/conn.ts";
 import { statToInfo } from "../src/file.ts";
 import { ChildProcess } from "../src/process.ts";
@@ -13,6 +19,7 @@ import {
   llseek,
   openat,
   read,
+  readlinkat,
   spawn,
   unlinkat,
   write,
@@ -48,6 +55,7 @@ export async function runAgentWasm64Suite(
   assert: RuntimeAssertions,
   runCase: (name: string, body: () => Promise<void>) => Promise<void>,
   writeLine: (text: string) => void,
+  options: Pick<BootMachineOptions, "plugins"> & { productionRoot?: boolean } = {},
 ) {
   const passed: string[] = [];
   const t = {
@@ -63,7 +71,10 @@ export async function runAgentWasm64Suite(
   const output = (userConsole: boolean) =>
     console_line_output(
       (line) => {
-        if (userConsole && line === "agent-wasm64-runtime: ready") ready.resolve();
+        const readyLine = options.productionRoot
+          ? "linux-guest-agent: ready on vsock port 1024"
+          : "agent-wasm64-runtime: ready";
+        if (userConsole && line === readyLine) ready.resolve();
         if (line.includes("Kernel panic - not syncing")) ready.reject(new Error(line));
       },
       { write: writeLine },
@@ -71,7 +82,12 @@ export async function runAgentWasm64Suite(
   const machine = await bootMachine({
     cpus: 1,
     initcpio,
-    plugins: [vsock, consoleDevice(closed_input(), output(true)), entropyDevice()],
+    plugins: [
+      vsock,
+      consoleDevice(closed_input(), output(true)),
+      entropyDevice(),
+      ...(options.plugins ?? []),
+    ],
   });
   const bootOutput = machine.bootConsole.pipeTo(output(false));
   // Observe failures immediately, including a machine that stops before ready.
@@ -105,6 +121,43 @@ export async function runAgentWasm64Suite(
     assert.equal(session.abi, "wasm64");
     assert.equal(session.protocolVersion, 4);
     const active = session;
+
+    if (options.productionRoot) {
+      await t.test(
+        "production agent pivots into the labeled root and detaches its initramfs",
+        async () => {
+          await with_close(
+            await openat(active, "/etc/agent-runtime-root", O.RDONLY, 0),
+            async (fd) => {
+              assert.equal(new TextDecoder().decode(await read(fd, 128)), "native-wasm64-root\n");
+            },
+          );
+          assert.equal(
+            new TextDecoder().decode(await readlinkat(active, "/proc/self/root", 128)),
+            "/",
+          );
+          for (const path of ["/dev/pts", "/proc/self/fd", "/sys/class/block"]) {
+            assert.equal((await fstatat64(active, path, 0)).st_mode & S_IF.MT, S_IF.DIR);
+          }
+          await assert.rejects(
+            fstatat64(active, "/mnt/init", 0),
+            (error) => error instanceof SystemError && error.code === "ENOENT",
+          );
+          await with_close(await openat(active, "/proc/mounts", O.RDONLY, 0), async (fd) => {
+            const mounts = new TextDecoder().decode(await read(fd, 32768));
+            assert.equal(
+              mounts.split("\n").some((line) => {
+                const fields = line.split(" ");
+                return (
+                  fields[1] === "/" && fields[2] === "erofs" && fields[3]?.split(",").includes("ro")
+                );
+              }),
+              true,
+            );
+          });
+        },
+      );
+    }
 
     await t.test("native seek exceeds 4 GiB; truncate and stat round-trip file bytes", async () => {
       await with_close(
