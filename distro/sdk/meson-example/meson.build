@@ -36,5 +36,9 @@ endforeach
 generator = executable('sdk-generator', 'generator.c', native: true)
 header = custom_target('generated-answer', output: 'answer.h',
   command: [generator, '@OUTPUT@'])
+dependencies = [dependency('threads')]
+if get_option('installed_answer')
+  dependencies += dependency('sdk-answer', method: 'pkg-config', static: true)
+endif
 executable('sdk-meson', ['main.cc', header],
-  dependencies: dependency('threads'), name_suffix: 'wasm')
+  dependencies: dependencies, name_suffix: 'wasm')

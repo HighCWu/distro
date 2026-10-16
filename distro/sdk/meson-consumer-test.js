@@ -117,6 +117,23 @@ endif
         /Target dependency was replaced by host metadata/,
       );
     }
+    const prefix = join(root, "prefix");
+    const libraryBuild = join(root, "library-build");
+    run(meson, [
+      "setup",
+      libraryBuild,
+      join(source, "dependency-example"),
+      "--cross-file",
+      crossFile,
+      "--prefix",
+      prefix,
+      "--libdir",
+      "lib",
+      "--wrap-mode=nofallback",
+    ]);
+    run(meson, ["compile", "-C", libraryBuild]);
+    run(meson, ["install", "-C", libraryBuild, "--no-rebuild"]);
+    env.WASM_PKG_CONFIG_PATH = join(prefix, "lib/pkgconfig");
     const build = join(root, "build");
     run(meson, [
       "setup",
@@ -125,6 +142,7 @@ endif
       "--cross-file",
       crossFile,
       "--buildtype=release",
+      "-Dinstalled_answer=true",
       "--wrap-mode=nofallback",
     ]);
     run(meson, ["compile", "-C", build]);
@@ -136,6 +154,24 @@ endif
     } else {
       assert.match(run(binary, []).stdout, /::vm-test::pass/);
     }
+    const pcFile = join(prefix, "lib/pkgconfig/sdk-answer.pc");
+    writeFileSync(
+      pcFile,
+      readFileSync(pcFile, "utf8").replace("Libs.private: -lsdk-helper", "Libs.private:"),
+    );
+    const missingPrivate = join(root, "missing-private");
+    run(meson, [
+      "setup",
+      missingPrivate,
+      join(source, "meson-example"),
+      "--cross-file",
+      crossFile,
+      "-Dinstalled_answer=true",
+      "--wrap-mode=nofallback",
+    ]);
+    const failed = spawnSync(meson, ["compile", "-C", missingPrivate], { env, encoding: "utf8" });
+    assert.notEqual(failed.status, 0, "link without private dependency unexpectedly passed");
+    assert.match(failed.stdout + failed.stderr, /sdk_helper/);
   } finally {
     rmSync(root, { recursive: true, force: true });
   }
