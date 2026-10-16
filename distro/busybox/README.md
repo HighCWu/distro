@@ -30,6 +30,18 @@ process and loopback-network checks remain independent results. Merely exposing
 these checks does not establish that the wasm64 package builds or passes them.
 These are Node runtime checks, not browser or full-distribution certification.
 
+The build also inspects the linked executable before installing it. It requires
+exactly one shared `env.memory` import of the selected address width, no defined
+memory, and the platform's declared memory ceiling. This is a structural ABI
+gate, not evidence of successful execution or a promise that the host can
+allocate the declared maximum. Its host-only regression checks both widths and
+rejects wrong-width, private, missing/duplicate/defined memories, inconsistent
+limits and malformed inputs:
+
+```console
+node --test distro/busybox/check-binary.test.mjs
+```
+
 `stdenv-wasm64` is available for additional package ports. The surrounding
 default package scope remains wasm32: explicitly select matching wasm64
 dependencies rather than passing a default-scope library to a wasm64 build.
