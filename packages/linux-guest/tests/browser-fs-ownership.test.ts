@@ -3,6 +3,79 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import { BrowserFS } from "../src/browser.ts";
 
+test("BrowserFS file rename waits for pending source writes before copying", async () => {
+  const files = new Map([["source", "before"]]);
+  const closing = Promise.withResolvers<void>();
+  const release = Promise.withResolvers<void>();
+  let snapshots = 0;
+  const fileHandle = (name: string) => ({
+    kind: "file",
+    async getFile() {
+      if (name === "source") snapshots++;
+      return new Blob([files.get(name)!]);
+    },
+    async createWritable() {
+      let pending = "";
+      const receive = (chunk: Uint8Array) => {
+        pending += new TextDecoder().decode(chunk);
+      };
+      const commit = () => {
+        files.set(name, pending);
+      };
+      return Object.assign(new WritableStream({ write: receive, close: commit }), {
+        async seek() {},
+        async write(data: ArrayBuffer) {
+          receive(new Uint8Array(data));
+        },
+        async close() {
+          if (name === "source") {
+            closing.resolve();
+            await release.promise;
+          }
+          commit();
+        },
+      });
+    },
+  });
+  const fs = new BrowserFS({
+    kind: "directory",
+    async getDirectoryHandle() {
+      throw new DOMException("not a directory", "TypeMismatchError");
+    },
+    async getFileHandle(name: string, options?: { create?: boolean }) {
+      if (!files.has(name)) {
+        if (!options?.create) throw new DOMException("missing", "NotFoundError");
+        files.set(name, "");
+      }
+      return fileHandle(name);
+    },
+    async removeEntry(name: string) {
+      files.delete(name);
+    },
+  } as unknown as FileSystemDirectoryHandle);
+  const node = await fs.lookup(fs.root, "source");
+  assert.ok(node);
+  const handle = await fs.open(node, 0);
+  const writing = fs.write(node, handle, 0n, new TextEncoder().encode("after!"));
+  await closing.promise;
+  const moving = fs.rename(fs.root, "source", fs.root, "destination");
+  try {
+    await new Promise<void>((resolve) => setImmediate(resolve));
+    assert.equal(snapshots, 0, "copy must wait for the source stream to commit");
+  } finally {
+    release.resolve();
+    await writing;
+    await moving;
+  }
+  assert.equal(files.get("destination"), "after!");
+  assert.equal(files.has("source"), false);
+  assert.equal(
+    await fs.lookup(fs.root, "destination"),
+    node,
+    "open source identity follows rename",
+  );
+});
+
 test("BrowserFS same-path rename still requires the source to exist", async () => {
   let exists = false;
   const root = {

@@ -508,7 +508,23 @@ export class BrowserFS implements FS<Node, Handle> {
     if (!source) throw new FSError("ENOENT");
     if (old_parent === new_parent && oldName === newName) return;
     const source_node = this.#as_node(source);
+    const move = () => this.#move_node(old_parent, oldName, new_parent, newName, source_node);
+    // Copying a file snapshots its committed bytes. Keep the source's mutation
+    // queue reserved until its handle has been retargeted to the new name.
+    if (source_node.handle.kind === "file") await this.#mutate(source_node, move);
+    else await move();
+  }
+
+  async #move_node(
+    old_parent: Node,
+    oldName: string,
+    new_parent: Node,
+    newName: string,
+    source_node: Node,
+  ) {
+    this.#as_node(source_node);
     const old_parts = [...old_parent.parts, oldName];
+    if (this.#nodes.get(old_parts.join("/")) !== source_node) throw new FSError("ENOENT");
     const new_parts = [...new_parent.parts, newName];
     if (
       source_node.handle.kind === "directory" &&
