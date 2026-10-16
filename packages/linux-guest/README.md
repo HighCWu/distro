@@ -131,6 +131,11 @@ the boot disk to `guestAgent({ abi: "wasm64", image })`. A separate explicit
 Node check verifies this actual minimal root rather than substituting the
 fixture root. Adding the check does not establish it has passed; browser,
 full shell, networking and a larger package set still need their own results.
+The same four-case minimal-root corpus is also wired into explicit
+`browser-tests-check-agent-minimal-root-wasm64-chromium` and
+`browser-tests-check-agent-minimal-root-wasm64-firefox` checks. They verify the
+real system root, not the separate public API fixture images, and require
+the exact case list, machine closure, and a report without skips or retries.
 The default npm assets remain wasm32. This experimental root is not a complete
 distribution release: BusyBox remains GPL-2.0-only, and its included license
 texts do not replace corresponding-source delivery or a full release inventory.

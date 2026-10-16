@@ -123,7 +123,7 @@ proc/sys/devpts directories and detached old initramfs in addition to all seven
 file/process cases. The report requires the exact eight completed case names,
 machine closure, one successful test, no skips and no retries. Asset download
 failures are errors; there is no fallback to the fixture or another ABI.
-The minimal root includes the native test program, not a full distribution or
+The fixture root includes the native test program, not a full distribution or
 system init. Passing Node production tests alone does not establish browser
 production support.
 
@@ -133,6 +133,24 @@ focused diagnostic, the browser entry accepts
 Node runtime wrapper accepts `AGENT_WASM64_TRACE=1`. Compare traced and untraced
 results separately: diagnostic output can affect scheduling and is not a fix
 for an intermittent handshake timeout.
+
+### Fixture-free minimal system root
+
+Independent checks boot `guest-agent.nativeWasm64.rootfs` with the native boot
+disk using only public `guestAgent({ abi: "wasm64", image })` selection. They
+share four cases with Node: root identity and mount metadata, installed license
+texts and absence of runtime fixtures, exact binary BusyBox output, and basic
+installed shell execution. The browser result requires all four case names,
+machine closure, and an exact successful report without skips or retries.
+
+```console
+nix build .#checks.x86_64-linux.browser-tests-check-agent-minimal-root-wasm64-chromium -L
+nix build .#checks.x86_64-linux.browser-tests-check-agent-minimal-root-wasm64-firefox -L
+```
+
+Run heavy builds in public CI. Wiring the checks does not establish they have
+passed, certify the richer shell/network profiles, or complete distribution
+release compliance. No test executable is installed into this system root.
 
 ### Public plugin and GPT boot disk
 
