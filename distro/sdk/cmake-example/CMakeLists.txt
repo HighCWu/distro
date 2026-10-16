@@ -1,6 +1,12 @@
 # SPDX-License-Identifier: MIT
 cmake_minimum_required(VERSION 3.20)
 project(linux_wasm_sdk_example LANGUAGES C CXX)
+include(CheckFunctionExists)
+check_function_exists(malloc SDK_HAS_MALLOC)
+check_function_exists(linux_wasm_sdk_missing_function SDK_HAS_MISSING_FUNCTION)
+if(NOT SDK_HAS_MALLOC OR SDK_HAS_MISSING_FUNCTION)
+  message(FATAL_ERROR "SDK function probes must link: malloc exists, the fixture symbol does not")
+endif()
 find_package(Threads REQUIRED)
 option(SDK_USE_INSTALLED_ANSWER "Find the separately installed target library" OFF)
 if(SDK_USE_INSTALLED_ANSWER)
