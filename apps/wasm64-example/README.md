@@ -6,8 +6,9 @@ This is a small application using the public kernel and agent APIs, not a
 terminal distribution or test fixture. It bundles a matching wasm64 kernel,
 native agent boot disk and minimal BusyBox ext4 root. The page starts/stops
 Linux, runs native `uname`, writes bounded UTF-8 text through the file API and
-reads it using native `cat`. No shell interpolation or arbitrary command input
-is required by the example.
+reads it using native `cat`. It also imports a developer-selected Linux wasm64
+executable into the temporary root and runs it through the public streaming
+process API, without shell interpolation.
 
 Build heavy assets in public CI:
 
@@ -59,12 +60,56 @@ BigInt memory-growth API; it does not promise that enough memory is available
 to boot Linux or reserve the kernel's configured maximum. Unsupported engines
 are not silently routed through wasm32.
 
-The example only executes bounded commands; `run()` collects their outputs in
-memory. The displayed recent boot console is capped at 64 KiB. Use `exec()` and
-streaming output with cancellation for general-purpose long-running workloads.
+The preset commands use `run()` to collect bounded outputs. Imported programs
+use `exec()` with concurrent stdout/stderr consumption and cancellation instead
+of collecting all output. The displayed recent boot console and application
+output are each capped at 65,536 characters.
 This platform's NOMMU model is not an isolation boundary between mutually
 untrusted Linux programs. Browser isolation does not make such programs safe
 to run together in one instance.
+
+## Importing your own program
+
+Compile a static executable with the matching Linux wasm64 SDK, for example
+inside the repository's `sdk-wasm64` development shell:
+
+```console
+wasm-linux-cc -Wall -Wextra your-program.c -o application.wasm
+```
+
+Start Linux, select the resulting file, enter arguments as a JSON string array
+(for example `["hello world", "--count", "3"]`), then choose **Import and run
+program**. The filename is not interpreted as a path: bytes are written to
+`/root/application.wasm`, marked executable, and executed with `/root` as cwd.
+Nothing is uploaded to the HTTP server. This overwrites that one application
+path in the ephemeral root; a later start uses a fresh root as before.
+
+Files are limited to 16 MiB and must have a version-1 Wasm header; arguments
+are at most 64 NUL-free strings in 8192 JSON characters. These are UI/resource
+bounds, not ABI or security validation. The binary must use this Linux SDK's
+wasm64 ABI, not WASI, wasm32 or ELF; the native loader reports incompatible
+programs rather than translating them. The minimal root does not provide
+arbitrary dependencies or dynamic libraries. Standard input receives EOF;
+interactive terminal input is not implemented here. Stdout and stderr are
+decoded separately as UTF-8; their displayed interleaving is nondeterministic,
+and older output is discarded rather than retained invisibly.
+
+**Cancel application** aborts the process capability, and the UI waits for
+process/pipe cleanup before enabling another action. Nonzero exit status and
+errors remain visible; neither is converted to success. This is not a global
+timeout, descendant-process-group cleanup, CPU/memory quota, or safe execution
+of untrusted code. A program can change or damage the same Linux instance and
+its files. Only run trusted programs, and retain the licenses/notices required
+by the components linked into your own binary.
+
+Nine host regressions verify import/argument validation, executable mode,
+literal argv, UTF-8 streams, nonzero status, cancellation and failure cleanup.
+They do not prove Linux execution. The browser check separately compiles a
+small MIT C program with the SDK, selects that file through the actual input,
+checks literal Unicode arguments and both streams, a nonzero exit, cancellation
+after an execution marker, and native `uname` after cleanup. This program is a
+test-only input, not installed into or shipped with the minimal application
+root. The extended real browser check still requires public CI results.
 
 The explicit `browser-tests-check-wasm64-example-chromium` and
 `browser-tests-check-wasm64-example-firefox` checks exercise the actual packaged

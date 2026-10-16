@@ -224,6 +224,14 @@ nix build .#checks.x86_64-linux.browser-tests-check-wasm64-example-chromium -L
 nix build .#checks.x86_64-linux.browser-tests-check-wasm64-example-firefox -L
 ```
 
+The control test now also selects a separate SDK-built MIT program through the
+file input and checks literal Unicode arguments (without shell expansion),
+stdout/stderr, stdin EOF, exit code 37, cancellation of a waiting application,
+and continued native `uname` execution. This program is compiled only for the
+browser suite and is not installed into the minimal example root. Import size,
+argument validation, streaming/cleanup and bounded display have nine host
+regressions; actual extended browser execution still requires public CI results.
+
 The shared scenario clicks the real page controls to boot, run `uname`, perform
 an exact UTF-8 file round-trip, stop, restart with a fresh disk, observe native
 `cat` fail for the old file, and run another successful command. The strict
