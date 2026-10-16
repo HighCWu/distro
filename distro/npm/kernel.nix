@@ -5,7 +5,7 @@
   pkgs,
 }:
 
-pkgs.stdenvNoCC.mkDerivation {
+pkgs.stdenvNoCC.mkDerivation (finalAttrs: {
   pname = "lowland-kernel";
   inherit ((builtins.fromJSON (builtins.readFile ../../packages/kernel/package.json))) version;
   src = ../..;
@@ -41,4 +41,15 @@ pkgs.stdenvNoCC.mkDerivation {
 
     runHook postInstall
   '';
-}
+  passthru.checks.build-materials =
+    pkgs.runCommand "npm-kernel-build-materials-check"
+      {
+        passthru.ci.heavy = true;
+        nativeBuildInputs = [ pkgs.nodejs ];
+      }
+      ''
+        node ${./check-kernel-package.mjs} ${finalAttrs.finalPackage}/package.tgz \
+          ${linux} ${../../packages/kernel/package.json} ${../../packages/kernel/LICENSE}
+        touch $out
+      '';
+})

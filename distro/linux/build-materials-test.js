@@ -5,6 +5,7 @@ import { mkdtempSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "nod
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import test from "node:test";
+import { createHash } from "node:crypto";
 
 const recipe = new URL("./package.nix", import.meta.url);
 const script = new URL("./build-materials.sh", import.meta.url);
@@ -69,12 +70,24 @@ for (const failure of [
         readFileSync(new URL("../../packages/kernel/package.json", import.meta.url)),
       );
       put(join(output, "package.json"), JSON.stringify(manifest));
+      const license = new URL("../../packages/kernel/LICENSE", import.meta.url);
+      const manifestPath = new URL("../../packages/kernel/package.json", import.meta.url);
+      const checker = new URL("../npm/check-kernel-package.mjs", import.meta.url);
+      put(join(output, "LICENSE"), readFileSync(license));
       const packed = spawnSync("npm", ["pack", "--ignore-scripts", "--json", output], {
         cwd: root,
         encoding: "utf8",
       });
       assert.equal(packed.status, 0, packed.stderr);
       const [tarball] = JSON.parse(packed.stdout);
+      const verify = (archive) =>
+        spawnSync(
+          process.execPath,
+          [checker.pathname, archive, output, manifestPath.pathname, license.pathname],
+          { encoding: "utf8" },
+        );
+      const verified = verify(join(root, tarball.filename));
+      assert.equal(verified.status, 0, verified.stderr);
       const extracted = join(root, "extracted");
       mkdirSync(extracted);
       assert.equal(
@@ -96,6 +109,39 @@ for (const failure of [
         spawnSync("sha256sum", ["--check", "linux-build/SHA256SUMS"], { cwd: extracted }).status,
         0,
       );
+      // Rehashing a substituted configuration must not fool the archive-level
+      // comparison against the selected Linux output.
+      const sumsPath = join(extracted, "linux-build/SHA256SUMS");
+      const hash = createHash("sha256").update("tampered\n").digest("hex");
+      put(
+        sumsPath,
+        readFileSync(sumsPath, "utf8").replace(
+          /^\w+  linux-build\/kernel.config$/m,
+          `${hash}  linux-build/kernel.config`,
+        ),
+      );
+      const modifiedArchive = join(root, "modified.tgz");
+      const repack = () => {
+        assert.equal(
+          spawnSync("tar", ["-czf", modifiedArchive, "-C", root, "extracted"]).status,
+          0,
+        );
+        return verify(modifiedArchive);
+      };
+      const substituted = repack();
+      assert.notEqual(substituted.status, 0);
+      assert.match(substituted.stderr, /archive bytes differ/);
+      put(join(extracted, "linux-build/kernel.config"), originals[".config"]);
+      put(sumsPath, readFileSync(join(output, "linux-build/SHA256SUMS")));
+      put(join(extracted, "LICENSE"), "wrong host license\n");
+      const wrongLicense = repack();
+      assert.notEqual(wrongLicense.status, 0);
+      assert.match(wrongLicense.stderr, /host MIT license must remain unchanged/);
+      put(join(extracted, "LICENSE"), readFileSync(license));
+      put(join(extracted, "package.json"), JSON.stringify({ ...manifest, license: "MIT" }));
+      const relicensed = repack();
+      assert.notEqual(relicensed.status, 0);
+      assert.match(relicensed.stderr, /license/);
     } finally {
       rmSync(root, { recursive: true, force: true });
     }
