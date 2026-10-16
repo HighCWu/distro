@@ -83,6 +83,33 @@ test("Autoconf SDK entry point separates build and host without executing target
       WASM_CONFIG_SITE: targetSite,
     });
     assert.match(explicit.stdout, /SDK_EXPLICIT_TARGET_SITE/);
+    // A third-party configure script without a cross-compilation fallback must
+    // stop, rather than executing the target or silently inventing an answer.
+    const unsupported = join(root, "runtime-required");
+    mkdirSync(unsupported);
+    writeFileSync(
+      join(unsupported, "configure.ac"),
+      `AC_INIT([sdk-runtime-required], [1.0])
+AC_PROG_CC
+AC_RUN_IFELSE([AC_LANG_PROGRAM([], [return 0;])],
+  [AC_MSG_NOTICE([SDK_UNEXPECTED_RUNTIME_SUCCESS])],
+  [AC_MSG_NOTICE([SDK_UNEXPECTED_RUNTIME_FAILURE])])
+AC_OUTPUT
+`,
+    );
+    run("autoconf", [], unsupported);
+    const rejected = spawnSync(wrapper, [join(unsupported, "configure")], {
+      cwd: unsupported,
+      env,
+      encoding: "utf8",
+    });
+    assert.equal(rejected.error, undefined);
+    assert.notEqual(rejected.status, 0, "configure without a cross fallback unexpectedly passed");
+    assert.match(
+      rejected.stdout + rejected.stderr,
+      /cannot run test program while cross compiling/,
+    );
+    assert.doesNotMatch(rejected.stdout + rejected.stderr, /SDK_UNEXPECTED_RUNTIME_/);
   } finally {
     rmSync(root, { recursive: true, force: true });
   }
