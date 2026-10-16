@@ -14,6 +14,7 @@
   playwright,
   repository,
   site,
+  toolchain-smoke-wasm64,
 }:
 
 let
@@ -47,6 +48,10 @@ let
     tar -xzf ${linux-guest.package}/package.tgz --strip-components=1 -C $out/node_modules/@lowland/guest
   '';
 
+  memory64Initramfs = image.mkInitramfs {
+    name = "memory64-browser-runtime";
+    init = "${toolchain-smoke-wasm64}/smoke-c.wasm";
+  };
   memory64Suite = pkgs.runCommand "memory64-browser-tests" { } ''
     mkdir -p \
       $out/node_modules/@lowland/bytes \
@@ -54,6 +59,9 @@ let
       $out/tests
     ${playwright.linkRuntime "$out"}
     cp ${source}/memory64-app.js $out/app.js
+    cp ${source}/runtime-smoke.js $out/runtime-smoke.js
+    cp ${../vm-test/protocol.js} $out/protocol.js
+    cp ${memory64Initramfs} $out/runtime.cpio
     cp ${source}/memory64-index.html $out/index.html
     cp ${source}/playwright.config.js $out/playwright.config.js
     cp ${source}/server.js $out/server.js

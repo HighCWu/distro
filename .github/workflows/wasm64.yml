@@ -17,6 +17,8 @@ on:
       - distro/toolchain-smoke/**
       - distro/npm/browser-tests.nix
       - packages/browser-tests/memory64-app.js
+      - packages/browser-tests/runtime-smoke.js
+      - distro/vm-test/protocol.js
       - packages/browser-tests/memory64-index.html
       - packages/browser-tests/memory64-tests/**
       - packages/browser-tests/package.json
@@ -44,6 +46,8 @@ on:
       - distro/toolchain-smoke/**
       - distro/npm/browser-tests.nix
       - packages/browser-tests/memory64-app.js
+      - packages/browser-tests/runtime-smoke.js
+      - distro/vm-test/protocol.js
       - packages/browser-tests/memory64-index.html
       - packages/browser-tests/memory64-tests/**
       - packages/browser-tests/package.json

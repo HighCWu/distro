@@ -1,6 +1,6 @@
 import { expect, test } from "@playwright/test";
 
-test("boots the Memory64 kernel", async ({ page }) => {
+test("runs Memory64 musl allocation, mmap, threads, TLS and signals", async ({ page }) => {
   page.on("console", (message) => console.log(`[browser] ${message.text()}`));
   page.on("pageerror", (error) => console.error(`[browser] ${error.stack ?? error}`));
 
@@ -10,5 +10,6 @@ test("boots the Memory64 kernel", async ({ page }) => {
     .toBe("function");
   const output = await page.evaluate(() => globalThis.bootMemory64Smoke());
 
-  expect(output).toContain("Linux version");
+  expect(output).toContain("::vm-test::pass");
+  expect(output).not.toContain("::vm-test::fail");
 });
