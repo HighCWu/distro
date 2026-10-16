@@ -10,6 +10,7 @@
   platform-wasm64 ? null,
   production ? null,
   bootDisk ? false,
+  extraRootPackages ? { },
 }:
 let
   program = pkgs.runCommand "agent-runtime-init-wasm64" { } ''
@@ -44,7 +45,9 @@ let
   childRepository = apk.mkRepository {
     name = "native-agent-runtime";
     arch = platform-wasm64.apkArch;
-    packages.child = childPackage;
+    packages = extraRootPackages // {
+      child = childPackage;
+    };
   };
   rootfs = image.mkFilesystem {
     name = "native-agent-runtime-root";
@@ -52,7 +55,7 @@ let
       name = "native-agent-runtime";
       arch = platform-wasm64.apkArch;
       repositories = [ childRepository ];
-      packages = [ childPackage ];
+      packages = [ childPackage ] ++ builtins.attrValues extraRootPackages;
       files."/etc/agent-runtime-root" = pkgs.writeText "agent-runtime-root-marker" "native-wasm64-root\n";
     };
   };
@@ -65,6 +68,7 @@ let
       production.bootInitramfs;
 in
 assert !bootDisk || production != null;
+assert !(extraRootPackages ? child);
 pkgs.stdenvNoCC.mkDerivation {
   pname =
     if bootDisk then

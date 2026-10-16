@@ -9,6 +9,8 @@
   sdk-wasm64,
   apk,
   platform-wasm64,
+  apk-wasm64,
+  busybox-wasm64,
 }:
 
 let
@@ -21,19 +23,26 @@ let
       platform-wasm64
       ;
   };
-  bootDiskCheck = import ./runtime-wasm64.nix {
-    inherit
-      bytes
-      pkgs
-      sdk-wasm64
-      image
-      node-workspace
-      apk
-      platform-wasm64
-      ;
-    kernel = kernel-wasm64;
-    production = nativeWasm64;
-    bootDisk = true;
+  bootDiskCheckFor =
+    extraRootPackages:
+    import ./runtime-wasm64.nix {
+      inherit
+        bytes
+        pkgs
+        sdk-wasm64
+        image
+        node-workspace
+        apk
+        platform-wasm64
+        ;
+      kernel = kernel-wasm64;
+      production = nativeWasm64;
+      bootDisk = true;
+      inherit extraRootPackages;
+    };
+  bootDiskCheck = bootDiskCheckFor { };
+  userlandBootAssets = bootDiskCheckFor {
+    busybox = apk-wasm64.packageFrom busybox-wasm64;
   };
   package = stdenv.mkDerivation {
     pname = "linux-guest-agent";
@@ -114,5 +123,11 @@ package
     inherit bytes pkgs node-workspace;
     kernel = kernel-wasm64;
     assets = bootDiskCheck;
+  };
+  checks.public-userland-wasm64 = import ./public-wasm64.nix {
+    inherit bytes pkgs node-workspace;
+    kernel = kernel-wasm64;
+    assets = userlandBootAssets;
+    userland = true;
   };
 }

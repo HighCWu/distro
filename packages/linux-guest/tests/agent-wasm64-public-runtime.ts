@@ -20,6 +20,7 @@ test(
       (line) => {
         process.stderr.write(line);
       },
+      { userland: process.env.AGENT_WASM64_USERLAND === "1" },
     );
   },
 );

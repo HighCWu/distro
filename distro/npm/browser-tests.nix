@@ -141,11 +141,22 @@ let
         name:
         playwright.mkCheck {
           name = "browser-tests-${name}";
-          suite = agentPublicSuite;
+          suite = agentPublicSuite false;
           expectedTests = [ "boots native wasm64 through public guestAgent image selection" ];
           project = lib.removePrefix "agent-public-wasm64-" name;
         }
       ))
+      // (lib.genAttrs [ "agent-public-userland-wasm64-chromium" "agent-public-userland-wasm64-firefox" ]
+        (
+          name:
+          playwright.mkCheck {
+            name = "browser-tests-${name}";
+            suite = agentPublicSuite true;
+            expectedTests = [ "runs native wasm64 shell through public guestAgent image selection" ];
+            project = lib.removePrefix "agent-public-userland-wasm64-" name;
+          }
+        )
+      )
       // (lib.genAttrs [ "runtime-wasm32-chromium" "runtime-wasm32-firefox" ] (
         name:
         playwright.mkCheck {
@@ -222,10 +233,13 @@ let
       '';
 
   agentPublicSuite =
+    userland:
     let
-      assets = guest-agent.checks.boot-disk-wasm64;
+      assets =
+        if userland then guest-agent.checks.public-userland-wasm64 else guest-agent.checks.public-wasm64;
+      variant = "public${lib.optionalString userland "-userland"}";
     in
-    pkgs.runCommand "agent-public-wasm64-browser-tests"
+    pkgs.runCommand "agent-${variant}-wasm64-browser-tests"
       {
         nativeBuildInputs = [ pkgs.esbuild ];
       }
@@ -238,7 +252,8 @@ let
           --external:@lowland/bytes --outfile=$out/agent-public-suite.js
         cp ${source}/agent-public-app.js $out/app.js
         cp ${source}/agent-assertions.js $out/agent-assertions.js
-        cp ${source}/agent-tests/agent-public.spec.js $out/tests/
+        cp ${source}/agent-tests/agent-public-check.js $out/tests/
+        cp ${source}/agent-tests/agent-public${lib.optionalString userland "-userland"}.spec.js $out/tests/
         cp ${source}/memory64-index.html $out/index.html
         cp ${source}/playwright.config.js $out/playwright.config.js
         cp ${source}/server.js $out/server.js

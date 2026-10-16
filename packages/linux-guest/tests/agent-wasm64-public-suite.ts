@@ -12,6 +12,7 @@ export async function runPublicAgentWasm64Suite(
   assert: RuntimeAssertions,
   runCase: (name: string, body: () => Promise<void>) => Promise<void>,
   writeLine: (line: string) => void,
+  options: { userland?: boolean } = {},
 ) {
   const passed: string[] = [];
   const check = (name: string, body: () => Promise<void>) =>
@@ -92,6 +93,45 @@ export async function runPublicAgentWasm64Suite(
         "abi=64 cwd=/tmp arg=public arg env=public env\n",
       );
     });
+    if (options.userland) {
+      await check("public run executes native shell pipelines and child lifecycle", async () => {
+        const shell = await agent.run(
+          [
+            "/bin/sh",
+            "-c",
+            `
+set -eu
+[ "$PWD" = /tmp ]
+[ "$1" = 'public shell arg' ]
+[ "$AGENT_RUNTIME_VALUE" = 'public shell env' ]
+printf '%s\\n' "$1" | grep -qx 'public shell arg'
+root=$(cat /etc/agent-runtime-root)
+[ "$root" = native-wasm64-root ]
+printf '%s\\n' "$AGENT_RUNTIME_VALUE" > /tmp/public-shell-source
+cp /tmp/public-shell-source /tmp/public-shell-copy
+[ "$(cat /tmp/public-shell-copy)" = 'public shell env' ]
+if /bin/sh -c 'exit 7'; then exit 90; else status=$?; fi
+[ "$status" -eq 7 ]
+sleep 0.01 &
+child=$!
+wait "$child"
+rm /tmp/public-shell-source /tmp/public-shell-copy
+printf '%s\\n' 'native shell passed'
+`,
+            "agent-shell",
+            "public shell arg",
+          ],
+          { cwd: "/tmp", env: { AGENT_RUNTIME_VALUE: "public shell env" } },
+        );
+        if (!shell.status.success) {
+          writeLine(`public shell failure: ${JSON.stringify(shell.status)}\n`);
+          writeLine(new TextDecoder().decode(shell.stderr));
+        }
+        assert.deepEqual(shell.status, { success: true, code: 0, signal: null });
+        assert.equal(new TextDecoder().decode(shell.stdout), "native shell passed\n");
+        assert.equal(shell.stderr.byteLength, 0);
+      });
+    }
   } finally {
     machine.close();
     await machine.closed;

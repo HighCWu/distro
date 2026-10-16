@@ -8,7 +8,7 @@ async function loadImage(path) {
   return new Uint8Array(await response.arrayBuffer());
 }
 
-globalThis.runPublicNativeAgent = async () => {
+globalThis.runPublicNativeAgent = async ({ userland = false } = {}) => {
   const [image, root] = await Promise.all([
     loadImage("/agent-boot.img"),
     loadImage("/agent-root.erofs"),
@@ -22,5 +22,6 @@ globalThis.runPublicNativeAgent = async () => {
       console.log(`public agent passed: ${name}`);
     },
     (line) => console.log(line.trimEnd()),
+    { userland },
   );
 };
