@@ -31,7 +31,10 @@ done
 cd "$output"
 sums=$(mktemp "${TMPDIR:-/tmp}/linux-wasm-build-sums.XXXXXX")
 trap 'rm -f -- "$sums"' EXIT
-{ printf '%s\0' vmlinux.wasm; find linux-build -type f ! -path linux-build/SHA256SUMS -print0; } \
-  | sort -z | xargs -0 sha256sum > "$sums"
+{
+  printf '%s\0' vmlinux.wasm
+  find linux-build -type f ! -path linux-build/SHA256SUMS -print0
+} |
+  sort -z | xargs -0 sha256sum >"$sums"
 cp "$sums" linux-build/SHA256SUMS
 sha256sum --check linux-build/SHA256SUMS
