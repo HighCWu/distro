@@ -73,6 +73,14 @@ the old file, and recovery after native `cat` reports failure. The exact outer
 case must pass without skips/retries. Newly added checks require actual CI
 results; the local server test and esbuild success do not establish browser
 Linux execution.
+The corrected source-directory input has passed actual Nix application
+packaging and the 111-file integrity inventory. A later failure occurred before
+browser execution because the copied store `node_modules` directory was
+read-only when the test suite added Playwright links. The suite now enables
+owner write permission only on that copied directory, not recursively on
+application payloads. A host regression reproduces the old permission failure
+and verifies link creation without modifying payload permissions or bytes;
+the corrected browser run still requires CI results.
 The page check also removes COEP from the document response, verifies the
 visible isolation diagnostic without disk downloads, then restores normal
 hosting and continues the Linux controls check. Host probe tests distinguish
