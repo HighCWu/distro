@@ -1,0 +1,10 @@
+prefix=${pcfiledir}/../..
+libdir=${prefix}/lib
+includedir=${prefix}/include
+
+Name: SQLite
+Description: Native wasm64 SQLite, static NOMMU profile
+Version: @version@
+Libs: -L${libdir} -lsqlite3
+Libs.private: -lm -pthread
+Cflags: -I${includedir} -pthread

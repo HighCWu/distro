@@ -189,7 +189,9 @@ lib.makeScope (scope: lib.callPackageWith ({ inherit lib pkgs; } // scope)) (
     rust-smoke = callPackage ./rust-smoke/package.nix { };
     sed = callPackage ./sed/package.nix { };
     sqlite3 = callPackage ./sqlite3/package.nix { };
-    sqlite3-wasm64 = callPackage ./sqlite3/native-wasm64.nix { };
+    sqlite3-wasm64 = callPackage ./sqlite3/native-wasm64.nix {
+      vm-test = vmTestWasm64;
+    };
     tar = callPackage ./tar/package.nix { };
     util-linux = callPackage ./util-linux/package.nix { };
     vim = callPackage ./vim/package.nix { };
