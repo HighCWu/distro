@@ -281,6 +281,128 @@ test("BrowserFS file rename waits for pending source writes before copying", asy
   );
 });
 
+function replacementFixture(failed: boolean, denyRemoval = false) {
+  const files = new Map([
+    ["source", "source"],
+    ["target", "before"],
+  ]);
+  const closing = Promise.withResolvers<void>();
+  const release = Promise.withResolvers<void>();
+  let targetStreams = 0;
+  const removals: string[] = [];
+  const fs = new BrowserFS({
+    kind: "directory",
+    async getDirectoryHandle() {
+      throw new DOMException("file", "TypeMismatchError");
+    },
+    async getFileHandle(name: string, options?: { create?: boolean }) {
+      if (!files.has(name)) {
+        if (!options?.create) throw new DOMException("missing", "NotFoundError");
+        files.set(name, "");
+      }
+      return {
+        kind: "file",
+        async getFile() {
+          return new File([files.get(name)!], name);
+        },
+        async createWritable(options?: { keepExistingData?: boolean }) {
+          const first = name === "target" && ++targetStreams === 1;
+          let pending = options?.keepExistingData ? files.get(name)! : "";
+          const commit = () => {
+            files.set(name, pending);
+          };
+          return Object.assign(
+            new WritableStream<Uint8Array>({
+              write(bytes) {
+                pending += new TextDecoder().decode(bytes);
+              },
+              close: commit,
+            }),
+            {
+              async seek() {},
+              async write(data: ArrayBuffer) {
+                pending = new TextDecoder().decode(data);
+              },
+              async truncate(size: number) {
+                pending = pending.slice(0, size);
+              },
+              async close() {
+                if (first) {
+                  closing.resolve();
+                  await release.promise;
+                  if (failed) throw new DOMException("full", "QuotaExceededError");
+                }
+                commit();
+              },
+            },
+          );
+        },
+      };
+    },
+    async removeEntry(name: string) {
+      removals.push(name);
+      if (name === "target" && denyRemoval) {
+        denyRemoval = false;
+        throw new DOMException("denied", "NotAllowedError");
+      }
+      files.delete(name);
+    },
+  } as unknown as FileSystemDirectoryHandle);
+  return { fs, files, closing, release, removals };
+}
+
+for (const operation of ["write", "truncate"] as const) {
+  for (const failed of [false, true]) {
+    test(`BrowserFS replacement waits for target ${operation} (failed: ${failed})`, async () => {
+      const { fs, files, closing, release, removals } = replacementFixture(failed);
+      const source = await fs.lookup(fs.root, "source");
+      const target = await fs.lookup(fs.root, "target");
+      assert.ok(source && target);
+      const sourceHandle = await fs.open(source, 2);
+      const targetHandle = await fs.open(target, 2);
+      const mutation =
+        operation === "write"
+          ? fs.write(target, targetHandle, 0n, new TextEncoder().encode("after!"))
+          : fs.setattr(target, { size: 2n });
+      const result = failed ? assert.rejects(mutation, { errno: 28 }) : mutation;
+      await closing.promise;
+      const moving = fs.rename(fs.root, "source", fs.root, "target");
+      try {
+        await new Promise<void>((resolve) => setImmediate(resolve));
+        assert.deepEqual(removals, [], "replacement must wait for the destination stream");
+      } finally {
+        release.resolve();
+        await result;
+        await moving;
+      }
+      assert.equal(files.get("target"), "source");
+      assert.equal(files.has("source"), false);
+      assert.equal(await fs.lookup(fs.root, "target"), source);
+      await assert.rejects(fs.write(target, targetHandle, 0n, Uint8Array.of(1)), { errno: 2 });
+      await fs.write(source, sourceHandle, 0n, new TextEncoder().encode("updated"));
+      assert.equal(files.get("target"), "updated");
+    });
+  }
+}
+
+test("BrowserFS failed replacement removal releases both file queues and namespace queue", async () => {
+  const { fs, files, release } = replacementFixture(false, true);
+  release.resolve();
+  const source = await fs.lookup(fs.root, "source");
+  const target = await fs.lookup(fs.root, "target");
+  assert.ok(source && target);
+  const sourceHandle = await fs.open(source, 2);
+  const targetHandle = await fs.open(target, 2);
+  await assert.rejects(fs.rename(fs.root, "source", fs.root, "target"), { errno: 13 });
+  assert.equal(await fs.lookup(fs.root, "source"), source);
+  assert.equal(await fs.lookup(fs.root, "target"), target);
+  await fs.write(source, sourceHandle, 0n, new TextEncoder().encode("new source"));
+  await fs.write(target, targetHandle, 0n, new TextEncoder().encode("new target"));
+  assert.equal(files.get("target"), "new target");
+  await fs.rename(fs.root, "source", fs.root, "target");
+  assert.equal(files.get("target"), "new source");
+});
+
 for (const operation of ["write", "truncate"] as const) {
   for (const failed of [false, true]) {
     test(`BrowserFS unlink waits for an earlier ${operation} (failed: ${failed})`, async () => {

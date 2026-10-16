@@ -616,12 +616,19 @@ export class BrowserFS implements FS<Node, Handle> {
       // replacement atomic, but rejecting it prevents package installation and
       // similarly fundamental workflows. Keep the source until its replacement
       // has been copied so a failed operation still retains the new data.
-      await opfs_call(
-        this.#directory(new_parent).removeEntry(newName, {
-          recursive: false,
-        }),
-      );
-      this.#forget(new_parts);
+      // Like unlink, replacement must wait for this adapter's outstanding
+      // destination writes/truncations to commit or abort. Keep the queue
+      // reserved until the old generation is detached; later old-handle writes
+      // then fail rather than touching the copied source at the same name.
+      await this.#mutate(existing_node, async () => {
+        this.#as_node(existing_node);
+        await opfs_call(
+          this.#directory(new_parent).removeEntry(newName, {
+            recursive: false,
+          }),
+        );
+        this.#forget(new_parts);
+      });
     }
 
     const destination = this.#directory(new_parent);
