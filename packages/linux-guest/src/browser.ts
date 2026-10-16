@@ -85,6 +85,14 @@ function checked_offset(value: bigint) {
   return result;
 }
 
+function checked_range(offset: bigint, length: number) {
+  const start = checked_offset(offset);
+  if (!Number.isSafeInteger(length) || length < 0 || length > Number.MAX_SAFE_INTEGER - start) {
+    throw new FSError("EINVAL", "I/O range exceeds JavaScript's integer range");
+  }
+  return { start, end: start + length };
+}
+
 async function commit_opfs_write(
   writable: FileSystemWritableFileStream,
   operation: () => Promise<unknown>,
@@ -372,20 +380,18 @@ export class BrowserFS implements FS<Node, Handle> {
 
   async read(node: Node, handle: Handle, offset: bigint, length: number) {
     const current = this.#open_handle(node, handle);
+    const { start, end } = checked_range(offset, length);
     if (current.handle.kind !== "file") {
       throw new FSError("EISDIR");
     }
     const file = await opfs_call((current.handle as FileSystemFileHandle).getFile());
     current.metadata.atime = now();
-    return new Uint8Array(
-      await opfs_call(
-        file.slice(checked_offset(offset), checked_offset(offset) + length).arrayBuffer(),
-      ),
-    );
+    return new Uint8Array(await opfs_call(file.slice(start, end).arrayBuffer()));
   }
 
   async write(node: Node, handle: Handle, offset: bigint, data: Uint8Array) {
     const current = this.#open_handle(node, handle);
+    const { start } = checked_range(offset, data.byteLength);
     return await this.#mutate(current, async () => {
       this.#open_handle(node, handle);
       if (current.handle.kind !== "file") {
@@ -397,7 +403,7 @@ export class BrowserFS implements FS<Node, Handle> {
         }),
       );
       await commit_opfs_write(writable, async () => {
-        await opfs_call(writable.seek(checked_offset(offset)));
+        await opfs_call(writable.seek(start));
         const copy = new Uint8Array(data.byteLength);
         copy.set(data);
         await opfs_call(writable.write(copy.buffer));

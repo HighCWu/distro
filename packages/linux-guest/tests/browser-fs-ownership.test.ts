@@ -3,6 +3,54 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import { BrowserFS } from "../src/browser.ts";
 
+test("BrowserFS rejects invalid I/O ranges before touching storage", async () => {
+  let reads = 0;
+  let writes = 0;
+  const fs = new BrowserFS({
+    kind: "directory",
+    async getDirectoryHandle() {
+      throw new DOMException("file", "TypeMismatchError");
+    },
+    async getFileHandle() {
+      return {
+        kind: "file",
+        async getFile() {
+          reads++;
+          return new Blob(["abcdef"]);
+        },
+        async createWritable() {
+          writes++;
+          assert.fail("invalid writes must not create a stream");
+        },
+      };
+    },
+  } as unknown as FileSystemDirectoryHandle);
+  const node = await fs.lookup(fs.root, "file");
+  assert.ok(node);
+  const handle = await fs.open(node, 0);
+  const max = BigInt(Number.MAX_SAFE_INTEGER);
+  for (const [offset, length] of [
+    [-1n, 1],
+    [max + 1n, 0],
+    [0n, -1],
+    [0n, 0.5],
+    [0n, NaN],
+    [0n, Infinity],
+    [0n, Number.MAX_SAFE_INTEGER + 1],
+    [max, 1],
+  ] as const) {
+    await assert.rejects(fs.read(node, handle, offset, length), { errno: 22 });
+  }
+  for (const offset of [-1n, max, max + 1n]) {
+    await assert.rejects(fs.write(node, handle, offset, Uint8Array.of(1)), { errno: 22 });
+  }
+  assert.equal(reads, 0);
+  assert.equal(writes, 0);
+  assert.deepEqual(await fs.read(node, handle, 2n, 3), new TextEncoder().encode("cde"));
+  assert.equal((await fs.read(node, handle, max, 0)).byteLength, 0);
+  assert.equal((await fs.read(node, handle, 100n, 3)).byteLength, 0);
+});
+
 test("BrowserFS file rename waits for pending source writes before copying", async () => {
   const files = new Map([["source", "before"]]);
   const closing = Promise.withResolvers<void>();
