@@ -49,7 +49,13 @@ This bring-up does not switch the published repository, system image, or default
 npm package to wasm64.
 
 BusyBox remains GPL-2.0-only; selecting another architecture does not relicense
-it. Its source revision is pinned in `package.nix`. Distribution must fulfill
+it. Both profiles install upstream `LICENSE`, the selected musl `COPYRIGHT`,
+the selected compiler-rt `LICENSE.TXT` and an explanatory README under
+`/share/licenses/busybox/`. The installed smoke check requires all four files
+to be nonempty after root assembly; adding this assertion does not itself prove
+that the updated image has passed CI.
+
+Its source revision is pinned in `package.nix`. Distribution must fulfill
 BusyBox's corresponding-source obligations as well as the applicable musl and
 LLVM runtime notices. License metadata alone is not a source-delivery mechanism.
 The project's own build and test infrastructure follows the repository's MIT
