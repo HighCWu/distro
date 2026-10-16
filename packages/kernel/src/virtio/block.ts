@@ -32,7 +32,11 @@ const BlockDeviceStatus = {
 
 type MaybePromise<T> = T | Promise<T>;
 
-/** The storage behind a block device. */
+/**
+ * The storage behind a block device. Read, write and flush exceptions/rejections
+ * complete the affected request with IOERR; already performed I/O is not undone.
+ * Close failures still propagate to the machine's shutdown result.
+ */
 export interface BlockDeviceStorage {
   /** Reads into `target` at `offset`, returning the bytes read. */
   read(offset: number, target: Uint8Array): MaybePromise<number>;
@@ -97,7 +101,13 @@ export function blockDevice(storage: BlockDeviceStorage): VirtioDevice {
           let ok = true;
           for (const desc of data) {
             assert(desc.writable, "data must be writable when IN");
-            const read = await storage.read(offset, desc.array);
+            let read: number;
+            try {
+              read = await storage.read(offset, desc.array);
+            } catch {
+              ok = false;
+              break;
+            }
             if (read !== desc.array.byteLength) {
               ok = false;
               break;
@@ -116,7 +126,13 @@ export function blockDevice(storage: BlockDeviceStorage): VirtioDevice {
           let ok = true;
           for (const desc of data) {
             assert(!desc.writable, "data must be readonly when OUT");
-            const written = await storage.write(offset, desc.array);
+            let written: number;
+            try {
+              written = await storage.write(offset, desc.array);
+            } catch {
+              ok = false;
+              break;
+            }
             if (written !== desc.array.byteLength) {
               ok = false;
               break;
@@ -132,8 +148,12 @@ export function blockDevice(storage: BlockDeviceStorage): VirtioDevice {
             set_status(BlockDeviceStatus.UNSUPP);
             break;
           }
-          await storage.flush();
-          set_status(BlockDeviceStatus.OK);
+          try {
+            await storage.flush();
+            set_status(BlockDeviceStatus.OK);
+          } catch {
+            set_status(BlockDeviceStatus.IOERR);
+          }
           break;
         }
         case BlockDeviceRequestType.GET_ID: {
