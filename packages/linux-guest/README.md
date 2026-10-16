@@ -129,6 +129,12 @@ return EINVAL. Valid reads beyond EOF remain short reads; these numeric checks
 are not a memory quota or a guarantee that every representable request can be
 allocated.
 
+Timestamp metadata normalizes pre-epoch values to nonnegative nanosecond
+fractions. Updates use numeric-second strings rather than Date objects, avoiding
+millisecond truncation and Node's special handling of negative numeric times.
+The host API still has floating-point/platform precision limits: preserving an
+omitted timestamp requires reading and rewriting it, not an atomic UTIME_OMIT.
+
 `BrowserFS` accepts OPFS and user-selected `FileSystemDirectoryHandle` values.
 The browser API has no Unix inode metadata or atomic portable rename, so the
 adapter synthesizes metadata and implements rename as copy-then-remove. A

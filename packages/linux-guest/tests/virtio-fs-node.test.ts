@@ -36,6 +36,67 @@ await mkdir(shared);
 await mkdir(outside);
 after(() => rm(temporary, { recursive: true, force: true }));
 
+test("node virtio-fs preserves sub-millisecond and pre-epoch timestamps", async () => {
+  const fs = new NodeFS(shared);
+  const { node, handle } = await fs.create(fs.root, "timestamp-check", linux_open.readwrite, {
+    mode: 0o100600,
+    uid: process.getuid!(),
+    gid: process.getgid!(),
+  });
+  const near = (actual: bigint, expected: bigint) => {
+    const difference = actual > expected ? actual - expected : expected - actual;
+    assert.ok(difference <= 1000n, `timestamp differs by ${difference}ns`);
+  };
+  try {
+    await fs.setattr(
+      node,
+      {
+        atime: { seconds: 1n, nanoseconds: 123456000 },
+        mtime: { seconds: 2n, nanoseconds: 987654000 },
+      },
+      handle,
+    );
+    const before = await handle.file!.stat({ bigint: true });
+    near(before.atimeNs, 1123456000n);
+    near(before.mtimeNs, 2987654000n);
+    await fs.setattr(node, { mtime: { seconds: 3n, nanoseconds: 987654000 } });
+    const after = await handle.file!.stat({ bigint: true });
+    near(after.atimeNs, before.atimeNs);
+    near(after.mtimeNs, 3987654000n);
+
+    for (const timestamp of [
+      { seconds: 0n, nanoseconds: -1 },
+      { seconds: 0n, nanoseconds: 1_000_000_000 },
+      { seconds: 0n, nanoseconds: 0.5 },
+      { seconds: 0n, nanoseconds: NaN },
+      { seconds: 0n, nanoseconds: Infinity },
+      { seconds: BigInt(Number.MAX_SAFE_INTEGER) + 1n },
+    ]) {
+      await assert.rejects(fs.setattr(node, { size: 99n, mtime: timestamp }, handle), {
+        errno: 22,
+      });
+    }
+    const unchanged = await handle.file!.stat({ bigint: true });
+    assert.equal(unchanged.size, 0n, "invalid timestamps must be rejected before truncation");
+    assert.equal(unchanged.mtimeNs, after.mtimeNs);
+
+    await fs.setattr(
+      node,
+      {
+        atime: { seconds: -1n, nanoseconds: 250000000 },
+        mtime: { seconds: -1n, nanoseconds: 500000000 },
+      },
+      handle,
+    );
+    for (const attrs of [await fs.getattr(node), await fs.getattr(node, handle)]) {
+      assert.deepEqual(attrs.atime, { seconds: -1n, nanoseconds: 250000000 });
+      assert.deepEqual(attrs.mtime, { seconds: -1n, nanoseconds: 500000000 });
+    }
+  } finally {
+    await fs.release(node, handle);
+  }
+});
+
 test("node virtio-fs rejects invalid ranges before allocating or issuing I/O", async () => {
   const fs = new NodeFS(shared);
   const { node, handle } = await fs.create(fs.root, "range-check", linux_open.readwrite, {

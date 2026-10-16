@@ -8,6 +8,7 @@ import {
   FSError,
   type FSSetAttributes,
   type FSStat,
+  type FSTimestamp,
 } from "@lowland/kernel";
 import { constants, type BigIntStats } from "node:fs";
 import {
@@ -81,10 +82,32 @@ function valid_name(name: string) {
 }
 
 function seconds(nanoseconds: bigint) {
+  let whole = nanoseconds / 1_000_000_000n;
+  let remainder = nanoseconds % 1_000_000_000n;
+  if (remainder < 0n) {
+    whole--;
+    remainder += 1_000_000_000n;
+  }
   return {
-    seconds: nanoseconds / 1_000_000_000n,
-    nanoseconds: Number(nanoseconds % 1_000_000_000n),
+    seconds: whole,
+    nanoseconds: Number(remainder),
   };
+}
+
+function timestamp_argument(timestamp: FSTimestamp) {
+  const whole = Number(timestamp.seconds);
+  const fraction = timestamp.nanoseconds ?? 0;
+  if (
+    !Number.isSafeInteger(whole) ||
+    !Number.isInteger(fraction) ||
+    fraction < 0 ||
+    fraction >= 1_000_000_000
+  ) {
+    throw new FSError("EINVAL", "invalid or unrepresentable timestamp");
+  }
+  // Node treats negative numeric utimes arguments as "now". Numeric strings
+  // preserve pre-epoch times, and avoid Date's millisecond truncation.
+  return String(whole + fraction / 1_000_000_000);
 }
 
 function attributes(stats: BigIntStats): FSAttributes {
@@ -400,6 +423,10 @@ export class NodeFS implements FS<Node, Handle> {
   }
 
   async #setattr(node: Node, changes: FSSetAttributes, file?: FileHandle) {
+    const explicit_atime =
+      typeof changes.atime === "object" ? timestamp_argument(changes.atime) : undefined;
+    const explicit_mtime =
+      typeof changes.mtime === "object" ? timestamp_argument(changes.mtime) : undefined;
     const target = file ? undefined : await this.#validated_path(this.#parts(node));
     const current = async () =>
       file ? await node_call(file.stat({ bigint: true })) : await this.#stats(node);
@@ -434,14 +461,17 @@ export class NodeFS implements FS<Node, Handle> {
       }
       if (changes.atime !== undefined || changes.mtime !== undefined) {
         const existing = await current();
-        const now = new Date();
-        const to_date = (value: FSSetAttributes["atime"], fallback: bigint) => {
-          if (value === undefined) return new Date(Number(fallback / 1_000_000n));
-          if (value === "now") return now;
-          return new Date(Number(value.seconds * 1000n) + (value.nanoseconds ?? 0) / 1_000_000);
+        const now = String(Date.now() / 1000);
+        const time = (
+          value: FSSetAttributes["atime"],
+          explicit: string | undefined,
+          fallback: bigint,
+        ) => {
+          if (value === undefined) return timestamp_argument(seconds(fallback));
+          return value === "now" ? now : explicit!;
         };
-        const atime = to_date(changes.atime, existing.atimeNs);
-        const mtime = to_date(changes.mtime, existing.mtimeNs);
+        const atime = time(changes.atime, explicit_atime, existing.atimeNs);
+        const mtime = time(changes.mtime, explicit_mtime, existing.mtimeNs);
         if (file) await file.utimes(atime, mtime);
         else await lutimes(target!, atime, mtime);
       }
