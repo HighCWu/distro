@@ -83,6 +83,27 @@ distribution test matrix, enable kernel softmmu or validate experimental EROFS
 initialized-copy mappings. SQLite uses the current NOMMU profile (no WAL or
 file mmap); process-exit recovery is not a browser crash or power-loss test.
 
+## Native wasm64 agent bring-up
+
+Independent Chromium and Firefox checks use the same minimal initramfs and six
+runtime cases as `guest-agent-check-runtime-wasm64`. They cover ABI identity,
+seek beyond 4 GiB, small-file truncate/stat, detached descriptors, native program
+arguments/environment/cwd, binary standard streams, exit status, SIGTERM and
+session process-group cleanup before reconnect. The shared TypeScript corpus is
+bundled for the browser; its Node entry point is not shipped into the page.
+
+```console
+nix build .#checks.x86_64-linux.browser-tests-check-agent-wasm64-chromium -L
+nix build .#checks.x86_64-linux.browser-tests-check-agent-wasm64-firefox -L
+```
+
+The browser test requires the exact six completed case names and machine closure.
+Its report gate requires one successful test with no skips or retries. No engine
+feature flags or unsupported-engine skips are used. This is an internal bring-up
+fixture, not a public wasm64 image selector or a full distro boot: production root
+discovery/pivot, mounts and networking remain outside this suite. A Node pass is
+not evidence of a browser pass; the browser runs must be checked independently.
+
 ## Experimental EROFS copy lifecycle
 
 Independent suites use the opt-in test kernel and the same C test/initramfs
