@@ -5,7 +5,7 @@
   debug,
   linux,
   musl,
-  llvm-toolchain,
+  llvm-runtimes,
   platform,
   src ? pkgs.fetchFromGitHub {
     owner = "tombl";
@@ -130,7 +130,7 @@ stdenv.mkDerivation (finalAttrs: {
     mkdir -p "$notices"
     cp LICENSE "$notices/LICENSE"
     cp ${musl.src}/COPYRIGHT "$notices/musl-COPYRIGHT"
-    cp ${llvm-toolchain.licenseSource}/compiler-rt/LICENSE.TXT "$notices/compiler-rt-LICENSE.TXT"
+    cp ${llvm-runtimes.src}/compiler-rt/LICENSE.TXT "$notices/compiler-rt-LICENSE.TXT"
     cp ${./notices.md} "$notices/README.md"
     runHook postInstall
   '';
