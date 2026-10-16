@@ -1001,6 +1001,28 @@ static int start_system_init(pid_t *pid)
 	return 0;
 }
 
+static int cleanup_session_descendants(pid_t worker)
+{
+	pid_t waited;
+
+	/* The worker's exit closes every session-owned descriptor and lane.
+	 * Its descendants are now owned by PID 1; kill and reap its process
+	 * group before allowing another session to start. */
+	if (kill(-worker, SIGKILL) == -1 && errno != ESRCH) {
+		perror("kill session descendants");
+		return -1;
+	}
+	for (;;) {
+		waited = waitpid(-worker, NULL, 0);
+		if (waited > 0 || (waited == -1 && errno == EINTR))
+			continue;
+		if (waited == -1 && errno == ECHILD)
+			return 0;
+		perror("reap session descendants");
+		return -1;
+	}
+}
+
 int main(void)
 {
 	struct sigaction child_action = { .sa_handler = child_exited };
@@ -1069,22 +1091,8 @@ int main(void)
 			return 1;
 		}
 
-		/* The worker's exit closes every session-owned descriptor and lane.
-		 * Its descendants are now owned by PID 1; kill and reap its process
-		 * group before allowing another session to start. */
-		if (kill(-worker, SIGKILL) == -1 && errno != ESRCH) {
-			perror("kill session descendants");
+		if (cleanup_session_descendants(worker))
 			return 1;
-		}
-		for (;;) {
-			waited = waitpid(-worker, NULL, 0);
-			if (waited > 0 || (waited == -1 && errno == EINTR))
-				continue;
-			if (waited == -1 && errno == ECHILD)
-				break;
-			perror("reap session descendants");
-			return 1;
-		}
 		if (!WIFEXITED(status) || WEXITSTATUS(status)) {
 			fprintf(stderr, "session worker failed\n");
 			return 1;

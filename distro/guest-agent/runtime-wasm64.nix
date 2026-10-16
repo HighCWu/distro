@@ -12,10 +12,13 @@ let
     mkdir $out
     ${sdk-wasm64}/bin/wasm-linux-cc -Wall -Wextra -Werror -pthread \
       -I${./.} ${./runtime-init.c} -o $out/init.wasm
+    ${sdk-wasm64}/bin/wasm-linux-cc -Wall -Wextra -Werror \
+      ${./runtime-child.c} -o $out/child.wasm
   '';
   initramfs = image.mkInitramfs {
     name = "agent-runtime-wasm64";
     init = "${program}/init.wasm";
+    files."/bin/agent-runtime-child" = "${program}/child.wasm";
   };
 in
 pkgs.stdenvNoCC.mkDerivation {

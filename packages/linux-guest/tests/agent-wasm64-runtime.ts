@@ -7,20 +7,23 @@ import { bootMachine, consoleDevice, entropyDevice, vsockDevice } from "@lowland
 import { O, ProtocolError, SystemError } from "../src/abi.ts";
 import { GuestSession } from "../src/conn.ts";
 import { statToInfo } from "../src/file.ts";
+import { ChildProcess } from "../src/process.ts";
 import {
   fstat64,
   fstatat64,
   ftruncate64,
+  kill,
   llseek,
   openat,
   read,
+  spawn,
   unlinkat,
   write,
 } from "../src/syscalls.ts";
-import { closed_input } from "./helpers.ts";
+import { closed_input, collect, expect_ready_message, pattern_bytes } from "./helpers.ts";
 
 test(
-  "native wasm64 agent session and file syscalls on real Linux",
+  "native wasm64 agent sessions, files and processes on real Linux",
   { timeout: 120_000 },
   async (t) => {
     const path = process.env.AGENT_WASM64_INITRAMFS;
@@ -122,6 +125,103 @@ test(
           assert.equal(current.st_size, 3n);
           await llseek(original, 0n, 0);
           assert.equal(new TextDecoder().decode(await read(original, 20)), "original");
+        },
+      );
+
+      await t.test("native program receives argv, cwd, env and streams binary stdio", async () => {
+        let releases = 0;
+        await using child = new ChildProcess({
+          session: active,
+          ...(await spawn(active, ["agent-runtime-child", "echo", "argument with spaces"], "/tmp", [
+            "PATH=/bin",
+            "AGENT_RUNTIME_VALUE=value with spaces",
+          ])),
+          release() {
+            releases++;
+          },
+        });
+        // Larger than one injected I/O chunk and the usual Linux pipe capacity.
+        // Drain both outputs while feeding stdin, including binary NUL bytes.
+        const payload = pattern_bytes(128 * 1024 + 17);
+        const writer = child.stdin.getWriter();
+        const input = (async () => {
+          try {
+            await writer.write(payload);
+            await writer.close();
+          } finally {
+            writer.releaseLock();
+          }
+        })();
+        const [, stdout, stderr, status] = await Promise.all([
+          input,
+          collect(child.stdout),
+          collect(child.stderr),
+          child.status,
+        ]);
+        assert.deepEqual(stdout, payload);
+        assert.equal(
+          new TextDecoder().decode(stderr),
+          "abi=64 cwd=/tmp arg=argument with spaces env=value with spaces\n",
+        );
+        assert.deepEqual(status, { success: true, code: 0, signal: null });
+        assert.equal(releases, 1);
+      });
+
+      await t.test("native nonzero exit and SIGTERM have distinct wait statuses", async () => {
+        let releases = 0;
+        const start = async (mode: string) =>
+          new ChildProcess({
+            session: active,
+            ...(await spawn(active, ["/bin/agent-runtime-child", mode], "/tmp", [])),
+            release() {
+              releases++;
+            },
+          });
+        {
+          await using child = await start("exit");
+          await child.stdin.close();
+          const [stdout, stderr, status] = await Promise.all([
+            collect(child.stdout),
+            collect(child.stderr),
+            child.status,
+          ]);
+          assert.equal(stdout.byteLength, 0);
+          assert.equal(stderr.byteLength, 0);
+          assert.deepEqual(status, { success: false, code: 23, signal: null });
+        }
+        {
+          await using child = await start("wait");
+          await child.stdin.close();
+          await expect_ready_message(child.stdout, "ready\n");
+          const stdout = collect(child.stdout);
+          const stderr = collect(child.stderr);
+          await child.kill();
+          const [out, err, status] = await Promise.all([stdout, stderr, child.status]);
+          assert.equal(out.byteLength, 0);
+          assert.equal(err.byteLength, 0);
+          assert.deepEqual(status, { success: false, code: 0, signal: "SIGTERM" });
+        }
+        assert.equal(releases, 2);
+      });
+
+      await t.test(
+        "closing a native session kills and reaps its running program before reconnect",
+        async () => {
+          const child = await spawn(active, ["/bin/agent-runtime-child", "wait"], "/tmp", []);
+          assert.equal(new TextDecoder().decode(await read(child.stdout, 6)), "ready\n");
+          active.close();
+          session = undefined;
+          // PID 1 accepts the next session only after the shared production
+          // cleanup helper has killed and reaped the previous process group.
+          session = await GuestSession.connect(vsock, { abi: "wasm64", timeoutMs: 3000 });
+          await assert.rejects(
+            kill(session, child.pid, 0),
+            (e) => e instanceof SystemError && e.code === "ESRCH",
+          );
+          assert.equal(
+            (await fstatat64(session, "/bin/agent-runtime-child", 0)).st_mode & 0o111,
+            0o111,
+          );
         },
       );
     } finally {

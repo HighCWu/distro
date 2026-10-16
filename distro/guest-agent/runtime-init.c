@@ -62,7 +62,7 @@ int main(void)
 			fputs("agent runtime fixture: session failed\n", stderr);
 			abort();
 		}
-		/* This fixture deliberately does not spawn descendant programs.
-		 * Production descendant cleanup remains covered by wasm32 tests. */
+		if (cleanup_session_descendants(child))
+			abort();
 	}
 }
