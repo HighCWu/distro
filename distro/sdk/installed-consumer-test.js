@@ -30,8 +30,15 @@ test("CMake consumes a separately installed static library through target pkg-co
     "Ninja",
     "-DCMAKE_BUILD_TYPE=Release",
     "-DCMAKE_NINJA_FORCE_RESPONSE_FILE=ON",
+    // CMake must not re-root the explicitly staged dependency into SDK sysroot.
+    `-DCMAKE_STAGING_PREFIX=${join(root, "prefix")}`,
   ];
   if (toolchain) configure.push(`-DCMAKE_TOOLCHAIN_FILE=${toolchain}`);
+  else
+    configure.push(
+      "-DCMAKE_FIND_ROOT_PATH=/unused-sdk-sysroot",
+      "-DCMAKE_FIND_ROOT_PATH_MODE_LIBRARY=ONLY",
+    );
   try {
     let pkgConfig = process.env.SDK_TEST_PKG_CONFIG;
     if (!pkgConfig) {
