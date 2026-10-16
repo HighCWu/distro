@@ -112,8 +112,15 @@ static void *group_waiter(void *argument)
 	return argument;
 }
 
-static void test_broadcast_after_cancel(struct fixture *fixture)
+enum broadcast_order {
+	JOIN_BEFORE_BROADCAST,
+	CANCEL_THEN_BROADCAST,
+	BROADCAST_THEN_CANCEL,
+};
+
+static void test_group_broadcast(struct fixture *fixture, enum broadcast_order order)
 {
+	int cancelled_rounds = 0;
 	for (int round = 0; round < 4; round++) {
 		pthread_t workers[4];
 		checked(pthread_mutex_lock(&fixture->mutex), "group main mutex lock");
@@ -125,29 +132,46 @@ static void test_broadcast_after_cancel(struct fixture *fixture)
 		while (fixture->ready != 4)
 			checked(pthread_cond_wait(&fixture->handshake, &fixture->mutex),
 				"wait group handshake");
-		/* All four have released the mutex in timedwait. Complete one
-		 * cancellation before broadcasting; this is not a cancel/signal race. */
-		checked(pthread_cancel(workers[0]), "cancel group member");
-		checked(pthread_mutex_unlock(&fixture->mutex), "group release for cleanup");
 		void *result = NULL;
-		checked(pthread_join(workers[0], &result), "join cancelled group member");
-		if (result != PTHREAD_CANCELED) test_fail("group member was not cancelled");
-		checked(pthread_mutex_lock(&fixture->mutex), "group lock after cancellation");
-		if (fixture->cleanup_count != 1 || fixture->wake_count != 0)
-			test_fail("group cleanup count or early waiter completion mismatch");
-		fixture->release = 1;
-		checked(pthread_cond_broadcast(&fixture->cond), "broadcast remaining waiters");
+		if (order == JOIN_BEFORE_BROADCAST) {
+			checked(pthread_cancel(workers[0]), "cancel group member");
+			checked(pthread_mutex_unlock(&fixture->mutex), "group release for cleanup");
+			checked(pthread_join(workers[0], &result), "join cancelled group member");
+			if (result != PTHREAD_CANCELED) test_fail("group member was not cancelled");
+			checked(pthread_mutex_lock(&fixture->mutex), "group lock after cancellation");
+			if (fixture->cleanup_count != 1 || fixture->wake_count != 0)
+				test_fail("group cleanup count or early waiter completion mismatch");
+			fixture->release = 1;
+			checked(pthread_cond_broadcast(&fixture->cond), "broadcast remaining waiters");
+		} else {
+			/* Both requests are issued while holding the mutex, before any
+			 * waiter can return with it. Do not force cancellation to win:
+			 * libc may legitimately consume the wake and finish normally. */
+			fixture->release = 1;
+			if (order == CANCEL_THEN_BROADCAST)
+				checked(pthread_cancel(workers[0]), "cancel before broadcast");
+			checked(pthread_cond_broadcast(&fixture->cond), "broadcast with pending cancellation");
+			if (order == BROADCAST_THEN_CANCEL)
+				checked(pthread_cancel(workers[0]), "cancel after broadcast");
+		}
 		checked(pthread_mutex_unlock(&fixture->mutex), "group unlock after broadcast");
+		if (order != JOIN_BEFORE_BROADCAST)
+			checked(pthread_join(workers[0], &result), "join overlapping cancel target");
+		int cancelled = result == PTHREAD_CANCELED;
+		cancelled_rounds += cancelled;
+		if (!cancelled && result != fixture) test_fail("cancel target result mismatch");
 		for (size_t i = 1; i < 4; i++) {
 			result = NULL;
 			checked(pthread_join(workers[i], &result), "join broadcast waiter");
 			if (result != fixture) test_fail("broadcast waiter result mismatch");
 		}
 		checked(pthread_mutex_lock(&fixture->mutex), "group verify mutex lock");
-		if (fixture->cleanup_count != 1 || fixture->wake_count != 3)
+		if (fixture->cleanup_count != cancelled || fixture->wake_count != 4 - cancelled)
 			test_fail("broadcast did not complete all surviving waiters exactly once");
 		checked(pthread_mutex_unlock(&fixture->mutex), "group verify mutex unlock");
 	}
+	printf("thread-time-group: clock=%d order=%d cancelled=%d normal=%d\n",
+		(int)fixture->clock, (int)order, cancelled_rounds, 4 - cancelled_rounds);
 }
 
 static void test_clock(clockid_t clock)
@@ -188,7 +212,9 @@ static void test_clock(clockid_t clock)
 		if (result != &fixture) test_fail("condition worker result mismatch");
 	}
 	test_cancellation(&fixture);
-	test_broadcast_after_cancel(&fixture);
+	test_group_broadcast(&fixture, JOIN_BEFORE_BROADCAST);
+	test_group_broadcast(&fixture, CANCEL_THEN_BROADCAST);
+	test_group_broadcast(&fixture, BROADCAST_THEN_CANCEL);
 	checked(pthread_mutex_lock(&fixture.mutex), "timeout mutex lock");
 	struct timespec deadline;
 	if (clock_gettime(clock, &deadline)) test_perror("short condition deadline");
