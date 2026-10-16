@@ -451,6 +451,7 @@ interface UdpFlow {
   readonly readable: ReadableStream<Uint8Array>;
   controller: ReadableStreamDefaultController<Uint8Array>;
   closed: boolean;
+  close(): void;
 }
 
 function tcp_key(guest_ip: number, guest_port: number, peer_ip: number, peer_port: number) {
@@ -1404,9 +1405,11 @@ export function createNetwork({ connectTcp, resolveDns }: NetworkOptions): Netwo
       readable,
       controller,
       closed: false,
+      close: () => close(),
     };
     udp_flows.set(key, flow);
-    const close = () => {
+    let output!: WritableStreamDefaultController;
+    const close = (closeWriter = true) => {
       if (flow.closed) return;
       flow.closed = true;
       udp_flows.delete(key);
@@ -1415,8 +1418,14 @@ export function createNetwork({ connectTcp, resolveDns }: NetworkOptions): Netwo
       } catch {
         // The stream was already cancelled.
       }
+      // External close/cancel must settle writer.closed even if no write is
+      // pending. Sink close/abort/error already settles its own writable.
+      if (closeWriter) output.error(new Error("UDP connection is closed"));
     };
     const writable = new WritableStream<Uint8Array>({
+      start(controller) {
+        output = controller;
+      },
       async write(payload) {
         if (flow.closed) throw new Error("UDP connection is closed");
         try {
@@ -1425,19 +1434,23 @@ export function createNetwork({ connectTcp, resolveDns }: NetworkOptions): Netwo
         } catch (error) {
           // A failed sink write errors the WritableStream; its abort callback
           // is not subsequently called. Release the flow and pending reads.
-          close();
+          close(false);
           throw error;
         }
       },
-      close,
-      abort: close,
+      close() {
+        close(false);
+      },
+      abort() {
+        close(false);
+      },
     });
     return Promise.resolve({
       readable,
       writable,
       localAddr: { transport: "udp", hostname: GATEWAY_ADDRESS, port: host_port },
       remoteAddr: { transport: "udp", hostname: guest.address, port: options.port },
-      close,
+      close: () => close(),
     });
   }
 
@@ -1472,11 +1485,7 @@ export function createNetwork({ connectTcp, resolveDns }: NetworkOptions): Netwo
               abort_tcp_flow(flow, new Error("guest detached from network"));
           }
           for (const flow of udp_flows.values()) {
-            if (flow.guest === attachment) {
-              flow.closed = true;
-              udp_flows.delete(flow.key);
-              flow.controller.close();
-            }
+            if (flow.guest === attachment) flow.close();
           }
           for (const [key, reassembly] of ip_reassemblies) {
             if (reassembly.source === ip) discard_ip_reassembly(key);
@@ -1491,8 +1500,7 @@ export function createNetwork({ connectTcp, resolveDns }: NetworkOptions): Netwo
       closed = true;
       for (const flow of tcp_flows.values()) abort_tcp_flow(flow, new Error("network closed"));
       for (const flow of udp_flows.values()) {
-        flow.closed = true;
-        flow.controller.close();
+        flow.close();
       }
       tcp_flows.clear();
       udp_flows.clear();
