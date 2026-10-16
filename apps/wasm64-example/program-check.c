@@ -23,6 +23,12 @@ int main(int argc, char **argv)
         }
         return ferror(stdin) ? 5 : 0;
     }
+    if (!strcmp(argv[1], "prefix")) {
+        int byte = getchar();
+        if (byte == EOF) return 6;
+        printf("prefix byte: %u\n", (unsigned int)(unsigned char)byte);
+        return 0;
+    }
     if (getchar() != EOF) return 3;
     printf("uploaded application: %s\n", argv[1]);
     fputs("uploaded application stderr\n", stderr);
