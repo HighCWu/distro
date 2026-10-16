@@ -2,6 +2,43 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import { hostFetchNetwork } from "../src/host-fetch-network.ts";
+import { bufferRequestBody, RequestBodyTooLarge } from "../src/fetch-request-body.ts";
+
+test("buffered uploads preserve bytes up to the configured limit", async () => {
+  const body = new ReadableStream<Uint8Array>({
+    start(controller) {
+      controller.enqueue(Uint8Array.of(1, 2));
+      controller.enqueue(Uint8Array.of(3));
+      controller.close();
+    },
+  });
+  assert.deepEqual(await bufferRequestBody(body, 3), Uint8Array.of(1, 2, 3));
+  assert.equal(body.locked, false);
+});
+
+test("oversized buffered uploads cancel the source and release its lock", async () => {
+  let cancelled = 0;
+  const body = new ReadableStream<Uint8Array>({
+    start(controller) {
+      controller.enqueue(new Uint8Array(4));
+    },
+    cancel() {
+      cancelled++;
+    },
+  });
+  await assert.rejects(bufferRequestBody(body, 3), RequestBodyTooLarge);
+  assert.equal(cancelled, 1);
+  assert.equal(body.locked, false);
+});
+
+test("invalid buffered upload limits fail before networking starts", () => {
+  for (const maxBufferedRequestBytes of [-1, NaN, Infinity, 1.5, 2 ** 53]) {
+    assert.throws(
+      () => hostFetchNetwork({ fetch: () => new Response(), maxBufferedRequestBytes }),
+      RangeError,
+    );
+  }
+});
 
 for (const [name, request, status] of [
   ["missing Host", "GET / HTTP/1.1\r\n\r\n", 400],

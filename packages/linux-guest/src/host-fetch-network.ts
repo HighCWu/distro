@@ -12,6 +12,13 @@ import {
   strip_hop_by_hop,
 } from "./http.ts";
 import type { NetworkOptions, TcpSession } from "./network.ts";
+import {
+  bufferRequestBody,
+  RequestBodyTooLarge,
+  supportsRequestStreams,
+} from "./fetch-request-body.ts";
+
+const streamingRequests = supportsRequestStreams();
 
 const PLACEHOLDER_ADDRESS = "198.18.0.1";
 const INVALID_HOST_RE = /[/\\?#@\s\u0000-\u001f\u007f]/;
@@ -24,6 +31,7 @@ const EXPECTATION_FAILED = response_bytes(
 );
 const NOT_IMPLEMENTED = response_bytes("HTTP/1.1 501 Not Implemented", "Not Implemented\n");
 const BAD_GATEWAY = response_bytes("HTTP/1.1 502 Bad Gateway", "Bad Gateway\n");
+const PAYLOAD_TOO_LARGE = response_bytes("HTTP/1.1 413 Content Too Large", "Content Too Large\n");
 
 function response_bytes(status: string, text: string) {
   const body = encoder.encode(text);
@@ -91,6 +99,7 @@ function fetch_until_abort(
 async function exchange(
   session: TcpSession,
   do_fetch: (request: Request) => Response | PromiseLike<Response>,
+  maxBufferedRequestBytes: number,
 ) {
   // This is a gateway request boundary: reject lone-LF syntax rather than
   // allowing different HTTP parsers to disagree about message boundaries.
@@ -147,10 +156,14 @@ async function exchange(
       if ((method === "GET" || method === "HEAD") && body) {
         throw new Error(`${method} request cannot carry a Fetch body`);
       }
-      const request = new Request(request_url(hosts[0]![1], target), {
+      const url = request_url(hosts[0]![1], target);
+      const requestBody =
+        body && !streamingRequests ? await bufferRequestBody(body, maxBufferedRequestBytes) : body;
+      abort.signal.throwIfAborted();
+      const request = new Request(url, {
         method,
         headers,
-        body,
+        body: requestBody,
         // Required by Fetch implementations that support streaming uploads.
         ...(body ? { duplex: "half" } : {}),
         credentials: "omit",
@@ -200,7 +213,7 @@ async function exchange(
     } catch (error) {
       if (abort.signal.aborted) throw abort.signal.reason;
       if (final_output_started) throw error;
-      await error_response(BAD_REQUEST);
+      await error_response(error instanceof RequestBodyTooLarge ? PAYLOAD_TOO_LARGE : BAD_REQUEST);
     }
   } finally {
     session.signal.removeEventListener("abort", stop);
@@ -220,9 +233,14 @@ async function exchange(
  */
 export function hostFetchNetwork(options: {
   fetch(request: Request): Response | PromiseLike<Response>;
+  /** Maximum buffered upload when Request streams are unavailable; defaults to 16 MiB. */
+  maxBufferedRequestBytes?: number;
 }): NetworkOptions {
+  const limit = options.maxBufferedRequestBytes ?? 16 * 1024 * 1024;
+  if (!Number.isSafeInteger(limit) || limit < 0)
+    throw new RangeError("maxBufferedRequestBytes must be a nonnegative safe integer");
   return {
     resolveDns: () => Promise.resolve([PLACEHOLDER_ADDRESS]),
-    connectTcp: (session) => exchange(session, options.fetch),
+    connectTcp: (session) => exchange(session, options.fetch, limit),
   };
 }
