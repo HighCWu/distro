@@ -6,7 +6,7 @@ test("flushes virtio writes through the real OPFS worker", async ({ page }) => {
     const directory = await navigator.storage.getDirectory();
     const name = `virtio-flush-${crypto.randomUUID()}.img`;
     const handle = await directory.getFileHandle(name, { create: true });
-    const worker = new Worker("/opfs-disk-worker.js", { type: "module" });
+    let worker = new Worker("/opfs-disk-worker.js", { type: "module" });
     function exchange(type, send) {
       return new Promise((resolve, reject) => {
         const timer = setTimeout(() => finish(new Error(`timed out waiting for ${type}`)), 10000);
@@ -45,8 +45,8 @@ test("flushes virtio writes through the real OPFS worker", async ({ page }) => {
       async function request(operation, ring) {
         view.setUint32(128, operation, true);
         descriptor(ring, 0, 128, 16, 128 | 1);
-        if (operation === 1) {
-          descriptor(ring, 1, 256, 512, 128 | 1);
+        if (operation === 1 || operation === 0) {
+          descriptor(ring, 1, 256, 512, 128 | 1 | (operation === 0 ? 2 : 0));
           descriptor(ring, 2, 1024, 1, 128 | 2);
         } else descriptor(ring, 1, 1024, 1, 128 | 2);
         view.setUint8(1024, 255);
@@ -63,6 +63,14 @@ test("flushes virtio writes through the real OPFS worker", async ({ page }) => {
           worker.postMessage({ type: "notify", vq: 0 }),
         );
         const status = response.completion.outputs.find((output) => output.address === 1024);
+        if (operation === 0) {
+          const data = response.completion.outputs.find((output) => output.address === 256)?.data;
+          return {
+            status: status?.data[0],
+            written: response.completion.written,
+            matches: data?.length === 512 && data.every((byte) => byte === 0x6b),
+          };
+        }
         return { status: status?.data[0], written: response.completion.written };
       }
       new Uint8Array(memory.buffer, 256, 512).fill(0x6b);
@@ -73,7 +81,21 @@ test("flushes virtio writes through the real OPFS worker", async ({ page }) => {
       const reopened = await handle.createWritable({ keepExistingData: true });
       await reopened.close();
       const bytes = new Uint8Array(await (await handle.getFile()).arrayBuffer());
-      return { write, flush, size: bytes.length, matches: bytes.every((byte) => byte === 0x6b) };
+      worker.terminate();
+      worker = new Worker("/opfs-disk-worker.js", { type: "module" });
+      // Omit capacity: reopening must not truncate or reinitialize stored data.
+      await exchange("ready", () => worker.postMessage({ handle }));
+      new Uint8Array(memory.buffer, 256, 512).fill(0);
+      worker.postMessage({ type: "bind", memory, control: control.buffer });
+      const read = await request(0, 4096);
+      await exchange("closed", () => worker.postMessage({ type: "close" }));
+      return {
+        write,
+        flush,
+        read,
+        size: bytes.length,
+        matches: bytes.every((byte) => byte === 0x6b),
+      };
     } finally {
       worker.terminate();
       await directory.removeEntry(name);
@@ -81,6 +103,7 @@ test("flushes virtio writes through the real OPFS worker", async ({ page }) => {
   });
   expect(result.write).toEqual({ status: 0, written: 1 });
   expect(result.flush).toEqual({ status: 0, written: 1 });
+  expect(result.read).toEqual({ status: 0, written: 513, matches: true });
   expect(result.size).toBe(512);
   expect(result.matches).toBe(true);
 });
