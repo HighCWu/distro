@@ -171,6 +171,7 @@ export interface FileSystem {
   /**
    * Opens a file for incremental or random-access I/O. The whole-file
    * methods above are simpler when you do not need either.
+   * SDK file descriptors are close-on-exec; `exec`/`run` do not inherit them.
    *
    * @example Read and write at arbitrary offsets
    * ```ts
@@ -371,7 +372,7 @@ class GuestClient {
   async writeFile(path: string, data: FileData, options: WriteFileOptions = {}) {
     const session = await this.#connect();
     options.signal?.throwIfAborted();
-    let flags = O.WRONLY;
+    let flags = O.WRONLY | O.CLOEXEC;
     if (options.create ?? true) flags |= O.CREAT;
     if (options.createNew) flags |= O.CREAT | O.EXCL;
     if (options.append) flags |= O.APPEND;
@@ -549,7 +550,11 @@ class GuestClient {
 
   async open(path: string, options: OpenOptions = {}) {
     const session = await this.#connect();
-    return new FsFile(await openat(session, path, openFlags(options), options.mode ?? 0o666));
+    // SDK handles belong to the agent, not to subsequently executed programs.
+    // Set this atomically at open, rather than racing a later fcntl with spawn.
+    return new FsFile(
+      await openat(session, path, openFlags(options) | O.CLOEXEC, options.mode ?? 0o666),
+    );
   }
 
   #acquire_process_slot(signal?: AbortSignal): Promise<() => void> {

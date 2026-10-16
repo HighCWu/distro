@@ -10,6 +10,7 @@ import {
 } from "./agent-wasm64-userland-commands.ts";
 import { checkPublicNetwork } from "./agent-wasm64-public-network.ts";
 import { checkQueuedExecAbort } from "./process-queue-runtime.ts";
+import { checkExecFileDescriptors } from "./exec-file-descriptors-runtime.ts";
 
 // Identical public API corpus in Node and browsers. No initcpio or manual
 // boot arguments: the plugin selects its disk, transport and readiness ABI.
@@ -162,6 +163,7 @@ export async function runPublicAgentWasm64Suite(
     });
     if (options.userland) {
       await check("public run executes native shell pipelines and child lifecycle", async () => {
+        await checkExecFileDescriptors(agent, assert, "/tmp/public-exec-fds");
         const shell = await agent.run(
           ["/bin/sh", "-c", publicShellScript, "agent-shell", "public shell arg"],
           { cwd: "/tmp", env: { AGENT_RUNTIME_VALUE: "public shell env" } },

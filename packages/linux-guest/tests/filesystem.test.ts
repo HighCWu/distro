@@ -2,9 +2,11 @@ import assert from "node:assert/strict";
 import { SeekMode, SystemError } from "../src/index.ts";
 import { guest_test } from "./fixture.ts";
 import { pattern_bytes } from "./helpers.ts";
+import { checkExecFileDescriptors } from "./exec-file-descriptors-runtime.ts";
 
 guest_test("filesystem", async (t, fixture) => {
-  const { fs } = await fixture.spawn();
+  const agent = await fixture.spawn();
+  const { fs } = agent;
 
   const directory = "/tmp/filesystem";
   await fs.mkdir(`${directory}/child`, { recursive: true });
@@ -12,6 +14,10 @@ guest_test("filesystem", async (t, fixture) => {
   await t.test("reads and writes text files", async () => {
     await fs.writeTextFile(`${directory}/hello.txt`, "hello, guest\n");
     assert.equal(await fs.readTextFile(`${directory}/hello.txt`), "hello, guest\n");
+  });
+
+  await t.test("SDK file descriptors are not inherited by executed programs", async () => {
+    await checkExecFileDescriptors(agent, assert, `${directory}/exec-fds`);
   });
 
   await t.test("stats files", async () => {

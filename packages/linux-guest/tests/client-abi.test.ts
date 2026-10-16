@@ -70,6 +70,31 @@ function copyFixture(abi: AgentAbi, sameFile: boolean, statError = false, differ
 }
 
 for (const abi of ["wasm32", "wasm64"] as const) {
+  for (const operation of ["open-read", "open-append", "write", "write-text"] as const) {
+    test(`${abi} ${operation} keeps SDK descriptors out of executed programs`, async (t) => {
+      const f = copyFixture(abi, false);
+      t.mock.method(GuestSession, "connect", async () => f.session);
+      const client = create_guest_client({} as VsockDevice, { abi });
+      if (operation === "open-read") await (await client.fs.open("/file")).close();
+      else if (operation === "open-append")
+        await (await client.fs.open("/file", { append: true, createNew: true })).close();
+      else if (operation === "write")
+        await client.fs.writeFile("/file", Uint8Array.of(1, 2, 3), { append: true });
+      else await client.fs.writeTextFile("/file", "text", { createNew: true });
+      const opened = f.requests.filter(({ nr }) => nr === NR.openat);
+      assert.equal(opened.length, 1);
+      assert.ok(opened[0]!.flags & O.CLOEXEC);
+      if (operation === "open-append" || operation === "write")
+        assert.ok(opened[0]!.flags & O.APPEND);
+      if (operation === "open-append" || operation === "write-text")
+        assert.ok(opened[0]!.flags & O.EXCL);
+      assert.deepEqual(
+        f.requests.filter(({ nr }) => nr === NR.close).map(({ fd }) => fd),
+        [40],
+      );
+    });
+  }
+
   test(`${abi} copy checks opened identities before truncating a replaced alias`, async (t) => {
     const f = copyFixture(abi, true);
     t.mock.method(GuestSession, "connect", async () => f.session);
