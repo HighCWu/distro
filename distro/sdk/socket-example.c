@@ -64,6 +64,53 @@ static int receive_exact(int fd, unsigned char *bytes, size_t length)
     return 1;
 }
 
+static int exercise_notifications(int writer, int reader, uint32_t mode)
+{
+    const unsigned char payload[] = {0, 255, 42, 0, 128, 1, 2};
+    const uint64_t identity = UINT64_C(9007199254740993);
+    unsigned char buffer[sizeof(payload)];
+    int epoll = -1, result = 0;
+    struct epoll_event request = { .events = EPOLLIN | mode,
+                                  .data.u64 = identity }, event;
+    epoll = epoll_create1(EPOLL_CLOEXEC);
+    REQUIRE(epoll >= 0);
+    REQUIRE(epoll_ctl(epoll, EPOLL_CTL_ADD, reader, &request) == 0);
+    for (unsigned round = 0; round < 3; round++) {
+        REQUIRE(epoll_wait(epoll, &event, 1, 0) == 0);
+        REQUIRE(send_all(writer, payload, sizeof(payload)));
+        REQUIRE(epoll_wait(epoll, &event, 1, 5000) == 1);
+        REQUIRE(event.data.u64 == request.data.u64 && (event.events & EPOLLIN));
+        if (mode & EPOLLONESHOT) {
+            /* Unread bytes stay ready, but the registration is disabled.
+             * MOD must rearm it immediately and replace its full 64-bit tag. */
+            REQUIRE(epoll_wait(epoll, &event, 1, 0) == 0);
+            request.data.u64 = identity + round + 1;
+            REQUIRE(epoll_ctl(epoll, EPOLL_CTL_MOD, reader, &request) == 0);
+            REQUIRE(epoll_wait(epoll, &event, 1, 5000) == 1);
+            REQUIRE(event.data.u64 == request.data.u64 && (event.events & EPOLLIN));
+            REQUIRE(receive_exact(reader, buffer, sizeof(buffer)));
+        } else {
+            /* This variant runs on the Unix socketpair, where one small
+             * write queues all probe bytes without TCP segmentation. */
+            REQUIRE(receive_exact(reader, buffer, 1));
+            REQUIRE(epoll_wait(epoll, &event, 1, 0) == 0);
+            REQUIRE(receive_exact(reader, buffer + 1, sizeof(buffer) - 1));
+        }
+        REQUIRE(memcmp(buffer, payload, sizeof(buffer)) == 0);
+        REQUIRE(epoll_wait(epoll, &event, 1, 0) == 0);
+        errno = 0;
+        REQUIRE(recv(reader, buffer, sizeof(buffer), 0) == -1 &&
+                (errno == EAGAIN || errno == EWOULDBLOCK));
+        if (mode & EPOLLONESHOT)
+            REQUIRE(epoll_ctl(epoll, EPOLL_CTL_MOD, reader, &request) == 0);
+    }
+    REQUIRE(epoll_ctl(epoll, EPOLL_CTL_DEL, reader, NULL) == 0);
+    result = 1;
+done:
+    if (epoll >= 0) close(epoll);
+    return result;
+}
+
 /* Both endpoints must be nonblocking. The same contract exercises Unix and
  * TCP sockets without a browser network proxy or external server. */
 static int exercise(int writer, int reader)
@@ -196,6 +243,8 @@ int main(void)
     };
     socklen_t length = sizeof(address);
     REQUIRE(socketpair(AF_UNIX, SOCK_STREAM | SOCK_NONBLOCK | SOCK_CLOEXEC, 0, pair) == 0);
+    REQUIRE(exercise_notifications(pair[0], pair[1], EPOLLET));
+    REQUIRE(exercise_notifications(pair[0], pair[1], EPOLLONESHOT));
     REQUIRE(exercise(pair[0], pair[1]));
     puts("SDK sockets: Unix stream nonblocking, poll/epoll and half-close verified");
     listener = socket(AF_INET, SOCK_STREAM | SOCK_CLOEXEC, 0);
@@ -223,8 +272,10 @@ int main(void)
     REQUIRE(ready(listener, POLLIN));
     server = accept4(listener, NULL, NULL, SOCK_NONBLOCK | SOCK_CLOEXEC);
     REQUIRE(server >= 0);
+    REQUIRE(exercise_notifications(client, server, EPOLLONESHOT));
     REQUIRE(exercise(client, server));
     puts("SDK sockets: TCP loopback nonblocking, poll/epoll and half-close verified");
+    puts("SDK sockets: epoll edge-trigger and one-shot rearm verified");
     REQUIRE(exercise_udp());
     puts("SDK sockets: UDP scatter/gather, peek, truncation and empty records verified");
     result = EXIT_SUCCESS;
