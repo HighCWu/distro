@@ -205,8 +205,9 @@ are blocked during readback, and the test removes only its own disk afterward.
 The matching memory64 disk worker uses the production startup helper without
 capacity reinitialization, so reopening does not truncate the filesystem.
 
-The Node application-root check has passed; browser results, including this new
-OPFS case, still require public CI verification. These checks do not establish
+The Node application-root check and original retained-memory Firefox case have
+passed; the additional OPFS case still requires public CI verification.
+These checks do not establish
 browser process restart, crash recovery, WAL, or physical durability. Four mock
 host orchestration regressions cover existing-byte readback, input validation,
 template commit ordering, and error cleanup; native host SQLite command tests

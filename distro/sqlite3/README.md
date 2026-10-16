@@ -53,7 +53,10 @@ output into a new prefix and compiles the existing SDK SQLite consumer using
 only that prefix's installed headers/archive, not SQLite source files. It then
 boots the consumer under wasm64 Linux, requiring its complete runtime marker
 (including transactions, locks, and hot rollback-journal recovery). Its results
-must still be checked in public CI. The lightweight metadata regression verifies
+have passed in public CI at distro `963a86c`: both the installed CLI and consumer
+passed memory64 ABI validation, and the Linux consumer emitted its complete
+runtime success marker. This does not establish the new OPFS page-reload case.
+The lightweight metadata regression verifies
 prefix relocation, static flags, and no host fallback after removing the `.pc`;
 it does not validate Wasm archive contents or target execution.
 
@@ -62,8 +65,10 @@ but Nix rejected an embedded reference to the SQLite source store path before
 Linux runtime tests began. The recipe now copies the unchanged compilation
 inputs into the build directory and compiles relative source paths for both
 the archive and shell. The empty `allowedReferences` gate remains enabled;
-the corrected application-root Node build and runtime have passed. The separate
-installed-library consumer and browser checks still require CI verification.
+the corrected application-root Node build and runtime have passed, as has the
+separate installed-library consumer. Firefox has also passed the original
+retained-memory root check, with both SQL phases and no skips/retries; the
+additional OPFS page-reload check still requires CI verification.
 
 SQLite's upstream public-domain declaration is retained in the installed
 `share/licenses/sqlite3/sqlite3.h`. Static musl and compiler-rt license texts are
