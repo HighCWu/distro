@@ -42,7 +42,12 @@ export const runtimeAssertions = {
       await promise;
     } catch (error) {
       if (predicate(error)) return;
-      throw new Error("runtime rejection did not match expected error", { cause: error });
+      // Browser runners may serialize only the outer message/stack, not cause.
+      // Preserve the original phase/error in both forms without accepting it.
+      const detail = error instanceof Error ? `${error.name}: ${error.message}` : String(error);
+      throw new Error(`runtime rejection did not match expected error: ${detail}`, {
+        cause: error,
+      });
     }
     throw new Error("runtime operation unexpectedly succeeded");
   },

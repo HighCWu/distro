@@ -36,6 +36,19 @@ test("browser runtime rejection assertions fail on success and the wrong error",
   );
   await assert.rejects(
     check.rejects(Promise.reject(reason), () => false),
-    (error) => error.cause === reason,
+    (error) => error.cause === reason && error.message.includes("Error: expected"),
   );
+});
+
+test("browser runtime rejection diagnostics distinguish connect and handshake deadlines", async () => {
+  for (const message of [
+    "timed out connecting to guest vsock port 1024",
+    "agent v3/wasm32 handshake timed out",
+  ]) {
+    const reason = new Error(message);
+    await assert.rejects(
+      check.rejects(Promise.reject(reason), () => false),
+      (error) => error.cause === reason && error.message.includes(message),
+    );
+  }
 });
