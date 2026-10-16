@@ -23,6 +23,7 @@ int main(void)
 		perror("agent runtime fixture: mounts");
 		abort();
 	}
+	trace_sessions = command_line_option("lowland.agent.trace=1");
 	session_listener = listener(session_port, 1);
 	if (session_listener == -1) {
 		perror("agent runtime fixture: listener");
@@ -48,6 +49,7 @@ int main(void)
 		};
 		/* As in production, PID 1 stays single-threaded so clone can
 		 * snapshot its address space before the worker starts threads. */
+		trace_session_stage("accepted session; cloning worker");
 		child = clone(session_worker, session_stack + session_stack_size,
 			      SIGCHLD, &args);
 		close(fd);
@@ -55,6 +57,7 @@ int main(void)
 			perror("agent runtime fixture: clone");
 			abort();
 		}
+		trace_session_stage("session worker cloned");
 		do
 			waited = waitpid(child, &status, 0);
 		while (waited == -1 && errno == EINTR);

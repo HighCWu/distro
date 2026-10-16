@@ -85,7 +85,7 @@ export async function runAgentWasm64Suite(
   const machine = await bootMachine({
     cpus: 1,
     initcpio,
-    args: options.args,
+    args: ["lowland.agent.trace=1", ...(options.args ?? [])],
     plugins: [
       vsock,
       consoleDevice(closed_input(), output(true)),

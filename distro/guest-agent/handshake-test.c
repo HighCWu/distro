@@ -32,9 +32,43 @@ static void check(uint16_t version, uint16_t abi, bool accepted, bool bad_magic,
 	close(sockets[1]);
 }
 
+static void check_trace(void)
+{
+	int output[2], saved_stderr;
+	char buffer[256];
+	ssize_t length;
+
+	assert(pipe2(output, O_CLOEXEC | O_NONBLOCK) == 0);
+	saved_stderr = dup(STDERR_FILENO);
+	assert(saved_stderr >= 0);
+	assert(dup2(output[1], STDERR_FILENO) >= 0);
+	trace_sessions = false;
+	errno = EDOM;
+	trace_session_stage("disabled stage");
+	assert(errno == EDOM);
+	assert(read(output[0], buffer, sizeof(buffer)) == -1);
+	assert(errno == EAGAIN || errno == EWOULDBLOCK);
+	trace_sessions = true;
+	errno = ERANGE;
+	trace_session_stage("trace-test-stage");
+	assert(errno == ERANGE);
+	fflush(stderr);
+	assert(dup2(saved_stderr, STDERR_FILENO) >= 0);
+	close(saved_stderr);
+	close(output[1]);
+	length = read(output[0], buffer, sizeof(buffer) - 1);
+	assert(length > 0);
+	buffer[length] = 0;
+	assert(strstr(buffer, "linux-guest-agent: trace pid="));
+	assert(strstr(buffer, " trace-test-stage\n"));
+	close(output[0]);
+	trace_sessions = false;
+}
+
 int main(void)
 {
 	_Static_assert(sizeof(void *) == sizeof(long), "agent requires ILP32 or LP64");
+	check_trace();
 	check(3, 0, protocol_abi == 32, false, 0);
 	check(4, protocol_abi, true, false, 0);
 	check(4, protocol_abi == 32 ? 64 : 32, false, false, 0);

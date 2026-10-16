@@ -92,6 +92,21 @@ static struct {
 	.changed = PTHREAD_COND_INITIALIZER,
 };
 
+/* Opt-in lifecycle diagnostics only: never print payloads or program data. */
+static bool trace_sessions;
+
+static void trace_session_stage(const char *stage)
+{
+	int saved_errno;
+
+	if (!trace_sessions)
+		return;
+	saved_errno = errno;
+	fprintf(stderr, "linux-guest-agent: trace pid=%ld %s\n",
+		(long)getpid(), stage);
+	errno = saved_errno;
+}
+
 static uint16_t load_u16(const uint8_t *p)
 {
 	return (uint16_t)p[0] | (uint16_t)p[1] << 8;
@@ -591,6 +606,7 @@ static int handshake(int fd, uint16_t expected_version)
 
 	if (read_all(fd, hs, sizeof(hs)) || load_u32(hs) != protocol_magic)
 		return -1;
+	trace_session_stage("handshake received");
 	version = load_u16(hs + 4);
 	abi = load_u16(hs + 6);
 	if (expected_version && version != expected_version)
@@ -734,6 +750,7 @@ static int session_worker(void *opaque)
 	pthread_t reaper;
 	int lane_listener, rc;
 
+	trace_session_stage("session worker entered");
 	/* Keep commands and their descendants in a session-owned process group.
 	 * PID 1 can then tear down only that session without touching /init. */
 	if (setpgid(0, 0) == -1)
@@ -746,17 +763,26 @@ static int session_worker(void *opaque)
 	lane_listener = listener(lane_port, max_lanes);
 	if (lane_listener == -1)
 		_exit(1);
+	trace_session_stage("lane listener created");
 	rc = pthread_attr_init(&worker_attr);
 	if (!rc)
 		rc = pthread_attr_setdetachstate(&worker_attr,
 					      PTHREAD_CREATE_DETACHED);
-	if (!rc)
+	if (!rc) {
+		trace_session_stage("creating reaper");
 		rc = pthread_create(&reaper, NULL, reap_children, NULL);
-	if (rc)
+	}
+	if (rc) {
+		trace_session_stage("reaper setup failed");
 		_exit(1);
+	}
+	trace_session_stage("reaper created; awaiting handshake");
 	rc = handshake(args->fd, 0);
-	if (rc < 0)
+	if (rc < 0) {
+		trace_session_stage("handshake rejected; exiting session");
 		_exit(0);
+	}
+	trace_session_stage("handshake accepted");
 	/* Immutable before any lane worker is created in this session process. */
 	session.version = (uint16_t)rc;
 	rc = serve_session(args->fd, lane_listener, &worker_attr);
@@ -1041,6 +1067,7 @@ int main(void)
 		perror("linux-guest-agent: preparing system root");
 		return 1;
 	}
+	trace_sessions = command_line_option("lowland.agent.trace=1");
 	/* A supervisor pthread would share PID 1's address space. The wasm kernel
 	 * refuses to snapshot an address space with another user, so that would
 	 * make every later clone of a session worker fail with EOPNOTSUPP. Keep PID
@@ -1073,6 +1100,7 @@ int main(void)
 			.fd = fd,
 			.session_listener = session_listener,
 		};
+		trace_session_stage("accepted session; cloning worker");
 		worker = clone(session_worker, session_stack + session_stack_size,
 			       SIGCHLD, &args);
 		if (worker == -1) {
@@ -1080,6 +1108,7 @@ int main(void)
 			close(fd);
 			return 1;
 		}
+		trace_session_stage("session worker cloned");
 		close(fd);
 		do {
 			waited = waitpid(worker, &status, 0);
