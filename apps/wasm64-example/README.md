@@ -16,6 +16,27 @@ nix build .#wasm64-example --out-link result-wasm64-example -L
 node result-wasm64-example/server.mjs
 ```
 
+The built directory includes this README, the development server, and an
+offline integrity checker. Copy the entire directory, including `node_modules`,
+to a normal filesystem directory without installing Nix there, then run:
+
+```console
+node integrity.mjs
+node server.mjs
+```
+
+Use a current Node.js release supporting ES modules. `integrity.mjs` reads the
+adjacent `checksums.json` and checks SHA-256, sizes and the complete file
+inventory, including the kernel, both disk images, scripts and notices. It
+rejects missing, extra or changed files and payload symlinks, and exits nonzero
+on failure. The build generates and checks the manifest after assembling the
+package. You may also specify `node integrity.mjs --check /path/to/bundle`.
+Do not regenerate the manifest to conceal a failed check. It detects accidental
+damage or mixed payloads, not authenticity: an attacker able to replace both
+the manifest and files can forge a matching set. Keep a trusted original;
+no signatures, secure update mechanism or full license compliance are implied.
+This is a static-payload check, not Linux execution or SDK relocatability.
+
 Open the printed localhost URL. The server binds only to `127.0.0.1`, chooses
 an available port (override with `PORT`), and serves files beside its script.
 It supplies COOP/COEP and Wasm MIME headers. It never builds missing assets;
