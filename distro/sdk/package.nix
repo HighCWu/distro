@@ -146,6 +146,7 @@ let
     ];
     passthru.meson = meson;
     passthru.checks = {
+      profile = profileCheck;
       wrapper =
         pkgs.runCommand "sdk-wrapper-contract"
           {
@@ -187,9 +188,10 @@ let
       };
     };
   };
-  programs =
-    pkgs.runCommand "sdk-consumer-${platform.wasmArch}"
+  profileCheck =
+    pkgs.runCommand "sdk-profile-${platform.wasmArch}"
       {
+        passthru.ci.heavy = true;
         nativeBuildInputs = [
           sdk
           pkgs.nodejs
@@ -205,6 +207,9 @@ let
           assert.equal(p.schemaVersion, 1);
           assert.equal(p.targetTriple, "${platform.targetTriple}");
           assert.equal(p.addressBits, ${toString platform.addressBits});
+          assert.equal(p.wasmArch, "${platform.wasmArch}");
+          assert.deepEqual(p.compilerFlags, ${builtins.toJSON platform.compilerFlags});
+          assert.deepEqual(p.linkerFlags, ${builtins.toJSON platform.linkerFlags});
           assert.equal(p.cxxConfiguration, fs.readFileSync(p.paths.toolchain + "/bin/clang++.cfg", "utf8"));
           assert.ok(fs.statSync(p.paths.sysroot).isDirectory());
           assert.ok(fs.statSync(p.paths.meson + "/bin/meson").isFile());
@@ -214,6 +219,21 @@ let
         wasm-linux-sdk-info --unknown > invalid-profile.json 2> info-error.log || info_status=$?
         test "$info_status" -eq 64
         test ! -s invalid-profile.json
+        mkdir $out
+        cp profile.json $out/profile.json
+      '';
+  programs =
+    pkgs.runCommand "sdk-consumer-${platform.wasmArch}"
+      {
+        nativeBuildInputs = [
+          sdk
+          pkgs.nodejs
+        ];
+      }
+      ''
+        # Keep SDK metadata verification mandatory for the runtime consumer,
+        # while allowing it to run independently without building a kernel.
+        test -s ${profileCheck}/profile.json
         cp ${./compiler.sh} compiler.sh
         cp ${./config-driver-test.js} config-driver-test.js
         SDK_TEST_CLANG=${llvm-toolchain}/bin/clang \
