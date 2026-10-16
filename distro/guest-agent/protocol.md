@@ -30,6 +30,14 @@ silent fallback, ABI inference from addresses, or retry with a different ABI.
 Updated wasm32 executors accept both compliant v3 and v4 handshakes, while
 older v3-only executors do not accept v4.
 
+The executor validates session identity while its session worker is still
+single-threaded. The lane listener is bound before the echo, but the child
+reaper and lane worker attributes are initialized only after admission. A
+rejected identity must not create a reaper thread. Resource setup failure after
+admission terminates the session rather than serving requests without a reaper;
+the host must still handle connection loss after a valid echo. This ordering
+does not change the wire format or relax identity validation.
+
 Version 4 transport support is not full wasm64 agent support. Syscall helpers
 select native lseek/ftruncate/stat arguments and layouts for explicit wasm64
 sessions; common scalar/blob operations keep their checked shared ABI. The
