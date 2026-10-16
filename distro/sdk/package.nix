@@ -6,6 +6,7 @@
   llvm-toolchain,
   sysroot,
   vm-test,
+  zlib,
 }:
 let
   profileConfig = pkgs.writeText "linux-${platform.wasmArch}.cfg" (
@@ -95,6 +96,10 @@ let
         init = "${cmakePrograms}/sdk-example.wasm";
         cpus = 2;
       };
+      zlib-runtime = vm-test.rawInitramfsTest {
+        name = "sdk-zlib-runtime-${platform.wasmArch}";
+        init = "${zlibPrograms}/sdk-zlib.wasm";
+      };
     };
   };
   programs =
@@ -132,6 +137,28 @@ let
           SDK_TEST_OUTPUT_DIRECTORY=$out \
           node --test ${./.}/installed-consumer-test.js
         chmod 0755 $out/sdk-example.wasm
+      '';
+  zlibPrograms =
+    pkgs.runCommand "sdk-zlib-consumer-${platform.wasmArch}"
+      {
+        nativeBuildInputs = [
+          pkgs.cmake
+          pkgs.ninja
+          pkgs.nodejs
+          pkgs.gnumake
+        ];
+        CC = "${cc}/bin/wasm-linux-cc";
+        AR = "${llvm-toolchain}/bin/llvm-ar";
+        RANLIB = "${llvm-toolchain}/bin/llvm-ranlib";
+      }
+      ''
+        mkdir $out
+        SDK_TEST_ZLIB_SOURCE=${zlib.src} \
+          SDK_TEST_CMAKE_TOOLCHAIN=${sdk}/share/cmake/linux-wasm.cmake \
+          SDK_TEST_PKG_CONFIG=${sdk}/bin/wasm-linux-pkg-config \
+          SDK_TEST_OUTPUT_DIRECTORY=$out \
+          node --test ${./.}/zlib-consumer-test.js
+        chmod 0755 $out/sdk-zlib.wasm
       '';
 in
 sdk

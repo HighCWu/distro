@@ -1,0 +1,12 @@
+# SPDX-License-Identifier: MIT
+cmake_minimum_required(VERSION 3.20)
+project(linux_wasm_sdk_zlib LANGUAGES C)
+find_package(PkgConfig REQUIRED)
+pkg_check_modules(ZLIB REQUIRED IMPORTED_TARGET zlib)
+add_executable(sdk-zlib main.c)
+target_compile_features(sdk-zlib PRIVATE c_std_11)
+target_compile_options(sdk-zlib PRIVATE -Wall -Wextra -Werror)
+target_link_libraries(sdk-zlib PRIVATE PkgConfig::ZLIB)
+if(CMAKE_CROSSCOMPILING)
+  set_target_properties(sdk-zlib PROPERTIES SUFFIX ".wasm")
+endif()
