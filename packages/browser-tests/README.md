@@ -184,6 +184,16 @@ just a single-purpose C fixture or a small collected text command. Missing shell
 assets or execution failures are errors, not fallback to the minimal C program.
 No external initramfs, manual boot arguments or session trace flag is supplied.
 
+The pinned NOMMU BusyBox uses hush, not a fully POSIX-compatible shell. In
+particular it supports `set -e` but not `set -u`/nounset. The shared command
+fixtures use errexit and explicit value assertions; they do not claim nounset
+support. Their host-only syntax and binary-pipeline checks do not replace the
+Node and browser Linux/Wasm executions:
+
+```console
+node --test packages/linux-guest/tests/agent-wasm64-userland-commands.test.ts
+```
+
 BusyBox remains GPL-2.0-only and its package architecture is wasm64. These test
 images are not a full distribution release or a change to users' software
 licenses; any redistributed image must satisfy its components' license and
