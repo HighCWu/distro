@@ -175,6 +175,9 @@ export class BrowserFS implements FS<Node, Handle> {
   readonly root: Node;
   readonly #nodes = new Map<string, Node>();
   readonly #ownedNodes = new WeakSet<Node>();
+  // Portable handles have no exclusive create/namespace transaction. Keep
+  // this adapter's check-and-mutate sequences from interleaving with each other.
+  readonly #namespace = { mutation: Promise.resolve() };
 
   constructor(root: FileSystemDirectoryHandle) {
     this.root = new Node([], root, default_metadata("directory"));
@@ -231,7 +234,7 @@ export class BrowserFS implements FS<Node, Handle> {
     return current;
   }
 
-  async #mutate<T>(node: Node, operation: () => Promise<T>): Promise<T> {
+  async #mutate<T>(node: Pick<Node, "mutation">, operation: () => Promise<T>): Promise<T> {
     const previous = node.mutation;
     const completion = Promise.withResolvers<void>();
     node.mutation = completion.promise;
@@ -358,6 +361,10 @@ export class BrowserFS implements FS<Node, Handle> {
   }
 
   async create(parent: Node, name: string, flags: number, context: FSCreateContext) {
+    return await this.#mutate(this.#namespace, () => this.#create(parent, name, flags, context));
+  }
+
+  async #create(parent: Node, name: string, flags: number, context: FSCreateContext) {
     name = valid_name(name);
     const parent_node = this.#as_node(parent);
     const directory = this.#directory(parent);
@@ -459,6 +466,10 @@ export class BrowserFS implements FS<Node, Handle> {
   }
 
   async mkdir(parent: Node, name: string, context: FSCreateContext) {
+    return await this.#mutate(this.#namespace, () => this.#mkdir(parent, name, context));
+  }
+
+  async #mkdir(parent: Node, name: string, context: FSCreateContext) {
     name = valid_name(name);
     const parent_node = this.#as_node(parent);
     if (await this.#child(this.#directory(parent), name)) {
@@ -475,6 +486,10 @@ export class BrowserFS implements FS<Node, Handle> {
   }
 
   async unlink(parent: Node, name: string) {
+    return await this.#mutate(this.#namespace, () => this.#unlink(parent, name));
+  }
+
+  async #unlink(parent: Node, name: string) {
     name = valid_name(name);
     const child = await this.lookup(parent, name);
     if (!child) throw new FSError("ENOENT");
@@ -486,6 +501,10 @@ export class BrowserFS implements FS<Node, Handle> {
   }
 
   async rmdir(parent: Node, name: string) {
+    return await this.#mutate(this.#namespace, () => this.#rmdir(parent, name));
+  }
+
+  async #rmdir(parent: Node, name: string) {
     name = valid_name(name);
     const child = await this.lookup(parent, name);
     if (!child) throw new FSError("ENOENT");
@@ -518,6 +537,12 @@ export class BrowserFS implements FS<Node, Handle> {
   }
 
   async rename(oldParent: Node, oldName: string, newParent: Node, newName: string) {
+    return await this.#mutate(this.#namespace, () =>
+      this.#rename(oldParent, oldName, newParent, newName),
+    );
+  }
+
+  async #rename(oldParent: Node, oldName: string, newParent: Node, newName: string) {
     oldName = valid_name(oldName);
     newName = valid_name(newName);
     const old_parent = this.#as_node(oldParent);

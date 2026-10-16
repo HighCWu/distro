@@ -3,6 +3,57 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import { BrowserFS } from "../src/browser.ts";
 
+test("BrowserFS serializes exclusive creation and recovers its namespace queue after rejection", async () => {
+  const entries = new Map<string, { kind: "file" | "directory" }>();
+  let created = 0;
+  async function entry(name: string, kind: "file" | "directory", options?: { create?: boolean }) {
+    let value = entries.get(name);
+    if (!value) {
+      if (!options?.create) throw new DOMException("missing", "NotFoundError");
+      value = { kind };
+      entries.set(name, value);
+      created++;
+    }
+    if (value.kind !== kind) throw new DOMException("wrong kind", "TypeMismatchError");
+    return value;
+  }
+  const fs = new BrowserFS({
+    kind: "directory",
+    getDirectoryHandle: (name: string, options?: { create?: boolean }) =>
+      entry(name, "directory", options),
+    getFileHandle: (name: string, options?: { create?: boolean }) => entry(name, "file", options),
+    async removeEntry(name: string) {
+      entries.delete(name);
+    },
+  } as unknown as FileSystemDirectoryHandle);
+  const context = { mode: 0o600, uid: 1, gid: 2 };
+  const results = await Promise.allSettled([
+    fs.create(fs.root, "file", 0xc2, context),
+    fs.create(fs.root, "file", 0xc2, { mode: 0o644, uid: 3, gid: 4 }),
+  ]);
+  assert.equal(results[0].status, "fulfilled");
+  assert.equal(results[1].status, "rejected");
+  if (results[0].status !== "fulfilled" || results[1].status !== "rejected") assert.fail();
+  assert.equal(results[1].reason.errno, 17);
+  assert.equal(created, 1, "the losing exclusive request must not create a backing entry");
+  const directories = await Promise.allSettled([
+    fs.mkdir(fs.root, "directory", context),
+    fs.mkdir(fs.root, "directory", context),
+  ]);
+  assert.equal(directories[0].status, "fulfilled");
+  assert.equal(directories[1].status, "rejected");
+  if (directories[1].status === "rejected") assert.equal(directories[1].reason.errno, 17);
+  const [removed, recreated] = await Promise.all([
+    fs.unlink(fs.root, "file"),
+    fs.create(fs.root, "file", 0xc2, context),
+  ]);
+  assert.equal(removed, undefined);
+  assert.notEqual(recreated.node, results[0].value.node);
+  await fs.rmdir(fs.root, "directory");
+  await fs.mkdir(fs.root, "directory", context);
+  assert.equal(created, 4, "rejections must not strand later namespace operations");
+});
+
 test("BrowserFS append handles resolve EOF after earlier queued commits", async () => {
   let content = "base";
   const file = {
