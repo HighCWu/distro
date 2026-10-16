@@ -18,7 +18,7 @@ pkgs.runCommand "linux-wasm64-browser-example"
   ''
     mkdir -p $out/node_modules/@lowland/{kernel,bytes}
     esbuild ${source}/app.js --bundle --platform=browser --format=esm --target=es2022 \
-      --alias:@lowland/guest=${../../packages/linux-guest/src/index.ts} \
+      --alias:@lowland/guest=${../../packages/linux-guest/src}/index.ts \
       --external:@lowland/kernel --external:@lowland/kernel/plugin --external:@lowland/bytes \
       --outfile=$out/app.js
     cp ${source}/index.html $out/index.html
