@@ -92,13 +92,11 @@ test("embeds native wasm64 Linux using the standalone example controls", async (
   await page.locator("#run-program").click();
   await expect(state).toHaveText("running");
   await expect(page.locator("#result")).toHaveText("prefix byte: 11\n");
-  await page
-    .locator("#stdin-file")
-    .setInputFiles({
-      name: "empty.bin",
-      mimeType: "application/octet-stream",
-      buffer: Buffer.alloc(0),
-    });
+  await page.locator("#stdin-file").setInputFiles({
+    name: "empty.bin",
+    mimeType: "application/octet-stream",
+    buffer: Buffer.alloc(0),
+  });
   await page.locator("#arguments").fill('["pattern"]');
   await page.locator("#run-program").click();
   await expect(state).toHaveText("running");
