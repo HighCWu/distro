@@ -198,7 +198,22 @@ let
       ''
         wasm-linux-sdk-info > profile.json
         ${pkgs.diffutils}/bin/cmp profile.json ${sdk}/share/linux-wasm-sdk/profile.json
-        node -e 'const p = JSON.parse(require("node:fs").readFileSync("profile.json")); if (p.schemaVersion !== 1 || p.targetTriple !== "${platform.targetTriple}" || p.addressBits !== ${toString platform.addressBits}) throw new Error("SDK profile mismatch")'
+        node -e '
+          const fs = require("node:fs");
+          const assert = require("node:assert/strict");
+          const p = JSON.parse(fs.readFileSync("profile.json"));
+          assert.equal(p.schemaVersion, 1);
+          assert.equal(p.targetTriple, "${platform.targetTriple}");
+          assert.equal(p.addressBits, ${toString platform.addressBits});
+          assert.equal(p.cxxConfiguration, fs.readFileSync(p.paths.toolchain + "/bin/clang++.cfg", "utf8"));
+          assert.ok(fs.statSync(p.paths.sysroot).isDirectory());
+          assert.ok(fs.statSync(p.paths.meson + "/bin/meson").isFile());
+          assert.ok(fs.readFileSync(p.paths.compilerConfiguration, "utf8").includes("--target=" + p.targetTriple));
+        '
+        info_status=0
+        wasm-linux-sdk-info --unknown > invalid-profile.json 2> info-error.log || info_status=$?
+        test "$info_status" -eq 64
+        test ! -s invalid-profile.json
         cp ${./compiler.sh} compiler.sh
         cp ${./config-driver-test.js} config-driver-test.js
         SDK_TEST_CLANG=${llvm-toolchain}/bin/clang \
