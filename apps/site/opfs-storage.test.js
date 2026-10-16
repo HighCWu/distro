@@ -3,6 +3,81 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import { installOpfsStorage } from "./opfs-storage.js";
 
+test("partial OPFS reads and writes advance both the buffer and file offset", () => {
+  const file = new Uint8Array(512);
+  const calls = [];
+  let storage;
+  installOpfsStorage(
+    {
+      getSize: () => file.length,
+      read(target, { at }) {
+        const count = Math.min(2, target.length);
+        calls.push(["read", at, target.length]);
+        target.set(file.subarray(at, at + count));
+        return count;
+      },
+      write(data, { at }) {
+        const count = Math.min(2, data.length);
+        calls.push(["write", at, data.length]);
+        file.set(data.subarray(0, count), at);
+        return count;
+      },
+    },
+    undefined,
+    (value) => {
+      storage = value;
+    },
+  );
+  const data = Uint8Array.of(11, 22, 33, 44, 55);
+  assert.equal(storage.write(17, data), 5);
+  const result = new Uint8Array(7).fill(99);
+  assert.equal(storage.read(17, result.subarray(1, 6)), 5);
+  assert.deepEqual(result, Uint8Array.of(99, ...data, 99));
+  assert.deepEqual(calls, [
+    ["write", 17, 5],
+    ["write", 19, 3],
+    ["write", 21, 1],
+    ["read", 17, 5],
+    ["read", 19, 3],
+    ["read", 21, 1],
+  ]);
+  assert.equal(file[16], 0);
+  assert.equal(file[22], 0);
+});
+
+for (const operation of ["read", "write"]) {
+  test(`OPFS ${operation} stops on zero progress and propagates storage errors`, () => {
+    let storage;
+    let calls = 0;
+    let fail = false;
+    const failure = new Error("storage unavailable");
+    installOpfsStorage(
+      {
+        getSize: () => 512,
+        [operation]() {
+          if (fail) throw failure;
+          calls++;
+          assert.ok(calls <= 2, "must not spin after zero progress");
+          return calls === 1 ? 2 : 0;
+        },
+      },
+      undefined,
+      (value) => {
+        storage = value;
+      },
+    );
+    assert.equal(storage[operation](0, new Uint8Array(5)), 2);
+    assert.equal(calls, 2);
+    // Empty transfers must not touch the handle, even after a storage failure.
+    fail = true;
+    assert.equal(storage[operation](0, new Uint8Array(0)), 0);
+    assert.throws(
+      () => storage[operation](0, new Uint8Array(5)),
+      (error) => error === failure,
+    );
+  });
+}
+
 test("invalid capacity releases the handle without truncating data", () => {
   for (const capacity of [-512, 1, NaN, Infinity, 2 ** 53]) {
     let closed = 0;
