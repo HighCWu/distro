@@ -26,6 +26,34 @@ struct Guard {
     ~Guard() { ++destroyed; }
 };
 
+struct ThreadCleanup {
+    int &destroyed;
+    int order;
+    ~ThreadCleanup()
+    {
+        if (destroyed != order) fail("thread_local destructor order");
+        ++destroyed;
+    }
+};
+
+static void thread_cleanup_probe()
+{
+    // Repeated thread creation must register fresh per-thread destructors.
+    // The referenced counter remains alive until join completes.
+    for (int iteration = 0; iteration < 2; ++iteration) {
+        int destroyed = 0;
+        std::thread worker([&] {
+            thread_local ThreadCleanup first{destroyed, 1};
+            thread_local ThreadCleanup second{destroyed, 0};
+            if (&first.destroyed != &destroyed || &second.destroyed != &destroyed)
+                fail("thread_local initialization retained another thread's state");
+            if (destroyed != 0) fail("thread_local destroyed before thread exit");
+        });
+        worker.join();
+        if (destroyed != 2) fail("thread_local destructors missing at join");
+    }
+}
+
 struct RetainedException {
     int *destroyed;
     ~RetainedException() { ++*destroyed; }
@@ -123,6 +151,10 @@ int main()
 
         inherited_exception_probe();
         std::puts("C++ runtime: inherited exception and RTTI adjustment passed");
+        std::fflush(stdout);
+
+        thread_cleanup_probe();
+        std::puts("C++ runtime: thread_local exit cleanup passed");
         std::fflush(stdout);
 
         tls_value = 17;

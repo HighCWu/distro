@@ -64,6 +64,7 @@ test("runs C++ containers, exceptions, cross-thread exception_ptr cleanup and TL
   expect(output).toContain("C++ runtime: typed catch and RAII cleanup passed");
   expect(output).toContain("C++ runtime: retained cross-thread exception cleanup passed");
   expect(output).toContain("C++ runtime: inherited exception and RTTI adjustment passed");
+  expect(output).toContain("C++ runtime: thread_local exit cleanup passed");
   expect(output).toContain("C++ runtime: containers, RAII, exception_ptr, thread and TLS verified");
   expect(output).toContain("::vm-test::pass");
   expect(output).not.toContain("::vm-test::fail");
