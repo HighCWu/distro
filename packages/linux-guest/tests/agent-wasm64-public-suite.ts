@@ -3,6 +3,7 @@ import { blockDevice, bootMachine, consoleDevice, entropyDevice } from "@lowland
 import { guestAgent, SeekMode, SystemError } from "../src/index.ts";
 import { closed_input, console_line_output } from "./helpers.ts";
 import type { RuntimeAssertions } from "./agent-wasm64-suite.ts";
+import { publicShellScript, publicStreamScript } from "./agent-wasm64-userland-commands.ts";
 
 // Identical public API corpus in Node and browsers. No initcpio or manual
 // boot arguments: the plugin selects its disk, transport and readiness ABI.
@@ -96,31 +97,7 @@ export async function runPublicAgentWasm64Suite(
     if (options.userland) {
       await check("public run executes native shell pipelines and child lifecycle", async () => {
         const shell = await agent.run(
-          [
-            "/bin/sh",
-            "-c",
-            `
-set -eu
-[ "$PWD" = /tmp ]
-[ "$1" = 'public shell arg' ]
-[ "$AGENT_RUNTIME_VALUE" = 'public shell env' ]
-printf '%s\\n' "$1" | grep -qx 'public shell arg'
-root=$(cat /etc/agent-runtime-root)
-[ "$root" = native-wasm64-root ]
-printf '%s\\n' "$AGENT_RUNTIME_VALUE" > /tmp/public-shell-source
-cp /tmp/public-shell-source /tmp/public-shell-copy
-[ "$(cat /tmp/public-shell-copy)" = 'public shell env' ]
-if /bin/sh -c 'exit 7'; then exit 90; else status=$?; fi
-[ "$status" -eq 7 ]
-sleep 0.01 &
-child=$!
-wait "$child"
-rm /tmp/public-shell-source /tmp/public-shell-copy
-printf '%s\\n' 'native shell passed'
-`,
-            "agent-shell",
-            "public shell arg",
-          ],
+          ["/bin/sh", "-c", publicShellScript, "agent-shell", "public shell arg"],
           { cwd: "/tmp", env: { AGENT_RUNTIME_VALUE: "public shell env" } },
         );
         if (!shell.status.success) {
@@ -134,11 +111,7 @@ printf '%s\\n' 'native shell passed'
       await check("public exec streams binary data through native shell pipelines", async () => {
         // Cross injected I/O chunks and Linux pipe capacity, including NULs.
         const payload = Uint8Array.from({ length: 256 * 1024 + 17 }, (_, i) => (i * 37 + 11) & 255);
-        const child = await agent.exec([
-          "/bin/sh",
-          "-c",
-          "set -eu; tee /tmp/public-stream-copy | cat; cat /tmp/public-stream-copy >&2; rm /tmp/public-stream-copy",
-        ]);
+        const child = await agent.exec(["/bin/sh", "-c", publicStreamScript]);
         try {
           const input = (async () => {
             const writer = child.stdin.getWriter();
