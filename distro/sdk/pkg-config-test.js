@@ -49,6 +49,13 @@ test("pkg-config isolates target metadata and preserves static dependencies", ()
     assert.ok(flags.stdout.includes(`-L${sysroot}/lib`), flags.stdout);
     assert.ok(flags.stdout.includes("-lprivate_dep"), flags.stdout);
     assert.ok(!flags.stdout.includes("host_poison"), flags.stdout);
+    const filtered = run(["--cflags", "--libs", "sdk"], {
+      PKG_CONFIG_SYSTEM_INCLUDE_PATH: `${sysroot}/include/sdk:/include/sdk`,
+      PKG_CONFIG_SYSTEM_LIBRARY_PATH: `${sysroot}/lib:/lib`,
+    });
+    assert.equal(filtered.status, 0, filtered.stderr);
+    assert.ok(filtered.stdout.includes(`-I${sysroot}/include/sdk`), filtered.stdout);
+    assert.ok(filtered.stdout.includes(`-L${sysroot}/lib`), filtered.stdout);
     assert.equal(run(["--exists", "host_only"]).status, 1);
     assert.equal(run(["--exists", "shared"]).status, 0);
     assert.equal(run(["--exists", "addon"]).status, 1);

@@ -8,4 +8,8 @@ if [[ -n ${WASM_PKG_CONFIG_SYSROOT_DIR-} ]]; then
 fi
 export PKG_CONFIG_LIBDIR=@libdir@
 export PKG_CONFIG_PATH="${WASM_PKG_CONFIG_PATH-}"
+# Host system-directory filters can silently remove required target -I/-L
+# flags even when package discovery itself is isolated.
+export PKG_CONFIG_SYSTEM_INCLUDE_PATH=""
+export PKG_CONFIG_SYSTEM_LIBRARY_PATH=""
 exec @pkgConfig@ --static "$@"
