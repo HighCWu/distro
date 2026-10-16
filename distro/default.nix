@@ -25,7 +25,17 @@ lib.makeScope (scope: lib.callPackageWith ({ inherit lib pkgs; } // scope)) (
     # that repository contains lowland-boot itself. This private index is the
     # acyclic package-only input used to construct those images.
     bootstrapRepository = callPackage ./repository.nix { };
-    vmTestWasm64 = callPackage ./vm-test/package.nix { kernel = self.kernel-wasm64; };
+    vmTestWasm64 = callPackage ./vm-test/package.nix {
+      kernel = self.kernel-wasm64;
+      apk = self.apk-wasm64;
+      image = self.image-wasm64;
+    };
+    stdenvReleaseWasm64 = import ./stdenv.nix {
+      inherit pkgs;
+      platform = self.platform-wasm64;
+      llvm-toolchain = self.llvm-toolchain-wasm64;
+      sysroot = self.sysroot-wasm64;
+    };
   in
   {
     inherit debug sourceVersion;
@@ -108,6 +118,21 @@ lib.makeScope (scope: lib.callPackageWith ({ inherit lib pkgs; } // scope)) (
       inherit (self) platform llvm-toolchain sysroot;
     };
     stdenvDebug = pkgs.stdenvAdapters.keepDebugInfo self.stdenvRelease;
+    # Opt-in native userland; never inherit wasm32 headers, libc or loader
+    # images merely because the surrounding default scope is wasm32.
+    stdenv-wasm64 =
+      if debug then pkgs.stdenvAdapters.keepDebugInfo stdenvReleaseWasm64 else stdenvReleaseWasm64;
+    apk-wasm64 = callPackage ./apk {
+      tools = self.apk-tools-host;
+      callPackage = lib.callPackageWith (
+        { inherit lib pkgs; } // self // { platform = self.platform-wasm64; }
+      );
+    };
+    image-wasm64 = callPackage ./image {
+      callPackage = lib.callPackageWith (
+        { inherit lib pkgs; } // self // { busybox = self.busybox-wasm64; }
+      );
+    };
 
     # A pinned nightly rustc with a from-source std for the wasm target.
     rust-toolchain = callPackage ./rust-toolchain/package.nix { };
@@ -137,6 +162,12 @@ lib.makeScope (scope: lib.callPackageWith ({ inherit lib pkgs; } // scope)) (
       };
     };
     busybox = callPackage ./busybox/package.nix { };
+    busybox-wasm64 = self.busybox.override {
+      stdenv = self.stdenv-wasm64;
+      platform = self.platform-wasm64;
+      linux = self.linux-wasm64;
+      vm-test = vmTestWasm64;
+    };
     bzip2 = callPackage ./bzip2/package.nix { };
     ca-certificates = callPackage ./ca-certificates/package.nix { };
     coreutils = callPackage ./coreutils/package.nix { };

@@ -18,6 +18,7 @@ stdenv.mkDerivation (finalAttrs: {
   pname = "busybox";
   version = "1.37.0";
   inherit src;
+  meta.license = lib.licenses.gpl2Only;
 
   # busybox builds host tools with HOSTCC during the target build.
   depsBuildBuild = [ pkgs.stdenv.cc ];
