@@ -18,7 +18,7 @@
 //                    ret) bytes), or the spawn/reap reply body.
 
 import { Bytes, FixedArray, I64LE, Struct, U32LE, U64LE, U8 } from "@lowland/bytes";
-import { AT, NR, Stat, stat_size, SystemError } from "./abi.ts";
+import { AT, NR, Stat, stat_size, SystemError, ProtocolError } from "./abi.ts";
 import type { GuestSession } from "./conn.ts";
 
 /** Host convention for bulk I/O: syscall data payloads are at most 32 KiB. */
@@ -98,6 +98,12 @@ async function syscall(
   ret: bigint;
   out: Uint8Array[]; // one entry per out arg, in order; empty when ret is -1
 }> {
+  // Negotiating an ABI is not enough to enable its syscall marshalling. Keep
+  // native LP64 sessions from accidentally using the legacy ILP32 layouts
+  // until the per-session syscall adapter is connected.
+  if (session.abi === "wasm64") {
+    throw new ProtocolError("wasm64 agent syscall marshalling is not enabled");
+  }
   const request = new Bytes(SyscallReq.size);
   const head = request.alloc(SyscallReq);
   const outs: { capacity: number; ret_sized: boolean }[] = [];

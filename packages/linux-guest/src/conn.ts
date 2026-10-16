@@ -1,4 +1,4 @@
-// Guest transport (protocol v3): how bytes travel. What they mean lives in
+// Agent transport (legacy v3 and explicit-ABI v4): how bytes travel. Meaning lives in
 // syscalls.ts and agent.c.
 //
 // A session is one pinned vsock connection to the session port plus a pool
@@ -21,6 +21,7 @@ const SESSION_PORT = 1024;
 const LANE_PORT = 1025;
 const HANDSHAKE_MAGIC = 0x584e4c54; // "TLNX"
 const PROTOCOL_VERSION = 3;
+export type AgentAbi = "wasm32" | "wasm64";
 
 // Hard cap on concurrent lanes, equal to the agent's limit. The agent creates
 // their workers on demand; the veneer's process cap (process.ts) keeps
@@ -62,22 +63,25 @@ class VsockLane implements Lane {
   }
 }
 
-async function handshake(conn: VsockConnection): Promise<void> {
+async function handshake(conn: VsockConnection, version: 3 | 4, abi: AgentAbi): Promise<void> {
   const bytes = new Bytes(Handshake.size);
   const hello = bytes.alloc(Handshake);
-  hello.value = { magic: HANDSHAKE_MAGIC, version: PROTOCOL_VERSION, reserved: 0 };
+  const tag = version === 3 ? 0 : abi === "wasm64" ? 64 : 32;
+  hello.value = { magic: HANDSHAKE_MAGIC, version, reserved: tag };
   await conn.write(bytes.array);
   const echo = await conn.readExactly(Handshake.size);
   if (echo.byteLength !== Handshake.size) {
     throw new ProtocolError("guest connection closed during handshake");
   }
   const reply = new Handshake(echo);
-  if (reply.magic !== HANDSHAKE_MAGIC || reply.version !== PROTOCOL_VERSION) {
+  if (reply.magic !== HANDSHAKE_MAGIC || reply.version !== version || reply.reserved !== tag) {
     throw new ProtocolError("guest handshake echo mismatch");
   }
 }
 
 export class GuestSession {
+  readonly abi: AgentAbi;
+  readonly protocolVersion: 3 | 4;
   #device: VsockDevice;
   #session: VsockConnection;
   #dead: Error | null = null;
@@ -86,7 +90,14 @@ export class GuestSession {
   #lane_count = 0;
   #waiters: { resolve: (lane: VsockLane) => void; reject: (error: Error) => void }[] = [];
 
-  private constructor(device: VsockDevice, session: VsockConnection) {
+  private constructor(
+    device: VsockDevice,
+    session: VsockConnection,
+    version: 3 | 4,
+    abi: AgentAbi,
+  ) {
+    this.abi = abi;
+    this.protocolVersion = version;
     this.#device = device;
     this.#session = session;
     void this.#watch();
@@ -96,19 +107,24 @@ export class GuestSession {
    *  any readiness retry loop. */
   static async connect(
     device: VsockDevice,
-    options?: { timeoutMs?: number },
+    options?: { timeoutMs?: number; abi?: AgentAbi },
   ): Promise<GuestSession> {
+    const abi = options?.abi ?? "wasm32";
+    if (abi !== "wasm32" && abi !== "wasm64") throw new RangeError("unsupported agent ABI");
+    // Keep existing images working without probing or retrying a rejected
+    // session. Explicit ABI selection requires the versioned ABI handshake.
+    const version = options?.abi === undefined ? PROTOCOL_VERSION : 4;
     const conn = await device.connect(
       SESSION_PORT,
       options?.timeoutMs !== undefined ? { timeoutMs: options.timeoutMs } : {},
     );
     try {
-      await handshake(conn);
+      await handshake(conn, version, abi);
     } catch (error) {
       conn.close();
       throw error;
     }
-    return new GuestSession(device, conn);
+    return new GuestSession(device, conn, version, abi);
   }
 
   // The session connection is silent after its handshake: EOF is session
@@ -150,11 +166,12 @@ export class GuestSession {
         const conn = await this.#device.connect(LANE_PORT);
         try {
           const lane = new VsockLane(conn);
-          await handshake(conn);
+          await handshake(conn, this.protocolVersion, this.abi);
           if (this.#dead) throw this.#dead;
           return lane;
         } catch (error) {
           conn.close();
+          if (error instanceof ProtocolError) this.#die(error);
           throw error;
         }
       } catch (error) {

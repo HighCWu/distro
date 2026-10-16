@@ -1,4 +1,4 @@
-# Guest agent protocol, version 3
+# Agent protocol, versions 3 and 4
 
 The guest agent is a dumb syscall executor. It knows nothing about paths,
 stat layouts, directories, or flags — every operation-specific decision
@@ -12,10 +12,28 @@ integers are little-endian; there is no alignment padding.
 
 ## Transport
 
-Two vsock ports, both handshaking with 8 bytes
-`{ magic u32 = 0x584e4c54, version u16 = 3, reserved u16 = 0 }` sent by the
-host and echoed verbatim by the agent (the echo doubles as the readiness
-signal).
+Both vsock ports use an 8-byte host request, echoed only after validation
+(the echo doubles as the readiness signal):
+
+- Version 3: `{ magic u32 = 0x584e4c54, version u16 = 3, reserved u16 = 0 }`.
+  This is the existing ILP32/wasm32 contract; an LP64 executor rejects it.
+- Version 4: `{ magic u32 = 0x584e4c54, version u16 = 4, abi_bits u16 }`.
+  `abi_bits` must be 32 or 64 and match the executor's native pointer/long
+  width. Zero, unknown widths, wrong magic and unknown versions are rejected
+  before requests. Request/reply bodies otherwise keep their existing shape.
+
+The host's internal `GuestSession.connect(device)` retains version 3/wasm32
+by default for existing images. Explicit `{ abi: "wasm32" }` or
+`{ abi: "wasm64" }` selects version 4. Every lane must echo the same version
+and ABI as its session; a mismatched lane poisons that session. There is no
+silent fallback, ABI inference from addresses, or retry with a different ABI.
+Updated wasm32 executors accept both compliant v3 and v4 handshakes, while
+older v3-only executors do not accept v4.
+
+Version 4 transport support is not full wasm64 agent support. Until the
+per-session native syscall adapter is connected, host syscall helpers reject
+wasm64 sessions before opening a request lane instead of sending ILP32 layouts.
+The public high-level integration and packaged image still default to wasm32.
 
 - **Session, port 1024.** One connection, opened first and pinned for the
   session's lifetime. It carries no requests: it exists because a session
@@ -39,8 +57,8 @@ computable from what came before it.
 ## Requests
 
 Each request starts with a kind byte, and every reply starts with the
-uniform head `{ ret i64, errno u32 }` — `ret` sign-extended from the
-guest's 32-bit long, `errno` nonzero only when `ret` is -1, in which case
+uniform head `{ ret i64, errno u32 }` — `ret` sign-extended from native
+`long` (32 bits for v3; the selected ABI width for v4), `errno` nonzero only when `ret` is -1, in which case
 nothing follows the head.
 
 **Syscall (kind 1):** `{ nr u32, arg_kinds u8[6], arg_values u64[6] }` then
@@ -51,7 +69,7 @@ capacity; a zeroed buffer is passed and the whole buffer follows the reply
 head), 3 out-blob-ret-sized (as 2, but only `min(capacity, ret)` bytes
 follow — for `read`, `getdents64`, ...). The agent executes via libc
 `syscall(nr, a0..a5)`, always six arguments, unused ones scalar 0. 64-bit
-arguments on this ILP32 target are split host-side (the syscall table in
+arguments on an ILP32 target are split host-side (the syscall table in
 `packages/linux-guest/src/syscalls.ts` owns the hi/lo order per syscall).
 
 **Spawn (kind 2):** `{ len u32 }` then a `len`-byte payload
@@ -94,6 +112,9 @@ emit a `_Static_assert` per entry; that file is compiled (never run) with
 the guest toolchain, turning any drift into a build failure. Per-syscall
 semantics (argument shapes, 64-bit splitting, which argument is the path)
 live once each in `packages/linux-guest/src/syscalls.ts`.
+The internal `abi-wasm64.ts` separately describes native LP64 syscall aliases
+and the 128-byte kernel `struct stat`, reusing width-independent checked facts.
+Its target compilation check does not yet select that ABI for syscall helpers.
 
 ## Agent startup
 

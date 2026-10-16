@@ -1,4 +1,4 @@
-/* Guest agent (protocol v3): a dumb syscall executor.
+/* Agent (legacy v3 and explicit-ABI v4): a dumb syscall executor.
  *
  * The host opens one connection to the session port plus up to `max_lanes`
  * lanes on the lane port. A lane carries strictly serial request/reply
@@ -42,11 +42,15 @@
 #include <linux/vm_sockets.h>
 #include <unistd.h>
 
+_Static_assert(sizeof(void *) == sizeof(long), "agent requires ILP32 or LP64");
+
 enum {
 	session_port = 1024,
 	lane_port = 1025,
 	protocol_magic = 0x584e4c54,
 	protocol_version = 3,
+	protocol_version_abi = 4,
+	protocol_abi = sizeof(unsigned long) == 8 ? 64 : 32,
 	max_lanes = 64,
 	max_blob = 128 * 1024,
 	max_spawn_payload = 4 * 1024 * 1024,
@@ -82,6 +86,7 @@ static struct {
 	pthread_mutex_t mutex;
 	pthread_cond_t changed;
 	int active_lanes;
+	uint16_t version;
 } session = {
 	.mutex = PTHREAD_MUTEX_INITIALIZER,
 	.changed = PTHREAD_COND_INITIALIZER,
@@ -577,20 +582,28 @@ static int serve_reap(int fd)
 	return write_all(fd, body, sizeof(body));
 }
 
-/* Handshake: 8 bytes { magic u32, version u16, reserved u16 }, echoed. */
-static int handshake(int fd)
+/* v3: reserved must be zero, ILP32 only. v4: the last u16 is the required
+ * ABI width. Reject a mismatch before accepting any syscall request. */
+static int handshake(int fd, uint16_t expected_version)
 {
 	uint8_t hs[8];
+	uint16_t version, abi;
 
-	if (read_all(fd, hs, sizeof(hs)) || load_u32(hs) != protocol_magic ||
-	    load_u16(hs + 4) != protocol_version)
+	if (read_all(fd, hs, sizeof(hs)) || load_u32(hs) != protocol_magic)
 		return -1;
-	return write_all(fd, hs, sizeof(hs));
+	version = load_u16(hs + 4);
+	abi = load_u16(hs + 6);
+	if (expected_version && version != expected_version)
+		return -1;
+	if (!((version == protocol_version && abi == 0 && protocol_abi == 32) ||
+	      (version == protocol_version_abi && abi == protocol_abi)))
+		return -1;
+	return write_all(fd, hs, sizeof(hs)) ? -1 : version;
 }
 
 static void serve_lane(int fd)
 {
-	if (handshake(fd))
+	if (handshake(fd, session.version) < 0)
 		return;
 	for (;;) {
 		uint8_t kind;
@@ -741,8 +754,11 @@ static int session_worker(void *opaque)
 		rc = pthread_create(&reaper, NULL, reap_children, NULL);
 	if (rc)
 		_exit(1);
-	if (handshake(args->fd))
+	rc = handshake(args->fd, 0);
+	if (rc < 0)
 		_exit(0);
+	/* Immutable before any lane worker is created in this session process. */
+	session.version = (uint16_t)rc;
 	rc = serve_session(args->fd, lane_listener, &worker_attr);
 	_exit(rc ? 1 : 0);
 }
