@@ -22,6 +22,12 @@ test("C++ configuration preserves Wasm exception handlers", (context) => {
     process.env.SDK_TEST_CXX_CONFIG ||
     fileURLToPath(new URL("../llvm-toolchain/clang++.cfg", import.meta.url));
   const source = fileURLToPath(new URL("./exception-probe.cc", import.meta.url));
+  const destructorSource = fileURLToPath(new URL("./destructor-probe.cc", import.meta.url));
+  assert.match(
+    readFileSync(config, "utf8"),
+    /^-fc\+\+-abi=webassembly$/m,
+    "Linux/Wasm must explicitly select the ABI used by libc++abi",
+  );
   const root = mkdtempSync(join(tmpdir(), "sdk-exception-codegen-"));
   try {
     for (const target of targets) {
@@ -49,6 +55,33 @@ test("C++ configuration preserves Wasm exception handlers", (context) => {
         /\bcatch(?:_all|_ref|_all_ref)?\b/,
         `${target}: exception handler was discarded`,
       );
+      for (const incompatible of [false, true]) {
+        const probe = spawnSync(
+          compiler,
+          [
+            `--config=${config}`,
+            `--target=${target}`,
+            ...(incompatible ? ["-fc++-abi=itanium"] : []),
+            "-S",
+            "-emit-llvm",
+            "-O0",
+            destructorSource,
+            "-o",
+            "-",
+          ],
+          { encoding: "utf8" },
+        );
+        assert.equal(probe.status, 0, probe.stderr);
+        const definition = probe.stdout
+          .split("\n")
+          .find((line) => line.startsWith("define ") && line.includes("D2Ev("));
+        assert.ok(definition, `${target}: destructor definition missing`);
+        assert.match(
+          definition,
+          incompatible ? /\bvoid @/ : /\bptr @/,
+          `${target}: destructor return type must match libc++abi's indirect call`,
+        );
+      }
     }
   } finally {
     rmSync(root, { recursive: true, force: true });

@@ -33,7 +33,9 @@ let
     "-DCMAKE_CXX_COMPILER_TARGET=${platform.targetTriple}"
     "-DCMAKE_ASM_COMPILER_TARGET=${platform.targetTriple}"
     "-DCMAKE_C_FLAGS=${wasmCompileFlags}"
-    "-DCMAKE_CXX_FLAGS=${wasmCompileFlags}"
+    # libc++abi's __wasm__ exception destructors return their object pointer.
+    # The Linux target otherwise defaults to Itanium's void-returning ABI.
+    "-DCMAKE_CXX_FLAGS=${wasmCompileFlags} -fc++-abi=webassembly"
     "-DCMAKE_ASM_FLAGS=-mexception-handling"
     "-DCMAKE_BUILD_WITH_INSTALL_RPATH=OFF"
     "-DCMAKE_SKIP_BUILD_RPATH=ON"
