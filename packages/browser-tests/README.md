@@ -127,6 +127,13 @@ The minimal root includes the native test program, not a full distribution or
 system init. Passing Node production tests alone does not establish browser
 production support.
 
+Session admission tracing is disabled in the shared corpus by default. For a
+focused diagnostic, the browser entry accepts
+`runNativeAgent({ productionRoot: true, traceSessions: true })`; the explicit
+Node runtime wrapper accepts `AGENT_WASM64_TRACE=1`. Compare traced and untraced
+results separately: diagnostic output can affect scheduling and is not a fix
+for an intermittent handshake timeout.
+
 ### Public plugin and GPT boot disk
 
 The public API has separate checks, using the same assertions as
