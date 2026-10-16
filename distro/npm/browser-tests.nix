@@ -326,6 +326,9 @@ let
   wasm64ExampleSuite = pkgs.runCommand "wasm64-example-browser-tests" { } ''
     mkdir -p $out/tests
     cp -r ${wasm64-example}/. $out/
+    # The copied store directory is read-only; add test-only dependency links
+    # without changing permissions on the installed application's payloads.
+    chmod u+w $out/node_modules
     ${playwright.linkRuntime "$out"}
     cp ${../../apps/wasm64-example}/server.mjs $out/server.js
     cp ${source}/playwright.config.js $out/playwright.config.js
