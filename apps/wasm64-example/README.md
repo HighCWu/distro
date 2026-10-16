@@ -121,7 +121,7 @@ browser deadline, graceful filesystem shutdown, or persistence guarantee.
 Five mock-host UI regressions cover these ownership/stop/restart races, including
 delayed machine closure. Together with the other example/packaging host checks,
 28 tests pass. The real browser case now stops a waiting imported program and
-restarts Linux; that extended behavior still requires public CI verification.
+restarts Linux; its verified Chromium result is recorded below.
 
 Fourteen host regressions verify import/argument validation, executable mode,
 literal argv, UTF-8 input/output, nonzero status, cancellation and failure cleanup,
@@ -132,7 +132,7 @@ checks literal Unicode arguments and both streams, exact Unicode stdin round-tri
 prefix-only reading of substantial input, a nonzero exit, cancellation
 after an execution marker, and native `uname` after cleanup. This program is a
 test-only input, not installed into or shipped with the minimal application
-root. The extended real browser check still requires public CI results.
+root. The verified Chromium result is recorded below; Firefox remains separate.
 
 The explicit `browser-tests-check-wasm64-example-chromium` and
 `browser-tests-check-wasm64-example-firefox` checks exercise the actual packaged

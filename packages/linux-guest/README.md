@@ -102,6 +102,18 @@ reasons, prior pump errors and normal EOF (72 related host tests pass).
 Native wasm32 and shared wasm64 public-userland assertions are included;
 their execution remains separate from host validation.
 
+`fs.copyFile()` validates the source and destination using `fstat` on both
+opened descriptors before truncating the destination. Identical device/inode
+pairs reject with `EINVAL`, including symlink or hard-link aliases introduced
+between pathname lookup and open. Identity stays at kernel integer width;
+large inode numbers are not rounded into JavaScript numbers. Both descriptors
+are close-on-exec and are disposed on validation errors. This is not an atomic
+copy, immutable snapshot, path-confinement guarantee or rollback on I/O failure;
+a newly created destination can remain after a failed operation. Eight added
+dual-width protocol cases cover stale paths, exact identity, short writes and
+cleanup, with 85 related host tests passing. Native ordinary-copy and symlink
+alias assertions are included but require execution at the updated revision.
+
 Process admission is capped at eight live SDK children so blocked process I/O
 does not consume every syscall lane. An `exec()` waiting for capacity is
 abortable: it rejects with the original signal reason, removes its waiter,
