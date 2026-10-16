@@ -44,7 +44,15 @@ export function consoleDevice(
   output: WritableStream<Uint8Array> | null,
 ): ConsoleDevice {
   const reader = input?.getReader();
-  const writer = output?.getWriter();
+  let writer: WritableStreamDefaultWriter<Uint8Array> | undefined;
+  try {
+    writer = output?.getWriter();
+  } catch (error) {
+    // Construction never took ownership of the streams. Return the input
+    // lock without cancelling data that still belongs to the caller.
+    reader?.releaseLock();
+    throw error;
+  }
   const config_bytes = new Uint8Array(ConsoleConfig.size);
   const config = new ConsoleConfig(config_bytes);
   config.columns = 80;
@@ -133,6 +141,8 @@ export function consoleDevice(
       },
       async close() {
         const results = await Promise.allSettled([reader_cancellation, writer_abortion]);
+        reader?.releaseLock();
+        writer?.releaseLock();
         const failure = results.find((result) => result.status === "rejected");
         if (failure) throw failure.reason;
       },
