@@ -37,6 +37,7 @@ test("pkg-config isolates target metadata and preserves static dependencies", ()
           PKG_CONFIG_LIBDIR: hostdir,
           PKG_CONFIG_SYSROOT_DIR: "/wrong",
           WASM_PKG_CONFIG_PATH: "",
+          WASM_PKG_CONFIG_SYSROOT_DIR: "",
           ...overrides,
         },
       });

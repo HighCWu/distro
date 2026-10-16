@@ -122,17 +122,16 @@ let
         nativeBuildInputs = [
           pkgs.cmake
           pkgs.ninja
+          pkgs.nodejs
         ];
       }
       ''
-          cmake -S ${./cmake-example} -B build -G Ninja \
-            -DCMAKE_TOOLCHAIN_FILE=${sdk}/share/cmake/linux-wasm.cmake \
-        -DCMAKE_NINJA_FORCE_RESPONSE_FILE=ON \
-            -DCMAKE_BUILD_TYPE=Release
-          cmake --build build --verbose
-          mkdir $out
-          cp build/sdk-example.wasm $out/
-          chmod 0755 $out/sdk-example.wasm
+        mkdir $out
+        SDK_TEST_CMAKE_TOOLCHAIN=${sdk}/share/cmake/linux-wasm.cmake \
+          SDK_TEST_PKG_CONFIG=${sdk}/bin/wasm-linux-pkg-config \
+          SDK_TEST_OUTPUT_DIRECTORY=$out \
+          node --test ${./.}/installed-consumer-test.js
+        chmod 0755 $out/sdk-example.wasm
       '';
 in
 sdk

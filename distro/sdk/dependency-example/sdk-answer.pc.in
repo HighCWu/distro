@@ -1,0 +1,11 @@
+# SPDX-License-Identifier: MIT
+prefix=@CMAKE_INSTALL_PREFIX@
+libdir=${prefix}/lib
+includedir=${prefix}/include
+
+Name: sdk-answer
+Description: Linux/Wasm SDK installed static dependency example
+Version: 1.0
+Libs: -L${libdir} -lsdk-answer
+Libs.private: -lsdk-helper
+Cflags: -I${includedir} -DSDK_EXTERNAL_ANSWER=1

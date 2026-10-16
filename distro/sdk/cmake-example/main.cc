@@ -5,7 +5,11 @@
 #include <thread>
 #include <vector>
 
+#ifdef SDK_EXTERNAL_ANSWER
+#include <answer.h>
+#else
 extern "C" int sdk_answer(void);
+#endif
 
 int main()
 {

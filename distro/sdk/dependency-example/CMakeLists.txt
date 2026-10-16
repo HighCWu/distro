@@ -1,0 +1,11 @@
+# SPDX-License-Identifier: MIT
+cmake_minimum_required(VERSION 3.20)
+project(linux_wasm_sdk_dependency LANGUAGES C)
+add_library(sdk-answer STATIC answer.c)
+add_library(sdk-helper STATIC helper.c)
+target_compile_features(sdk-answer PRIVATE c_std_11)
+target_compile_features(sdk-helper PRIVATE c_std_11)
+install(TARGETS sdk-answer sdk-helper ARCHIVE DESTINATION lib)
+install(FILES answer.h DESTINATION include)
+configure_file(sdk-answer.pc.in sdk-answer.pc @ONLY)
+install(FILES "${CMAKE_CURRENT_BINARY_DIR}/sdk-answer.pc" DESTINATION lib/pkgconfig)
