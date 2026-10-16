@@ -42,5 +42,9 @@ dependencies = [dependency('threads')]
 if get_option('installed_answer')
   dependencies += dependency('sdk-answer', method: 'pkg-config', static: true)
 endif
+# A -> B -> a previously unneeded object in A requires archive rescanning on
+# GNU ld. wasm-ld resolves it lazily without --start-group/--end-group.
+archive_a = static_library('sdk-archive-a', ['archive-entry.c', 'archive-leaf.c'])
+archive_b = static_library('sdk-archive-b', 'archive-bridge.c')
 executable('sdk-meson', ['main.cc', header],
-  dependencies: dependencies, name_suffix: 'wasm')
+  link_with: [archive_a, archive_b], dependencies: dependencies, name_suffix: 'wasm')

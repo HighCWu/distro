@@ -68,7 +68,10 @@ test("Meson runs build-machine generators without executing target probes", () =
         ar: "ar",
         strip: "strip",
         pkgConfig,
-        wasmArch: "wasm32",
+        // This fallback executes native binaries; do not disguise an ELF
+        // compiler as Wasm when testing target-specific linker decisions.
+        wasmArch:
+          process.arch === "x64" ? "x86_64" : process.arch === "arm64" ? "aarch64" : process.arch,
         sysroot: "/",
       })) {
         template = template.replaceAll(`@${key}@`, value);
