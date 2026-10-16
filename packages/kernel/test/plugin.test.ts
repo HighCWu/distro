@@ -46,6 +46,65 @@ function machine_stub(): Machine {
   };
 }
 
+test("failed configuration revokes setup before awaiting device cleanup", async () => {
+  const closing = Promise.withResolvers<void>();
+  const release = Promise.withResolvers<void>();
+  const failure = new Error("configuration failure");
+  let setup: Parameters<MachinePlugin["configure"]>[0] | undefined;
+  let settled = false;
+  let secondClosed = false;
+  const first = new VirtioController(
+    { deviceId: 1 },
+    {
+      queues: [],
+      async close() {
+        closing.resolve();
+        await release.promise;
+        throw new Error("cleanup failure");
+      },
+    },
+  );
+  const second = new VirtioController(
+    { deviceId: 2 },
+    {
+      queues: [],
+      close() {
+        secondClosed = true;
+      },
+    },
+  );
+  const pending = configure_machine(
+    [],
+    [
+      {
+        configure(value) {
+          setup = value;
+          value.devices.add(first.device, second.device);
+          throw failure;
+        },
+      },
+    ],
+  );
+  const checked = assert
+    .rejects(pending, (error) => error === failure)
+    .then(() => {
+      settled = true;
+    });
+  try {
+    await closing.promise;
+    assert.equal(settled, false, "configuration must await pending cleanup");
+    assert.equal(secondClosed, true, "one slow device must not prevent closing others");
+    assert.ok(setup);
+    const saved = setup;
+    assert.throws(() => saved.devices.add(), /configuration has finished/);
+    assert.throws(() => saved.args.add("late"), /configuration has finished/);
+    assert.throws(() => saved.deviceTree.merge({ late: 1 }), /configuration has finished/);
+  } finally {
+    release.resolve();
+    await checked;
+  }
+});
+
 test("plugins configure a machine in array order", async () => {
   const first = new VirtioController({ deviceId: 1 }, { queues: [] }).device;
   const second = new VirtioController({ deviceId: 2 }, { queues: [] }).device;

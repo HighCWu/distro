@@ -33,7 +33,11 @@ export interface DeviceTreeBuilder {
   merge(fragment: DeviceTreeNode): void;
 }
 
-/** The configure-only surface made available to machine plugins. */
+/**
+ * The configure-only surface made available to machine plugins. Mutations
+ * throw after configuration finishes, including while failed setup is cleaned
+ * up. Await asynchronous configuration work before returning from configure.
+ */
 export interface MachineSetup {
   readonly args: KernelArguments;
   readonly devices: MachineDevices;
