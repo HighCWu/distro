@@ -47,6 +47,22 @@ test("public binary pipeline script preserves bytes, separates streams and remov
     });
     assert.ifError(missingDirectory.error);
     assert.equal(missingDirectory.status, 1);
+
+    // Fail at the first assertion before touching any fixed runtime paths.
+    const wrongCwd = spawnSync(
+      "/bin/sh",
+      ["-c", publicShellScript, "agent-shell", "public shell arg"],
+      {
+        cwd: directory,
+        env: { ...process.env, AGENT_RUNTIME_VALUE: "public shell env" },
+        encoding: "utf8",
+        timeout: 5000,
+      },
+    );
+    assert.ifError(wrongCwd.error);
+    assert.equal(wrongCwd.status, 1);
+    assert.equal(wrongCwd.stdout, "");
+    assert.equal(wrongCwd.stderr, `public shell check failed: cwd [${directory}]\n`);
   } finally {
     rmSync(directory, { recursive: true, force: true });
   }

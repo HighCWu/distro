@@ -3,21 +3,26 @@
 // value assertions; do not use `set -u` as a substitute for testing them.
 export const publicShellScript = String.raw`
 set -e
-[ "$PWD" = /tmp ]
-[ "$1" = 'public shell arg' ]
-[ "$AGENT_RUNTIME_VALUE" = 'public shell env' ]
-printf '%s\n' "$1" | grep -qx 'public shell arg'
-root=$(cat /etc/agent-runtime-root)
-[ "$root" = native-wasm64-root ]
-printf '%s\n' "$AGENT_RUNTIME_VALUE" > /tmp/public-shell-source
-cp /tmp/public-shell-source /tmp/public-shell-copy
-[ "$(cat /tmp/public-shell-copy)" = 'public shell env' ]
-if /bin/sh -c 'exit 7'; then exit 90; else status=$?; fi
-[ "$status" -eq 7 ]
+fail() {
+  printf 'public shell check failed: %s [%s]\n' "$1" "$2" >&2
+  exit 1
+}
+[ "$PWD" = /tmp ] || fail cwd "$PWD"
+[ "$1" = 'public shell arg' ] || fail argv "$1"
+[ "$AGENT_RUNTIME_VALUE" = 'public shell env' ] || fail env "$AGENT_RUNTIME_VALUE"
+printf '%s\n' "$1" | grep -qx 'public shell arg' || fail pipeline "$?"
+root=$(cat /etc/agent-runtime-root) || fail root-read "$?"
+[ "$root" = native-wasm64-root ] || fail root-marker "$root"
+printf '%s\n' "$AGENT_RUNTIME_VALUE" > /tmp/public-shell-source || fail source-write "$?"
+cp /tmp/public-shell-source /tmp/public-shell-copy || fail copy "$?"
+copy=$(cat /tmp/public-shell-copy) || fail copy-read "$?"
+[ "$copy" = 'public shell env' ] || fail copy-content "$copy"
+if /bin/sh -c 'exit 7'; then fail child-exit 0; else status=$?; fi
+[ "$status" -eq 7 ] || fail child-status "$status"
 sleep 0.01 &
 child=$!
-wait "$child"
-rm /tmp/public-shell-source /tmp/public-shell-copy
+wait "$child" || fail child-wait "$?"
+rm /tmp/public-shell-source /tmp/public-shell-copy || fail remove "$?"
 printf '%s\n' 'native shell passed'
 `;
 
