@@ -181,7 +181,10 @@ let
           playwright.mkCheck {
             name = "browser-tests-${name}";
             suite = agentSystemRootSuite "persistent";
-            expectedTests = [ "persists native wasm64 ext4 root data across fresh browser machines" ];
+            expectedTests = [
+              "persists native wasm64 ext4 root data across fresh browser machines"
+              "persists native wasm64 ext4 root through OPFS across page reload"
+            ];
             project = lib.removePrefix "agent-persistent-root-wasm64-" name;
           }
         )
@@ -303,6 +306,10 @@ let
     let
       assets = guest-agent.checks."${profile}-root-wasm64";
       rootFilename = "agent-root.${if profile == "persistent" then "ext4" else "erofs"}";
+      opfsWorker = import ../site/opfs-disk-worker.nix {
+        inherit bytes pkgs;
+        kernel = kernel-wasm64;
+      };
     in
     pkgs.runCommand "agent-${profile}-root-wasm64-browser-tests"
       {
@@ -323,6 +330,9 @@ let
         cp ${source}/server.js $out/server.js
         cp ${assets.runtimeBootDisk} $out/agent-boot.img
         cp ${assets.runtimeRootfs} $out/${rootFilename}
+        ${lib.optionalString (profile == "persistent") ''
+          cp ${opfsWorker}/opfs-disk-worker.js $out/opfs-disk-worker.js
+        ''}
         cp -r ${bytes}/. $out/node_modules/@lowland/bytes/
         cp -r ${kernel-wasm64}/. $out/node_modules/@lowland/kernel/
       '';
