@@ -15,11 +15,14 @@ The Linux COPYING and LICENSES directory accompany the UAPI headers; this SDK
 does not link Linux kernel implementation code into applications. LLVM project
 license files retain their upstream exceptions and notices. SDK-owned wrapper
 and integration code uses the MIT text in SDK-MIT.txt; this does not relicense
-any upstream component.
+any upstream component. The Meson directory contains its original COPYING,
+NOTICE when present, and this project's archive-group patch and modification
+description. The source identity is taken from the SDK's selected Meson package.
 
 This is a partial license-material bundle, not a complete SBOM, dependency
 inventory, legal determination or GPL corresponding-source archive. In
-particular, host tool dependencies, Meson, and additional application libraries
+particular, host tool dependencies, Meson's Python dependencies and inherited
+Nixpkgs patches, and additional application libraries
 need their own license/notice inventory. Per-file notices in upstream source
 also remain applicable; these top-level texts are not a substitute for auditing
 the files and binaries actually distributed. Source store identities are not

@@ -10,7 +10,14 @@ const recipe = readFileSync(new URL("./license-texts.nix", import.meta.url), "ut
 const script = recipe.match(/\n  ''\n([\s\S]*)\n  ''\s*$/)?.[1];
 assert.ok(script, "test must execute the actual license-copy shell recipe");
 
-for (const failure of ["none", "missing", "empty"]) {
+for (const failure of [
+  "none",
+  "missing",
+  "empty",
+  "meson missing",
+  "meson empty",
+  "meson notice",
+]) {
   test(`SDK license bundle copies original notices and fails closed: ${failure}`, () => {
     const root = mkdtempSync(join(tmpdir(), "sdk-license-"));
     const files = new Map();
@@ -20,7 +27,7 @@ for (const failure of ["none", "missing", "empty"]) {
     };
     try {
       const sources = Object.fromEntries(
-        ["musl", "linux", "llvm-toolchain", "llvm-runtimes"].map((name) => [
+        ["musl", "linux", "llvm-toolchain", "llvm-runtimes", "meson"].map((name) => [
           name,
           join(root, name),
         ]),
@@ -31,6 +38,8 @@ for (const failure of ["none", "missing", "empty"]) {
         files.set(`${source}/${relative}`, text);
       };
       add("musl", "COPYRIGHT");
+      add("meson", "COPYING");
+      if (failure === "meson notice") add("meson", "NOTICE");
       add("linux", "COPYING");
       add("linux", "LICENSES/exceptions/Linux-syscall-note");
       for (const component of ["llvm", "clang", "lld"])
@@ -40,6 +49,8 @@ for (const failure of ["none", "missing", "empty"]) {
       const copyright = join(sources.musl, "COPYRIGHT");
       if (failure === "missing") rmSync(copyright);
       if (failure === "empty") writeFileSync(copyright, "");
+      if (failure === "meson missing") rmSync(join(sources.meson, "COPYING"));
+      if (failure === "meson empty") writeFileSync(join(sources.meson, "COPYING"), "");
       const index = join(root, "index.json");
       put(index, '{"scope":"fixture only"}\n');
       const values = {
@@ -49,6 +60,11 @@ for (const failure of ["none", "missing", "empty"]) {
         sourceIndex: index,
         "./license-texts.README.md": new URL("./license-texts.README.md", import.meta.url).pathname,
         "./LICENSE.MIT": new URL("./LICENSE.MIT", import.meta.url).pathname,
+        "./meson-wasm-archive-groups.patch": new URL(
+          "./meson-wasm-archive-groups.patch",
+          import.meta.url,
+        ).pathname,
+        "./meson-modifications.txt": new URL("./meson-modifications.txt", import.meta.url).pathname,
       };
       const shell = script.replace(/\$\{([^}]+)\}/g, (_match, key) => {
         assert.ok(Object.hasOwn(values, key), `unhandled Nix interpolation: ${key}`);
@@ -59,7 +75,7 @@ for (const failure of ["none", "missing", "empty"]) {
         encoding: "utf8",
         env: { ...process.env, out: output, TMPDIR: root },
       });
-      if (failure !== "none") {
+      if (failure !== "none" && failure !== "meson notice") {
         assert.notEqual(result.status, 0, "missing/empty notices must fail the build");
         return;
       }
@@ -75,6 +91,20 @@ for (const failure of ["none", "missing", "empty"]) {
       const sums = readFileSync(join(directory, "SHA256SUMS"), "utf8");
       assert.match(sums, /Linux-syscall-note/);
       assert.match(sums, /SDK-MIT.txt/);
+      assert.match(sums, /meson\/COPYING/);
+      for (const [source, installed] of [
+        ["meson-wasm-archive-groups.patch", "meson/meson-wasm-archive-groups.patch"],
+        ["meson-modifications.txt", "meson/MODIFICATIONS.txt"],
+      ]) {
+        assert.equal(
+          readFileSync(join(directory, installed), "utf8"),
+          readFileSync(new URL(source, import.meta.url), "utf8"),
+        );
+      }
+      assert.equal(
+        readFileSync(join(directory, "SHA256SUMS"), "utf8").includes("./meson/NOTICE"),
+        failure === "meson notice",
+      );
       assert.doesNotMatch(sums, /SHA256SUMS|empty-license-files/);
       put(join(directory, "musl/COPYRIGHT"), "tampered\n");
       assert.notEqual(

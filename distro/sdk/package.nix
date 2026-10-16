@@ -15,6 +15,7 @@ let
     inherit pkgs lib;
     sources = sysroot.licenseSources // {
       llvm-toolchain = llvm-toolchain.licenseSource;
+      meson = meson.src;
     };
   };
   profileConfig = pkgs.writeText "linux-${platform.wasmArch}.cfg" (

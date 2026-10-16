@@ -1,0 +1,16 @@
+SPDX-License-Identifier: MIT
+
+Linux/Wasm SDK Meson modifications
+
+This SDK uses Meson from the source input identified as meson in sources.json,
+with the Nixpkgs package's existing patches and build integration retained.
+In addition, meson-wasm-archive-groups.patch changes
+mesonbuild/compilers/mixins/clike.py to omit GNU archive group options for
+wasm32 and wasm64. Native ELF archive grouping remains unchanged.
+The included patch identifies this project's modification and retains the
+Apache-2.0 license; it does not relicense Meson or compiled applications.
+
+COPYING is copied unmodified from the selected upstream source. NOTICE is
+included unchanged when present in that source. This directory is selected
+license material, not a complete Meson build recipe, Nixpkgs patch inventory,
+Python dependency inventory or corresponding-source archive.

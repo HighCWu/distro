@@ -35,10 +35,16 @@ pkgs.runCommand "linux-wasm-sdk-license-texts"
   }
   ''
     destination=$out/share/linux-wasm-sdk/licenses
-    mkdir -p "$destination"/{musl,linux,llvm-toolchain,llvm-runtimes}
+    mkdir -p "$destination"/{musl,linux,llvm-toolchain,llvm-runtimes,meson}
     cp ${sourceIndex} "$destination/sources.json"
     cp ${./license-texts.README.md} "$destination/README.md"
     cp ${./LICENSE.MIT} "$destination/SDK-MIT.txt"
+    cp ${sources.meson}/COPYING "$destination/meson/COPYING"
+    if test -e ${sources.meson}/NOTICE; then
+      cp ${sources.meson}/NOTICE "$destination/meson/NOTICE"
+    fi
+    cp ${./meson-wasm-archive-groups.patch} "$destination/meson/meson-wasm-archive-groups.patch"
+    cp ${./meson-modifications.txt} "$destination/meson/MODIFICATIONS.txt"
     cp ${sources.musl}/COPYRIGHT "$destination/musl/COPYRIGHT"
     cp ${sources.linux}/COPYING "$destination/linux/COPYING"
     cp -r ${sources.linux}/LICENSES "$destination/linux/"
