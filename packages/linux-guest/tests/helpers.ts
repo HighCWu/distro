@@ -18,6 +18,36 @@ export async function collect(stream: ReadableStream<Uint8Array>) {
   return new Uint8Array(await new Response(stream).arrayBuffer());
 }
 
+export async function expect_ready_message(
+  stream: ReadableStream<Uint8Array>,
+  expected: string,
+  timeout_ms = 30_000,
+) {
+  const reader = stream.getReader();
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  const read = async () => {
+    const decoder = new TextDecoder();
+    let text = "";
+    while (text !== expected) {
+      const chunk = await reader.read();
+      if (chunk.done) throw new Error("server exited before announcing readiness");
+      text += decoder.decode(chunk.value, { stream: true });
+      if (!expected.startsWith(text)) throw new Error("unexpected server readiness message");
+    }
+  };
+  try {
+    await Promise.race([
+      read(),
+      new Promise<never>((_, reject) => {
+        timer = setTimeout(() => reject(new Error("server readiness timed out")), timeout_ms);
+      }),
+    ]);
+  } finally {
+    clearTimeout(timer);
+    reader.releaseLock();
+  }
+}
+
 export function pattern_bytes(length: number) {
   const result = new Uint8Array(length);
   for (let index = 0; index < result.length; index++) {

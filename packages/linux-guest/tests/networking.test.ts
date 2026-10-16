@@ -1,7 +1,13 @@
 import assert from "node:assert/strict";
 import { createServer, type AddressInfo } from "node:net";
 import { guest_test } from "./fixture.ts";
-import { collect, connect_with_retry, pattern_bytes, read_with_retransmit } from "./helpers.ts";
+import {
+  collect,
+  connect_with_retry,
+  pattern_bytes,
+  read_with_retransmit,
+  expect_ready_message,
+} from "./helpers.ts";
 
 guest_test("networking", async (t, fixture) => {
   const guest = await fixture.spawn();
@@ -174,18 +180,7 @@ guest_test("networking", async (t, fixture) => {
     const second = await fixture.spawn();
     const server = await guest.exec(["/tmp/network-test", "listen-ready", "tcp", "12003"]);
     const server_error = collect(server.stderr);
-    const readiness = server.stdout.getReader();
-    let announced = "";
-    try {
-      while (!announced.includes("\n")) {
-        const chunk = await readiness.read();
-        assert.equal(chunk.done, false, "TCP server exited before announcing readiness");
-        announced += new TextDecoder().decode(chunk.value);
-      }
-      assert.equal(announced, "listening\n");
-    } finally {
-      readiness.releaseLock();
-    }
+    await expect_ready_message(server.stdout, "listening\n");
     const server_output = collect(server.stdout);
     const client = await second.exec([
       "/tmp/network-test",
