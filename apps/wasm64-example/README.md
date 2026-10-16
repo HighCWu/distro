@@ -151,7 +151,13 @@ and verifies link creation without modifying payload permissions or bytes;
 the corrected baseline Chromium run at distro `bfcc295` has passed its exact
 control case without skips/retries, including native file operations and
 stop/restart. That earlier version did not include developer-program import
-or the subsequent active-application Stop behavior; those need separate results.
+or the subsequent active-application Stop behavior.
+The extended Chromium run at distro `c58929a` has now passed the exact page case
+with zero skips/retries and all 111 bundle files verified. Its SDK-built upload
+checks literal Unicode argv, both outputs, exact UTF-8 stdin, a prefix-reading
+filter fed 65,536 Chinese characters, exit 37, cancellation, active-application
+Stop and restart. This does not establish Firefox coverage, interactive TTY,
+durable storage or validation of later SDK revisions.
 The page check also removes COEP from the document response, verifies the
 visible isolation diagnostic without disk downloads, then restores normal
 hosting and continues the Linux controls check. Host probe tests distinguish
