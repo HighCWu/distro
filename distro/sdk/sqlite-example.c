@@ -2,10 +2,12 @@
 #include <errno.h>
 #include <sqlite3.h>
 #include <stdint.h>
+#include <spawn.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
 #include <sys/stat.h>
+#include <sys/wait.h>
 #include <unistd.h>
 #ifdef __wasm__
 #include <sched.h>
@@ -34,8 +36,57 @@ static int finish(sqlite3_stmt **stmt)
     return rc == SQLITE_OK;
 }
 
-int main(void)
+extern char **environ;
+
+static int lock_child(const char *path, const char *mode)
 {
+    sqlite3 *db = NULL;
+    int result = EXIT_FAILURE;
+    if (strcmp(mode, "busy") != 0 && strcmp(mode, "write") != 0)
+        return result;
+    if (sqlite3_open_v2(path, &db, SQLITE_OPEN_READWRITE, NULL) != SQLITE_OK)
+        goto done;
+    int rc = sqlite3_exec(db, "BEGIN IMMEDIATE", NULL, NULL, NULL);
+    if (strcmp(mode, "busy") == 0) {
+        if (rc == SQLITE_BUSY) result = EXIT_SUCCESS;
+        else fprintf(stderr, "SQLite child expected SQLITE_BUSY, got %d\n", rc);
+    } else if (rc == SQLITE_OK && sql(db, "INSERT INTO t VALUES(43); COMMIT")) {
+        result = EXIT_SUCCESS;
+    }
+done:
+    if (db && sqlite3_close(db) != SQLITE_OK) result = EXIT_FAILURE;
+    return result;
+}
+
+static int probe_lock(const char *executable, char *path, char *mode)
+{
+    pid_t child;
+    char *args[] = {(char *)executable, "--lock-child", path, mode, NULL};
+    int rc = posix_spawnp(&child, executable, NULL, NULL, args, environ);
+    if (rc != 0) {
+        fprintf(stderr, "SQLite lock probe spawn failed: %s\n", strerror(rc));
+        return 0;
+    }
+    int status;
+    pid_t waited;
+    do {
+        waited = waitpid(child, &status, 0);
+    } while (waited < 0 && errno == EINTR);
+    if (waited != child) {
+        fprintf(stderr, "SQLite lock probe wait failed: %s\n", strerror(errno));
+        return 0;
+    }
+    if (!WIFEXITED(status) || WEXITSTATUS(status) != EXIT_SUCCESS) {
+        fprintf(stderr, "SQLite lock probe %s failed with wait status %d\n", mode, status);
+        return 0;
+    }
+    return 1;
+}
+
+int main(int argc, char **argv)
+{
+    if (argc == 4 && strcmp(argv[1], "--lock-child") == 0)
+        return lock_child(argv[2], argv[3]);
     sqlite3 *db = NULL;
     sqlite3_stmt *stmt = NULL;
     const sqlite3_int64 value = INT64_C(9007199254740993);
@@ -90,11 +141,25 @@ int main(void)
     REQUIRE(finish(&stmt));
     REQUIRE(sqlite3_close(db) == SQLITE_OK);
     db = NULL;
+    puts("SDK SQLite: file commit, rollback, reopen and integrity verified");
+
+    REQUIRE(sqlite3_open_v2(path, &db, SQLITE_OPEN_READWRITE, NULL) == SQLITE_OK);
+    REQUIRE(sql(db, "BEGIN IMMEDIATE"));
+    REQUIRE(probe_lock(argv[0], path, "busy"));
+    REQUIRE(sql(db, "ROLLBACK"));
+    REQUIRE(probe_lock(argv[0], path, "write"));
+    REQUIRE(sqlite3_prepare_v2(db, "SELECT count(*),sum(n) FROM t", -1, &stmt, NULL) == SQLITE_OK);
+    REQUIRE(sqlite3_step(stmt) == SQLITE_ROW);
+    REQUIRE(sqlite3_column_int(stmt, 0) == 2 && sqlite3_column_int(stmt, 1) == 85);
+    REQUIRE(sqlite3_step(stmt) == SQLITE_DONE);
+    REQUIRE(finish(&stmt));
+    REQUIRE(sqlite3_close(db) == SQLITE_OK);
+    db = NULL;
+    puts("SDK SQLite: cross-process writer exclusion and lock release verified");
     REQUIRE(unlink(path) == 0);
     path[0] = '\0';
     REQUIRE(rmdir(directory) == 0);
     created = 0;
-    puts("SDK SQLite: file commit, rollback, reopen and integrity verified");
     result = EXIT_SUCCESS;
 done:
     if (stmt) sqlite3_finalize(stmt);
