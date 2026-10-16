@@ -197,11 +197,21 @@ nix build .#checks.x86_64-linux.browser-tests-check-agent-sqlite-root-wasm64-fir
 ```
 
 The browser gate requires both internal case names, machine closure, and the
-exact successful outer report without skips/retries. Run heavy builds in public
-CI; newly wired checks still need target results. These cases preserve host
-block bytes, not OPFS state, and do not establish crash recovery, WAL, or
-physical durability. Native host SQLite command regressions reject missing,
-corrupt, or wrong-field databases but cannot prove Wasm execution.
+exact successful outer report without skips/retries. A second browser case
+creates a uniquely named OPFS disk from the root template, commits and syncs
+through the installed CLI, closes the machine and disk, reloads the page, then
+reopens the same OPFS file for read-only database verification. Template fetches
+are blocked during readback, and the test removes only its own disk afterward.
+The matching memory64 disk worker uses the production startup helper without
+capacity reinitialization, so reopening does not truncate the filesystem.
+
+The Node application-root check has passed; browser results, including this new
+OPFS case, still require public CI verification. These checks do not establish
+browser process restart, crash recovery, WAL, or physical durability. Four mock
+host orchestration regressions cover existing-byte readback, input validation,
+template commit ordering, and error cleanup; native host SQLite command tests
+reject missing, corrupt, or wrong-field databases. Neither proves Wasm or OPFS
+execution. Run heavy builds in public CI.
 
 ### Standalone wasm64 embedding example
 

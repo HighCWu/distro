@@ -22,8 +22,12 @@ available runtime RAM. The dedicated 64 MiB ext4 application root installs this
 CLI with matching BusyBox, leaving the default minimal EROFS/ext4 roots unchanged.
 Its shared Node/Chromium/Firefox checks commit a 64-bit integer and binary BLOB,
 roll back an update, sync, close Linux, then verify integrity and exact fields
-in a fresh Linux instance over the retained block bytes. This is not OPFS,
-crash recovery, WAL, or a complete wasm64 package repository.
+in a fresh Linux instance over the retained block bytes. The Node check has
+passed. An additional browser case uses an actual OPFS disk, closes it after
+sync, reloads the page, and reopens the same file for read-only verification
+while blocking root-template fetches. The browser checks still require public
+CI results. Neither path establishes crash recovery, WAL, physical durability,
+or a complete wasm64 package repository.
 
 ## Linking applications with the installed library
 
@@ -58,7 +62,8 @@ but Nix rejected an embedded reference to the SQLite source store path before
 Linux runtime tests began. The recipe now copies the unchanged compilation
 inputs into the build directory and compiles relative source paths for both
 the archive and shell. The empty `allowedReferences` gate remains enabled;
-the corrected target build and runtime still require CI verification.
+the corrected application-root Node build and runtime have passed. The separate
+installed-library consumer and browser checks still require CI verification.
 
 SQLite's upstream public-domain declaration is retained in the installed
 `share/licenses/sqlite3/sqlite3.h`. Static musl and compiler-rt license texts are
