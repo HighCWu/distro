@@ -4,6 +4,50 @@ import { setImmediate } from "node:timers/promises";
 import test from "node:test";
 import { ethernetNetwork } from "../src/virtio/net.ts";
 
+test("Ethernet learning routes replies and forgets closed ports", async () => {
+  const network = ethernetNetwork();
+  const deliveries: string[] = [];
+  const a = network.addPort(() => {
+    deliveries.push("a");
+  });
+  const b = network.addPort(() => {
+    deliveries.push("b");
+  });
+  network.addPort(() => {
+    deliveries.push("observer");
+  });
+  const mac = (id: number) => [2, 0, 0, 0, 0, id];
+  const frame = (source: number, destination?: number) =>
+    Uint8Array.from([
+      ...(destination === undefined ? [255, 255, 255, 255, 255, 255] : mac(destination)),
+      ...mac(source),
+      8,
+      0,
+    ]);
+  try {
+    await a.send(frame(1));
+    assert.deepEqual(deliveries.splice(0), ["b", "observer"]);
+    await b.send(frame(2, 1));
+    assert.deepEqual(deliveries.splice(0), ["a"], "learned reply is not flooded");
+    await a.send(frame(1, 2));
+    assert.deepEqual(deliveries.splice(0), ["b"]);
+    await a.send(frame(1, 1));
+    assert.deepEqual(deliveries.splice(0), [], "same-port traffic is filtered");
+    b.close();
+    await a.send(frame(1, 2));
+    assert.deepEqual(deliveries.splice(0), ["observer"], "closed destination becomes unknown");
+    const replacement = network.addPort(() => {
+      deliveries.push("replacement");
+    });
+    await replacement.send(frame(2, 1));
+    assert.deepEqual(deliveries.splice(0), ["a"]);
+    await a.send(frame(1, 2));
+    assert.deepEqual(deliveries.splice(0), ["replacement"], "replacement address is learned");
+  } finally {
+    network.close();
+  }
+});
+
 for (const asynchronous of [false, true]) {
   test(`broadcast continues after a receiver ${asynchronous ? "rejects" : "throws"}`, async () => {
     const network = ethernetNetwork();
