@@ -80,6 +80,17 @@ expired-handle rejection without a syscall, live signalling and aborted-reap
 handling. Real wasm32 integration and wasm64 public-userland checks also assert
 the exposed `ESRCH` behavior, but still require results for this revision.
 
+Descriptor owners become invalid when close begins, including when Linux later
+reports a close error. Further operations reject with `EBADF` without sending
+the old fd number. An operation waiting for a syscall lane rechecks ownership
+before writing its request; local rejection leaves the session usable. Output
+already buffered before process disposal may still be consumed, but further
+pulls cannot issue reads through the closed owner. This does not cancel an
+already dispatched syscall or make separately constructed owners of the same
+numeric fd safe. Eight added dual-width host cases cover close errors, queued
+operations, continued session use and stale process outputs; 62 related host
+tests and TypeScript checks pass. These are not native fd-reuse stress tests.
+
 Process admission is capped at eight live SDK children so blocked process I/O
 does not consume every syscall lane. An `exec()` waiting for capacity is
 abortable: it rejects with the original signal reason, removes its waiter,
