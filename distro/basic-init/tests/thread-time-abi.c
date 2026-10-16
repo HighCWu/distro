@@ -12,6 +12,8 @@ struct fixture {
 	clockid_t clock;
 	int ready;
 	int cleanup_count;
+	int release;
+	int wake_count;
 };
 
 static void checked(int status, const char *operation)
@@ -89,6 +91,65 @@ static void test_cancellation(struct fixture *fixture)
 	}
 }
 
+static void *group_waiter(void *argument)
+{
+	struct fixture *fixture = argument;
+	checked(pthread_setcanceltype(PTHREAD_CANCEL_DEFERRED, NULL), "group deferred cancellation");
+	checked(pthread_mutex_lock(&fixture->mutex), "group worker mutex lock");
+	struct timespec future;
+	if (clock_gettime(fixture->clock, &future)) test_perror("group condition deadline");
+	if (future.tv_sec > 6000000000LL) test_fail("clock too large for group fixture");
+	future.tv_sec += 3000000000LL;
+	pthread_cleanup_push(cancellation_cleanup, fixture);
+	fixture->ready++;
+	checked(pthread_cond_signal(&fixture->handshake), "group worker handshake");
+	while (!fixture->release)
+		checked(pthread_cond_timedwait(&fixture->cond, &fixture->mutex, &future),
+			"group long timedwait");
+	pthread_cleanup_pop(0);
+	fixture->wake_count++;
+	checked(pthread_mutex_unlock(&fixture->mutex), "group normal waiter mutex ownership");
+	return argument;
+}
+
+static void test_broadcast_after_cancel(struct fixture *fixture)
+{
+	for (int round = 0; round < 4; round++) {
+		pthread_t workers[4];
+		checked(pthread_mutex_lock(&fixture->mutex), "group main mutex lock");
+		fixture->ready = fixture->cleanup_count = 0;
+		fixture->release = fixture->wake_count = 0;
+		for (size_t i = 0; i < 4; i++)
+			checked(pthread_create(&workers[i], NULL, group_waiter, fixture),
+				"create group waiter");
+		while (fixture->ready != 4)
+			checked(pthread_cond_wait(&fixture->handshake, &fixture->mutex),
+				"wait group handshake");
+		/* All four have released the mutex in timedwait. Complete one
+		 * cancellation before broadcasting; this is not a cancel/signal race. */
+		checked(pthread_cancel(workers[0]), "cancel group member");
+		checked(pthread_mutex_unlock(&fixture->mutex), "group release for cleanup");
+		void *result = NULL;
+		checked(pthread_join(workers[0], &result), "join cancelled group member");
+		if (result != PTHREAD_CANCELED) test_fail("group member was not cancelled");
+		checked(pthread_mutex_lock(&fixture->mutex), "group lock after cancellation");
+		if (fixture->cleanup_count != 1 || fixture->wake_count != 0)
+			test_fail("group cleanup count or early waiter completion mismatch");
+		fixture->release = 1;
+		checked(pthread_cond_broadcast(&fixture->cond), "broadcast remaining waiters");
+		checked(pthread_mutex_unlock(&fixture->mutex), "group unlock after broadcast");
+		for (size_t i = 1; i < 4; i++) {
+			result = NULL;
+			checked(pthread_join(workers[i], &result), "join broadcast waiter");
+			if (result != fixture) test_fail("broadcast waiter result mismatch");
+		}
+		checked(pthread_mutex_lock(&fixture->mutex), "group verify mutex lock");
+		if (fixture->cleanup_count != 1 || fixture->wake_count != 3)
+			test_fail("broadcast did not complete all surviving waiters exactly once");
+		checked(pthread_mutex_unlock(&fixture->mutex), "group verify mutex unlock");
+	}
+}
+
 static void test_clock(clockid_t clock)
 {
 	struct fixture fixture = { .clock = clock, .ready = 0 };
@@ -127,6 +188,7 @@ static void test_clock(clockid_t clock)
 		if (result != &fixture) test_fail("condition worker result mismatch");
 	}
 	test_cancellation(&fixture);
+	test_broadcast_after_cancel(&fixture);
 	checked(pthread_mutex_lock(&fixture.mutex), "timeout mutex lock");
 	struct timespec deadline;
 	if (clock_gettime(clock, &deadline)) test_perror("short condition deadline");
@@ -157,6 +219,6 @@ int main(void)
 	_Static_assert(sizeof(time_t) == 8, "thread deadlines require 64-bit time_t");
 	test_clock(CLOCK_REALTIME);
 	test_clock(CLOCK_MONOTONIC);
-	puts("thread time ABI: wakeups, cancellation, timeouts and mutex ownership verified");
+	puts("thread time ABI: wakeups, cancellation, broadcast, timeouts and mutex ownership verified");
 	test_pass();
 }
