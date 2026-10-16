@@ -3,6 +3,61 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import { hostFetchNetwork } from "../src/host-fetch-network.ts";
 
+test("a response returned after disconnect is cancelled without writing an HTTP reply", async () => {
+  const abort = new AbortController();
+  const reason = new Error("closed while fetching");
+  let cancelCount = 0;
+  let writes = 0;
+  let started!: () => void;
+  const ready = new Promise<void>((resolve) => {
+    started = resolve;
+  });
+  let finish!: (response: Response) => void;
+  const response = new Promise<Response>((resolve) => {
+    finish = resolve;
+  });
+  const body = new ReadableStream<Uint8Array>({
+    cancel() {
+      cancelCount++;
+    },
+  });
+  const network = hostFetchNetwork({
+    fetch() {
+      started();
+      return response;
+    },
+  });
+  const readable = new ReadableStream<Uint8Array>({
+    start(controller) {
+      controller.enqueue(new TextEncoder().encode("GET / HTTP/1.1\r\nHost: example.test\r\n\r\n"));
+      controller.close();
+    },
+  });
+  const writable = new WritableStream<Uint8Array>({
+    write() {
+      writes++;
+    },
+  });
+  const handled = Promise.resolve(
+    network.connectTcp!({
+      target: { hostname: "198.18.0.1", port: 80 },
+      signal: abort.signal,
+      readable,
+      writable,
+    }),
+  );
+  const rejected = assert.rejects(handled, (error) => error === reason);
+  await ready;
+  abort.abort(reason);
+  finish(new Response(body));
+  await rejected;
+  assert.equal(writes, 0);
+  assert.equal(cancelCount, 1);
+  assert.equal(body.locked, false);
+  assert.equal(readable.locked, false);
+  assert.equal(writable.locked, false);
+});
+
 test("connection abort cancels a pending custom response read", { timeout: 1000 }, async () => {
   const abort = new AbortController();
   const reason = new Error("connection closed");
