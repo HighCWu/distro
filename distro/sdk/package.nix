@@ -157,6 +157,7 @@ let
     passthru.meson = meson;
     # Reuse the exact SDK-built consumer in real-browser runtime checks.
     passthru.sqliteProgram = "${sqlitePrograms}/sdk-sqlite.wasm";
+    passthru.socketProgram = "${socketPrograms}/sdk-socket.wasm";
     passthru.checks = {
       licenses = licenseTexts;
       profile = profileCheck;
@@ -193,6 +194,10 @@ let
       sqlite-runtime = vm-test.rawInitramfsTest {
         name = "sdk-sqlite-runtime-${platform.wasmArch}";
         init = "${sqlitePrograms}/sdk-sqlite.wasm";
+      };
+      socket-runtime = vm-test.rawInitramfsTest {
+        name = "sdk-socket-runtime-${platform.wasmArch}";
+        init = "${socketPrograms}/sdk-socket.wasm";
       };
       autoconf-runtime = vm-test.rawInitramfsTest {
         name = "sdk-autoconf-runtime-${platform.wasmArch}";
@@ -310,6 +315,11 @@ let
           node --test ${./.}/zlib-consumer-test.js
         chmod 0755 $out/sdk-zlib.wasm
       '';
+  socketPrograms = pkgs.runCommand "sdk-socket-consumer-${platform.wasmArch}" { } ''
+    mkdir $out
+    ${cc}/bin/wasm-linux-cc -O2 -Wall -Wextra -Werror \
+      ${./socket-example.c} -o $out/sdk-socket.wasm
+  '';
   sqlitePrograms = pkgs.runCommand "sdk-sqlite-consumer-${platform.wasmArch}" { } ''
     mkdir $out
     # Rebuild the upstream amalgamation with this SDK, not the wasm32

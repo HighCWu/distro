@@ -17,3 +17,4 @@ const bootRuntime = (initramfsPath) =>
 globalThis.bootRuntimeSmoke = () => bootRuntime("/runtime.cpio");
 globalThis.bootCxxRuntimeSmoke = () => bootRuntime("/runtime-cxx.cpio");
 globalThis.bootSqliteRuntimeSmoke = () => bootRuntime("/runtime-sqlite.cpio");
+globalThis.bootSocketRuntimeSmoke = () => bootRuntime("/runtime-sockets.cpio");

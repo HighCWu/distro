@@ -87,6 +87,24 @@ test("runs SDK SQLite transactions and file reopen through Linux", async ({ page
   expect(output).not.toContain("::vm-test::fail");
 });
 
+test("runs SDK Unix and TCP socket readiness and half-close through Linux", async ({ page }) => {
+  page.on("console", (message) => console.log(`[browser] ${message.text()}`));
+  page.on("pageerror", (error) => console.error(`[browser] ${error.stack ?? error}`));
+  await page.goto("/");
+  await expect
+    .poll(() => page.evaluate(() => typeof globalThis.bootSocketRuntimeSmoke))
+    .toBe("function");
+  const output = await page.evaluate(() => globalThis.bootSocketRuntimeSmoke());
+  expect(output).toContain(
+    "SDK sockets: Unix stream nonblocking, poll/epoll and half-close verified",
+  );
+  expect(output).toContain(
+    "SDK sockets: TCP loopback nonblocking, poll/epoll and half-close verified",
+  );
+  expect(output).toContain("::vm-test::pass");
+  expect(output).not.toContain("::vm-test::fail");
+});
+
 test("retries a failed kernel download in the same page with a generic MIME type", async ({
   page,
 }) => {
