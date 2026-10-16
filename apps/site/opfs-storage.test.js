@@ -199,20 +199,19 @@ for (const stage of ["truncate", "getSize", "install"]) {
   });
 }
 
-test("successful installation retains ownership until close, including flush failure", () => {
-  let closed = 0;
+test("close reports release failure after a successful flush", () => {
+  const calls = [];
+  const failure = new Error("close failed");
   let storage;
-  const failure = new Error("flush failed");
   installOpfsStorage(
     {
-      getSize() {
-        return 1024;
-      },
+      getSize: () => 512,
       flush() {
-        throw failure;
+        calls.push("flush");
       },
       close() {
-        closed++;
+        calls.push("close");
+        throw failure;
       },
     },
     undefined,
@@ -220,11 +219,41 @@ test("successful installation retains ownership until close, including flush fai
       storage = value;
     },
   );
-  assert.equal(storage.capacity, 1024);
-  assert.equal(closed, 0);
   assert.throws(
     () => storage.close(),
     (error) => error === failure,
   );
-  assert.equal(closed, 1);
+  assert.deepEqual(calls, ["flush", "close"]);
 });
+
+for (const closeFails of [false, true])
+  test(`close preserves flush failure when closeFails=${closeFails}`, () => {
+    let closed = 0;
+    let storage;
+    const failure = new Error("flush failed");
+    installOpfsStorage(
+      {
+        getSize() {
+          return 1024;
+        },
+        flush() {
+          throw failure;
+        },
+        close() {
+          closed++;
+          if (closeFails) throw new Error("close failed too");
+        },
+      },
+      undefined,
+      (value) => {
+        storage = value;
+      },
+    );
+    assert.equal(storage.capacity, 1024);
+    assert.equal(closed, 0);
+    assert.throws(
+      () => storage.close(),
+      (error) => error === failure,
+    );
+    assert.equal(closed, 1);
+  });

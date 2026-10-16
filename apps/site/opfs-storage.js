@@ -56,9 +56,15 @@ export function installOpfsStorage(access, requestedCapacity, install) {
       close() {
         try {
           access.flush();
-        } finally {
-          access.close();
+        } catch (error) {
+          // Preserve the failed durability operation even if releasing the
+          // handle fails too. Always attempt to release the exclusive lock.
+          try {
+            access.close();
+          } catch {}
+          throw error;
         }
+        access.close();
       },
     });
   } catch (error) {
