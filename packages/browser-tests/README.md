@@ -203,6 +203,24 @@ block bytes, not OPFS state, and do not establish crash recovery, WAL, or
 physical durability. Native host SQLite command regressions reject missing,
 corrupt, or wrong-field databases but cannot prove Wasm execution.
 
+### Standalone wasm64 embedding example
+
+The `wasm64-example` package is a standalone browser application using native
+wasm64 boot/root assets, not runtime fixtures. Its UI checks are explicit:
+
+```console
+nix build .#checks.x86_64-linux.browser-tests-check-wasm64-example-chromium -L
+nix build .#checks.x86_64-linux.browser-tests-check-wasm64-example-firefox -L
+```
+
+The shared scenario clicks the real page controls to boot, run `uname`, perform
+an exact UTF-8 file round-trip, stop, restart with a fresh disk, observe native
+`cat` fail for the old file, and run another successful command. The strict
+report requires the exact outer case without skips/retries. Its development
+server never builds assets on demand. Heavy builds run in public CI; these new
+checks still need target results. This is intentionally an in-memory example,
+not a persistent installation or OPFS test. See `apps/wasm64-example/README.md`.
+
 ### Public plugin and GPT boot disk
 
 The public API has separate checks, using the same assertions as
