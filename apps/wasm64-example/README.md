@@ -89,15 +89,15 @@ are at most 64 NUL-free strings in 8192 JSON characters. These are UI/resource
 bounds, not ABI or security validation. The binary must use this Linux SDK's
 wasm64 ABI, not WASI, wasm32 or ELF; the native loader reports incompatible
 programs rather than translating them. The minimal root does not provide
-arbitrary dependencies or dynamic libraries. Standard input receives the text
+arbitrary dependencies or dynamic libraries. In **UTF-8 text** mode, standard input receives the text
 from the page's optional UTF-8 input field followed by EOF. Input is limited to
 65,536 characters before any import or launch, and sending it runs concurrently
 with draining both outputs to avoid pipe-filter deadlock. Empty input retains
 the previous immediate-EOF behavior. A filter may intentionally close stdin
 after a prefix: producer `EPIPE` is tolerated, but its actual exit status and
 both output streams are still required; other input errors or cancellation
-remain failures. This is finite text input, not binary-file streaming, an
-interactive terminal, or a process input quota. Stdout and stderr are
+remain failures. This text mode is finite input, not an interactive terminal
+or a process input quota. Stdout and stderr are
 decoded separately as UTF-8; their displayed interleaving is nondeterministic,
 and older output is discarded rather than retained invisibly.
 
@@ -106,6 +106,27 @@ awaits native pipe acceptance while both outputs are drained. This avoids an
 additional compatibility-mode background input queue, without changing the
 page's text/size limits. The earlier `c58929a` browser result below predates
 this mode; the updated implementation requires a new target result.
+
+Choose **Local binary file** as the standard-input source to stream a selected
+file's exact bytes instead. A file is required in that mode; the text field is
+ignored, and selecting a file while in text mode does not change text input.
+An empty file sends EOF. The input filename is not passed as an argument or
+written into Linux: `File.stream().pipeTo(child.stdin)` sends bytes with SDK
+backpressure, without `arrayBuffer()` of the whole input or an HTTP upload.
+No additional input-file size cap or hard memory/CPU quota is imposed. Use
+Cancel application or Stop Linux for long-running input, retain concurrent
+output draining, and account for browser/stream buffers and application memory.
+Outputs are still UTF-8 previews, not a binary download facility. Early consumer
+EPIPE cancels the remaining file source but still requires the real process
+status and both output streams; file read errors and cancellation stay failures.
+
+Eight added host checks cover byte preservation, empty/missing inputs, source
+failure/cancellation, prefix EPIPE, UI source choice and the C fixture (36 related
+checks total). The host-compiled fixture verifies every byte of a known 512 KiB
+plus 17-byte pattern, count/EOF, and rejection of corruption. The real page check
+uses that SDK-built fixture through the actual binary input picker, including
+empty input and a prefix consumer. New target results are required: previous
+text/streaming-mode passes do not validate this file-selection extension.
 
 **Cancel application** aborts the process capability, and the UI waits for
 process/pipe cleanup before enabling another action. Nonzero exit status and
