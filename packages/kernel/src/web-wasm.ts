@@ -7,7 +7,7 @@ export async function compile_web_wasm(response: Response): Promise<{
   if (!response.ok) {
     throw new Error(`kernel Wasm request failed: HTTP ${response.status} ${response.statusText}`);
   }
-  if (response.headers.get("Content-Type")?.trim().toLowerCase() === "application/wasm") {
+  if (response.headers.get("Content-Type") === "application/wasm") {
     // Consume both branches concurrently rather than buffering the unused tee
     // while compilation runs. Streaming preserves the browser's native cache.
     const [module, buffer] = await Promise.all([

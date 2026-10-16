@@ -4,7 +4,13 @@ import test from "node:test";
 import { compile_web_wasm } from "../src/web-wasm.ts";
 
 const emptyModule = new Uint8Array([0, 97, 115, 109, 1, 0, 0, 0]);
-for (const mime of ["application/wasm", "application/octet-stream", undefined]) {
+for (const mime of [
+  "application/wasm",
+  "application/octet-stream",
+  "Application/Wasm",
+  "application/wasm; charset=utf-8",
+  undefined,
+]) {
   test(`loads valid Wasm with MIME ${mime ?? "absent"}`, async () => {
     const response = new Response(emptyModule, {
       headers: mime ? { "Content-Type": mime } : {},
