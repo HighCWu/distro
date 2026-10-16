@@ -43,6 +43,10 @@ jobs:
                 error("unknown heavy check: " + $check)
               end
             ' <<< "$checks")
+            # Listing attribute names does not force derivation evaluation.
+            # Catch invalid SDK/package overrides before provisioning a heavy job.
+            nix eval --show-trace --raw \
+              ".#checks.x86_64-linux.$REQUESTED_HEAVY_CHECK.drvPath" >/dev/null
           fi
           echo "heavy-checks=$(jq --compact-output '{check: .}' <<< "$checks")" \
             >> "$GITHUB_OUTPUT"
@@ -200,7 +204,7 @@ jobs:
           if [[ "${{ needs.plan.outputs.targeted }}" == true ]]; then
             nix build --no-link --print-build-logs .#checks.x86_64-linux.formatting
           fi
-          nix build --no-link --print-build-logs "$installable"
+          nix build --show-trace --no-link --print-build-logs "$installable"
       - name: Retain completed toolchain outputs after targeted checks
         id: retained
         if: ${{ !cancelled() && needs.plan.outputs.targeted == 'true' && steps.heavy-cache.outcome == 'success' && steps.heavy-cache.outputs.hit-primary-key != 'true' }}
