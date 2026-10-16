@@ -116,6 +116,16 @@ dual-width protocol cases cover stale paths, exact identity, short writes and
 cleanup, with 85 related host tests passing. Native ordinary-copy and symlink
 alias assertions are included but require execution at the updated revision.
 
+Linux C-string arguments (paths, symlink targets, mount source/type/options)
+reject embedded NUL with `TypeError` before the syscall is sent. They are not
+silently truncated to another path or option prefix. Literal Unicode, spaces,
+newlines and shell metacharacters remain UTF-8 data, not shell commands. This
+does not normalize paths, confine access or make multi-operation filesystem
+methods transactional. Dual-width protocol tests cover 16 argument positions
+with leading/interior/trailing NUL and continued valid I/O (87 related host
+tests pass). Native write/remove/rename preservation assertions are included;
+their updated target execution remains separate from host validation.
+
 Process admission is capped at eight live SDK children so blocked process I/O
 does not consume every syscall lane. An `exec()` waiting for capacity is
 abortable: it rejects with the original signal reason, removes its waiter,
