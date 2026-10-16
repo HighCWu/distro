@@ -12,6 +12,7 @@ let
     #define _GNU_SOURCE
 
     #include <errno.h>
+    #include <fcntl.h>
     #include <pthread.h>
     #include <sched.h>
     #include <signal.h>
@@ -19,6 +20,8 @@ let
     #include <stdlib.h>
     #include <string.h>
     #include <sys/mman.h>
+    #include <sys/statfs.h>
+    #include <sys/statvfs.h>
     #include <unistd.h>
 
     static _Thread_local int tls_value = 41;
@@ -54,6 +57,27 @@ let
         fail("process arguments were not preserved");
       if (!getenv("HOME") || strcmp(getenv("HOME"), "/") != 0)
         fail("process environment was not preserved");
+
+      /* On LP64 asm-generic statfs takes two arguments; the ILP32 statfs64
+       * entry takes a structure size as well. A wrong syscall name can return
+       * EFAULT and leave the caller's zeroed filesystem type looking valid. */
+      struct statfs named_fs, opened_fs;
+      struct statvfs named_vfs, opened_vfs;
+      int root_fd = open("/", O_RDONLY | O_DIRECTORY);
+      if (root_fd < 0 || statfs("/", &named_fs) || fstatfs(root_fd, &opened_fs))
+        fail("statfs/fstatfs failed on the initramfs root");
+      if ((named_fs.f_type != 0x858458f6UL && named_fs.f_type != 0x01021994UL) ||
+          opened_fs.f_type != named_fs.f_type || !named_fs.f_bsize ||
+          opened_fs.f_bsize != named_fs.f_bsize)
+        fail("statfs/fstatfs returned invalid root type or block size");
+      if (statvfs("/", &named_vfs) || fstatvfs(root_fd, &opened_vfs) ||
+          named_vfs.f_bsize != named_fs.f_bsize ||
+          opened_vfs.f_bsize != named_vfs.f_bsize ||
+          named_vfs.f_namemax != named_fs.f_namelen ||
+          opened_vfs.f_namemax != named_vfs.f_namemax)
+        fail("statvfs/fstatvfs did not preserve filesystem metadata");
+      if (close(root_fd))
+        fail("closing root directory failed");
 
       uint64_t *value = malloc(sizeof(*value));
       if (!value)
