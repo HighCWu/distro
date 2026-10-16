@@ -94,19 +94,20 @@ element("start").addEventListener("click", () =>
     void output.catch(() => {});
     const active = { agent, machine, output };
     session = active;
+    const ended = (message, reason) => {
+      // Machine closure is authoritative even if an old operation never
+      // settles. Stop owns its separate cleanup path until output is drained.
+      if (session !== active || stopping) return;
+      ++generation;
+      session = undefined;
+      busy = false;
+      programController?.abort(reason);
+      programController = undefined;
+      state(message);
+    };
     void machine.closed.then(
-      () => {
-        if (session === active) {
-          session = undefined;
-          if (!busy) state("stopped");
-        }
-      },
-      (error) => {
-        if (session === active) {
-          session = undefined;
-          state(`error: ${error.message}`);
-        }
-      },
+      () => ended("stopped", new DOMException("Linux stopped", "AbortError")),
+      (error) => ended(`error: ${error.message}`, error),
     );
     return "running";
   }),

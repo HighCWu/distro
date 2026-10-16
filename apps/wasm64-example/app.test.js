@@ -78,6 +78,9 @@ function harness({ closeError, deferClose = false } = {}) {
         finishClose() {
           closed.resolve();
         },
+        failClose(error) {
+          closed.reject(error);
+        },
       };
       machines.push(machine);
       return machine;
@@ -197,4 +200,50 @@ test("restart remains blocked until the old machine closure settles", async () =
   const finalStop = h.click("stop");
   h.machines[1].finishClose();
   await finalStop;
+});
+
+for (const failure of [false, true]) {
+  test(`unexpected machine ${failure ? "failure" : "closure"} releases the UI while an application is pending`, async () => {
+    const h = harness();
+    await h.click("start");
+    const running = h.click("run-program");
+    const error = new Error("machine crashed");
+    if (failure) h.machines[0].failClose(error);
+    else h.machines[0].finishClose();
+    await new Promise((resolve) => setImmediate(resolve));
+    assert.equal(h.nodes("state").textContent, failure ? "error: machine crashed" : "stopped");
+    assert.equal(h.nodes("start").disabled, false);
+    assert.equal(h.nodes("cancel-program").disabled, true);
+    assert.equal(h.applications[0].options.signal.aborted, true);
+    await h.click("start");
+    assert.equal(h.machines.length, 2);
+    const replacement = h.click("run-program");
+    h.applications[0].options.onOutput("stdout", "obsolete output");
+    h.applications[0].result.reject(new Error("obsolete operation failed"));
+    await running;
+    assert.equal(h.nodes("state").textContent, "running application");
+    assert.equal(h.nodes("result").textContent, "");
+    assert.equal(h.nodes("cancel-program").disabled, false);
+    assert.equal(h.applications[1].options.signal.aborted, false);
+    h.applications[1].result.resolve(success.status);
+    await replacement;
+    await h.click("stop");
+  });
+}
+
+test("unexpected machine closure invalidates a pending command before restart", async () => {
+  const h = harness();
+  await h.click("start");
+  const result = Promise.withResolvers();
+  h.agents[0].run = () => result.promise;
+  const command = h.click("uname");
+  h.machines[0].finishClose();
+  await new Promise((resolve) => setImmediate(resolve));
+  assert.equal(h.nodes("start").disabled, false);
+  await h.click("start");
+  result.resolve(success);
+  await command;
+  assert.equal(h.nodes("result").textContent, "");
+  assert.equal(h.nodes("state").textContent, "running");
+  await h.click("stop");
 });
