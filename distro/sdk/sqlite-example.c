@@ -42,7 +42,8 @@ static int lock_child(const char *path, const char *mode)
 {
     sqlite3 *db = NULL;
     int result = EXIT_FAILURE;
-    if (strcmp(mode, "busy") != 0 && strcmp(mode, "write") != 0)
+    if (strcmp(mode, "busy") != 0 && strcmp(mode, "write") != 0 &&
+        strcmp(mode, "abandon") != 0)
         return result;
     if (sqlite3_open_v2(path, &db, SQLITE_OPEN_READWRITE, NULL) != SQLITE_OK)
         goto done;
@@ -50,6 +51,12 @@ static int lock_child(const char *path, const char *mode)
     if (strcmp(mode, "busy") == 0) {
         if (rc == SQLITE_BUSY) result = EXIT_SUCCESS;
         else fprintf(stderr, "SQLite child expected SQLITE_BUSY, got %d\n", rc);
+    } else if (strcmp(mode, "abandon") == 0 && rc == SQLITE_OK) {
+        /* Force uncommitted dirty pages out of the cache. No close/rollback:
+         * the next process must recover the hot journal, not just observe an
+         * unchanged database whose dirty pages never left this process. */
+        if (sql(db, "UPDATE t SET n=99") && sqlite3_db_cacheflush(db) == SQLITE_OK)
+            _exit(23);
     } else if (rc == SQLITE_OK && sql(db, "INSERT INTO t VALUES(43); COMMIT")) {
         result = EXIT_SUCCESS;
     }
@@ -76,7 +83,8 @@ static int probe_lock(const char *executable, char *path, char *mode)
         fprintf(stderr, "SQLite lock probe wait failed: %s\n", strerror(errno));
         return 0;
     }
-    if (!WIFEXITED(status) || WEXITSTATUS(status) != EXIT_SUCCESS) {
+    const int expected = strcmp(mode, "abandon") == 0 ? 23 : EXIT_SUCCESS;
+    if (!WIFEXITED(status) || WEXITSTATUS(status) != expected) {
         fprintf(stderr, "SQLite lock probe %s failed with wait status %d\n", mode, status);
         return 0;
     }
@@ -93,6 +101,7 @@ int main(int argc, char **argv)
     const unsigned char blob[] = {0, 255, 42, 0, 128};
     char directory[] = "/tmp/sdk-sqlite-XXXXXX";
     char path[128] = "";
+    char journal[144] = "";
     int created = 0, result = EXIT_FAILURE;
 
     REQUIRE(strcmp(sqlite3_libversion(), SQLITE_VERSION) == 0);
@@ -156,6 +165,35 @@ int main(int argc, char **argv)
     REQUIRE(sqlite3_close(db) == SQLITE_OK);
     db = NULL;
     puts("SDK SQLite: cross-process writer exclusion and lock release verified");
+
+    REQUIRE(snprintf(journal, sizeof(journal), "%s-journal", path) < (int)sizeof(journal));
+    REQUIRE(probe_lock(argv[0], path, "abandon"));
+    struct stat journal_stat;
+    REQUIRE(stat(journal, &journal_stat) == 0 && journal_stat.st_size > 512);
+    FILE *hot = fopen(journal, "rb");
+    REQUIRE(hot != NULL);
+    unsigned char header[8];
+    const unsigned char magic[] = {0xd9, 0xd5, 0x05, 0xf9, 0x20, 0xa1, 0x63, 0xd7};
+    size_t header_bytes = fread(header, 1, sizeof(header), hot);
+    int close_status = fclose(hot);
+    REQUIRE(header_bytes == sizeof(header) && close_status == 0);
+    REQUIRE(memcmp(header, magic, sizeof(magic)) == 0);
+    REQUIRE(sqlite3_open_v2(path, &db, SQLITE_OPEN_READWRITE, NULL) == SQLITE_OK);
+    REQUIRE(sqlite3_prepare_v2(db, "SELECT count(*),sum(n) FROM t", -1, &stmt, NULL) == SQLITE_OK);
+    REQUIRE(sqlite3_step(stmt) == SQLITE_ROW);
+    REQUIRE(sqlite3_column_int(stmt, 0) == 2 && sqlite3_column_int(stmt, 1) == 85);
+    REQUIRE(sqlite3_step(stmt) == SQLITE_DONE);
+    REQUIRE(finish(&stmt));
+    REQUIRE(sqlite3_prepare_v2(db, "PRAGMA integrity_check", -1, &stmt, NULL) == SQLITE_OK);
+    REQUIRE(sqlite3_step(stmt) == SQLITE_ROW);
+    REQUIRE(sqlite3_column_text(stmt, 0) != NULL);
+    REQUIRE(strcmp((const char *)sqlite3_column_text(stmt, 0), "ok") == 0);
+    REQUIRE(sqlite3_step(stmt) == SQLITE_DONE);
+    REQUIRE(finish(&stmt));
+    REQUIRE(sqlite3_close(db) == SQLITE_OK);
+    db = NULL;
+    REQUIRE(access(journal, F_OK) == -1 && errno == ENOENT);
+    puts("SDK SQLite: hot rollback journal recovery after process exit verified");
     REQUIRE(unlink(path) == 0);
     path[0] = '\0';
     REQUIRE(rmdir(directory) == 0);
@@ -164,6 +202,7 @@ int main(int argc, char **argv)
 done:
     if (stmt) sqlite3_finalize(stmt);
     if (db) sqlite3_close(db);
+    if (journal[0]) unlink(journal);
     if (path[0]) unlink(path);
     if (created) rmdir(directory);
     puts(result == EXIT_SUCCESS ? "::vm-test::pass" : "::vm-test::fail");

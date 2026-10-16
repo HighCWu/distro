@@ -82,6 +82,7 @@ test("runs SDK SQLite transactions and file reopen through Linux", async ({ page
   expect(output).toContain("SDK SQLite: in-memory bindings and rollback verified");
   expect(output).toContain("SDK SQLite: file commit, rollback, reopen and integrity verified");
   expect(output).toContain("SDK SQLite: cross-process writer exclusion and lock release verified");
+  expect(output).toContain("SDK SQLite: hot rollback journal recovery after process exit verified");
   expect(output).toContain("::vm-test::pass");
   expect(output).not.toContain("::vm-test::fail");
 });
