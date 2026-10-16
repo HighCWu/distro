@@ -97,7 +97,14 @@ export function ethernetNetwork(): EthernetNetwork {
             : Array.from(ports, (candidate) =>
                 candidate !== port && !candidate.closed ? candidate : undefined,
               ).filter((candidate): candidate is SwitchPort => !!candidate);
-        await Promise.all(recipients.map((recipient) => recipient.receive(frame.slice())));
+        const outcomes = await Promise.allSettled(
+          recipients.map(async (recipient) => recipient.receive(frame.slice())),
+        );
+        // A synchronous exception must not prevent later ports from receiving
+        // their copies. Finish all deliveries before reporting the first error.
+        for (const outcome of outcomes) {
+          if (outcome.status === "rejected") throw outcome.reason;
+        }
       },
       close() {
         if (port.closed) return;
