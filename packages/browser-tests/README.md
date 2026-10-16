@@ -1,18 +1,22 @@
 # Browser tests
 
-This package boots the packaged `@lowland/guest` runtime in Playwright's
-Chromium, Firefox, and WebKit builds. The server supplies the COOP and COEP
+This package tests Linux/Wasm in real Playwright browsers. The main wasm32
+suite boots the packaged agent runtime in Chromium, Firefox, and WebKit;
+separate wasm32 and wasm64 suites boot C/C++ user programs directly through
+`@lowland/kernel` in Chromium and Firefox. The server supplies the COOP and COEP
 headers required by shared WebAssembly memory. Browser binaries, fonts, npm
-packages, rootfs, initramfs, and kernel assets all come from Nix store paths;
-the tests do not fetch anything at runtime.
+packages, rootfs, initramfs, and kernel assets all come from Nix store paths.
+Tests fetch their assets from the local test server, not external services.
 
-The npm `@playwright/test` version is an exact pin. `package.nix` compares it
-with `playwright-driver.version` at evaluation time and fails with both
-versions in the error if they differ.
+The npm `@playwright/test` version is an exact pin. The Nix browser-suite
+definition compares it with `playwright-driver.version` through
+`distro/npm/playwright.nix` at evaluation time and fails with both versions in
+the error if they differ.
 
 ## Running
 
-Each engine is an ordinary flake check and runs inside the Nix build sandbox:
+Run these commands from the distro checkout. Each engine is an ordinary flake
+check and runs inside the Nix build sandbox:
 
 ```console
 nix build .#checks.x86_64-linux.browser-tests-check-chromium -L
@@ -20,9 +24,15 @@ nix build .#checks.x86_64-linux.browser-tests-check-firefox -L
 nix build .#checks.x86_64-linux.browser-tests-check-webkit -L
 ```
 
-The generic check discovery in `checks.nix` exposes these checks and the
-generic CI build matrix runs them. There is no separate browser-test app or CI
-job.
+The generic check discovery in `checks.nix` exposes these checks. Public GitHub
+Actions can run one heavy check without dispatching the full matrix:
+
+```console
+gh workflow run ci.yml --repo HighCWu/distro --ref YOUR_PUSHED_BRANCH -f heavy-check=browser-tests-check-memory64-chromium
+```
+
+Local development does not require rebuilding Linux, LLVM or all browser suites;
+use the public CI for heavy builds and keep independent lightweight work moving.
 
 The wasm32 suite covers packaged runtime boot, `uname`, clean shutdown,
 Worker scheduler handoff, spawn, private-memory snapshots, OPFS storage and
@@ -30,17 +40,48 @@ virtio-fs. It catches SAB/COOP/COEP/Worker/module-loading regressions that only
 show up on a real browser engine. Site/service-worker integration checks are
 separate checks rather than part of every engine's suite.
 
-Memory64 has separate Chromium and Firefox checks:
+## C/C++ user-program runtime suites
+
+Memory64 has separate Chromium and Firefox checks. Their historic `memory64`
+names are retained, but success requires user-program completion, not a kernel
+version banner:
 
 ```console
 nix build .#checks.x86_64-linux.browser-tests-check-memory64-chromium -L
 nix build .#checks.x86_64-linux.browser-tests-check-memory64-firefox -L
 ```
 
-These currently check kernel startup through its Linux version banner; they
-do not execute the wasm32 userspace suite or the experimental EROFS initialized
-copy tests. Passing a banner smoke test is not evidence of browser coverage for
-file reads, mapping lifecycle, signals or process teardown.
+The equivalent wasm32 entry points use matching wasm32 kernels and programs:
+
+```console
+nix build .#checks.x86_64-linux.browser-tests-check-runtime-wasm32-chromium -L
+nix build .#checks.x86_64-linux.browser-tests-check-runtime-wasm32-firefox -L
+```
+
+Both profiles use the default NOMMU kernel and two CPUs. The suite checks:
+
+- Invalid CPU counts rejected before device configuration or kernel fetch.
+- musl arguments/environment, allocation, anonymous mmap, partial munmap,
+  rejected out-of-range fixed mappings, pthread/TLS and signals.
+- C++ containers, exceptions/RAII, cross-thread exception lifetime, RTTI,
+  thread-local cleanup and condition-variable handoff.
+- SDK-built SQLite transactions, reopen, locking and rollback-journal recovery.
+- SDK-built Unix/TCP/UDP socket operations and readiness/epoll behavior.
+- SDK-built time64 timers and ready-fd waits.
+- SDK-built pthread time64 deadlines, cancellation, broadcast and lock ownership.
+- Kernel download failure followed by same-page recovery with a generic MIME type.
+
+Each program must emit its complete user-console result and close the machine
+successfully. Boot-console pass markers cannot substitute for user-program
+completion. The exact-title JSON report gate rejects missing, skipped, retried,
+unexpected or failed cases; adding a test does not itself establish a passing
+browser result. Runtime setup and required titles are defined together in
+`distro/npm/browser-tests.nix`.
+
+These suites do not turn the high-level agent into a wasm64 agent, run the full
+distribution test matrix, enable kernel softmmu or validate experimental EROFS
+initialized-copy mappings. SQLite uses the current NOMMU profile (no WAL or
+file mmap); process-exit recovery is not a browser crash or power-loss test.
 
 ## Experimental EROFS copy lifecycle
 
