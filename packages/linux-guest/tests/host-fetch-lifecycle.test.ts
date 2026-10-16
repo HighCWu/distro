@@ -16,6 +16,55 @@ test("buffered uploads preserve bytes up to the configured limit", async () => {
   assert.equal(body.locked, false);
 });
 
+test("buffered uploads copy reused tiny chunks across buffer growth", async () => {
+  const count = 10003;
+  const reused = new Uint8Array(1);
+  let index = 0;
+  const body = new ReadableStream<Uint8Array>(
+    {
+      pull(controller) {
+        if (index === count) {
+          controller.close();
+          return;
+        }
+        reused[0] = index++ % 251;
+        controller.enqueue(reused);
+      },
+    },
+    { highWaterMark: 0 },
+  );
+  const result = await bufferRequestBody(body, count);
+  assert.equal(result.length, count);
+  assert.equal(result.buffer.byteLength, count);
+  for (let i = 0; i < count; i++) assert.equal(result[i], i % 251);
+  reused[0] = 255;
+  assert.equal(result[count - 1], (count - 1) % 251);
+  assert.equal(body.locked, false);
+});
+
+test("empty chunks fit a zero upload budget", async () => {
+  let remaining = 1000;
+  const body = new ReadableStream<Uint8Array>({
+    pull(controller) {
+      if (remaining-- > 0) controller.enqueue(new Uint8Array(0));
+      else controller.close();
+    },
+  });
+  assert.equal((await bufferRequestBody(body, 0)).buffer.byteLength, 0);
+  assert.equal(body.locked, false);
+});
+
+test("buffered upload source errors release the reader", async () => {
+  const error = new Error("upload failed");
+  const body = new ReadableStream<Uint8Array>({
+    pull(controller) {
+      controller.error(error);
+    },
+  });
+  await assert.rejects(bufferRequestBody(body, 100), (caught) => caught === error);
+  assert.equal(body.locked, false);
+});
+
 test("oversized buffered uploads cancel the source and release its lock", async () => {
   let cancelled = 0;
   const body = new ReadableStream<Uint8Array>({

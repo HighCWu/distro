@@ -28,7 +28,7 @@ export async function bufferRequestBody(
   limit: number,
 ): Promise<Uint8Array<ArrayBuffer>> {
   const reader = body.getReader();
-  const chunks: Uint8Array[] = [];
+  let bytes = new Uint8Array(0);
   let length = 0;
   try {
     for (;;) {
@@ -36,16 +36,19 @@ export async function bufferRequestBody(
       if (done) break;
       if (value.byteLength > limit - length)
         throw new RequestBodyTooLarge("buffered request body exceeds limit");
-      chunks.push(value.slice());
+      // Do not retain one object per chunk: even empty or single-byte chunks
+      // must not amplify retained storage beyond the byte budget.
+      const required = length + value.byteLength;
+      if (required > bytes.length) {
+        const capacity = Math.min(limit, Math.max(required, 4096, bytes.length * 2));
+        const grown = new Uint8Array(capacity);
+        grown.set(bytes.subarray(0, length));
+        bytes = grown;
+      }
+      bytes.set(value, length);
       length += value.byteLength;
     }
-    const bytes = new Uint8Array(length);
-    let offset = 0;
-    for (const chunk of chunks) {
-      bytes.set(chunk, offset);
-      offset += chunk.byteLength;
-    }
-    return bytes;
+    return length === bytes.length ? bytes : bytes.slice(0, length);
   } finally {
     await reader.cancel().catch(() => {});
     reader.releaseLock();
