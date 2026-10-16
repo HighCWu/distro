@@ -237,6 +237,7 @@ function may_write(flags: number) {
 class Node {
   parts: string[];
   attached = true;
+  readonly files = new Set<FileHandle>();
 
   constructor(parts: string[]) {
     this.parts = parts;
@@ -250,6 +251,7 @@ class Handle {
   constructor(node: Node, file?: FileHandle) {
     this.node = node;
     this.file = file;
+    if (file) node.files.add(file);
   }
 }
 
@@ -404,7 +406,17 @@ export class NodeFS implements FS<Node, Handle> {
     if (handle?.file) {
       return attributes(await node_call(handle.file.stat({ bigint: true })));
     }
-    return await this.#path_operation(async () => attributes(await this.#stats(node)));
+    return await this.#path_operation(async () => {
+      this.#owned_node(node);
+      // Linux's inode getattr does not necessarily supply FUSE_GETATTR_FH,
+      // even for fstat. An unlinked/replaced inode is still addressable by its
+      // nodeid while open; never resolve its former pathname to a new inode.
+      if (!node.attached) {
+        const file = node.files.values().next().value;
+        if (file) return attributes(await node_call(file.stat({ bigint: true })));
+      }
+      return attributes(await this.#stats(node));
+    });
   }
 
   async readlink(node: Node) {
@@ -538,7 +550,14 @@ export class NodeFS implements FS<Node, Handle> {
   }
 
   async release(node: Node, handle: Handle) {
-    await node_call(this.#file(node, handle).close());
+    await this.#path_operation(async () => {
+      const file = this.#file(node, handle);
+      try {
+        await node_call(file.close());
+      } finally {
+        node.files.delete(file);
+      }
+    });
   }
 
   async opendir(node: Node) {

@@ -288,10 +288,9 @@ test("node virtio-fs adapter keeps open files distinct across unlink and recreat
     new TextDecoder().decode(await filesystem.read!(old.node, old.handle, 0n, 3)),
     "old",
   );
-  await assert.rejects(
-    filesystem.getattr(old.node),
-    (error) => error instanceof FSError && error.errno === 2,
-  );
+  // Linux FUSE getattr can omit FH even for fstat on an open, unlinked inode.
+  assert.equal((await filesystem.getattr(old.node)).size, 3n);
+  assert.equal((await filesystem.getattr(old.node)).nlink, 0);
   await assert.rejects(
     filesystem.open!(old.node, linux_open.readonly),
     (error) => error instanceof FSError && error.errno === 2,
@@ -300,7 +299,39 @@ test("node virtio-fs adapter keeps open files distinct across unlink and recreat
   assert.equal(new TextDecoder().decode(await filesystem.read!(old.node, old.handle, 0n, 3)), "ol");
   assert.equal(await readFile(path.join(shared, "recreated"), "utf8"), "new");
   await filesystem.release!(old.node, old.handle);
+  await assert.rejects(filesystem.getattr(old.node), { errno: 2 });
   await filesystem.release!(replacement.node, replacement.handle);
+});
+
+test("node virtio-fs detached attributes survive until the last descriptor closes", async () => {
+  const fs = new NodeFS(shared);
+  const target = await fs.create(fs.root, "held-target", linux_open.readwrite, {
+    mode: constants.S_IFREG | 0o600,
+    uid: process.getuid!(),
+    gid: process.getgid!(),
+  });
+  const second = await fs.open(target.node, linux_open.readonly);
+  const source = await fs.create(fs.root, "held-source", linux_open.readwrite, {
+    mode: constants.S_IFREG | 0o600,
+    uid: process.getuid!(),
+    gid: process.getgid!(),
+  });
+  try {
+    await fs.write(target.node, target.handle, 0n, new TextEncoder().encode("old inode"));
+    await fs.write(source.node, source.handle, 0n, new TextEncoder().encode("new"));
+    await fs.rename(fs.root, "held-source", fs.root, "held-target");
+    assert.equal((await fs.getattr(target.node)).size, 9n);
+    assert.equal((await fs.getattr(target.node)).nlink, 0);
+    assert.equal((await fs.getattr(source.node)).size, 3n);
+    await fs.release(target.node, target.handle);
+    assert.equal((await fs.getattr(target.node)).size, 9n);
+    await assert.rejects(fs.open(target.node, linux_open.readonly), { errno: 2 });
+  } finally {
+    if (target.handle.file!.fd !== -1) await fs.release(target.node, target.handle);
+    await fs.release(target.node, second);
+    await fs.release(source.node, source.handle);
+  }
+  await assert.rejects(fs.getattr(target.node), { errno: 2 });
 });
 
 test("node virtio-fs adapter preserves inode generations across replacement rename", async () => {
