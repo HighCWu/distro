@@ -1,5 +1,90 @@
 import { expect, test } from "@playwright/test";
 
+test("flushes virtio writes through the real OPFS worker", async ({ page }) => {
+  await page.goto("/");
+  const result = await page.evaluate(async () => {
+    const directory = await navigator.storage.getDirectory();
+    const name = `virtio-flush-${crypto.randomUUID()}.img`;
+    const handle = await directory.getFileHandle(name, { create: true });
+    const worker = new Worker("/opfs-disk-worker.js", { type: "module" });
+    function exchange(type, send) {
+      return new Promise((resolve, reject) => {
+        const timer = setTimeout(() => finish(new Error(`timed out waiting for ${type}`)), 10000);
+        function finish(error, value) {
+          clearTimeout(timer);
+          worker.removeEventListener("message", message);
+          worker.removeEventListener("error", failed);
+          if (error) reject(error);
+          else resolve(value);
+        }
+        function failed(event) {
+          event.preventDefault();
+          finish(new Error(event.message));
+        }
+        function message({ data }) {
+          if (data.type === "error" || data.error) finish(new Error(data.error?.message));
+          else if (data.type === type) finish(null, data);
+        }
+        worker.addEventListener("message", message);
+        worker.addEventListener("error", failed);
+        send();
+      });
+    }
+    try {
+      await exchange("ready", () => worker.postMessage({ handle, capacity: 512 }));
+      const memory = new WebAssembly.Memory({ initial: 1, maximum: 1, shared: true });
+      const view = new DataView(memory.buffer);
+      const control = new Int32Array(new SharedArrayBuffer(8));
+      worker.postMessage({ type: "bind", memory, control: control.buffer });
+      const descriptor = (ring, index, address, length, flags) => {
+        const offset = ring + index * 16;
+        view.setBigUint64(offset, BigInt(address), true);
+        view.setUint32(offset + 8, length, true);
+        view.setUint16(offset + 14, flags, true);
+      };
+      async function request(operation, ring) {
+        view.setUint32(128, operation, true);
+        descriptor(ring, 0, 128, 16, 128 | 1);
+        if (operation === 1) {
+          descriptor(ring, 1, 256, 512, 128 | 1);
+          descriptor(ring, 2, 1024, 1, 128 | 2);
+        } else descriptor(ring, 1, 1024, 1, 128 | 2);
+        view.setUint8(1024, 255);
+        worker.postMessage({
+          type: "enable",
+          vq: 0,
+          size: 4,
+          descriptor_address: ring,
+          irq: 1,
+          device_epoch: 0,
+          queue_epoch: 0,
+        });
+        const response = await exchange("complete", () =>
+          worker.postMessage({ type: "notify", vq: 0 }),
+        );
+        const status = response.completion.outputs.find((output) => output.address === 1024);
+        return { status: status?.data[0], written: response.completion.written };
+      }
+      new Uint8Array(memory.buffer, 256, 512).fill(0x6b);
+      const write = await request(1, 0);
+      const flush = await request(4, 2048);
+      await exchange("closed", () => worker.postMessage({ type: "close" }));
+      // Reopen before terminating the Worker: normal device close owns lock release.
+      const reopened = await handle.createWritable({ keepExistingData: true });
+      await reopened.close();
+      const bytes = new Uint8Array(await (await handle.getFile()).arrayBuffer());
+      return { write, flush, size: bytes.length, matches: bytes.every((byte) => byte === 0x6b) };
+    } finally {
+      worker.terminate();
+      await directory.removeEntry(name);
+    }
+  });
+  expect(result.write).toEqual({ status: 0, written: 1 });
+  expect(result.flush).toEqual({ status: 0, written: 1 });
+  expect(result.size).toBe(512);
+  expect(result.matches).toBe(true);
+});
+
 test("invalid disk capacity preserves OPFS data and releases its lock", async ({ page }) => {
   await page.goto("/");
   test.skip(
