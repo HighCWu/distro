@@ -10,6 +10,7 @@ import {
   fchmodat,
   fchownat,
   fstatat64,
+  fstat64,
   ftruncate64,
   getdents64,
   getpid,
@@ -488,18 +489,16 @@ class GuestClient {
 
   async copyFile(from: string, to: string) {
     const session = await this.#connect();
-    const src = await this.stat(from);
-    let dst: FileInfo | null = null;
-    try {
-      dst = await this.stat(to);
-    } catch (error) {
-      if (!(error instanceof SystemError && error.code === "ENOENT")) throw error;
-    }
-    if (dst && dst.dev === src.dev && dst.ino === src.ino) {
+    await using src_fd = await openat(session, from, O.RDONLY | O.CLOEXEC, 0);
+    await using dst_fd = await openat(session, to, O.WRONLY | O.CREAT | O.CLOEXEC, 0o666);
+    // Check the opened objects, not earlier path lookups: symlink/rename races
+    // can otherwise turn the destination into the source before truncation.
+    // Compare kernel-width values directly, without lossy JS number conversion.
+    const src = await fstat64(src_fd);
+    const dst = await fstat64(dst_fd);
+    if (dst.st_dev === src.st_dev && dst.st_ino === src.st_ino) {
       throw new SystemError(E.INVAL);
     }
-    await using src_fd = await openat(session, from, O.RDONLY, 0);
-    await using dst_fd = await openat(session, to, O.WRONLY | O.CREAT, 0o666);
     await ftruncate64(dst_fd, 0n);
     for (;;) {
       const data = await read(src_fd, CHUNK);

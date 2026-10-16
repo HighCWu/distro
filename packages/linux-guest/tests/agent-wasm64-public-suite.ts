@@ -103,6 +103,22 @@ export async function runPublicAgentWasm64Suite(
       } finally {
         await file.close();
       }
+      const copy = "/tmp/public-native-copy";
+      const alias = "/tmp/public-native-alias";
+      try {
+        await agent.fs.copyFile(path, copy);
+        assert.equal(await agent.fs.readTextFile(copy), "public");
+        await agent.fs.symlink(path, alias);
+        await assert.rejects(
+          agent.fs.copyFile(path, alias),
+          (error) => error instanceof SystemError && error.code === "EINVAL",
+        );
+        assert.equal(await agent.fs.readTextFile(path), "public");
+        assert.equal(await agent.fs.readLink(alias), path);
+      } finally {
+        await agent.fs.remove(alias).catch(() => {});
+        await agent.fs.remove(copy).catch(() => {});
+      }
     });
     await check("public run collects native status and forwards process options", async () => {
       const exited = await agent.run(["agent-runtime-child", "exit"]);

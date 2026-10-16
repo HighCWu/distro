@@ -48,6 +48,15 @@ guest_test("filesystem", async (t, fixture) => {
     assert.equal(await fs.readTextFile(`${directory}/hello.txt`), "hello, guest\n");
   });
 
+  await t.test("rejects copying through a symlink alias without losing source data", async () => {
+    await assert.rejects(
+      fs.copyFile(`${directory}/hello.txt`, `${directory}/link`),
+      (error) => error instanceof SystemError && error.code === "EINVAL",
+    );
+    assert.equal(await fs.readTextFile(`${directory}/hello.txt`), "hello, guest\n");
+    assert.equal(await fs.readLink(`${directory}/link`), "hello.txt");
+  });
+
   await t.test("changes file modes and sizes", async () => {
     await fs.chmod(`${directory}/renamed.txt`, 0o600);
     assert.equal((await fs.stat(`${directory}/renamed.txt`)).mode & 0o777, 0o600);
