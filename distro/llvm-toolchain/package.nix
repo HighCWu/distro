@@ -18,6 +18,7 @@ in
 pkgs.runCommand "llvm-toolchain-${platform.wasmArch}-${version}"
   {
     passthru = {
+      licenseSource = llvm-toolchain-unwrapped.src;
       isClang = true;
       hardeningUnsupportedFlags = [
         "bindnow"

@@ -6,14 +6,20 @@
   sysroot-base,
 }:
 
-pkgs.runCommand "sysroot-${platform.wasmArch}" { } ''
-  mkdir -p $out/lib $out/include/${platform.multiarchTriple} $out/share
+pkgs.runCommand "sysroot-${platform.wasmArch}"
+  {
+    passthru.licenseSources = sysroot-base.licenseSources // {
+      llvm-runtimes = llvm-runtimes.src;
+    };
+  }
+  ''
+    mkdir -p $out/lib $out/include/${platform.multiarchTriple} $out/share
 
-  cp -r ${sysroot-base}/include/* $out/include/
-  cp ${sysroot-base}/lib/* $out/lib/
+    cp -r ${sysroot-base}/include/* $out/include/
+    cp ${sysroot-base}/lib/* $out/lib/
 
-  cp -r ${llvm-runtimes}/include/c++ $out/include/
-  cp -r ${llvm-runtimes}/include/${platform.targetTriple}/c++ $out/include/${platform.multiarchTriple}/
-  cp -r ${llvm-runtimes}/share/libc++ $out/share/
-  cp ${llvm-runtimes}/lib/${platform.targetTriple}/* $out/lib/
-''
+    cp -r ${llvm-runtimes}/include/c++ $out/include/
+    cp -r ${llvm-runtimes}/include/${platform.targetTriple}/c++ $out/include/${platform.multiarchTriple}/
+    cp -r ${llvm-runtimes}/share/libc++ $out/share/
+    cp ${llvm-runtimes}/lib/${platform.targetTriple}/* $out/lib/
+  ''

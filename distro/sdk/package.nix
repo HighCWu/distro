@@ -11,6 +11,12 @@
 }:
 let
   meson = import ./meson.nix { inherit pkgs; };
+  licenseTexts = import ./license-texts.nix {
+    inherit pkgs lib;
+    sources = sysroot.licenseSources // {
+      llvm-toolchain = llvm-toolchain.licenseSource;
+    };
+  };
   profileConfig = pkgs.writeText "linux-${platform.wasmArch}.cfg" (
     lib.concatMapStringsSep "\n" lib.escapeShellArg (
       [
@@ -115,6 +121,7 @@ let
         ;
       cxxConfiguration = builtins.readFile ../llvm-toolchain/clang++.cfg;
       paths = {
+        licenseTexts = "${licenseTexts}/share/linux-wasm-sdk/licenses";
         toolchain = "${llvm-toolchain}";
         sysroot = "${sysroot}";
         compilerConfiguration = "${profileConfig}";
@@ -143,12 +150,14 @@ let
       mesonFiles
       profileMetadata
       sdkInfo
+      licenseTexts
       llvm-toolchain
     ];
     passthru.meson = meson;
     # Reuse the exact SDK-built consumer in real-browser runtime checks.
     passthru.sqliteProgram = "${sqlitePrograms}/sdk-sqlite.wasm";
     passthru.checks = {
+      licenses = licenseTexts;
       profile = profileCheck;
       wrapper =
         pkgs.runCommand "sdk-wrapper-contract"
@@ -215,6 +224,7 @@ let
           assert.equal(p.targetTriple, "${platform.targetTriple}");
           assert.equal(p.addressBits, ${toString platform.addressBits});
           assert.equal(p.wasmArch, "${platform.wasmArch}");
+          assert.ok(fs.statSync(p.paths.licenseTexts + "/SHA256SUMS").isFile());
           assert.deepEqual(p.compilerFlags, ${builtins.toJSON platform.compilerFlags});
           assert.deepEqual(p.linkerFlags, ${builtins.toJSON platform.linkerFlags});
           assert.equal(p.cxxConfiguration, fs.readFileSync(p.paths.toolchain + "/bin/clang++.cfg", "utf8"));
