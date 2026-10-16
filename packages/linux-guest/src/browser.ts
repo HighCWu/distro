@@ -146,14 +146,16 @@ function default_metadata(kind: FileSystemHandle["kind"]): Metadata {
 export class BrowserFS implements FS<Node, Handle> {
   readonly root: Node;
   readonly #nodes = new Map<string, Node>();
+  readonly #ownedNodes = new WeakSet<Node>();
 
   constructor(root: FileSystemDirectoryHandle) {
     this.root = new Node([], root, default_metadata("directory"));
+    this.#ownedNodes.add(this.root);
     this.#nodes.set("", this.root);
   }
 
   #as_node(node: Node) {
-    if (!(node instanceof Node)) {
+    if (!(node instanceof Node) || !this.#ownedNodes.has(node)) {
       throw new FSError("EINVAL", "node belongs to another filesystem");
     }
     if (!node.attached) {
@@ -175,6 +177,7 @@ export class BrowserFS implements FS<Node, Handle> {
     let node = this.#nodes.get(key);
     if (!node) {
       node = new Node(parts, handle, default_metadata(handle.kind));
+      this.#ownedNodes.add(node);
       this.#nodes.set(key, node);
     } else {
       node.handle = handle;
