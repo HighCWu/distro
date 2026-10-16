@@ -237,6 +237,8 @@ let
     pkgs.runCommand "sdk-meson-consumer-${platform.wasmArch}"
       {
         nativeBuildInputs = [
+          # Meson probes the build-machine static linker even in cross builds.
+          pkgs.binutils
           pkgs.meson
           pkgs.ninja
           pkgs.nodejs
