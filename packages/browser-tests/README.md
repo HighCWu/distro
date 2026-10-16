@@ -107,6 +107,26 @@ fixture, not a public wasm64 image selector or a full distro boot: production ro
 discovery/pivot, mounts and networking remain outside this suite. A Node pass is
 not evidence of a browser pass; the browser runs must be checked independently.
 
+### Production entry and root pivot
+
+Separate checks replace the fixture PID 1 with the real native wasm64 agent
+entry point and attach its matching `LOWLAND_ROOT` EROFS image:
+
+```console
+nix build .#checks.x86_64-linux.browser-tests-check-agent-production-wasm64-chromium -L
+nix build .#checks.x86_64-linux.browser-tests-check-agent-production-wasm64-firefox -L
+```
+
+They reuse the Node production check's initramfs and root image, not its result.
+The shared corpus requires the root marker, EROFS read-only root mount,
+proc/sys/devpts directories and detached old initramfs in addition to all seven
+file/process cases. The report requires the exact eight completed case names,
+machine closure, one successful test, no skips and no retries. Asset download
+failures are errors; there is no fallback to the fixture or another ABI.
+The minimal root includes the native test program, not a full distribution or
+system init. Passing Node production tests alone does not establish browser
+production support.
+
 ## Experimental EROFS copy lifecycle
 
 Independent suites use the opt-in test kernel and the same C test/initramfs
