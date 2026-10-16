@@ -25,8 +25,8 @@ roll back an update, sync, close Linux, then verify integrity and exact fields
 in a fresh Linux instance over the retained block bytes. The Node check has
 passed. An additional browser case uses an actual OPFS disk, closes it after
 sync, reloads the page, and reopens the same file for read-only verification
-while blocking root-template fetches. The browser checks still require public
-CI results. Neither path establishes crash recovery, WAL, physical durability,
+while blocking root-template fetches. Both browser checks have passed in public
+CI at the revisions recorded below. Neither path establishes crash recovery, WAL, physical durability,
 or a complete wasm64 package repository.
 
 ## Linking applications with the installed library
