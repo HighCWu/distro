@@ -25,6 +25,34 @@ roll back an update, sync, close Linux, then verify integrity and exact fields
 in a fresh Linux instance over the retained block bytes. This is not OPFS,
 crash recovery, WAL, or a complete wasm64 package repository.
 
+## Linking applications with the installed library
+
+The separate `dev` output contains `include/sqlite3.h`, `sqlite3ext.h`,
+`lib/libsqlite3.a`, relocatable `lib/pkgconfig/sqlite3.pc`, and license texts.
+Only `out` (the CLI and notices) is installed by default or put into the
+application root; development files do not become runtime image contents.
+The CLI itself links this same archive. `sqlite3ext.h` is the upstream header,
+not a promise that loadable extensions are supported by this build.
+
+```console
+nix build .#sqlite3-wasm64.dev --out-link result-sqlite-dev -L
+export WASM_PKG_CONFIG_PATH="$PWD/result-sqlite-dev/lib/pkgconfig"
+export WASM_PKG_CONFIG_SYSROOT_DIR=/
+wasm-linux-cc -pthread app.c $(wasm-linux-pkg-config --cflags --libs sqlite3) -o app.wasm
+nix build .#checks.x86_64-linux.sqlite3-wasm64-check-development -L
+```
+
+Use the matching wasm64 SDK, not the default wasm32 compiler. The SDK's
+pkg-config wrapper selects static dependency flags; `-lm` and `-pthread` are
+part of the metadata. The development check copies the installed development
+output into a new prefix and compiles the existing SDK SQLite consumer using
+only that prefix's installed headers/archive, not SQLite source files. It then
+boots the consumer under wasm64 Linux, requiring its complete runtime marker
+(including transactions, locks, and hot rollback-journal recovery). Its results
+must still be checked in public CI. The lightweight metadata regression verifies
+prefix relocation, static flags, and no host fallback after removing the `.pc`;
+it does not validate Wasm archive contents or target execution.
+
 SQLite's upstream public-domain declaration is retained in the installed
 `share/licenses/sqlite3/sqlite3.h`. Static musl and compiler-rt license texts are
 also installed; those components retain their own terms. The MIT license on the
