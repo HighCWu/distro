@@ -1,10 +1,13 @@
 // SPDX-License-Identifier: MIT
 #include <algorithm>
+#include <chrono>
+#include <condition_variable>
 #include <cstdint>
 #include <cstdio>
 #include <cstdlib>
 #include <exception>
 #include <memory>
+#include <mutex>
 #include <numeric>
 #include <sched.h>
 #include <stdexcept>
@@ -25,6 +28,37 @@ struct Guard {
     int &destroyed;
     ~Guard() { ++destroyed; }
 };
+
+static void condition_variable_probe()
+{
+    std::mutex mutex;
+    std::condition_variable changed;
+    bool ready = false;
+    bool work = false;
+    bool complete = false;
+    int result = 0;
+    std::thread worker([&] {
+        std::unique_lock<std::mutex> lock(mutex);
+        ready = true;
+        changed.notify_one();
+        if (!changed.wait_for(lock, std::chrono::seconds(10), [&] { return work; }))
+            fail("condition variable worker timed out");
+        result = 73;
+        complete = true;
+        changed.notify_one();
+    });
+    {
+        std::unique_lock<std::mutex> lock(mutex);
+        if (!changed.wait_for(lock, std::chrono::seconds(10), [&] { return ready; }))
+            fail("condition variable readiness timed out");
+        work = true;
+        changed.notify_one();
+        if (!changed.wait_for(lock, std::chrono::seconds(10), [&] { return complete; }))
+            fail("condition variable completion timed out");
+        if (result != 73) fail("condition variable result visibility");
+    }
+    worker.join();
+}
 
 struct ThreadCleanup {
     int &destroyed;
@@ -155,6 +189,10 @@ int main()
 
         thread_cleanup_probe();
         std::puts("C++ runtime: thread_local exit cleanup passed");
+        std::fflush(stdout);
+
+        condition_variable_probe();
+        std::puts("C++ runtime: condition variable handoff passed");
         std::fflush(stdout);
 
         tls_value = 17;
