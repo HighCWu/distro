@@ -102,6 +102,20 @@ of untrusted code. A program can change or damage the same Linux instance and
 its files. Only run trusted programs, and retain the licenses/notices required
 by the components linked into your own binary.
 
+**Stop Linux** stays available during application or filesystem work. Unlike
+single-process cancellation, it requests closure of the whole machine and
+discards the temporary disk. It does not wait behind application completion:
+the UI invalidates the old operation, requests machine closure, and waits for
+the machine and boot-console stream before allowing a restart. Late output,
+errors, or file-operation continuations from the old instance cannot update
+the replacement instance or run a command there. Closure errors stay visible.
+This still depends on the runtime's machine-close contract; it is not a hard
+browser deadline, graceful filesystem shutdown, or persistence guarantee.
+Five mock-host UI regressions cover these ownership/stop/restart races, including
+delayed machine closure. Together with the other example/packaging host checks,
+23 tests pass. The real browser case now stops a waiting imported program and
+restarts Linux; that extended behavior still requires public CI verification.
+
 Nine host regressions verify import/argument validation, executable mode,
 literal argv, UTF-8 streams, nonzero status, cancellation and failure cleanup.
 They do not prove Linux execution. The browser check separately compiles a
@@ -125,7 +139,10 @@ read-only when the test suite added Playwright links. The suite now enables
 owner write permission only on that copied directory, not recursively on
 application payloads. A host regression reproduces the old permission failure
 and verifies link creation without modifying payload permissions or bytes;
-the corrected browser run still requires CI results.
+the corrected baseline Chromium run at distro `bfcc295` has passed its exact
+control case without skips/retries, including native file operations and
+stop/restart. That earlier version did not include developer-program import
+or the subsequent active-application Stop behavior; those need separate results.
 The page check also removes COEP from the document response, verifies the
 visible isolation diagnostic without disk downloads, then restores normal
 hosting and continues the Linux controls check. Host probe tests distinguish

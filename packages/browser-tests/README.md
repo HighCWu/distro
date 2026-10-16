@@ -207,6 +207,8 @@ capacity reinitialization, so reopening does not truncate the filesystem.
 
 The Node application-root check and original retained-memory Firefox case have
 passed; the additional OPFS case still requires public CI verification.
+Chromium has subsequently passed both browser cases at distro `041b82c`,
+including OPFS page reload, without skips/retries; Firefox OPFS remains pending.
 These checks do not establish
 browser process restart, crash recovery, WAL, or physical durability. Four mock
 host orchestration regressions cover existing-byte readback, input validation,
@@ -231,6 +233,11 @@ and continued native `uname` execution. This program is compiled only for the
 browser suite and is not installed into the minimal example root. Import size,
 argument validation, streaming/cleanup and bounded display have nine host
 regressions; actual extended browser execution still requires public CI results.
+The whole-machine Stop control also remains available during application work;
+five mock-host UI regressions guard stop/restart ownership, late results and
+closure errors. The real browser case now stops a waiting application before
+restarting. Earlier baseline Chromium success at `bfcc295` did not include
+application import or this extended stop scenario.
 
 The shared scenario clicks the real page controls to boot, run `uname`, perform
 an exact UTF-8 file round-trip, stop, restart with a fresh disk, observe native

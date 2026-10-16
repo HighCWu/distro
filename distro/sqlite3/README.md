@@ -68,7 +68,9 @@ the archive and shell. The empty `allowedReferences` gate remains enabled;
 the corrected application-root Node build and runtime have passed, as has the
 separate installed-library consumer. Firefox has also passed the original
 retained-memory root check, with both SQL phases and no skips/retries; the
-additional OPFS page-reload check still requires CI verification.
+additional OPFS page-reload check has now passed in Chromium at distro
+`041b82c`: both browser cases executed, with no skips/retries. Firefox OPFS
+verification remains pending. This does not establish crash recovery or WAL.
 
 SQLite's upstream public-domain declaration is retained in the installed
 `share/licenses/sqlite3/sqlite3.h`. Static musl and compiler-rt license texts are
