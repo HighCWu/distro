@@ -7,6 +7,7 @@
   sysroot,
   vm-test,
   zlib,
+  sqlite3,
 }:
 let
   meson = import ./meson.nix { inherit pkgs; };
@@ -177,6 +178,10 @@ let
         name = "sdk-zlib-runtime-${platform.wasmArch}";
         init = "${zlibPrograms}/sdk-zlib.wasm";
       };
+      sqlite-runtime = vm-test.rawInitramfsTest {
+        name = "sdk-sqlite-runtime-${platform.wasmArch}";
+        init = "${sqlitePrograms}/sdk-sqlite.wasm";
+      };
       autoconf-runtime = vm-test.rawInitramfsTest {
         name = "sdk-autoconf-runtime-${platform.wasmArch}";
         init = "${autoconfPrograms}/sdk-autoconf.wasm";
@@ -287,6 +292,19 @@ let
           node --test ${./.}/zlib-consumer-test.js
         chmod 0755 $out/sdk-zlib.wasm
       '';
+  sqlitePrograms = pkgs.runCommand "sdk-sqlite-consumer-${platform.wasmArch}" { } ''
+    mkdir $out
+    # Rebuild the upstream amalgamation with this SDK, not the wasm32
+    # distribution library. Match the existing NOMMU SQLite profile.
+    ${cc}/bin/wasm-linux-cc -O2 -pthread \
+      -DSQLITE_THREADSAFE=1 -DSQLITE_OMIT_LOAD_EXTENSION=1 \
+      -DSQLITE_OMIT_WAL=1 -DSQLITE_MAX_MMAP_SIZE=0 \
+      -I${sqlite3.src} -c ${sqlite3.src}/sqlite3.c -o sqlite3.o
+    ${llvm-toolchain}/bin/llvm-ar rcs libsqlite3.a sqlite3.o
+    ${cc}/bin/wasm-linux-cc -O2 -pthread -Wall -Wextra -Werror \
+      -I${sqlite3.src} ${./sqlite-example.c} ./libsqlite3.a -lm \
+      -o $out/sdk-sqlite.wasm
+  '';
   autoconfPrograms =
     pkgs.runCommand "sdk-autoconf-consumer-${platform.wasmArch}"
       {
