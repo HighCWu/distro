@@ -20,7 +20,13 @@ import {
   unlinkat,
   write,
 } from "../src/syscalls.ts";
-import { closed_input, collect, expect_ready_message, pattern_bytes } from "./helpers.ts";
+import {
+  closed_input,
+  collect,
+  console_line_output,
+  expect_ready_message,
+  pattern_bytes,
+} from "./helpers.ts";
 
 test(
   "native wasm64 agent sessions, files and processes on real Linux",
@@ -30,17 +36,10 @@ test(
     assert.ok(path, "AGENT_WASM64_INITRAMFS must select the wasm64 fixture");
     const vsock = vsockDevice();
     const ready = Promise.withResolvers<void>();
-    let consoleText = "";
-    const decoder = new TextDecoder();
     const output = () =>
-      new WritableStream<Uint8Array>({
-        write(chunk) {
-          process.stderr.write(chunk);
-          consoleText += decoder.decode(chunk, { stream: true });
-          if (consoleText.includes("agent-wasm64-runtime: ready\n")) ready.resolve();
-          if (consoleText.includes("Kernel panic - not syncing"))
-            ready.reject(new Error(consoleText));
-        },
+      console_line_output((line) => {
+        if (line === "agent-wasm64-runtime: ready") ready.resolve();
+        if (line.includes("Kernel panic - not syncing")) ready.reject(new Error(line));
       });
     const machine = await bootMachine({
       cpus: 1,

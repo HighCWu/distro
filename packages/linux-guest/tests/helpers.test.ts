@@ -1,7 +1,48 @@
 // SPDX-License-Identifier: MIT
 import assert from "node:assert/strict";
 import test from "node:test";
-import { collect, expect_ready_message } from "./helpers.ts";
+import { collect, console_line_output, expect_ready_message } from "./helpers.ts";
+
+for (const newline of ["\n", "\r\n"]) {
+  test(`console readiness consumes complete ${JSON.stringify(newline)} lines across chunks`, async () => {
+    const lines: string[] = [];
+    const logged: string[] = [];
+    const writer = console_line_output((line) => lines.push(line), {
+      write(text) {
+        logged.push(text);
+      },
+    }).getWriter();
+    const bytes = new TextEncoder().encode(
+      `kernel ✓${newline}agent-wasm64-runtime: ready${newline}`,
+    );
+    for (const byte of bytes) await writer.write(Uint8Array.of(byte));
+    await writer.close();
+    assert.deepEqual(lines, ["kernel ✓", "agent-wasm64-runtime: ready"]);
+    assert.deepEqual(logged, ["kernel ✓\n", "agent-wasm64-runtime: ready\n"]);
+  });
+}
+
+test("console streams do not merge partial lines or accept an unterminated ready fragment", async () => {
+  const lines: string[] = [];
+  const logged: string[] = [];
+  const output = {
+    write(text: string) {
+      logged.push(text);
+    },
+  };
+  const first = console_line_output((line) => lines.push(line), output).getWriter();
+  const second = console_line_output((line) => lines.push(line), output).getWriter();
+  const encode = (text: string) => new TextEncoder().encode(text);
+  await first.write(encode("boot"));
+  await second.write(encode("agent-wasm64-runtime: ready\r"));
+  assert.deepEqual(lines, []);
+  await first.write(encode(" message\n"));
+  await second.write(encode("\nagent-wasm64-runtime: ready"));
+  assert.deepEqual(lines, ["boot message", "agent-wasm64-runtime: ready"]);
+  await Promise.all([first.close(), second.close()]);
+  assert.equal(lines.length, 2);
+  assert.equal(logged.at(-1), "agent-wasm64-runtime: ready\n");
+});
 
 test("readiness accepts split output and releases the stream lock", async () => {
   const stream = new ReadableStream<Uint8Array>({

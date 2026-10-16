@@ -1,3 +1,28 @@
+import {
+  LineDecoder,
+  writeConsoleLines,
+  type ConsoleOutput,
+} from "../../../distro/vm-test/protocol.js";
+
+// The serial console can translate LF into CRLF, and its chunks need not align
+// with lines or UTF-8 characters. Reuse the boot harness's decoder, with one
+// decoder per stream. Only complete lines trigger readiness/error callbacks.
+export function console_line_output(
+  consumeLine: (line: string) => void,
+  output: ConsoleOutput = process.stderr,
+): WritableStream<Uint8Array> {
+  const decoder = new LineDecoder();
+  return new WritableStream({
+    write(chunk) {
+      writeConsoleLines(output, decoder.write(chunk), consumeLine);
+    },
+    close() {
+      // An unterminated final fragment is diagnostic output, not readiness.
+      for (const line of decoder.close()) output.write(`${line}\n`);
+    },
+  });
+}
+
 export function closed_input() {
   return new ReadableStream<Uint8Array>({
     start(controller) {
