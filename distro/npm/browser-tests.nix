@@ -20,6 +20,12 @@
 
 let
   source = ../../packages/browser-tests;
+  runtimeTests = [
+    "rejects invalid CPU counts before configuring devices or fetching the kernel"
+    "runs musl allocation, mmap, threads, TLS and signals"
+    "runs C++ containers, exceptions, cross-thread exception_ptr cleanup and TLS"
+    "retries a failed kernel download in the same page with a generic MIME type"
+  ];
 
   baseSuite = pkgs.runCommand "browser-tests" { } ''
     mkdir -p \
@@ -91,6 +97,7 @@ let
         playwright.mkCheck {
           name = "browser-tests-${name}";
           suite = runtimeSuite 32;
+          expectedTests = runtimeTests;
           project = lib.removePrefix "runtime-wasm32-" name;
         }
       ))
@@ -126,6 +133,7 @@ let
     playwright.mkCheck {
       name = "browser-tests-${name}";
       suite = runtimeSuite 64;
+      expectedTests = runtimeTests;
       project = lib.removePrefix "memory64-" name;
     };
 
@@ -211,6 +219,11 @@ let
     name = "browser-tests-site-live";
     project = "chromium";
     suite = siteSuite;
+    expectedTests = [
+      "missing cross-origin isolation stops before disk access or kernel startup"
+      "boots and formats a blank persistent disk into the canonical system"
+      "falls back to live-only mode when persistent storage is unavailable"
+    ];
   };
   serviceWorkerCheck = playwright.mkCheck {
     name = "browser-tests-service-worker";

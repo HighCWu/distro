@@ -45,6 +45,7 @@ in
       name,
       project,
       suite,
+      expectedTests ? [ ],
     }:
     pkgs.runCommand name
       {
@@ -69,7 +70,12 @@ in
         export WEBKIT_DISABLE_DMABUF_RENDERER=1
 
         cd ${suite}
-        node node_modules/@playwright/test/cli.js test --project=${project} --reporter=line
+        export PLAYWRIGHT_JSON_OUTPUT_NAME="$TMPDIR/browser-report.json"
+        node node_modules/@playwright/test/cli.js test --project=${project} --forbid-only --reporter=line,json
+        ${lib.optionalString (expectedTests != [ ]) ''
+          node ${./browser-report-check.mjs} "$TMPDIR/browser-report.json" \
+            ${pkgs.writeText "expected-browser-tests.json" (builtins.toJSON expectedTests)}
+        ''}
         touch $out
       '';
 }
