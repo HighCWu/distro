@@ -131,11 +131,14 @@ let
     "pnpm --filter=@lowland/guest-tests exec node --test --test-concurrency=1 "
     + "virtio-fs-node-guest.test.ts"
   );
+  networking = integration-test "linux-guest-networking-test" (
+    "pnpm --filter=@lowland/guest-tests exec node --test --test-concurrency=1 networking.test.ts"
+  );
 in
 package
 // {
   checks.tests = {
     assets = test-assets;
-    inherit integration node-filesystem;
+    inherit integration node-filesystem networking;
   };
 }
