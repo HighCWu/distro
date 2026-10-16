@@ -69,6 +69,8 @@ export function consoleDevice(
   const receive_chains: VirtqueueChain[] = [];
   const pending_input: Uint8Array[] = [];
   let guest_ready = false;
+  let input_stopped = false;
+  let input_drained: (() => void) | undefined;
 
   function reset() {
     // Receive descriptors belong to the old queue, but host input belongs to
@@ -91,11 +93,23 @@ export function consoleDevice(
       if (n < chunk.byteLength) pending_input[0] = chunk.subarray(n);
       else pending_input.shift();
     }
+    if (pending_input.length === 0) {
+      input_drained?.();
+      input_drained = undefined;
+    }
   }
 
   async function pump_input() {
     assert(reader);
     for (;;) {
+      // Keep at most one source chunk pending when Linux is not consuming
+      // input. Otherwise an unbounded producer can exhaust the browser heap.
+      if (pending_input.length > 0) {
+        await new Promise<void>((resolve) => {
+          input_drained = resolve;
+        });
+      }
+      if (input_stopped) break;
       const { value, done } = await reader.read();
       if (done) break;
       pending_input.push(value);
@@ -134,6 +148,9 @@ export function consoleDevice(
       queues: [reader ? notify_input : () => {}, notify_output],
       reset,
       stop() {
+        input_stopped = true;
+        input_drained?.();
+        input_drained = undefined;
         reset();
         pending_input.length = 0;
         reader_cancellation ??= reader?.cancel();
