@@ -24,6 +24,8 @@ test("pkg-config isolates target metadata and preserves static dependencies", ()
     writeFileSync(join(hostdir, "host_only.pc"), pc("host_only"));
     writeFileSync(join(sharedir, "shared.pc"), pc("shared"));
     writeFileSync(join(extra, "addon.pc"), pc("addon"));
+    writeFileSync(join(libdir, "consumer.pc"), pc("consumer") + "Requires.private: sdk >= 1.0\n");
+    writeFileSync(join(libdir, "missing.pc"), pc("missing") + "Requires.private: host_only\n");
     const script = template
       .replaceAll("@sysroot@", quote(sysroot))
       .replaceAll("@libdir@", quote(`${libdir}:${sharedir}`))
@@ -52,6 +54,30 @@ test("pkg-config isolates target metadata and preserves static dependencies", ()
     assert.equal(run(["--exists", "addon"]).status, 1);
     assert.equal(run(["--exists", "addon"], { WASM_PKG_CONFIG_PATH: extra }).status, 0);
     assert.equal(run(["--modversion", "sdk"]).stdout.trim(), "1.0");
+    const transitive = run(["--libs", "consumer"]);
+    assert.equal(transitive.status, 0, transitive.stderr);
+    assert.match(transitive.stdout, /-lconsumer\b/);
+    assert.match(transitive.stdout, /-lsdk\b/);
+    assert.match(transitive.stdout, /-lprivate_dep\b/);
+    assert.doesNotMatch(transitive.stdout, /host_poison/);
+    assert.notEqual(run(["--libs", "missing"]).status, 0);
+
+    // External target libraries can be staged outside the SDK's own sysroot.
+    // The explicit target override must replace, not concatenate, that root.
+    const staged = join(root, "staged-target");
+    const relocatedFlags = run(["--cflags", "--libs", "addon"], {
+      WASM_PKG_CONFIG_PATH: extra,
+      WASM_PKG_CONFIG_SYSROOT_DIR: staged,
+    });
+    assert.equal(relocatedFlags.status, 0, relocatedFlags.stderr);
+    assert.ok(!relocatedFlags.stdout.includes(sysroot), relocatedFlags.stdout);
+    // Inspect the flags as arguments, as a shell-based build would consume them.
+    const parsed = spawnSync("bash", ["-c", `printf '%s\\n' ${relocatedFlags.stdout}`], {
+      encoding: "utf8",
+    });
+    assert.equal(parsed.status, 0, parsed.stderr);
+    assert.ok(parsed.stdout.split("\n").includes(`-I${staged}/include/sdk`), parsed.stdout);
+    assert.ok(parsed.stdout.split("\n").includes(`-L${staged}/lib`), parsed.stdout);
     assert.notEqual(run(["--definitely-invalid-option"]).status, 0);
   } finally {
     rmSync(root, { recursive: true, force: true });
