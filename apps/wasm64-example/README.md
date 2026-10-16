@@ -101,6 +101,12 @@ interactive terminal, or a process input quota. Stdout and stderr are
 decoded separately as UTF-8; their displayed interleaving is nondeterministic,
 and older output is discarded rather than retained invisibly.
 
+The launcher now selects the SDK's `stdinMode: "streaming"`, so its write
+awaits native pipe acceptance while both outputs are drained. This avoids an
+additional compatibility-mode background input queue, without changing the
+page's text/size limits. The earlier `c58929a` browser result below predates
+this mode; the updated implementation requires a new target result.
+
 **Cancel application** aborts the process capability, and the UI waits for
 process/pipe cleanup before enabling another action. Nonzero exit status and
 errors remain visible; neither is converted to success. This is not a global

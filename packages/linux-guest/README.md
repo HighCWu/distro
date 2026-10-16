@@ -79,8 +79,10 @@ Six added dual-width mock-protocol cases (14 lifecycle cases total) verify
 expired-handle rejection without a syscall, live signalling and aborted-reap
 handling. Real wasm32 integration and wasm64 public-userland checks also assert
 the exposed `ESRCH` behavior. The wasm64 Node userland run at `50c3439` has
-passed all six tests without failures, cancellations or skips; wasm32 remains
-separate, and this does not validate later stdin or copy revisions.
+passed all six tests without failures, cancellations or skips. The wasm32
+integration at the same revision passed all 274 tests, including reaped-handle
+rejection and buffered-input/fd-reuse ordering, with zero failures/cancellations/
+skips. Neither result validates later stdin, copy or streaming revisions.
 
 Descriptor owners become invalid when close begins, including when Linux later
 reports a close error. Further operations reject with `EBADF` without sending
@@ -149,6 +151,37 @@ cases verify rejection and exact byte/count boundaries (91 related host tests
 pass); CI also checks that SDK constants match the native parser and the
 largest permitted body fits its frame. Updated native oversized-input and
 subsequent-execution assertions still require target CI results.
+
+For larger inputs, `exec(argv, { stdinMode: "streaming", signal })` makes each
+stdin write wait for native pipe acceptance and propagates that write's error.
+`pipeTo()` or sequential awaited writes then apply backpressure instead of
+building the SDK's compatibility-mode background input queue. Drain stdout
+and stderr concurrently, for example with application-provided byte streams:
+
+```ts
+await using child = await agent.exec(["cat"], {
+  stdinMode: "streaming",
+  signal: AbortSignal.timeout(30_000),
+});
+const [, , , status] = await Promise.all([
+  input.pipeTo(child.stdin),
+  child.stdout.pipeTo(output),
+  child.stderr.pipeTo(diagnostics),
+  child.status,
+]);
+```
+
+Here `input` is a `ReadableStream<Uint8Array>` (such as `file.stream()`), and
+`output`/`diagnostics` are writable byte sinks supplied by the embedder. Waiting
+for all input before reading outputs can deadlock. Use the exec signal or
+`child.close()` to interrupt a blocked injected write; Web Streams can defer
+`writer.abort()` until its pending sink write finishes. No hard memory quota
+is implied: chunk sizes and upstream queues still matter, and ignoring write
+promises can queue arbitrarily much data. The default `"buffered"` mode retains
+its earlier feed-input-first behavior. Both modes preserve disposal/reap order.
+Thirteen additional host cases cover mode selection, blocked writes/producer,
+snapshots, errors and disposal (104 related tests pass). Native dual-mode binary
+pipeline and wasm32 tests are updated but still require their target results.
 
 The plugin boots its private EROFS using the GPT partition label
 `LOWLAND_AGENT`, so its position among block-device plugins is irrelevant. The
