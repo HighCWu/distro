@@ -109,8 +109,9 @@ test("boots and formats a blank persistent disk into the canonical system", asyn
 
   // Exercise ordinary installed-root writes, not just the installer's image.
   // sync is intentional: this tests clean persistence, not crash recovery.
+  // The minimal rootfs need not ship a home directory for its root shell.
   await installedInput.pressSequentially(
-    "printf 'persisted-%s\\n' payload > /root/persistence-probe && sync && printf 'persistence-%s\\n' synced",
+    "mkdir -p /root && printf 'persisted-%s\\n' payload > /root/persistence-probe && sync && printf 'persistence-%s\\n' synced",
   );
   await installedInput.press("Enter");
   await expect(installedTerminal).toContainText("persistence-synced", { timeout: 30_000 });
