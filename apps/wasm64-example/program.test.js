@@ -100,7 +100,11 @@ test("program import forwards signal, executable mode and exact argv without a s
   assert.deepEqual(calls, [
     ["write", "/root/application.wasm", wasm, { mode: 0o700, signal }],
     ["chmod", "/root/application.wasm", 0o700],
-    ["exec", ["/root/application.wasm", "literal $HOME"], { cwd: "/root", signal }],
+    [
+      "exec",
+      ["/root/application.wasm", "literal $HOME"],
+      { cwd: "/root", signal, stdinMode: "streaming" },
+    ],
     "stdin-eof",
     "child-close",
   ]);

@@ -49,7 +49,11 @@ export async function runProgram(agent, file, argumentText, { signal, onOutput, 
   signal?.throwIfAborted();
   await agent.fs.chmod(programPath, 0o700);
   signal?.throwIfAborted();
-  const child = await agent.exec([programPath, ...args], { cwd: "/root", signal });
+  const child = await agent.exec([programPath, ...args], {
+    cwd: "/root",
+    signal,
+    stdinMode: "streaming",
+  });
   const pump = (stream, name) => {
     const decoder = new TextDecoder();
     return stream.pipeTo(

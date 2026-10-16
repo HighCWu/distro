@@ -13,6 +13,8 @@ function fixture(
   failClose = false,
   bufferedOutput = false,
   writeErrno = 0,
+  stdinMode?: "buffered" | "streaming",
+  writeGate?: Promise<void>,
 ) {
   let finishReap!: () => void;
   const reaped = new Promise<void>((resolve) => {
@@ -23,6 +25,7 @@ function fixture(
   let releases = 0;
   let reads = 0;
   let writes = 0;
+  const writtenData: Uint8Array[] = [];
   const session = {
     abi,
     async exchange<T>(
@@ -37,8 +40,10 @@ function fixture(
           request = bytes.slice();
           if (request[0] === 1 && new DataView(request.buffer).getUint32(1, true) === NR.read)
             reads++;
-          if (request[0] === 1 && new DataView(request.buffer).getUint32(1, true) === NR.write)
+          if (request[0] === 1 && new DataView(request.buffer).getUint32(1, true) === NR.write) {
             writes++;
+            writtenData.push(request.slice(59));
+          }
         },
         async read(length) {
           const result = new Uint8Array(length);
@@ -53,6 +58,7 @@ function fixture(
             const nr = new DataView(request.buffer).getUint32(1, true);
             assert.ok([NR.kill, NR.read, NR.close, NR.write].includes(nr));
             if (nr === NR.write) {
+              await writeGate;
               assert.equal(length, 12);
               const view = new DataView(result.buffer);
               view.setBigInt64(0, writeErrno ? -1n : BigInt(request.byteLength - 59), true);
@@ -84,6 +90,7 @@ function fixture(
     stdout: new GuestFd(session, 11),
     stderr: new GuestFd(session, 12),
     signal,
+    stdinMode,
     release() {
       releases++;
     },
@@ -102,6 +109,7 @@ function fixture(
     get writes() {
       return writes;
     },
+    writtenData,
     finish(status = 9) {
       waitStatus = status;
       finishReap();
@@ -110,6 +118,123 @@ function fixture(
 }
 
 for (const abi of ["wasm32", "wasm64"] as const) {
+  test(`streaming pipeTo does not drain its producer while a native write is blocked (${abi})`, async () => {
+    let drain!: () => void;
+    const gate = new Promise<void>((resolve) => {
+      drain = resolve;
+    });
+    const f = fixture(undefined, abi, false, false, 0, "streaming", gate);
+    let produced = 0;
+    const source = new ReadableStream<Uint8Array>(
+      {
+        pull(controller) {
+          if (produced === 3) controller.close();
+          else controller.enqueue(Uint8Array.of(++produced));
+        },
+      },
+      { highWaterMark: 0 },
+    );
+    const piping = source.pipeTo(f.child.stdin);
+    try {
+      await setImmediate();
+      assert.equal(produced, 1);
+      assert.equal(f.writes, 1);
+      drain();
+      await piping;
+      assert.equal(produced, 3);
+      assert.deepEqual(
+        f.writtenData,
+        [1, 2, 3].map((value) => Uint8Array.of(value)),
+      );
+    } finally {
+      drain();
+      f.finish();
+      await f.child.close();
+      await piping.catch(() => {});
+    }
+  });
+
+  for (const stdinMode of [undefined, "buffered", "streaming"] as const) {
+    test(`stdin ${stdinMode ?? "default"} applies its documented backpressure (${abi})`, async () => {
+      let drain!: () => void;
+      const gate = new Promise<void>((resolve) => {
+        drain = resolve;
+      });
+      const f = fixture(undefined, abi, false, false, 0, stdinMode, gate);
+      const writer = f.child.stdin.getWriter();
+      const data = Uint8Array.from({ length: 32768 + 17 }, (_, i) => i & 255);
+      const snapshot = data.slice();
+      let settled = false;
+      const writing = writer.write(data).then(() => {
+        settled = true;
+      });
+      try {
+        await setImmediate();
+        assert.equal(f.writes, 1);
+        assert.equal(settled, stdinMode !== "streaming");
+        assert.equal(f.reads, 2); // output pulls can progress while stdin waits
+        data.fill(0);
+        drain();
+        await writing;
+        await writer.close();
+        assert.deepEqual(f.writtenData, [snapshot.subarray(0, 32768), snapshot.subarray(32768)]);
+        f.finish(0);
+        assert.equal((await f.child.status).success, true);
+      } finally {
+        drain();
+        f.finish();
+        await f.child.close();
+        writer.releaseLock();
+      }
+    });
+  }
+
+  test(`streaming stdin surfaces a pump error on the same write (${abi})`, async () => {
+    const f = fixture(undefined, abi, false, false, 5, "streaming");
+    const writer = f.child.stdin.getWriter();
+    void writer.closed.catch(() => {});
+    try {
+      await assert.rejects(writer.write(Uint8Array.of(1)), { code: "EIO" });
+      await assert.rejects(writer.closed, { code: "EIO" });
+      assert.equal(f.writes, 1);
+    } finally {
+      f.finish();
+      await f.child.close();
+      writer.releaseLock();
+    }
+  });
+
+  test(`streaming stdin disposal settles its in-flight write before releasing fds (${abi})`, async () => {
+    let drain!: () => void;
+    const gate = new Promise<void>((resolve) => {
+      drain = resolve;
+    });
+    const f = fixture(undefined, abi, false, false, 0, "streaming", gate);
+    const writer = f.child.stdin.getWriter();
+    void writer.closed.catch(() => {});
+    const writing = writer.write(Uint8Array.of(1));
+    void writing.catch(() => {});
+    try {
+      await setImmediate();
+      let closed = false;
+      const closing = f.child.close().then(() => {
+        closed = true;
+      });
+      await setImmediate();
+      assert.equal(closed, false);
+      drain();
+      await assert.rejects(writing, { code: "EPIPE" });
+      f.finish();
+      await closing;
+      await assert.rejects(writer.closed, { code: "EPIPE" });
+    } finally {
+      drain();
+      f.finish();
+      await f.child.close();
+      writer.releaseLock();
+    }
+  });
+
   test(`process disposal preserves an already observed stdin pump failure (${abi})`, async () => {
     const f = fixture(undefined, abi, false, false, 5);
     const writer = f.child.stdin.getWriter();

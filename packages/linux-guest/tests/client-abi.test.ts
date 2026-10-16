@@ -229,3 +229,10 @@ test("high-level client rejects an unknown ABI before transport use", () => {
   assert.throws(() => create_guest_client(f.device, { abi: "invalid" as AgentAbi }), RangeError);
   assert.equal(f.connections.length, 0);
 });
+
+test("invalid stdin mode rejects before connecting or spawning", async () => {
+  const f = fixture();
+  const client = create_guest_client(f.device, { abi: "wasm64" });
+  await assert.rejects(client.exec(["true"], { stdinMode: "invalid" as "streaming" }), TypeError);
+  assert.equal(f.connections.length, 0);
+});

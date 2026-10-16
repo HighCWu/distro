@@ -34,7 +34,10 @@ guest_test("processes", async (t, fixture) => {
     });
 
     await t.test("runs processes concurrently with filesystem traffic", async () => {
-      const concurrent = await Promise.all([guest.exec(["cat"]), guest.exec(["cat"])]);
+      const concurrent = await Promise.all([
+        guest.exec(["cat"]),
+        guest.exec(["cat"], { stdinMode: "streaming" }),
+      ]);
       const collected = concurrent.map((process) => ({
         output: collect(process.stdout),
         error: collect(process.stderr),

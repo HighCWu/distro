@@ -6,6 +6,9 @@ import { E, SIG, SystemError, WEXITSTATUS, WIFEXITED, WIFSIGNALED, WTERMSIG } fr
 import type { GuestSession } from "./conn.ts";
 import { CHUNK, type GuestFd, kill, read, reap, write } from "./syscalls.ts";
 
+/** Buffered compatibility writes or writes awaiting native pipe acceptance. */
+export type StdinMode = "buffered" | "streaming";
+
 /** A signal that can be sent to a guest process with `ChildProcess.kill`. */
 export type Signal =
   | "SIGHUP"
@@ -52,6 +55,7 @@ export interface ChildProcessInit {
   stdout: GuestFd;
   stderr: GuestFd;
   signal?: AbortSignal;
+  stdinMode?: StdinMode;
   /** Returns the process slot client.ts acquired; called exactly once, when
    *  the reap settles, because until then this process may hold blocked
    *  lanes. */
@@ -73,8 +77,10 @@ export class ChildProcess implements AsyncDisposable {
    * A `WritableStream<Uint8Array>` connected to the process's stdin. Close
    * it to send EOF, which is how programs such as `cat` know to finish.
    *
-   * Writes are buffered on the host side, so filling stdin before reading
-   * stdout does not deadlock, even once the guest's pipe is full.
+   * By default writes are buffered on the host side, so filling stdin before
+   * reading stdout does not deadlock, even once the pipe is full. With exec's
+   * `stdinMode: "streaming"`, await writes or use pipeTo for backpressure and
+   * drain stdout/stderr concurrently; write errors surface on that write.
    * Closing or aborting the process errors an unfinished stdin with EPIPE;
    * successful writes mean host buffering, not confirmed delivery. Normal
    * stdin EOF already completed before disposal remains successful.
@@ -139,7 +145,7 @@ export class ChildProcess implements AsyncDisposable {
   #stdin_controller!: WritableStreamDefaultController;
 
   constructor(init: ChildProcessInit) {
-    const { session, pid, stdin, stdout, stderr, signal, release } = init;
+    const { session, pid, stdin, stdout, stderr, signal, stdinMode, release } = init;
     this.pid = pid;
     this.#session = session;
     this.#stdin = stdin;
@@ -161,9 +167,9 @@ export class ChildProcess implements AsyncDisposable {
       write: (chunk) => {
         // A blocking injected write returns only once the guest pipe accepts
         // the bytes, and the pipe drains through the child and back out via
-        // stdout — awaiting it here would deadlock callers that fill stdin
-        // before reading stdout. Buffer host-side and pump in the background;
-        // failures surface on the next write or on close.
+        // stdout. Keep the buffered default for callers that fill input first;
+        // streaming callers instead drain outputs concurrently and await this
+        // pump, propagating pipe backpressure through WritableStream/pipeTo.
         if (this.#stdin_error !== null) {
           return Promise.reject(this.#stdin_error);
         }
@@ -176,6 +182,12 @@ export class ChildProcess implements AsyncDisposable {
           .catch((error) => {
             this.#stdin_error = error;
           });
+        if (stdinMode === "streaming") {
+          return this.#stdin_tail.then(() => {
+            if (this.#stdin_error !== null) throw this.#stdin_error;
+            if (this.#stdin_stopped) throw new SystemError(E.PIPE);
+          });
+        }
         return Promise.resolve();
       },
       close: async () => {
@@ -183,9 +195,10 @@ export class ChildProcess implements AsyncDisposable {
         await stdin.close();
         if (this.#stdin_error !== null) throw this.#stdin_error;
       },
-      // An injected write cannot be cancelled independently. Tear down the
-      // process so a blocked write returns before its numeric fd is closed
-      // and can be reused.
+      // Web Streams invokes this after any pending sink write settles. To
+      // interrupt a streaming write already blocked in Linux, use the exec
+      // AbortSignal or child.close(), not writer.abort() alone. Disposal waits
+      // for that injected write before closing its reusable numeric fd.
       abort: () => this.close(),
     });
     this.stdout = this.#output_stream(stdout);

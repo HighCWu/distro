@@ -208,40 +208,42 @@ export async function runPublicAgentWasm64Suite(
       await check("public exec streams binary data through native shell pipelines", async () => {
         // Cross injected I/O chunks and Linux pipe capacity, including NULs.
         const payload = Uint8Array.from({ length: 256 * 1024 + 17 }, (_, i) => (i * 37 + 11) & 255);
-        const child = await agent.exec(["/bin/sh", "-c", publicStreamScript]);
-        try {
-          const input = (async () => {
-            const writer = child.stdin.getWriter();
-            try {
-              for (let offset = 0; offset < payload.byteLength; offset += 8191) {
-                await writer.write(payload.subarray(offset, offset + 8191));
+        for (const stdinMode of ["buffered", "streaming"] as const) {
+          const child = await agent.exec(["/bin/sh", "-c", publicStreamScript], { stdinMode });
+          try {
+            const input = (async () => {
+              const writer = child.stdin.getWriter();
+              try {
+                for (let offset = 0; offset < payload.byteLength; offset += 8191) {
+                  await writer.write(payload.subarray(offset, offset + 8191));
+                }
+                await writer.close();
+              } finally {
+                writer.releaseLock();
               }
-              await writer.close();
-            } finally {
-              writer.releaseLock();
-            }
-          })();
-          // Drain both pipes while feeding stdin: never serialize collection
-          // behind a write/close that may require the program to drain output.
-          const [, stdout, stderr, status] = await Promise.all([
-            input,
-            new Response(child.stdout).arrayBuffer(),
-            new Response(child.stderr).arrayBuffer(),
-            child.status,
-          ]);
-          assert.deepEqual(new Uint8Array(stdout), payload);
-          assert.deepEqual(new Uint8Array(stderr), payload);
-          assert.deepEqual(status, { success: true, code: 0, signal: null });
-          await assert.rejects(
-            child.kill("SIGTERM"),
-            (error) => error instanceof SystemError && error.code === "ESRCH",
-          );
-          await assert.rejects(
-            agent.fs.stat("/tmp/public-stream-copy"),
-            (error) => error instanceof SystemError && error.code === "ENOENT",
-          );
-        } finally {
-          await child.close();
+            })();
+            // Drain both pipes while feeding stdin: never serialize collection
+            // behind a write/close that may require the program to drain output.
+            const [, stdout, stderr, status] = await Promise.all([
+              input,
+              new Response(child.stdout).arrayBuffer(),
+              new Response(child.stderr).arrayBuffer(),
+              child.status,
+            ]);
+            assert.deepEqual(new Uint8Array(stdout), payload);
+            assert.deepEqual(new Uint8Array(stderr), payload);
+            assert.deepEqual(status, { success: true, code: 0, signal: null });
+            await assert.rejects(
+              child.kill("SIGTERM"),
+              (error) => error instanceof SystemError && error.code === "ESRCH",
+            );
+            await assert.rejects(
+              agent.fs.stat("/tmp/public-stream-copy"),
+              (error) => error instanceof SystemError && error.code === "ENOENT",
+            );
+          } finally {
+            await child.close();
+          }
         }
       });
       await check("public exec rejects stdin after process disposal", async () => {

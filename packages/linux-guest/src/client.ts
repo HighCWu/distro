@@ -37,7 +37,7 @@ import {
   statToInfo,
   type WriteFileOptions,
 } from "./file.ts";
-import { ChildProcess } from "./process.ts";
+import { ChildProcess, type StdinMode } from "./process.ts";
 
 /** Data that can be written to a guest file: bytes, a `Blob`, or a stream of bytes. */
 export type FileData = Uint8Array | Blob | ReadableStream<Uint8Array>;
@@ -51,6 +51,15 @@ export interface ExecOptions {
    * `TMPDIR=/tmp`. Only the variables being changed need to be set.
    */
   env?: Readonly<Record<string, string>>;
+  /**
+   * Defaults to "buffered" for compatibility with feeding stdin before reading
+   * output. "streaming" awaits native pipe writes, so pipeTo/awaited writes
+   * apply backpressure without an additional unbounded host input queue.
+   * Drain both outputs concurrently. Cancel blocked native writes using the
+   * exec signal or child.close(); writer.abort() alone waits for a pending
+   * Web Streams sink write. Ignoring write promises can still queue input.
+   */
+  stdinMode?: StdinMode;
   /**
    * Aborting kills the process, and `status` rejects with the abort reason.
    * If waiting for a process slot, aborting rejects exec without spawning.
@@ -577,6 +586,9 @@ class GuestClient {
 
   async exec(argv: readonly string[], options: ExecOptions = {}) {
     if (!argv.length) throw new TypeError("exec argv must not be empty");
+    const stdinMode = options.stdinMode ?? "buffered";
+    if (stdinMode !== "buffered" && stdinMode !== "streaming")
+      throw new TypeError("stdinMode must be buffered or streaming");
     options.signal?.throwIfAborted();
     const session = await this.#connect();
     options.signal?.throwIfAborted();
@@ -597,6 +609,7 @@ class GuestClient {
         session,
         ...spawned,
         signal: options.signal,
+        stdinMode,
         release,
       });
     } catch (error) {
