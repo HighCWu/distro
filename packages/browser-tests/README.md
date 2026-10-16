@@ -183,6 +183,10 @@ removal. This checks real userland pipes through the public streaming API, not
 just a single-purpose C fixture or a small collected text command. Missing shell
 assets or execution failures are errors, not fallback to the minimal C program.
 No external initramfs, manual boot arguments or session trace flag is supplied.
+The shell lifecycle case also waits for an atomically renamed readiness marker
+from a real running command, aborts `run()`, requires the original abort reason,
+and runs another command successfully after cleanup. This is not merely an
+already-aborted signal rejected before spawning.
 
 The pinned NOMMU BusyBox uses hush, not a fully POSIX-compatible shell. In
 particular it supports `set -e` but not `set -u`/nounset. The shared command

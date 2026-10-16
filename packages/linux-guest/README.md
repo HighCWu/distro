@@ -50,6 +50,14 @@ console.log(new TextDecoder().decode(result.stdout));
 collects its status, stdout, and stderr and is convenient for bounded commands.
 Both methods accept an argv array without shell parsing.
 
+`run()` owns the child it creates: it sends stdin EOF, collects both outputs
+concurrently, and awaits disposal on success or failure. Nonzero exit status
+still returns a `RunResult`. An execution/transport/abort failure is rethrown
+after cleanup; if cleanup also fails, an `AggregateError` contains the primary
+failure followed by the cleanup error, with the primary failure as `cause`.
+If only cleanup fails, that error is reported directly. Output collection is
+still in-memory; use streaming `exec()` for unbounded output.
+
 `ChildProcess.close()` is idempotent. It terminates a still-tracked process,
 settles buffered stdin, closes its standard descriptors, and waits for its
 wait result and client process-slot release before returning. An aborted
