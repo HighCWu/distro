@@ -85,6 +85,23 @@ function checked_offset(value: bigint) {
   return result;
 }
 
+async function commit_opfs_write(
+  writable: FileSystemWritableFileStream,
+  operation: () => Promise<unknown>,
+) {
+  try {
+    await operation();
+    await opfs_call(writable.close());
+  } catch (error) {
+    // Closing commits the temporary file. Failed operations must abort it,
+    // and an abort failure must not hide the original storage error.
+    try {
+      await writable.abort(error);
+    } catch {}
+    throw error;
+  }
+}
+
 class Node {
   parts: string[];
   handle: FileSystemHandle;
@@ -284,6 +301,7 @@ export class BrowserFS implements FS<Node, Handle> {
     return await this.#mutate(current, async () => {
       this.#as_node(current);
       if (changes.size !== undefined) {
+        const size = checked_offset(changes.size);
         if (current.handle.kind !== "file") {
           throw new FSError("EISDIR");
         }
@@ -292,11 +310,9 @@ export class BrowserFS implements FS<Node, Handle> {
             keepExistingData: true,
           }),
         );
-        try {
-          await opfs_call(writable.truncate(checked_offset(changes.size)));
-        } finally {
-          await opfs_call(writable.close());
-        }
+        await commit_opfs_write(writable, async () => {
+          await opfs_call(writable.truncate(size));
+        });
         // Truncation changes the backing file, so its native timestamp becomes
         // authoritative unless this setattr also supplies an explicit mtime.
         current.metadata.mtimeOverride = false;
@@ -380,14 +396,12 @@ export class BrowserFS implements FS<Node, Handle> {
           keepExistingData: true,
         }),
       );
-      try {
+      await commit_opfs_write(writable, async () => {
         await opfs_call(writable.seek(checked_offset(offset)));
         const copy = new Uint8Array(data.byteLength);
         copy.set(data);
         await opfs_call(writable.write(copy.buffer));
-      } finally {
-        await opfs_call(writable.close());
-      }
+      });
       current.metadata.mtime = now();
       current.metadata.mtimeOverride = false;
       current.metadata.ctime = current.metadata.mtime;
@@ -395,8 +409,9 @@ export class BrowserFS implements FS<Node, Handle> {
     });
   }
 
-  // OPFS commits each write when its writable closes, so a file is durable by
-  // the time `write` resolves; flush and fsync have nothing left to do.
+  // Each successful write closes its stream and commits through the browser
+  // API. There is no additional portable flush primitive on these handles;
+  // this does not promise physical-media durability or crash recovery.
   async flush() {}
 
   async fsync() {}
