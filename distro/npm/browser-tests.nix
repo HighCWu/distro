@@ -28,6 +28,7 @@ let
     "runs C++ containers, exceptions, cross-thread exception_ptr cleanup and TLS"
     "runs SDK SQLite transactions and file reopen through Linux"
     "runs SDK Unix and TCP socket readiness and half-close through Linux"
+    "runs SDK time64 relative and absolute timers and ready-fd waits through Linux"
     "retries a failed kernel download in the same page with a generic MIME type"
   ];
 
@@ -80,6 +81,10 @@ let
         name = "wasm${toString bits}-browser-runtime-sockets";
         init = (if bits == 64 then sdk-wasm64 else sdk).socketProgram;
       };
+      timeInitramfs = image.mkInitramfs {
+        name = "wasm${toString bits}-browser-runtime-time";
+        init = (if bits == 64 then sdk-wasm64 else sdk).timeProgram;
+      };
     in
     pkgs.runCommand "wasm${toString bits}-runtime-browser-tests" { } ''
       mkdir -p \
@@ -94,6 +99,7 @@ let
       cp ${cxxInitramfs} $out/runtime-cxx.cpio
       cp ${sqliteInitramfs} $out/runtime-sqlite.cpio
       cp ${socketInitramfs} $out/runtime-sockets.cpio
+      cp ${timeInitramfs} $out/runtime-time.cpio
       cp ${source}/memory64-index.html $out/index.html
       cp ${source}/playwright.config.js $out/playwright.config.js
       cp ${source}/server.js $out/server.js

@@ -109,6 +109,23 @@ test("runs SDK Unix and TCP socket readiness and half-close through Linux", asyn
   expect(output).not.toContain("::vm-test::fail");
 });
 
+test("runs SDK time64 relative and absolute timers and ready-fd waits through Linux", async ({
+  page,
+}) => {
+  page.on("console", (message) => console.log(`[browser] ${message.text()}`));
+  page.on("pageerror", (error) => console.error(`[browser] ${error.stack ?? error}`));
+  await page.goto("/");
+  await expect
+    .poll(() => page.evaluate(() => typeof globalThis.bootTimeRuntimeSmoke))
+    .toBe("function");
+  const output = await page.evaluate(() => globalThis.bootTimeRuntimeSmoke());
+  expect(output).toContain(
+    "time ABI: relative/absolute timers, expiration and ready-fd waits verified",
+  );
+  expect(output).toContain("::vm-test::pass");
+  expect(output).not.toContain("::vm-test::fail");
+});
+
 test("retries a failed kernel download in the same page with a generic MIME type", async ({
   page,
 }) => {

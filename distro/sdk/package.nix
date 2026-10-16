@@ -158,6 +158,7 @@ let
     # Reuse the exact SDK-built consumer in real-browser runtime checks.
     passthru.sqliteProgram = "${sqlitePrograms}/sdk-sqlite.wasm";
     passthru.socketProgram = "${socketPrograms}/sdk-socket.wasm";
+    passthru.timeProgram = "${timePrograms}/sdk-time.wasm";
     passthru.checks = {
       licenses = licenseTexts;
       profile = profileCheck;
@@ -198,6 +199,10 @@ let
       socket-runtime = vm-test.rawInitramfsTest {
         name = "sdk-socket-runtime-${platform.wasmArch}";
         init = "${socketPrograms}/sdk-socket.wasm";
+      };
+      time-runtime = vm-test.rawInitramfsTest {
+        name = "sdk-time-runtime-${platform.wasmArch}";
+        init = "${timePrograms}/sdk-time.wasm";
       };
       autoconf-runtime = vm-test.rawInitramfsTest {
         name = "sdk-autoconf-runtime-${platform.wasmArch}";
@@ -319,6 +324,11 @@ let
     mkdir $out
     ${cc}/bin/wasm-linux-cc -O2 -Wall -Wextra -Werror \
       ${./socket-example.c} -o $out/sdk-socket.wasm
+  '';
+  timePrograms = pkgs.runCommand "sdk-time-consumer-${platform.wasmArch}" { } ''
+    mkdir $out
+    ${cc}/bin/wasm-linux-cc -O2 -Wall -Wextra -Werror \
+      -I${../basic-init/tests} ${../basic-init/tests/time-abi.c} -o $out/sdk-time.wasm
   '';
   sqlitePrograms = pkgs.runCommand "sdk-sqlite-consumer-${platform.wasmArch}" { } ''
     mkdir $out
