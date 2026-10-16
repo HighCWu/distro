@@ -11,7 +11,7 @@ const { runRuntimeSmoke } = await import(
   `data:text/javascript;base64,${Buffer.from(source).toString("base64")}`
 );
 
-function fixture(lines, { bootDelay = false, closeConsole = false } = {}) {
+function fixture(lines, { bootDelay = false, closeConsole = false, bootLines = [] } = {}) {
   let writer;
   let closed = false;
   let releaseBoot;
@@ -19,6 +19,7 @@ function fixture(lines, { bootDelay = false, closeConsole = false } = {}) {
   const machine = {
     bootConsole: new ReadableStream({
       start(controller) {
+        for (const line of bootLines) controller.enqueue(new TextEncoder().encode(line));
         controller.close();
       },
     }),
@@ -67,6 +68,18 @@ test("requires a complete user-program pass marker, not the kernel banner", asyn
   const bannerOnly = fixture(["Linux version test\n"]);
   await assert.rejects(runRuntimeSmoke(bannerOnly.options), /timed out/);
   assert.equal(bannerOnly.closed, true);
+});
+
+test("boot-console result markers cannot substitute for user-program completion", async () => {
+  const state = fixture([], { bootLines: ["::vm-test::pass\n"] });
+  await assert.rejects(runRuntimeSmoke(state.options), /timed out/);
+  assert.equal(state.closed, true);
+});
+
+test("kernel panic on the boot console fails the runtime check", async () => {
+  const state = fixture([], { bootLines: ["Kernel panic - not syncing: broken\n"] });
+  await assert.rejects(runRuntimeSmoke(state.options), /Kernel panic/);
+  assert.equal(state.closed, true);
 });
 
 test("propagates program failure, panic and premature console closure", async () => {

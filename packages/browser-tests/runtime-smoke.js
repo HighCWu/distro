@@ -24,7 +24,9 @@ export async function runRuntimeSmoke({
     const consume = (lines) => {
       for (const line of lines) {
         output += `${line}\n`;
-        const status = parseResult(line);
+        // Only the user console owns the test protocol. Boot diagnostics must
+        // remain visible, but cannot certify that the user program ran.
+        const status = required ? parseResult(line) : undefined;
         if (status?.passed) resolveResult();
         else if (status) rejectResult(new Error(status.reason));
         else if (line.includes("Kernel panic - not syncing")) rejectResult(new Error(line));
