@@ -720,6 +720,11 @@ export function fileSystemDevice<TNode extends object, THandle, T extends FS<TNo
 
   const records = new Map<bigint, NodeRecord<TNode>>();
   const by_node = new WeakMap<TNode, NodeRecord<TNode>>();
+  // Kernel lookup/handle references own records, not inode identity. A backend
+  // can keep its node alive after FORGET; relookup of that same object must
+  // retain st_ino even when its previous protocol record has been collected.
+  // Weak keys do not retain deleted backend nodes or their full record trees.
+  const node_ids = new WeakMap<TNode, bigint>();
   let next_nodeid = 2n;
   const root: NodeRecord<TNode> = {
     id: 1n,
@@ -732,6 +737,7 @@ export function fileSystemDevice<TNode extends object, THandle, T extends FS<TNo
   root.parent = root;
   records.set(root.id, root);
   by_node.set(filesystem.root, root);
+  node_ids.set(filesystem.root, root.id);
 
   const handles = new Map<bigint, HandleRecord<TNode, THandle>>();
   let next_handle = 1n;
@@ -740,8 +746,13 @@ export function fileSystemDevice<TNode extends object, THandle, T extends FS<TNo
   function record_for_node(node: TNode, parent: NodeRecord<TNode>) {
     let record = by_node.get(node);
     if (!record) {
+      let id = node_ids.get(node);
+      if (id === undefined) {
+        id = next_nodeid++;
+        node_ids.set(node, id);
+      }
       record = {
-        id: next_nodeid++,
+        id,
         node,
         parent,
         lookups: 0n,
