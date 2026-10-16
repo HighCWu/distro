@@ -98,13 +98,28 @@ test("boots and formats a blank persistent disk into the canonical system", asyn
 
   const liveRootfsRequests = rootfsRequests.length;
   await page.reload();
-  const { input: installedInput, terminal: installedTerminal } = await waitForGuest(page);
+  let { input: installedInput, terminal: installedTerminal } = await waitForGuest(page);
   await installedInput.pressSequentially(
     "mount | grep ' on / type ext4 (rw'; printf 'installed-root-%s\\n' ready",
   );
   await installedInput.press("Enter");
   await expect(installedTerminal).toContainText("on / type ext4 (rw", { timeout: 15_000 });
   await expect(installedTerminal).toContainText("installed-root-ready");
+
+  // Exercise ordinary installed-root writes, not just the installer's image.
+  // sync is intentional: this tests clean persistence, not crash recovery.
+  await installedInput.pressSequentially(
+    "printf 'persisted-%s\\n' payload > /root/persistence-probe && sync && printf 'persistence-%s\\n' synced",
+  );
+  await installedInput.press("Enter");
+  await expect(installedTerminal).toContainText("persistence-synced", { timeout: 30_000 });
+  await page.reload();
+  ({ input: installedInput, terminal: installedTerminal } = await waitForGuest(page));
+  await installedInput.pressSequentially(
+    "test \"$(cat /root/persistence-probe)\" = persisted-payload && printf 'persistence-%s\\n' restored",
+  );
+  await installedInput.press("Enter");
+  await expect(installedTerminal).toContainText("persistence-restored", { timeout: 15_000 });
 
   await installedInput.pressSequentially(
     "printf user-customized > /boot/index.html; apk --allow-untrusted fix --reinstall lowland-boot; grep -qx user-customized /boot/index.html && test -f /boot/index.html.apk-new && printf 'protected-boot-%s\\n' ok",
