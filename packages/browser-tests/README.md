@@ -166,10 +166,21 @@ nix build .#checks.x86_64-linux.browser-tests-check-agent-persistent-root-wasm64
 nix build .#checks.x86_64-linux.browser-tests-check-agent-persistent-root-wasm64-firefox -L
 ```
 
-Run heavy builds in public CI. Only host block bytes survive between instances;
-these checks do not claim OPFS, browser-restart persistence, physical durability,
-or graceful shutdown. The default EROFS profile is unchanged. These newly wired
-checks still require actual runtime results.
+An additional browser case initializes a uniquely named OPFS image, opens the
+existing synchronous-access disk worker, and runs the same write/sync checks.
+After device closure and a page reload, a new worker reopens that existing image
+without a capacity override or a template download and verifies data and mode.
+Both browser cases must pass without skips or retries, including on Firefox.
+The worker is bundled against the matching wasm64 kernel package; this does not
+build or depend on the entire site.
+
+Run heavy builds in public CI. The Node and first browser case retain only host
+block bytes; the additional case checks normal synchronized OPFS page reload,
+not a browser process restart, eviction, physical durability, crash recovery,
+or graceful Linux shutdown. The default EROFS profile is unchanged. These newly
+wired checks still require actual runtime results. Six mock-host regressions
+check initialization, readback without replacement, and failure cleanup; they
+do not substitute for actual OPFS or Linux execution.
 
 ### Public plugin and GPT boot disk
 

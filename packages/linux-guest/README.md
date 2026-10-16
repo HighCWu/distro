@@ -170,6 +170,10 @@ file size/mode, and native `cat` output. This checks in-memory block retention
 across instances, not OPFS, browser reloads, physical durability, or clean system
 shutdown. Wiring the check is not evidence of runtime success.
 
+The browser profile additionally checks reopening that ext4 image through the
+existing OPFS disk worker after page reload, with no template fetch on readback.
+See the browser-tests README for its distinct scope and required runtime checks.
+
 Pass `"lowland.root.overlay=tmpfs"` as a kernel argument to mount the system
 image read-only beneath a temporary writable OverlayFS:
 
