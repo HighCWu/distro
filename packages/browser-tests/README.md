@@ -194,6 +194,27 @@ Node and browser Linux/Wasm executions:
 node --test packages/linux-guest/tests/agent-wasm64-userland-commands.test.ts
 ```
 
+An independent public-network profile additionally attaches the public
+`createNetwork()` plugin before the agent, configures the native interface,
+and reaches a BusyBox `httpd` process through `attachment.connect()`. It waits
+for the exact port in `/proc/net/tcp` to reach LISTEN, requires HTTP 200 with
+the exact body, terminates/reaps the server, checks empty process output, and
+closes the connection, network and machine. Its six completed cases are
+required by the browser gate; userland-only checks still require five.
+
+```console
+nix build .#checks.x86_64-linux.guest-agent-check-public-network-wasm64 -L
+nix build .#checks.x86_64-linux.browser-tests-check-agent-public-network-wasm64-chromium -L
+nix build .#checks.x86_64-linux.browser-tests-check-agent-public-network-wasm64-firefox -L
+node --test packages/linux-guest/tests/agent-wasm64-public-network.test.ts
+```
+
+This uses the same native userland assets, not a successful result from another
+check. Outbound adapters and DNS are deliberately unavailable: this is private
+host-to-instance Ethernet/TCP validation, not browser raw sockets, Internet
+access, DNS, proxy, TLS, or UDP certification. Exposing these checks does not
+mean their actual Linux/Wasm execution has passed. Run heavy builds in public CI.
+
 BusyBox remains GPL-2.0-only and its package architecture is wasm64. These test
 images are not a full distribution release or a change to users' software
 licenses; any redistributed image must satisfy its components' license and
