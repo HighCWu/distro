@@ -50,6 +50,15 @@ console.log(new TextDecoder().decode(result.stdout));
 collects its status, stdout, and stderr and is convenient for bounded commands.
 Both methods accept an argv array without shell parsing.
 
+`ChildProcess.close()` is idempotent. It terminates a still-tracked process,
+settles buffered stdin, closes its standard descriptors, and waits for its
+wait result and client process-slot release before returning. An aborted
+`status` still rejects with the caller's reason; disposal does not replace that
+result. A descriptor-close error is reported only after the wait has settled.
+Disposal does not send another signal after a successful reap. This is not a
+pidfd-based identity guarantee for every concurrent signal/reap race, nor a
+promise to terminate an entire descendant process group.
+
 The plugin boots its private EROFS using the GPT partition label
 `LOWLAND_AGENT`, so its position among block-device plugins is irrelevant. The
 agent then requires exactly one attached EROFS or ext4 filesystem labeled
