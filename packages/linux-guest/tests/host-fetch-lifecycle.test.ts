@@ -3,6 +3,60 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import { hostFetchNetwork } from "../src/host-fetch-network.ts";
 
+for (const [method, framing, payload] of [
+  ["GET", "", ""],
+  ["POST", "Content-Length: 5\r\n", "hello"],
+  ["POST", "Transfer-Encoding: chunked\r\n", "2\r\nhe\r\n3\r\nllo\r\n0\r\n\r\n"],
+] as const) {
+  test(`normal ${method} ${framing.trim()} transfers the body and releases streams`, async () => {
+    let calls = 0;
+    const network = hostFetchNetwork({
+      async fetch(request) {
+        calls++;
+        assert.equal(request.url, "https://example.test/resource?q=1");
+        assert.equal(request.method, method);
+        assert.equal(request.signal.aborted, false);
+        assert.equal(await request.text(), method === "GET" ? "" : "hello");
+        return new Response("response body", { status: 201 });
+      },
+    });
+    const bytes = new TextEncoder().encode(
+      `${method} /resource?q=1 HTTP/1.1\r\nHost: example.test\r\n${framing}\r\n${payload}`,
+    );
+    // Fragment even CRLF and chunk-size boundaries across input reads.
+    const readable = new ReadableStream<Uint8Array>({
+      start(controller) {
+        for (let offset = 0; offset < bytes.length; offset += 3)
+          controller.enqueue(bytes.slice(offset, offset + 3));
+        controller.close();
+      },
+    });
+    const chunks: Uint8Array[] = [];
+    let closed = false;
+    const writable = new WritableStream<Uint8Array>({
+      write(chunk) {
+        chunks.push(chunk);
+      },
+      close() {
+        closed = true;
+      },
+    });
+    await network.connectTcp!({
+      target: { hostname: "198.18.0.1", port: 80 },
+      signal: new AbortController().signal,
+      readable,
+      writable,
+    });
+    const output = Buffer.concat(chunks).toString();
+    assert.match(output, /^HTTP\/1\.1 201 /);
+    assert.equal(output.split("\r\n\r\n")[1], "response body");
+    assert.equal(calls, 1);
+    assert.equal(closed, true);
+    assert.equal(readable.locked, false);
+    assert.equal(writable.locked, false);
+  });
+}
+
 test(
   "disconnect while waiting for request headers cancels the input",
   { timeout: 1000 },
