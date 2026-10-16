@@ -5,10 +5,14 @@ import { existsSync, mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
-import { publicShellScript, publicStreamScript } from "./agent-wasm64-userland-commands.ts";
+import {
+  publicAbortScript,
+  publicShellScript,
+  publicStreamScript,
+} from "./agent-wasm64-userland-commands.ts";
 
 test("public userland scripts retain fail-fast checks without unsupported hush nounset", () => {
-  for (const script of [publicShellScript, publicStreamScript]) {
+  for (const script of [publicShellScript, publicStreamScript, publicAbortScript]) {
     assert.equal(script.trimStart().split("\n")[0], "set -e");
     const syntax = spawnSync("/bin/sh", ["-n", "-c", script], { encoding: "utf8" });
     assert.ifError(syntax.error);

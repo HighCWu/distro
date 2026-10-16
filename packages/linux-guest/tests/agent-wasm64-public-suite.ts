@@ -3,7 +3,11 @@ import { blockDevice, bootMachine, consoleDevice, entropyDevice } from "@lowland
 import { createNetwork, guestAgent, SeekMode, SystemError } from "../src/index.ts";
 import { closed_input, console_line_output } from "./helpers.ts";
 import type { RuntimeAssertions } from "./agent-wasm64-suite.ts";
-import { publicShellScript, publicStreamScript } from "./agent-wasm64-userland-commands.ts";
+import {
+  publicAbortScript,
+  publicShellScript,
+  publicStreamScript,
+} from "./agent-wasm64-userland-commands.ts";
 import { checkPublicNetwork } from "./agent-wasm64-public-network.ts";
 
 // Identical public API corpus in Node and browsers. No initcpio or manual
@@ -128,6 +132,36 @@ export async function runPublicAgentWasm64Suite(
         assert.deepEqual(shell.status, { success: true, code: 0, signal: null });
         assert.equal(new TextDecoder().decode(shell.stdout), "native shell passed\n");
         assert.equal(shell.stderr.byteLength, 0);
+
+        // Wait for a real running command before aborting: an already-aborted
+        // signal would only test rejection before spawn, not run() cleanup.
+        const controller = new AbortController();
+        const reason = new Error("cancel public native shell run");
+        const cancelled = agent.run(["/bin/sh", "-c", publicAbortScript], {
+          signal: controller.signal,
+        });
+        void cancelled.catch(() => {});
+        try {
+          const deadline = performance.now() + 10_000;
+          for (;;) {
+            try {
+              assert.equal(await agent.fs.readTextFile("/tmp/public-run-ready"), "ready");
+              break;
+            } catch (error) {
+              if (!(error instanceof SystemError && error.code === "ENOENT")) throw error;
+              if (performance.now() >= deadline) throw new Error("public run did not start");
+              await new Promise((resolve) => setTimeout(resolve, 10));
+            }
+          }
+        } finally {
+          controller.abort(reason);
+        }
+        await assert.rejects(cancelled, (error) => error === reason);
+        await agent.fs.remove("/tmp/public-run-ready");
+        const next = await agent.run(["/bin/true"]);
+        assert.deepEqual(next.status, { success: true, code: 0, signal: null });
+        assert.equal(next.stdout.byteLength, 0);
+        assert.equal(next.stderr.byteLength, 0);
       });
       await check("public exec streams binary data through native shell pipelines", async () => {
         // Cross injected I/O chunks and Linux pipe capacity, including NULs.

@@ -28,3 +28,11 @@ tee "$TMPDIR/public-stream-copy" | cat
 cat "$TMPDIR/public-stream-copy" >&2
 rm "$TMPDIR/public-stream-copy"
 `;
+
+// Publish readiness by rename only after the complete marker was written.
+export const publicAbortScript = String.raw`
+set -e
+printf ready > /tmp/public-run-ready.tmp
+mv /tmp/public-run-ready.tmp /tmp/public-run-ready
+exec sleep 30
+`;

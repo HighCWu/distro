@@ -15,7 +15,8 @@ import {
   type Unmount,
 } from "./client.ts";
 import { platform } from "./platform.ts";
-import type { ChildProcess, CommandStatus } from "./process.ts";
+import { collect_run_result, type RunResult } from "./run.ts";
+export type { RunResult } from "./run.ts";
 import { select_agent_image, type GuestAgentOptions } from "./agent-image.ts";
 export type { GuestAgentOptions } from "./agent-image.ts";
 
@@ -63,17 +64,6 @@ async function wait_for_guest(client: GuestClientCapabilities, machine: Machine)
     await Promise.race([new Promise((resolve) => setTimeout(resolve, 25)), ended]);
   } while (performance.now() < deadline);
   throw new Error("guest agent did not become ready", { cause: failure });
-}
-
-async function collect(stream: ReadableStream<Uint8Array>) {
-  return new Uint8Array(await new Response(stream).arrayBuffer());
-}
-
-/** The collected result of a guest command. Nonzero exit status does not reject `run()`. */
-export interface RunResult {
-  readonly status: CommandStatus;
-  readonly stdout: Uint8Array;
-  readonly stderr: Uint8Array;
 }
 
 /**
@@ -157,14 +147,7 @@ export function guestAgent(options: GuestAgentOptions = {}): GuestAgent {
     mount: client.mount,
     unmount: client.unmount,
     async run(argv, options) {
-      const child: ChildProcess = await client.exec(argv, options);
-      const [status, stdout, stderr] = await Promise.all([
-        child.status,
-        collect(child.stdout),
-        collect(child.stderr),
-        child.stdin.close(),
-      ]);
-      return { status, stdout, stderr };
+      return collect_run_result(await client.exec(argv, options));
     },
     [getMachinePlugin]() {
       return plugin;
