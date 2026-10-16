@@ -52,6 +52,7 @@ export interface ExecOptions {
   env?: Readonly<Record<string, string>>;
   /**
    * Aborting kills the process, and `status` rejects with the abort reason.
+   * If waiting for a process slot, aborting rejects exec without spawning.
    *
    * @example Give a command a time budget
    * ```ts
@@ -285,7 +286,7 @@ function* prefixes(path: string): Generator<string> {
 class GuestClient {
   #session: Promise<GuestSession> | null = null;
   #processes = 0;
-  #process_waiters: (() => void)[] = [];
+  #process_waiters = new Set<() => void>();
   private readonly vsock: VsockDevice;
   private readonly abi: AgentAbi | undefined;
 
@@ -543,20 +544,36 @@ class GuestClient {
     return new FsFile(await openat(session, path, openFlags(options), options.mode ?? 0o666));
   }
 
-  #acquire_process_slot(): Promise<() => void> {
+  #acquire_process_slot(signal?: AbortSignal): Promise<() => void> {
+    signal?.throwIfAborted();
     let released = false;
     const release = () => {
       if (released) return;
       released = true;
-      const waiter = this.#process_waiters.shift();
-      if (waiter) waiter();
-      else this.#processes--;
+      const waiter = this.#process_waiters.values().next().value;
+      if (waiter) {
+        this.#process_waiters.delete(waiter);
+        waiter();
+      } else this.#processes--;
     };
     if (this.#processes < MAX_PROCESSES) {
       this.#processes++;
       return Promise.resolve(release);
     }
-    return new Promise((resolve) => this.#process_waiters.push(() => resolve(release)));
+    return new Promise((resolve, reject) => {
+      const granted = () => {
+        signal?.removeEventListener("abort", aborted);
+        resolve(release);
+      };
+      const aborted = () => {
+        if (!this.#process_waiters.delete(granted)) return;
+        signal?.removeEventListener("abort", aborted);
+        reject(signal?.reason);
+      };
+      this.#process_waiters.add(granted);
+      signal?.addEventListener("abort", aborted, { once: true });
+      if (signal?.aborted) aborted();
+    });
   }
 
   async exec(argv: readonly string[], options: ExecOptions = {}) {
@@ -571,8 +588,11 @@ class GuestClient {
       ...options.env,
     };
     const env = Object.entries(environment).map(([key, value]) => `${key}=${value}`);
-    const release = await this.#acquire_process_slot();
+    const release = await this.#acquire_process_slot(options.signal);
     try {
+      // A grant resolves asynchronously: abort may arrive before this
+      // continuation runs. Return the granted slot without starting a child.
+      options.signal?.throwIfAborted();
       const spawned = await spawn(session, argv, options.cwd ?? "/tmp", env);
       return new ChildProcess({
         session,

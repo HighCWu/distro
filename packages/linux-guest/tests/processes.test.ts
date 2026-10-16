@@ -7,6 +7,7 @@ import { getpid, kill, openat, read, reap, spawn } from "../src/syscalls.ts";
 import { agent_device, root_device } from "./assets.ts";
 import { guest_test } from "./fixture.ts";
 import { collect, pattern_bytes } from "./helpers.ts";
+import { checkQueuedExecAbort } from "./process-queue-runtime.ts";
 
 guest_test("processes", async (t, fixture) => {
   const guest = await fixture.spawn();
@@ -139,6 +140,7 @@ guest_test("processes", async (t, fixture) => {
       const abort_reason = new Error("cancel process");
       abort_controller.abort(abort_reason);
       await assert.rejects(aborted.status, (error) => error === abort_reason);
+      await checkQueuedExecAbort(guest, assert);
     });
 
     await t.test("settles buffered stdin before its descriptor is reused", async () => {

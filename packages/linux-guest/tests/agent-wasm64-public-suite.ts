@@ -9,6 +9,7 @@ import {
   publicStreamScript,
 } from "./agent-wasm64-userland-commands.ts";
 import { checkPublicNetwork } from "./agent-wasm64-public-network.ts";
+import { checkQueuedExecAbort } from "./process-queue-runtime.ts";
 
 // Identical public API corpus in Node and browsers. No initcpio or manual
 // boot arguments: the plugin selects its disk, transport and readiness ABI.
@@ -162,6 +163,7 @@ export async function runPublicAgentWasm64Suite(
         assert.deepEqual(next.status, { success: true, code: 0, signal: null });
         assert.equal(next.stdout.byteLength, 0);
         assert.equal(next.stderr.byteLength, 0);
+        await checkQueuedExecAbort(agent, assert);
       });
       await check("public exec streams binary data through native shell pipelines", async () => {
         // Cross injected I/O chunks and Linux pipe capacity, including NULs.
