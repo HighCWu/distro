@@ -4,6 +4,7 @@
   platform,
   llvm-toolchain,
   sysroot,
+  vm-test,
 }:
 
 let
@@ -139,20 +140,29 @@ let
     ++ platform.compilerFlags
     ++ map (flag: "-Wl,${flag}") platform.linkerFlags
   );
+  programs =
+    pkgs.runCommand "toolchain-smoke-${platform.wasmArch}"
+      {
+        passthru.checks.cxx-runtime = vm-test.rawInitramfsTest {
+          name = "toolchain-cxx-runtime-${platform.wasmArch}";
+          init = "${programs}/runtime-cxx.wasm";
+          cpus = 2;
+        };
+        nativeBuildInputs = [
+          llvm-toolchain
+          pkgs.wabt
+        ];
+      }
+      ''
+        mkdir -p $out
+        clang ${compileFlags} ${cSource} -o $out/smoke-c.wasm
+        clang++ ${compileFlags} ${cxxSource} -o $out/smoke-cxx.wasm
+        clang++ ${compileFlags} -std=c++17 -O2 -pthread -Wl,--fatal-warnings ${./runtime-cxx.cc} -o $out/runtime-cxx.wasm
+        chmod 0755 $out/smoke-c.wasm $out/smoke-cxx.wasm
+        chmod 0755 $out/runtime-cxx.wasm
+        wasm-validate --enable-memory64 --enable-threads --enable-exceptions $out/smoke-c.wasm
+        wasm-validate --enable-memory64 --enable-threads --enable-exceptions $out/smoke-cxx.wasm
+        wasm-validate --enable-memory64 --enable-threads --enable-exceptions $out/runtime-cxx.wasm
+      '';
 in
-
-pkgs.runCommand "toolchain-smoke-${platform.wasmArch}"
-  {
-    nativeBuildInputs = [
-      llvm-toolchain
-      pkgs.wabt
-    ];
-  }
-  ''
-    mkdir -p $out
-    clang ${compileFlags} ${cSource} -o $out/smoke-c.wasm
-    clang++ ${compileFlags} ${cxxSource} -o $out/smoke-cxx.wasm
-    chmod 0755 $out/smoke-c.wasm $out/smoke-cxx.wasm
-    wasm-validate --enable-memory64 --enable-threads --enable-exceptions $out/smoke-c.wasm
-    wasm-validate --enable-memory64 --enable-threads --enable-exceptions $out/smoke-cxx.wasm
-  ''
+programs
