@@ -102,6 +102,35 @@ let
     mkdir -p $out/share/meson
     cp ${mesonCrossFile} $out/share/meson/linux-wasm.ini
   '';
+  profileMetadata = pkgs.writeTextDir "share/linux-wasm-sdk/profile.json" (
+    builtins.toJSON {
+      schemaVersion = 1;
+      inherit (platform)
+        addressBits
+        wasmArch
+        targetTriple
+        compilerFlags
+        linkerFlags
+        ;
+      cxxConfiguration = builtins.readFile ../llvm-toolchain/clang++.cfg;
+      paths = {
+        toolchain = "${llvm-toolchain}";
+        sysroot = "${sysroot}";
+        compilerConfiguration = "${profileConfig}";
+        meson = "${meson}";
+      };
+    }
+  );
+  sdkInfo = pkgs.writeShellApplication {
+    name = "wasm-linux-sdk-info";
+    text = ''
+      if [[ $# -ne 0 ]]; then
+        echo "usage: wasm-linux-sdk-info" >&2
+        exit 64
+      fi
+      exec ${pkgs.coreutils}/bin/cat ${profileMetadata}/share/linux-wasm-sdk/profile.json
+    '';
+  };
   sdk = pkgs.symlinkJoin {
     name = "linux-wasm-sdk-${platform.wasmArch}";
     paths = [
@@ -111,6 +140,8 @@ let
       configure
       cmakeFiles
       mesonFiles
+      profileMetadata
+      sdkInfo
       llvm-toolchain
     ];
     passthru.meson = meson;
@@ -165,6 +196,9 @@ let
         ];
       }
       ''
+        wasm-linux-sdk-info > profile.json
+        ${pkgs.diffutils}/bin/cmp profile.json ${sdk}/share/linux-wasm-sdk/profile.json
+        node -e 'const p = JSON.parse(require("node:fs").readFileSync("profile.json")); if (p.schemaVersion !== 1 || p.targetTriple !== "${platform.targetTriple}" || p.addressBits !== ${toString platform.addressBits}) throw new Error("SDK profile mismatch")'
         cp ${./compiler.sh} compiler.sh
         cp ${./config-driver-test.js} config-driver-test.js
         SDK_TEST_CLANG=${llvm-toolchain}/bin/clang \
