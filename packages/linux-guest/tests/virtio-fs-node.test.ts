@@ -36,6 +36,49 @@ await mkdir(shared);
 await mkdir(outside);
 after(() => rm(temporary, { recursive: true, force: true }));
 
+test("node virtio-fs binds nodes and handles to their adapter and file", async () => {
+  const left = new NodeFS(shared);
+  const right = new NodeFS(outside);
+  const context = { mode: 0o100600, uid: process.getuid!(), gid: process.getgid!() };
+  const a = await left.create(left.root, "owner-a", linux_open.readwrite, context);
+  const sibling = await left.create(left.root, "owner-sibling", linux_open.readwrite, context);
+  const b = await right.create(right.root, "owner-b", linux_open.readwrite, context);
+  try {
+    await left.write(a.node, a.handle, 0n, new TextEncoder().encode("left"));
+    await right.write(b.node, b.handle, 0n, new TextEncoder().encode("right"));
+    await assert.rejects(left.lookup(right.root, "owner-b"), { errno: 22 });
+    await assert.rejects(left.getattr(b.node), { errno: 22 });
+    await assert.rejects(left.open(b.node, linux_open.readonly), { errno: 22 });
+    for (const [node, handle, errno] of [
+      [a.node, b.handle, 9],
+      [b.node, b.handle, 22],
+      [a.node, sibling.handle, 9],
+    ] as const) {
+      for (const operation of [
+        () => left.getattr(node, handle),
+        () => left.setattr(node, { size: 0n }, handle),
+        () => left.read(node, handle, 0n, 5),
+        () => left.write(node, handle, 0n, Uint8Array.of(42)),
+        () => left.flush(node, handle),
+        () => left.fsync(node, handle, false),
+        () => left.release(node, handle),
+      ]) {
+        await assert.rejects(operation(), { errno });
+      }
+    }
+    const directory = await right.opendir(right.root);
+    await assert.rejects(left.readdir(left.root, directory), { errno: 9 });
+    await assert.rejects(left.readdir(right.root, directory), { errno: 22 });
+    assert.equal(new TextDecoder().decode(await left.read(a.node, a.handle, 0n, 5)), "left");
+    assert.equal(new TextDecoder().decode(await right.read(b.node, b.handle, 0n, 5)), "right");
+    assert.equal((await left.getattr(sibling.node, sibling.handle)).size, 0n);
+  } finally {
+    await left.release(a.node, a.handle);
+    await left.release(sibling.node, sibling.handle);
+    await right.release(b.node, b.handle);
+  }
+});
+
 test("node virtio-fs adapter reads and writes beneath its root", async () => {
   const filesystem = new NodeFS(shared);
   const created = await filesystem.create!(

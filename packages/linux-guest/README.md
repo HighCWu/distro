@@ -116,6 +116,13 @@ descriptor-relative operations needed to make that confinement race-free
 against an unrelated host process restructuring the directory. Use an OS
 sandbox or native helper when that stronger boundary is required.
 
+Nodes belong to one adapter instance, and open handles belong to their original
+node. Cross-adapter nodes and mismatched handles are rejected before descriptor
+operations, including metadata, synchronization and close. An already-open Node
+file descriptor remains usable after unlink or replacement rename; validating
+ownership does not retarget it to a new file at the same pathname. These checks
+prevent adapter mix-ups, not hostile host namespace races.
+
 `BrowserFS` accepts OPFS and user-selected `FileSystemDirectoryHandle` values.
 The browser API has no Unix inode metadata or atomic portable rename, so the
 adapter synthesizes metadata and implements rename as copy-then-remove. A

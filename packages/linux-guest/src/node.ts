@@ -213,9 +213,11 @@ class Node {
 }
 
 class Handle {
+  readonly node: Node;
   readonly file: FileHandle | undefined;
 
-  constructor(file?: FileHandle) {
+  constructor(node: Node, file?: FileHandle) {
+    this.node = node;
     this.file = file;
   }
 }
@@ -241,10 +243,12 @@ export class NodeFS implements FS<Node, Handle> {
   readonly readOnly: boolean;
   readonly #root_path: Promise<string>;
   readonly #nodes = new Map<string, Node>();
+  readonly #ownedNodes = new WeakSet<Node>();
   #path_tail = Promise.resolve();
 
   constructor(root: string, options: NodeFSOptions = {}) {
     this.root = new Node([]);
+    this.#ownedNodes.add(this.root);
     this.readOnly = options.readOnly ?? false;
     this.#nodes.set("", this.root);
     this.#root_path = node_call(realpath(path.resolve(root)));
@@ -271,19 +275,40 @@ export class NodeFS implements FS<Node, Handle> {
     let node = this.#nodes.get(key);
     if (!node) {
       node = new Node(parts);
+      this.#ownedNodes.add(node);
       this.#nodes.set(key, node);
     }
     return node;
   }
 
-  #parts(node: Node) {
-    if (!(node instanceof Node)) {
+  #owned_node(node: Node) {
+    if (!(node instanceof Node) || !this.#ownedNodes.has(node)) {
       throw new FSError("EINVAL", "node belongs to another filesystem");
     }
+    return node;
+  }
+
+  #parts(node: Node) {
+    this.#owned_node(node);
     if (!node.attached) {
       throw new FSError("ENOENT", "filesystem node is no longer attached");
     }
     return node.parts;
+  }
+
+  #handle(node: Node, handle: Handle) {
+    this.#owned_node(node);
+    if (!(handle instanceof Handle) || handle.node !== node) {
+      throw new FSError("EBADF", "handle does not belong to this node");
+    }
+    return handle;
+  }
+
+  #file(node: Node, handle: Handle) {
+    const current = this.#handle(node, handle);
+    if (!current.file) throw new FSError("EBADF");
+    // An unlinked node remains usable through its own open descriptor.
+    return current.file;
   }
 
   async #path(parts: readonly string[]) {
@@ -344,7 +369,8 @@ export class NodeFS implements FS<Node, Handle> {
   }
 
   async getattr(node: Node, handle?: Handle) {
-    if (handle instanceof Handle && handle.file) {
+    if (handle !== undefined) this.#handle(node, handle);
+    if (handle?.file) {
       return attributes(await node_call(handle.file.stat({ bigint: true })));
     }
     return await this.#path_operation(async () => attributes(await this.#stats(node)));
@@ -419,7 +445,8 @@ export class NodeFS implements FS<Node, Handle> {
 
   async setattr(node: Node, changes: FSSetAttributes, handle?: Handle) {
     this.#writable();
-    if (handle instanceof Handle && handle.file) {
+    if (handle !== undefined) this.#handle(node, handle);
+    if (handle?.file) {
       return await this.#setattr(node, changes, handle.file);
     }
     return await this.#path_operation(async () => this.#setattr(node, changes));
@@ -430,7 +457,7 @@ export class NodeFS implements FS<Node, Handle> {
     const host_flags = translate_open_flags(flags) | constants.O_NOFOLLOW;
     return await this.#path_operation(async () => {
       const target = await this.#validated_path(this.#parts(node));
-      return new Handle(await node_call(open(target, host_flags)));
+      return new Handle(node, await node_call(open(target, host_flags)));
     });
   }
 
@@ -442,62 +469,50 @@ export class NodeFS implements FS<Node, Handle> {
       const parts = [...this.#parts(parent), valid_name(name)];
       const target = await this.#validated_path(parts);
       const file = await node_call(open(target, host_flags, context.mode & 0o7777));
-      return { node: this.#node(parts), handle: new Handle(file) };
+      const node = this.#node(parts);
+      return { node, handle: new Handle(node, file) };
     });
   }
 
-  async read(_node: Node, handle: Handle, offset: bigint, length: number) {
-    if (!(handle instanceof Handle) || !handle.file) {
-      throw new FSError("EBADF");
-    }
+  async read(node: Node, handle: Handle, offset: bigint, length: number) {
+    const file = this.#file(node, handle);
     const buffer = new Uint8Array(length);
-    const { bytesRead } = await node_call(
-      handle.file.read(buffer, 0, length, checked_offset(offset)),
-    );
+    const { bytesRead } = await node_call(file.read(buffer, 0, length, checked_offset(offset)));
     return buffer.subarray(0, bytesRead);
   }
 
-  async write(_node: Node, handle: Handle, offset: bigint, data: Uint8Array) {
+  async write(node: Node, handle: Handle, offset: bigint, data: Uint8Array) {
     this.#writable();
-    if (!(handle instanceof Handle) || !handle.file) {
-      throw new FSError("EBADF");
-    }
+    const file = this.#file(node, handle);
     const { bytesWritten } = await node_call(
-      handle.file.write(data, 0, data.byteLength, checked_offset(offset)),
+      file.write(data, 0, data.byteLength, checked_offset(offset)),
     );
     return bytesWritten;
   }
 
-  async flush(_node: Node, handle: Handle) {
-    if (!(handle instanceof Handle) || !handle.file) {
-      throw new FSError("EBADF");
-    }
-    await node_call(handle.file.datasync());
+  async flush(node: Node, handle: Handle) {
+    await node_call(this.#file(node, handle).datasync());
   }
 
-  async fsync(_node: Node, handle: Handle, dataOnly: boolean) {
-    if (!(handle instanceof Handle) || !handle.file) {
-      throw new FSError("EBADF");
-    }
-    await node_call(dataOnly ? handle.file.datasync() : handle.file.sync());
+  async fsync(node: Node, handle: Handle, dataOnly: boolean) {
+    const file = this.#file(node, handle);
+    await node_call(dataOnly ? file.datasync() : file.sync());
   }
 
-  async release(_node: Node, handle: Handle) {
-    if (!(handle instanceof Handle) || !handle.file) {
-      throw new FSError("EBADF");
-    }
-    await node_call(handle.file.close());
+  async release(node: Node, handle: Handle) {
+    await node_call(this.#file(node, handle).close());
   }
 
   async opendir(node: Node) {
     return await this.#path_operation(async () => {
       const stats = await this.#stats(node);
       if (!stats.isDirectory()) throw new FSError("ENOTDIR");
-      return new Handle();
+      return new Handle(node);
     });
   }
 
-  async readdir(node: Node, _handle: Handle): Promise<FSDirectoryEntry<Node>[]> {
+  async readdir(node: Node, handle: Handle): Promise<FSDirectoryEntry<Node>[]> {
+    this.#handle(node, handle);
     return await this.#path_operation(async () => {
       const parts = this.#parts(node);
       const target = await this.#validated_path(parts);
