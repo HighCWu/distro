@@ -224,6 +224,26 @@ jobs:
           if-no-files-found: error
           compression-level: 0
           retention-days: 3
+      - name: Collect the validated BusyBox source bundle
+        if: ${{ success() && startsWith(matrix.check, 'busybox') && endsWith(matrix.check, '-check-source-bundle') }}
+        env:
+          WASM64_CHECK: ${{ contains(matrix.check, 'wasm64') }}
+        run: |
+          package=busybox
+          if [[ "$WASM64_CHECK" == true ]]; then package=busybox-wasm64; fi
+          bundle=$(nix eval --raw ".#$package.sourceBundle.outPath")
+          nix path-info "$bundle"
+          mkdir busybox-source-bundle
+          cp "$bundle/busybox-source.tar.gz" "$bundle/README.md" "$bundle/SHA256SUMS" \
+            "$bundle/BINARY_SHA256SUMS" busybox-source-bundle/
+      - uses: actions/upload-artifact@v4
+        if: ${{ success() && startsWith(matrix.check, 'busybox') && endsWith(matrix.check, '-check-source-bundle') }}
+        with:
+          name: busybox-source-${{ matrix.check }}-${{ github.sha }}
+          path: busybox-source-bundle/
+          if-no-files-found: error
+          compression-level: 0
+          retention-days: 3
       - name: Retain completed toolchain outputs after targeted checks
         id: retained
         if: ${{ !cancelled() && needs.plan.outputs.targeted == 'true' && steps.heavy-cache.outcome == 'success' && steps.heavy-cache.outputs.hit-primary-key != 'true' }}

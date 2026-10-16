@@ -16,11 +16,32 @@
   vm-test,
 }:
 
+let
+  identity = value: builtins.baseNameOf "${value}";
+  buildMetadata = pkgs.writeText "busybox-build.json" (
+    builtins.toJSON {
+      schemaVersion = 1;
+      addressBits = platform.addressBits;
+      inherit debug;
+      sourceIdentity = identity src;
+      muslSourceIdentity = identity musl.src;
+      runtimeSourceIdentity = identity llvm-runtimes.src;
+      compilerIdentity = identity stdenv.cc;
+      linuxHeadersIdentity = identity linux.headers;
+      scope = "Selected BusyBox source and build materials; not a full dependency inventory or offline rebuild environment";
+    }
+  );
+in
 stdenv.mkDerivation (finalAttrs: {
   pname = "busybox";
   version = "1.37.0";
   inherit src;
+  outputs = [
+    "out"
+    "buildMaterials"
+  ];
   meta.license = lib.licenses.gpl2Only;
+  meta.outputsToInstall = [ "out" ];
 
   # busybox builds host tools with HOSTCC during the target build.
   depsBuildBuild = [ pkgs.stdenv.cc ];
@@ -132,8 +153,21 @@ stdenv.mkDerivation (finalAttrs: {
     cp ${musl.src}/COPYRIGHT "$notices/musl-COPYRIGHT"
     cp ${llvm-runtimes.src}/compiler-rt/LICENSE.TXT "$notices/compiler-rt-LICENSE.TXT"
     cp ${./notices.md} "$notices/README.md"
+    bash ${./build-materials.sh} "$PWD" "$buildMaterials" ${./package.nix} \
+      ${buildMetadata} ${./source-bundle.README.md}
+    cp ${./check-binary.mjs} "$buildMaterials/check-binary.mjs"
+    cp ${../../packages/kernel/src/wasm_binary.ts} "$buildMaterials/wasm_binary.ts"
+    cp ${./notices.md} "$buildMaterials/notices.md"
+    (cd "$buildMaterials" && sha256sum check-binary.mjs wasm_binary.ts notices.md >> SHA256SUMS)
     runHook postInstall
   '';
+
+  passthru.sourceBundle = import ./source-bundle.nix {
+    inherit pkgs;
+    busybox = finalAttrs.finalPackage;
+    addressBits = platform.addressBits;
+    maximumMemoryBytes = platform.maximumMemoryBytes;
+  };
 
   passthru.checks =
     let
@@ -146,6 +180,23 @@ stdenv.mkDerivation (finalAttrs: {
         };
     in
     {
+      source-bundle = finalAttrs.finalPackage.sourceBundle.check;
+      source-bundle-host =
+        pkgs.runCommand "busybox-source-bundle-host-check"
+          {
+            nativeBuildInputs = [
+              pkgs.nodejs
+              pkgs.bash
+              pkgs.gnutar
+              pkgs.gzip
+              pkgs.coreutils
+              pkgs.gnused
+            ];
+          }
+          ''
+            node --test ${./.}/source-bundle.test.js
+            touch $out
+          '';
       smoke = check "smoke" ./smoke-test.sh;
       processes = check "processes" ./process-test.sh;
       networking = check "networking" ./network-test.sh;
