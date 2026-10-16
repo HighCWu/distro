@@ -110,6 +110,12 @@ wasm64 BusyBox package (including its license texts) and minimal filesystem
 configuration, with the `LOWLAND_ROOT` label and the private-network resolver
 address. It does not use the default wasm32 package repository.
 
+The root includes `/etc/passwd` and `/etc/group` for the existing UID/GID 0
+identity, and `/etc/mtab` links to `/proc/mounts`. These support ordinary user
+name and mount-table lookups, not a login service, credentials, or multi-user
+isolation. The minimal-root check verifies `id -un` and reading the mount-table
+link in the running system; target execution still requires a passing CI run.
+
 Build heavy artifacts in public CI; these explicit source-flake targets select
 the matching boot disk, system root and kernel package:
 
