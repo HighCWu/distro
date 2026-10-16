@@ -17,7 +17,8 @@ sdk-generator: $(srcdir)/generator.c
 	$(CC_FOR_BUILD) $(CFLAGS_FOR_BUILD) $(srcdir)/generator.c -o $@
 
 generated.h: sdk-generator
-	./sdk-generator > $@.tmp && mv $@.tmp $@
+	@set -e; trap 'rm -f "$@.tmp"' 0; \
+	  ./sdk-generator > "$@.tmp"; mv "$@.tmp" "$@"
 
 main.o: $(srcdir)/main.c generated.h
 	$(CC) $(DEFS) $(CPPFLAGS) $(CFLAGS) -I. -c $(srcdir)/main.c -o $@

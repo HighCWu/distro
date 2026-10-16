@@ -3,6 +3,7 @@ import assert from "node:assert/strict";
 import {
   copyFileSync,
   cpSync,
+  existsSync,
   mkdirSync,
   mkdtempSync,
   readFileSync,
@@ -74,6 +75,33 @@ test("Autoconf SDK entry point separates build and host without executing target
     assert.doesNotMatch(configured.stdout + configured.stderr, /HOST_SITE_WAS_LOADED/);
     run("make", ["-j2", "CFLAGS=-O2 -Wall -Wextra -Werror"]);
     assert.match(readFileSync(join(build, "generated.h"), "utf8"), /SDK_GENERATED_SIZE 64/);
+    const generatorPath = join(build, "sdk-generator");
+    const headerPath = join(build, "generated.h");
+    const generatorBytes = readFileSync(generatorPath);
+    const headerBytes = readFileSync(headerPath);
+    // Inject a partial-output failure into the native generator only. Force
+    // regeneration without rebuilding it, and preserve any last good header.
+    writeFileSync(generatorPath, "#!/bin/sh\nprintf 'PARTIAL_OUTPUT\\n'\nexit 37\n");
+    const failedGeneration = () => {
+      const result = spawnSync("make", ["-W", "sdk-generator", "generated.h"], {
+        cwd: build,
+        env,
+        encoding: "utf8",
+      });
+      assert.equal(result.error, undefined);
+      assert.notEqual(result.status, 0, "failed generator was accepted");
+      assert.match(result.stderr, /Error 37/);
+      assert.equal(existsSync(join(build, "generated.h.tmp")), false);
+    };
+    failedGeneration();
+    assert.deepEqual(readFileSync(headerPath), headerBytes);
+    rmSync(headerPath);
+    failedGeneration();
+    assert.equal(existsSync(headerPath), false);
+    writeFileSync(generatorPath, generatorBytes);
+    run("make", ["-j2", "CFLAGS=-O2 -Wall -Wextra -Werror"]);
+    assert.deepEqual(readFileSync(headerPath), headerBytes);
+    run("make", ["-q"]);
     if (installedWrapper) {
       assert.ok(process.env.SDK_TEST_OUTPUT_DIRECTORY, "target checks require an output directory");
       copyFileSync(
