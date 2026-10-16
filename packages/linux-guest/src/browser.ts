@@ -125,6 +125,7 @@ class Node {
   handle: FileSystemHandle;
   metadata: Metadata;
   mutation = Promise.resolve();
+  location = 0;
   // Browser handles identify a locator rather than an inode generation and may
   // resolve a same-path recreation. Once removal is observed, permanently
   // detach this generation so old guest handles fail instead of retargeting it.
@@ -187,6 +188,8 @@ export class BrowserFS implements FS<Node, Handle> {
   // Portable handles have no exclusive create/namespace transaction. Keep
   // this adapter's check-and-mutate sequences from interleaving with each other.
   readonly #namespace = { mutation: Promise.resolve() };
+  #directoryMove?: { parts: string[]; destination: string[]; done: PromiseWithResolvers<void> };
+  #directoryLocation = 0;
 
   constructor(root: FileSystemDirectoryHandle) {
     this.root = new Node([], root, default_metadata("directory"));
@@ -243,7 +246,33 @@ export class BrowserFS implements FS<Node, Handle> {
     return current;
   }
 
-  async #mutate<T>(node: Pick<Node, "mutation">, operation: () => Promise<T>): Promise<T> {
+  #directory_blocker(node: Node) {
+    return this.#path_blocker(node.parts);
+  }
+
+  #path_blocker(parts: readonly string[], ancestors = false) {
+    const move = this.#directoryMove;
+    return move &&
+      [move.parts, move.destination].some(
+        (prefix) =>
+          prefix.every((part, index) => parts[index] === part) ||
+          (ancestors && parts.every((part, index) => prefix[index] === part)),
+      )
+      ? move
+      : undefined;
+  }
+
+  async #mutate<T>(
+    node: Pick<Node, "mutation">,
+    operation: () => Promise<T>,
+    relocationOwner = false,
+  ): Promise<T> {
+    // Directory relocation drains pre-existing mutations. Later subtree
+    // mutations must wait outside their node queue, otherwise relocation would
+    // wait for work that in turn waits for relocation itself.
+    if (node instanceof Node && !relocationOwner) {
+      for (let blocker; (blocker = this.#directory_blocker(node));) await blocker.done.promise;
+    }
     const previous = node.mutation;
     const completion = Promise.withResolvers<void>();
     node.mutation = completion.promise;
@@ -283,14 +312,33 @@ export class BrowserFS implements FS<Node, Handle> {
   }
 
   async lookup(parent: Node, name: string) {
-    const parent_node = this.#as_node(parent);
-    const parts = [...parent_node.parts, valid_name(name)];
-    const handle = await this.#child(this.#directory(parent), name);
-    if (!handle) {
-      this.#forget(parts);
-      return undefined;
+    name = valid_name(name);
+    for (;;) {
+      const current = this.#as_node(parent);
+      const parts = [...current.parts, name];
+      const blocker = this.#path_blocker(parts);
+      if (blocker) {
+        await blocker.done.promise;
+        continue;
+      }
+      const location = current.location;
+      const directoryLocation = this.#directoryLocation;
+      const handle = await this.#child(this.#directory(current), name);
+      // A lookup that was already in flight when relocation started must not
+      // publish a stale locator or detach the newly moved generation.
+      this.#as_node(current);
+      if (
+        this.#path_blocker(parts) ||
+        current.location !== location ||
+        this.#directoryLocation !== directoryLocation
+      )
+        continue;
+      if (!handle) {
+        this.#forget(parts);
+        return undefined;
+      }
+      return this.#remember(parts, handle);
     }
-    return this.#remember(parts, handle);
   }
 
   async getattr(node: Node): Promise<FSAttributes> {
@@ -474,15 +522,38 @@ export class BrowserFS implements FS<Node, Handle> {
   }
 
   async readdir(node: Node, handle: Handle): Promise<FSDirectoryEntry<Node>[]> {
-    const current = this.#open_handle(node, handle);
-    const result: FSDirectoryEntry<Node>[] = [];
-    for await (const [name, handle] of this.#directory(node).entries()) {
-      result.push({
+    for (;;) {
+      const current = this.#open_handle(node, handle);
+      const blocker = this.#path_blocker(current.parts, true);
+      if (blocker) {
+        await blocker.done.promise;
+        continue;
+      }
+      const location = current.location;
+      const directoryLocation = this.#directoryLocation;
+      const entries: [string, FileSystemHandle][] = [];
+      try {
+        for await (const entry of this.#directory(current).entries()) entries.push(entry);
+      } catch (error) {
+        if (
+          this.#path_blocker(current.parts, true) ||
+          this.#directoryLocation !== directoryLocation
+        )
+          continue;
+        opfs_error(error);
+      }
+      this.#open_handle(node, handle);
+      if (
+        this.#path_blocker(current.parts, true) ||
+        current.location !== location ||
+        this.#directoryLocation !== directoryLocation
+      )
+        continue;
+      return entries.map(([name, handle]) => ({
         name,
         node: this.#remember([...current.parts, name], handle),
-      });
+      }));
     }
-    return result;
   }
 
   async mkdir(parent: Node, name: string, context: FSCreateContext) {
@@ -577,11 +648,35 @@ export class BrowserFS implements FS<Node, Handle> {
     if (!source) throw new FSError("ENOENT");
     if (old_parent === new_parent && oldName === newName) return;
     const source_node = this.#as_node(source);
-    const move = () => this.#move_node(old_parent, oldName, new_parent, newName, source_node);
+    const existing = await this.lookup(new_parent, newName);
+    const move = () =>
+      this.#move_node(old_parent, oldName, new_parent, newName, source_node, existing);
     // Copying a file snapshots its committed bytes. Keep the source's mutation
     // queue reserved until its handle has been retargeted to the new name.
     if (source_node.handle.kind === "file") await this.#mutate(source_node, move);
-    else await move();
+    else {
+      // The namespace queue permits only one relocation. Install the barrier
+      // synchronously before capturing pending work so newly discovered nodes
+      // cannot start writes outside this snapshot.
+      const barrier = {
+        parts: [...source_node.parts],
+        destination: [...new_parent.parts, newName],
+        done: Promise.withResolvers<void>(),
+      };
+      this.#directoryMove = barrier;
+      this.#directoryLocation++;
+      const pending = [...this.#nodes.values()]
+        .filter((node) => this.#directory_blocker(node) === barrier)
+        .map((node) => node.mutation);
+      try {
+        await Promise.all(pending);
+        await move();
+      } finally {
+        this.#directoryMove = undefined;
+        this.#directoryLocation++;
+        barrier.done.resolve();
+      }
+    }
   }
 
   async #move_node(
@@ -590,6 +685,7 @@ export class BrowserFS implements FS<Node, Handle> {
     new_parent: Node,
     newName: string,
     source_node: Node,
+    existing: Node | undefined,
   ) {
     this.#as_node(source_node);
     const old_parts = [...old_parent.parts, oldName];
@@ -602,7 +698,6 @@ export class BrowserFS implements FS<Node, Handle> {
       throw new FSError("EINVAL", "cannot move a directory into itself");
     }
 
-    const existing = await this.lookup(new_parent, newName);
     if (existing) {
       const existing_node = this.#as_node(existing);
       if (source_node.handle.kind === "directory" && existing_node.handle.kind !== "directory") {
@@ -620,15 +715,19 @@ export class BrowserFS implements FS<Node, Handle> {
       // destination writes/truncations to commit or abort. Keep the queue
       // reserved until the old generation is detached; later old-handle writes
       // then fail rather than touching the copied source at the same name.
-      await this.#mutate(existing_node, async () => {
-        this.#as_node(existing_node);
-        await opfs_call(
-          this.#directory(new_parent).removeEntry(newName, {
-            recursive: false,
-          }),
-        );
-        this.#forget(new_parts);
-      });
+      await this.#mutate(
+        existing_node,
+        async () => {
+          this.#as_node(existing_node);
+          await opfs_call(
+            this.#directory(new_parent).removeEntry(newName, {
+              recursive: false,
+            }),
+          );
+          this.#forget(new_parts);
+        },
+        true,
+      ); // This namespace operation may pass through its own relocation barrier.
     }
 
     const destination = this.#directory(new_parent);
@@ -670,6 +769,7 @@ export class BrowserFS implements FS<Node, Handle> {
         handle = child;
       }
       node.handle = handle;
+      node.location++;
       if (key === old_parts.join("/") || key.startsWith(`${old_parts.join("/")}/`)) {
         this.#nodes.delete(key);
         node.parts = [...new_parts, ...node.parts.slice(old_parts.length)];
