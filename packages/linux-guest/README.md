@@ -91,6 +91,17 @@ numeric fd safe. Eight added dual-width host cases cover close errors, queued
 operations, continued session use and stale process outputs; 62 related host
 tests and TypeScript checks pass. These are not native fd-reuse stress tests.
 
+Process disposal also errors an unfinished stdin immediately: outstanding
+writers observe `EPIPE` from `write()` and `closed`, rather than accepting data
+that the stopped host pump would discard. An already observed pump error is
+preserved instead; stdin EOF completed before disposal remains successful.
+Buffered write success is not a delivery acknowledgement, and disposal may
+discard buffered input while still waiting for an injected write to settle.
+Ten additional dual-width host cases cover disposal before/after reap, abort
+reasons, prior pump errors and normal EOF (72 related host tests pass).
+Native wasm32 and shared wasm64 public-userland assertions are included;
+their execution remains separate from host validation.
+
 Process admission is capped at eight live SDK children so blocked process I/O
 does not consume every syscall lane. An `exec()` waiting for capacity is
 abortable: it rejects with the original signal reason, removes its waiter,
