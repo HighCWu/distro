@@ -1,0 +1,12 @@
+# SPDX-License-Identifier: MIT
+cmake_minimum_required(VERSION 3.20)
+project(linux_wasm_sdk_example LANGUAGES C CXX)
+find_package(Threads REQUIRED)
+add_library(answer STATIC answer.c)
+target_compile_features(answer PRIVATE c_std_11)
+add_executable(sdk-example main.cc)
+target_compile_features(sdk-example PRIVATE cxx_std_17)
+target_link_libraries(sdk-example PRIVATE answer Threads::Threads)
+if(CMAKE_CROSSCOMPILING)
+  set_target_properties(sdk-example PROPERTIES SUFFIX ".wasm")
+endif()

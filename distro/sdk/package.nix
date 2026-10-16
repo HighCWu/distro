@@ -28,11 +28,26 @@ let
           ]
           (builtins.readFile ./compiler.sh);
     };
+  cc = wrapper "wasm-linux-cc" "clang";
+  cxx = wrapper "wasm-linux-c++" "clang++";
+  cmakeToolchain = pkgs.replaceVars ./linux-wasm.cmake.in {
+    inherit (platform) wasmArch;
+    cc = "${cc}/bin/wasm-linux-cc";
+    cxx = "${cxx}/bin/wasm-linux-c++";
+    ar = "${llvm-toolchain}/bin/llvm-ar";
+    ranlib = "${llvm-toolchain}/bin/llvm-ranlib";
+    sysroot = "${sysroot}";
+  };
+  cmakeFiles = pkgs.runCommand "sdk-cmake-${platform.wasmArch}" { } ''
+    mkdir -p $out/share/cmake
+    cp ${cmakeToolchain} $out/share/cmake/linux-wasm.cmake
+  '';
   sdk = pkgs.symlinkJoin {
     name = "linux-wasm-sdk-${platform.wasmArch}";
     paths = [
-      (wrapper "wasm-linux-cc" "clang")
-      (wrapper "wasm-linux-c++" "clang++")
+      cc
+      cxx
+      cmakeFiles
       llvm-toolchain
     ];
     passthru.checks = {
@@ -47,6 +62,11 @@ let
         init = "${programs}/runtime-cxx.wasm";
         cpus = 2;
       };
+      cmake-runtime = vm-test.rawInitramfsTest {
+        name = "sdk-cmake-runtime-${platform.wasmArch}";
+        init = "${cmakePrograms}/sdk-example.wasm";
+        cpus = 2;
+      };
     };
   };
   programs = pkgs.runCommand "sdk-consumer-${platform.wasmArch}" { nativeBuildInputs = [ sdk ]; } ''
@@ -56,5 +76,22 @@ let
     wasm-linux-c++ -pthread -Wl,--fatal-warnings runtime.o -o $out/runtime-cxx.wasm
     chmod 0755 $out/runtime-cxx.wasm
   '';
+  cmakePrograms =
+    pkgs.runCommand "sdk-cmake-consumer-${platform.wasmArch}"
+      {
+        nativeBuildInputs = [
+          pkgs.cmake
+          pkgs.ninja
+        ];
+      }
+      ''
+        cmake -S ${./cmake-example} -B build -G Ninja \
+          -DCMAKE_TOOLCHAIN_FILE=${sdk}/share/cmake/linux-wasm.cmake \
+          -DCMAKE_BUILD_TYPE=Release
+        cmake --build build --verbose
+        mkdir $out
+        cp build/sdk-example.wasm $out/
+        chmod 0755 $out/sdk-example.wasm
+      '';
 in
 sdk

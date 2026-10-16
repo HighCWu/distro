@@ -1,0 +1,18 @@
+# SPDX-License-Identifier: MIT
+set(CMAKE_SYSTEM_NAME Linux)
+set(CMAKE_SYSTEM_PROCESSOR "@wasmArch@")
+set(CMAKE_C_COMPILER "@cc@")
+set(CMAKE_CXX_COMPILER "@cxx@")
+set(CMAKE_AR "@ar@")
+set(CMAKE_RANLIB "@ranlib@")
+set(CMAKE_SYSROOT "@sysroot@")
+# Configure may compile probes, but cannot execute Wasm on the build host.
+set(CMAKE_TRY_COMPILE_TARGET_TYPE STATIC_LIBRARY)
+set(CMAKE_FIND_ROOT_PATH "@sysroot@")
+set(CMAKE_FIND_ROOT_PATH_MODE_PROGRAM NEVER)
+set(CMAKE_FIND_ROOT_PATH_MODE_LIBRARY ONLY)
+set(CMAKE_FIND_ROOT_PATH_MODE_INCLUDE ONLY)
+set(CMAKE_FIND_ROOT_PATH_MODE_PACKAGE ONLY)
+set(CMAKE_EXECUTABLE_SUFFIX ".wasm")
+# This SDK currently provides static target libraries only.
+set_property(GLOBAL PROPERTY TARGET_SUPPORTS_SHARED_LIBS FALSE)

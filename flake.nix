@@ -141,6 +141,7 @@
               AR = "${wasmpkgs.llvm-toolchain}/bin/llvm-ar";
               RANLIB = "${wasmpkgs.llvm-toolchain}/bin/llvm-ranlib";
               sysroot = "${wasmpkgs.sysroot}";
+              WASM_CMAKE_TOOLCHAIN_FILE = "${wasmpkgs.sdk}/share/cmake/linux-wasm.cmake";
             };
           };
           sdk-wasm64 = pkgs.mkShellNoCC {
@@ -156,6 +157,7 @@
               AR = "${wasmpkgs.llvm-toolchain-wasm64}/bin/llvm-ar";
               RANLIB = "${wasmpkgs.llvm-toolchain-wasm64}/bin/llvm-ranlib";
               sysroot = "${wasmpkgs.sysroot-wasm64}";
+              WASM_CMAKE_TOOLCHAIN_FILE = "${wasmpkgs.sdk-wasm64}/share/cmake/linux-wasm.cmake";
             };
           };
 
