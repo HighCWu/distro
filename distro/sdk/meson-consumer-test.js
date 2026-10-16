@@ -18,6 +18,8 @@ test("Meson runs build-machine generators without executing target probes", () =
     CXX: "/invalid-target-cxx",
     AR: "/invalid-target-ar",
     AR_FOR_BUILD: process.env.AR_FOR_BUILD || "ar",
+    PKG_CONFIG: "/invalid-target-pkg-config",
+    PKG_CONFIG_FOR_BUILD: process.env.PKG_CONFIG_FOR_BUILD || "pkg-config",
     CC_FOR_BUILD: process.env.CC_FOR_BUILD || "cc",
     CXX_FOR_BUILD: process.env.CXX_FOR_BUILD || "c++",
   };
@@ -40,6 +42,7 @@ test("Meson runs build-machine generators without executing target probes", () =
     writeFileSync(join(hostMetadata, "sdk-meson-fixture.pc"), metadata("host"));
     writeFileSync(join(hostMetadata, "sdk-meson-host-only.pc"), metadata("host"));
     env.PKG_CONFIG_PATH = hostMetadata;
+    env.PKG_CONFIG_PATH_FOR_BUILD = hostMetadata;
     env.PKG_CONFIG_LIBDIR = hostMetadata;
     env.PKG_CONFIG_SYSROOT_DIR = "/invalid-host-sysroot";
     env.WASM_PKG_CONFIG_PATH = targetMetadata;
@@ -78,6 +81,13 @@ test("Meson runs build-machine generators without executing target probes", () =
       join(dependencySource, "meson.build"),
       `
 project('sdk-dependency-isolation', 'c')
+native_dependency = dependency('sdk-meson-fixture', native: true, method: 'pkg-config', required: true)
+if native_dependency.get_variable(pkgconfig: 'marker') != 'host'
+  error('Build-machine dependency was replaced by target metadata')
+endif
+if not dependency('sdk-meson-host-only', native: true, method: 'pkg-config', required: true).found()
+  error('Build-machine dependency must remain available to native tools')
+endif
 target = dependency('sdk-meson-fixture', method: 'pkg-config', required: true)
 if target.get_variable(pkgconfig: 'marker') != 'target'
   error('Target dependency was replaced by host metadata')

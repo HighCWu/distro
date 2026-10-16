@@ -245,6 +245,7 @@ let
         ];
         CC_FOR_BUILD = "${pkgs.stdenv.cc}/bin/cc";
         CXX_FOR_BUILD = "${pkgs.stdenv.cc}/bin/c++";
+        PKG_CONFIG_FOR_BUILD = "${pkgs.pkg-config}/bin/pkg-config";
       }
       ''
         mkdir $out
