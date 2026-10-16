@@ -141,7 +141,7 @@ let
         name:
         playwright.mkCheck {
           name = "browser-tests-${name}";
-          suite = agentPublicSuite false;
+          suite = agentPublicSuite false false;
           expectedTests = [ "boots native wasm64 through public guestAgent image selection" ];
           project = lib.removePrefix "agent-public-wasm64-" name;
         }
@@ -151,12 +151,21 @@ let
           name:
           playwright.mkCheck {
             name = "browser-tests-${name}";
-            suite = agentPublicSuite true;
+            suite = agentPublicSuite true false;
             expectedTests = [ "runs native wasm64 shell through public guestAgent image selection" ];
             project = lib.removePrefix "agent-public-userland-wasm64-" name;
           }
         )
       )
+      // (lib.genAttrs [ "agent-public-network-wasm64-chromium" "agent-public-network-wasm64-firefox" ] (
+        name:
+        playwright.mkCheck {
+          name = "browser-tests-${name}";
+          suite = agentPublicSuite true true;
+          expectedTests = [ "runs native wasm64 HTTP through public agent networking" ];
+          project = lib.removePrefix "agent-public-network-wasm64-" name;
+        }
+      ))
       // (lib.genAttrs [ "runtime-wasm32-chromium" "runtime-wasm32-firefox" ] (
         name:
         playwright.mkCheck {
@@ -233,11 +242,17 @@ let
       '';
 
   agentPublicSuite =
-    userland:
+    userland: networking:
     let
       assets =
-        if userland then guest-agent.checks.public-userland-wasm64 else guest-agent.checks.public-wasm64;
-      variant = "public${lib.optionalString userland "-userland"}";
+        if networking then
+          guest-agent.checks.public-network-wasm64
+        else if userland then
+          guest-agent.checks.public-userland-wasm64
+        else
+          guest-agent.checks.public-wasm64;
+      suffix = if networking then "-network" else lib.optionalString userland "-userland";
+      variant = "public${suffix}";
     in
     pkgs.runCommand "agent-${variant}-wasm64-browser-tests"
       {
@@ -253,7 +268,7 @@ let
         cp ${source}/agent-public-app.js $out/app.js
         cp ${source}/agent-assertions.js $out/agent-assertions.js
         cp ${source}/agent-tests/agent-public-check.js $out/tests/
-        cp ${source}/agent-tests/agent-public${lib.optionalString userland "-userland"}.spec.js $out/tests/
+        cp ${source}/agent-tests/agent-public${suffix}.spec.js $out/tests/
         cp ${source}/memory64-index.html $out/index.html
         cp ${source}/playwright.config.js $out/playwright.config.js
         cp ${source}/server.js $out/server.js

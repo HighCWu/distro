@@ -20,7 +20,10 @@ test(
       (line) => {
         process.stderr.write(line);
       },
-      { userland: process.env.AGENT_WASM64_USERLAND === "1" },
+      {
+        userland: process.env.AGENT_WASM64_USERLAND === "1",
+        networking: process.env.AGENT_WASM64_NETWORKING === "1",
+      },
     );
   },
 );

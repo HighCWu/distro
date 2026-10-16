@@ -130,4 +130,11 @@ package
     assets = userlandBootAssets;
     userland = true;
   };
+  checks.public-network-wasm64 = import ./public-wasm64.nix {
+    inherit bytes pkgs node-workspace;
+    kernel = kernel-wasm64;
+    assets = userlandBootAssets;
+    userland = true;
+    networking = true;
+  };
 }

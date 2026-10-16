@@ -1,9 +1,10 @@
 // SPDX-License-Identifier: MIT
 import { blockDevice, bootMachine, consoleDevice, entropyDevice } from "@lowland/kernel";
-import { guestAgent, SeekMode, SystemError } from "../src/index.ts";
+import { createNetwork, guestAgent, SeekMode, SystemError } from "../src/index.ts";
 import { closed_input, console_line_output } from "./helpers.ts";
 import type { RuntimeAssertions } from "./agent-wasm64-suite.ts";
 import { publicShellScript, publicStreamScript } from "./agent-wasm64-userland-commands.ts";
+import { checkPublicNetwork } from "./agent-wasm64-public-network.ts";
 
 // Identical public API corpus in Node and browsers. No initcpio or manual
 // boot arguments: the plugin selects its disk, transport and readiness ABI.
@@ -13,8 +14,10 @@ export async function runPublicAgentWasm64Suite(
   assert: RuntimeAssertions,
   runCase: (name: string, body: () => Promise<void>) => Promise<void>,
   writeLine: (line: string) => void,
-  options: { userland?: boolean } = {},
+  options: { userland?: boolean; networking?: boolean } = {},
 ) {
+  if (options.networking && !options.userland)
+    throw new Error("networking requires native userland");
   const passed: string[] = [];
   const check = (name: string, body: () => Promise<void>) =>
     runCase(name, async () => {
@@ -23,11 +26,26 @@ export async function runPublicAgentWasm64Suite(
       passed.push(name);
     });
   const agent = guestAgent({ abi: "wasm64", image });
+  let outbound = 0;
+  const network = options.networking
+    ? createNetwork({
+        connectTcp() {
+          outbound++;
+          throw new Error("this suite must not use an outbound network adapter");
+        },
+        async resolveDns() {
+          throw new Error("this suite must not use DNS");
+        },
+      })
+    : undefined;
+  const attachment = network?.attach(agent);
   // No initcpio and no manual boot arguments: the public plugin owns the
   // GPT boot disk, transport and readiness handshake just as in wasm32.
   const machine = await bootMachine({
     cpus: 1,
     plugins: [
+      // Exercise readiness dependency ordering: network before the agent.
+      ...(attachment ? [attachment] : []),
       blockDevice({
         capacity: root.byteLength,
         read(offset, target) {
@@ -43,6 +61,9 @@ export async function runPublicAgentWasm64Suite(
       ),
       entropyDevice(),
     ],
+  }).catch((error) => {
+    network?.close();
+    throw error;
   });
   const bootOutput = machine.bootConsole.pipeTo(
     console_line_output(() => {}, { write: writeLine }),
@@ -144,8 +165,15 @@ export async function runPublicAgentWasm64Suite(
         }
       });
     }
+    if (attachment) {
+      await check("public network reaches a native HTTP server over the attached NIC", async () => {
+        await checkPublicNetwork(agent, attachment, assert);
+        assert.equal(outbound, 0);
+      });
+    }
   } finally {
     machine.close();
+    network?.close();
     await machine.closed;
     await bootOutput;
   }

@@ -6,9 +6,18 @@
   node-workspace,
   pkgs,
   userland ? false,
+  networking ? false,
 }:
+assert !networking || userland;
 pkgs.stdenvNoCC.mkDerivation {
-  pname = "linux-agent-public${if userland then "-userland" else ""}-wasm64";
+  pname = "linux-agent-public${
+    if networking then
+      "-network"
+    else if userland then
+      "-userland"
+    else
+      ""
+  }-wasm64";
   version = "0.0.0";
   src = ../..;
   passthru.ci.heavy = true;
@@ -18,6 +27,7 @@ pkgs.stdenvNoCC.mkDerivation {
   env.AGENT_WASM64_BOOT_DISK = assets.runtimeBootDisk;
   env.AGENT_WASM64_ROOTFS = assets.runtimeRootfs;
   env.AGENT_WASM64_USERLAND = if userland then "1" else "";
+  env.AGENT_WASM64_NETWORKING = if networking then "1" else "";
   pnpmDeps = node-workspace.deps;
   nativeBuildInputs = [
     pkgs.nodejs

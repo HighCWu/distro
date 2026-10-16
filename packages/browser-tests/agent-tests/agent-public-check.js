@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: MIT
 import { expect } from "@playwright/test";
 
-export async function checkPublicAgent(page, userland = false) {
+export async function checkPublicAgent(page, userland = false, networking = false) {
   page.on("console", (message) => console.log(`[browser] ${message.text()}`));
   page.on("pageerror", (error) => console.error(`[browser] ${error.stack ?? error}`));
   await page.goto("/");
@@ -9,10 +9,10 @@ export async function checkPublicAgent(page, userland = false) {
   await expect
     .poll(() => page.evaluate(() => typeof globalThis.runPublicNativeAgent))
     .toBe("function");
-  const result = await page.evaluate(
-    (userland) => globalThis.runPublicNativeAgent({ userland }),
+  const result = await page.evaluate((options) => globalThis.runPublicNativeAgent(options), {
     userland,
-  );
+    networking,
+  });
   expect(result.passed).toEqual([
     "public plugin completes root pivot before exposing capabilities",
     "public file API retains native seek, metadata and truncate behavior",
@@ -23,6 +23,7 @@ export async function checkPublicAgent(page, userland = false) {
           "public exec streams binary data through native shell pipelines",
         ]
       : []),
+    ...(networking ? ["public network reaches a native HTTP server over the attached NIC"] : []),
   ]);
   expect(result.closed).toBe(true);
 }
