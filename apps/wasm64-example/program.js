@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: MIT
 export const maximumProgramBytes = 16 * 1024 * 1024;
 export const maximumOutputCharacters = 65536;
+export const maximumInputCharacters = 65536;
 const programPath = "/root/application.wasm";
 
 export function outputTail(previous, text) {
@@ -21,9 +22,11 @@ export function programArguments(text) {
 }
 
 /** Import only into this ephemeral Linux root, never onto the HTTP server. */
-export async function runProgram(agent, file, argumentText, { signal, onOutput }) {
+export async function runProgram(agent, file, argumentText, { signal, onOutput, inputText = "" }) {
   signal?.throwIfAborted();
   const args = programArguments(argumentText);
+  if (typeof inputText !== "string" || inputText.length > maximumInputCharacters)
+    throw new Error("standard input must be text of at most 65536 characters");
   if (
     !file ||
     !Number.isSafeInteger(file.size) ||
@@ -61,17 +64,29 @@ export async function runProgram(agent, file, argumentText, { signal, onOutput }
     );
   };
   const pending = [];
+  const input = async () => {
+    const writer = child.stdin.getWriter();
+    try {
+      signal?.throwIfAborted();
+      if (inputText.length) await writer.write(new TextEncoder().encode(inputText));
+      signal?.throwIfAborted();
+      await writer.close();
+    } catch (error) {
+      signal?.throwIfAborted();
+      // A filter can intentionally read only a prefix and close its pipe.
+      // Still require its real exit status and drain both outputs below.
+      if (error?.code !== "EPIPE") throw error;
+    } finally {
+      writer.releaseLock();
+    }
+  };
   let failed = false;
   let primary;
   try {
-    // Close stdin immediately; consume both outputs concurrently with status.
+    // Send bounded input followed by EOF while draining both outputs.
+    // Waiting for stdin before reading output can deadlock a pipe filter.
     // Unlike run(), no full-output buffer is retained for arbitrary programs.
-    pending.push(
-      child.status,
-      child.stdin.close(),
-      pump(child.stdout, "stdout"),
-      pump(child.stderr, "stderr"),
-    );
+    pending.push(child.status, input(), pump(child.stdout, "stdout"), pump(child.stderr, "stderr"));
     const [status] = await Promise.all(pending);
     return status;
   } catch (error) {

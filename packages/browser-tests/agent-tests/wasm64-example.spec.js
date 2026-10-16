@@ -57,6 +57,14 @@ test("embeds native wasm64 Linux using the standalone example controls", async (
     "uploaded application: literal $HOME → wasm64\n",
   );
   await expect(page.locator("#result")).toContainText("uploaded application stderr\n");
+  const standardInput = "Text stdin → native wasm64 filter\nUTF-8: 中文 €\n";
+  await page.locator("#stdin").fill(standardInput);
+  await page.locator("#arguments").fill('["stdin"]');
+  await page.locator("#run-program").click();
+  await expect(state).toHaveText("running");
+  await expect(page.locator("#result")).toHaveText(standardInput);
+  expect(await page.locator("#result").textContent()).toBe(standardInput);
+  await page.locator("#stdin").fill("");
   await page.locator("#arguments").fill('["fail"]');
   await page.locator("#run-program").click();
   await expect(state).toContainText('"code":37');

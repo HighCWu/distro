@@ -15,6 +15,14 @@ int main(int argc, char **argv)
         fputs("uploaded application expected failure\n", stderr);
         return 37;
     }
+    if (!strcmp(argv[1], "stdin")) {
+        unsigned char buffer[4096];
+        size_t size;
+        while ((size = fread(buffer, 1, sizeof(buffer), stdin))) {
+            if (fwrite(buffer, 1, size, stdout) != size) return 4;
+        }
+        return ferror(stdin) ? 5 : 0;
+    }
     if (getchar() != EOF) return 3;
     printf("uploaded application: %s\n", argv[1]);
     fputs("uploaded application stderr\n", stderr);

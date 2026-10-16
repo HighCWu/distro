@@ -95,7 +95,9 @@ function harness({ closeError, deferClose = false } = {}) {
 test("Stop Linux remains usable during an application and old output cannot affect a restart", async () => {
   const h = harness();
   await h.click("start");
+  h.nodes("stdin").value = "text for the application";
   const running = h.click("run-program");
+  assert.equal(h.applications[0].options.inputText, "text for the application");
   assert.equal(h.nodes("stop").disabled, false);
   await h.click("stop");
   assert.equal(h.machines[0].closes, 1);

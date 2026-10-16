@@ -13,7 +13,14 @@ const stream = (chunks = []) =>
       controller.close();
     },
   });
-function harness({ status = success, stdout, stderr, cleanupError, writeError } = {}) {
+function harness({
+  status = success,
+  stdout,
+  stderr,
+  cleanupError,
+  writeError,
+  inputFailure,
+} = {}) {
   const calls = [];
   const agent = {
     fs: {
@@ -30,6 +37,10 @@ function harness({ status = success, stdout, stderr, cleanupError, writeError } 
       return {
         status: Promise.resolve(status),
         stdin: new WritableStream({
+          write(bytes) {
+            calls.push(["stdin-write", bytes]);
+            if (inputFailure) throw inputFailure;
+          },
           close() {
             calls.push("stdin-eof");
           },
@@ -216,3 +227,76 @@ test("active cancellation forwards the exact reason and waits for process dispos
   await rejected;
   assert.equal(settled, true);
 });
+
+test("stdin text is UTF-8 encoded including NUL bytes and followed by EOF", async () => {
+  const { agent, calls } = harness();
+  const inputText = "stdin → 中文\0\n";
+  await runProgram(agent, file, "[]", { inputText, onOutput() {} });
+  const written = calls.find((entry) => Array.isArray(entry) && entry[0] === "stdin-write");
+  assert.deepEqual(written[1], new TextEncoder().encode(inputText));
+  assert.ok(calls.indexOf(written) < calls.indexOf("stdin-eof"));
+  assert.equal(calls.at(-1), "child-close");
+});
+
+test("invalid or oversized stdin is rejected before importing a program", async () => {
+  const { agent, calls } = harness();
+  for (const inputText of [null, 3, {}, "x".repeat(65537)])
+    await assert.rejects(
+      runProgram(agent, file, "[]", { inputText, onOutput() {} }),
+      /standard input/,
+    );
+  assert.deepEqual(calls, []);
+});
+
+test("stdin transport failures are preserved and dispose the child", async () => {
+  const reason = new Error("input transport failed");
+  const { agent, calls } = harness({ inputFailure: reason });
+  await assert.rejects(
+    runProgram(agent, file, "[]", { inputText: "data", onOutput() {} }),
+    (error) => error === reason,
+  );
+  assert.equal(calls.at(-1), "child-close");
+});
+
+test("a filter closing stdin early still requires its real successful or nonzero exit", async () => {
+  for (const status of [success, { success: false, code: 37, signal: null }]) {
+    const inputFailure = Object.assign(new Error("pipe closed"), { code: "EPIPE" });
+    const { agent, calls } = harness({ inputFailure, status });
+    assert.equal(await runProgram(agent, file, "[]", { inputText: "data", onOutput() {} }), status);
+    assert.equal(calls.at(-1), "child-close");
+  }
+});
+
+test(
+  "stdout is drained while stdin is blocked, rather than waiting for input EOF",
+  { timeout: 1000 },
+  async () => {
+    const { agent } = harness();
+    const drained = Promise.withResolvers();
+    const exited = Promise.withResolvers();
+    let eof = false;
+    agent.exec = async () => ({
+      status: exited.promise,
+      stdin: new WritableStream({
+        async write() {
+          await drained.promise;
+        },
+        close() {
+          eof = true;
+          exited.resolve(success);
+        },
+      }),
+      stdout: stream([new TextEncoder().encode("drain output first")]),
+      stderr: stream(),
+      async close() {},
+    });
+    const result = await runProgram(agent, file, "[]", {
+      inputText: "input",
+      onOutput(_name, text) {
+        if (text === "drain output first") drained.resolve();
+      },
+    });
+    assert.equal(result, success);
+    assert.equal(eof, true);
+  },
+);

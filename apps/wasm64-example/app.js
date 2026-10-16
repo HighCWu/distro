@@ -180,6 +180,7 @@ element("run-program").addEventListener("click", () =>
         element("arguments").value,
         {
           signal: controller.signal,
+          inputText: element("stdin").value,
           onOutput(_name, text) {
             if (session === active && !stopping)
               element("result").textContent = outputTail(element("result").textContent, text);

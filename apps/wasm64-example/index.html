@@ -58,11 +58,18 @@ Hello from native Linux wasm64.</textarea>
       /></label>
     </p>
     <button id="run-program" disabled>Import and run program</button>
+    <p>
+      <label
+        >UTF-8 standard input (at most 65,536 characters)<br />
+        <textarea id="stdin" maxlength="65536" rows="4" cols="60"></textarea>
+      </label>
+    </p>
     <button id="cancel-program" disabled>Cancel application</button>
     <p>
-      Standard input receives EOF. Recent output is limited to 65,536 characters; stdout/stderr
-      interleaving is not deterministic. Stop Linux remains available while an application runs; it
-      stops the whole instance and discards the temporary disk, unlike cancelling one application.
+      Standard input receives the text above followed by EOF. Recent output is limited to 65,536
+      characters; stdout/stderr interleaving is not deterministic. Stop Linux remains available
+      while an application runs; it stops the whole instance and discards the temporary disk, unlike
+      cancelling one application.
     </p>
     <h2>Command output</h2>
     <pre id="result" aria-live="polite"></pre>
