@@ -6,6 +6,9 @@ set(CMAKE_CXX_COMPILER "@cxx@")
 set(CMAKE_AR "@ar@")
 set(CMAKE_RANLIB "@ranlib@")
 set(CMAKE_SYSROOT "@sysroot@")
+set(PKG_CONFIG_EXECUTABLE "@pkgConfig@" CACHE FILEPATH "Target metadata query tool")
+# Do not append CMAKE_PREFIX_PATH (which may describe host tools) to .pc paths.
+set(PKG_CONFIG_USE_CMAKE_PREFIX_PATH FALSE)
 # Configure may compile probes, but cannot execute Wasm on the build host.
 set(CMAKE_TRY_COMPILE_TARGET_TYPE STATIC_LIBRARY)
 set(CMAKE_FIND_ROOT_PATH "@sysroot@")

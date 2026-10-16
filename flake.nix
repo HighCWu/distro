@@ -138,6 +138,7 @@
             env = {
               CC = "${wasmpkgs.sdk}/bin/wasm-linux-cc";
               CXX = "${wasmpkgs.sdk}/bin/wasm-linux-c++";
+              PKG_CONFIG = "${wasmpkgs.sdk}/bin/wasm-linux-pkg-config";
               AR = "${wasmpkgs.llvm-toolchain}/bin/llvm-ar";
               RANLIB = "${wasmpkgs.llvm-toolchain}/bin/llvm-ranlib";
               sysroot = "${wasmpkgs.sysroot}";
@@ -154,6 +155,7 @@
             env = {
               CC = "${wasmpkgs.sdk-wasm64}/bin/wasm-linux-cc";
               CXX = "${wasmpkgs.sdk-wasm64}/bin/wasm-linux-c++";
+              PKG_CONFIG = "${wasmpkgs.sdk-wasm64}/bin/wasm-linux-pkg-config";
               AR = "${wasmpkgs.llvm-toolchain-wasm64}/bin/llvm-ar";
               RANLIB = "${wasmpkgs.llvm-toolchain-wasm64}/bin/llvm-ranlib";
               sysroot = "${wasmpkgs.sysroot-wasm64}";

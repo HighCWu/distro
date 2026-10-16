@@ -34,6 +34,18 @@ let
     };
   cc = wrapper "wasm-linux-cc" "clang";
   cxx = wrapper "wasm-linux-c++" "clang++";
+  pkgConfig = pkgs.writeShellApplication {
+    name = "wasm-linux-pkg-config";
+    text =
+      builtins.replaceStrings
+        [ "@sysroot@" "@libdir@" "@pkgConfig@" ]
+        [
+          (lib.escapeShellArg "${sysroot}")
+          (lib.escapeShellArg "${sysroot}/lib/pkgconfig:${sysroot}/share/pkgconfig")
+          (lib.escapeShellArg "${pkgs.pkg-config}/bin/pkg-config")
+        ]
+        (builtins.readFile ./pkg-config.sh);
+  };
   cmakeToolchain = pkgs.replaceVars ./linux-wasm.cmake.in {
     inherit (platform) wasmArch;
     cc = "${cc}/bin/wasm-linux-cc";
@@ -41,6 +53,7 @@ let
     ar = "${llvm-toolchain}/bin/llvm-ar";
     ranlib = "${llvm-toolchain}/bin/llvm-ranlib";
     sysroot = "${sysroot}";
+    pkgConfig = "${pkgConfig}/bin/wasm-linux-pkg-config";
   };
   cmakeFiles = pkgs.runCommand "sdk-cmake-${platform.wasmArch}" { } ''
     mkdir -p $out/share/cmake
@@ -51,16 +64,27 @@ let
     paths = [
       cc
       cxx
+      pkgConfig
       cmakeFiles
       llvm-toolchain
     ];
     passthru.checks = {
-      wrapper = pkgs.runCommand "sdk-wrapper-contract" { nativeBuildInputs = [ pkgs.nodejs ]; } ''
-        cp ${./compiler.sh} compiler.sh
-        cp ${./wrapper-test.js} wrapper-test.js
-        node --test wrapper-test.js
-        mkdir $out
-      '';
+      wrapper =
+        pkgs.runCommand "sdk-wrapper-contract"
+          {
+            nativeBuildInputs = [
+              pkgs.nodejs
+              pkgs.pkg-config
+            ];
+          }
+          ''
+            cp ${./compiler.sh} compiler.sh
+            cp ${./wrapper-test.js} wrapper-test.js
+            cp ${./pkg-config.sh} pkg-config.sh
+            cp ${./pkg-config-test.js} pkg-config-test.js
+            node --test wrapper-test.js pkg-config-test.js
+            mkdir $out
+          '';
       cxx-runtime = vm-test.rawInitramfsTest {
         name = "sdk-cxx-runtime-${platform.wasmArch}";
         init = "${programs}/runtime-cxx.wasm";
