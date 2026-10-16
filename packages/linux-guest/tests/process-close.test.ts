@@ -12,6 +12,7 @@ function fixture(
   abi: AgentAbi = "wasm64",
   failClose = false,
   bufferedOutput = false,
+  writeErrno = 0,
 ) {
   let finishReap!: () => void;
   const reaped = new Promise<void>((resolve) => {
@@ -21,6 +22,7 @@ function fixture(
   let kills = 0;
   let releases = 0;
   let reads = 0;
+  let writes = 0;
   const session = {
     abi,
     async exchange<T>(
@@ -35,6 +37,8 @@ function fixture(
           request = bytes.slice();
           if (request[0] === 1 && new DataView(request.buffer).getUint32(1, true) === NR.read)
             reads++;
+          if (request[0] === 1 && new DataView(request.buffer).getUint32(1, true) === NR.write)
+            writes++;
         },
         async read(length) {
           const result = new Uint8Array(length);
@@ -47,7 +51,13 @@ function fixture(
           } else {
             assert.equal(request[0], 1);
             const nr = new DataView(request.buffer).getUint32(1, true);
-            assert.ok([NR.kill, NR.read, NR.close].includes(nr));
+            assert.ok([NR.kill, NR.read, NR.close, NR.write].includes(nr));
+            if (nr === NR.write) {
+              assert.equal(length, 12);
+              const view = new DataView(result.buffer);
+              view.setBigInt64(0, writeErrno ? -1n : BigInt(request.byteLength - 59), true);
+              view.setUint32(8, writeErrno, true);
+            }
             if (nr === NR.read && bufferedOutput) {
               if (length === 12) new DataView(result.buffer).setBigInt64(0, 1n, true);
               else {
@@ -89,6 +99,9 @@ function fixture(
     get reads() {
       return reads;
     },
+    get writes() {
+      return writes;
+    },
     finish(status = 9) {
       waitStatus = status;
       finishReap();
@@ -97,6 +110,94 @@ function fixture(
 }
 
 for (const abi of ["wasm32", "wasm64"] as const) {
+  test(`process disposal preserves an already observed stdin pump failure (${abi})`, async () => {
+    const f = fixture(undefined, abi, false, false, 5);
+    const writer = f.child.stdin.getWriter();
+    void writer.closed.catch(() => {});
+    try {
+      await writer.write(Uint8Array.of(1));
+      await setImmediate();
+      f.finish();
+      await f.child.close();
+      await assert.rejects(writer.closed, { code: "EIO" });
+      await assert.rejects(writer.write(Uint8Array.of(2)), { code: "EIO" });
+      assert.equal(f.writes, 1);
+    } finally {
+      f.finish();
+      await f.child.close();
+      writer.releaseLock();
+    }
+  });
+
+  test(`process disposal rejects stdin immediately while reap is pending (${abi})`, async () => {
+    const f = fixture(undefined, abi);
+    const writer = f.child.stdin.getWriter();
+    void writer.closed.catch(() => {});
+    const closing = f.child.close();
+    try {
+      await assert.rejects(writer.write(Uint8Array.of(1)), { code: "EPIPE" });
+      await assert.rejects(writer.closed, { code: "EPIPE" });
+      assert.equal(f.releases, 0);
+      assert.equal(f.writes, 0);
+    } finally {
+      f.finish();
+      await closing;
+      writer.releaseLock();
+    }
+  });
+
+  test(`new stdin writers cannot silently discard bytes after process disposal (${abi})`, async () => {
+    const f = fixture(undefined, abi);
+    f.finish();
+    await f.child.close();
+    const writer = f.child.stdin.getWriter();
+    try {
+      await assert.rejects(writer.write(new Uint8Array()), { code: "EPIPE" });
+      await assert.rejects(writer.closed, { code: "EPIPE" });
+      await assert.rejects(writer.close(), TypeError); // Web Streams terminal-state rule
+      assert.equal(f.writes, 0);
+    } finally {
+      writer.releaseLock();
+    }
+  });
+
+  test(`aborting a process rejects stdin without replacing the status reason (${abi})`, async () => {
+    const controller = new AbortController();
+    const f = fixture(controller.signal, abi);
+    const writer = f.child.stdin.getWriter();
+    void writer.closed.catch(() => {});
+    const reason = new Error("application cancelled");
+    controller.abort(reason);
+    try {
+      await assert.rejects(writer.write(Uint8Array.of(1)), { code: "EPIPE" });
+      f.finish();
+      await assert.rejects(f.child.status, (error) => error === reason);
+      assert.equal(f.writes, 0);
+    } finally {
+      f.finish();
+      await f.child.close();
+      writer.releaseLock();
+    }
+  });
+
+  test(`normal stdin EOF remains successful after process disposal (${abi})`, async () => {
+    const f = fixture(undefined, abi);
+    const writer = f.child.stdin.getWriter();
+    try {
+      await writer.write(Uint8Array.of(0, 255, 65));
+      await writer.close();
+      f.finish(0);
+      await f.child.close();
+      await writer.closed;
+      assert.equal(f.writes, 1);
+      assert.equal((await f.child.status).success, true);
+    } finally {
+      f.finish();
+      await f.child.close();
+      writer.releaseLock();
+    }
+  });
+
   test(`closed process output cannot issue reads through a reused descriptor (${abi})`, async () => {
     const f = fixture(undefined, abi, false, true);
     await setImmediate(); // each output stream has prefetched one chunk

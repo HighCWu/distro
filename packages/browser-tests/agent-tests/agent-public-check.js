@@ -21,6 +21,7 @@ export async function checkPublicAgent(page, userland = false, networking = fals
       ? [
           "public run executes native shell pipelines and child lifecycle",
           "public exec streams binary data through native shell pipelines",
+          "public exec rejects stdin after process disposal",
         ]
       : []),
     ...(networking ? ["public network reaches a native HTTP server over the attached NIC"] : []),

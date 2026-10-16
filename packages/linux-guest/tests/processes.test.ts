@@ -166,6 +166,15 @@ guest_test("processes", async (t, fixture) => {
         await input.write(large.subarray(offset, offset + 32 * 1024));
       }
       await stopped.close();
+      await assert.rejects(
+        input.write(Uint8Array.of(1)),
+        (error) => error instanceof SystemError && error.code === "EPIPE",
+      );
+      await assert.rejects(
+        input.closed,
+        (error) => error instanceof SystemError && error.code === "EPIPE",
+      );
+      input.releaseLock();
       // close must not return while its original wait record still owns a
       // process slot. The status is already settled when disposal completes.
       const settled = Symbol("unsettled");

@@ -75,6 +75,9 @@ export class ChildProcess implements AsyncDisposable {
    *
    * Writes are buffered on the host side, so filling stdin before reading
    * stdout does not deadlock, even once the guest's pipe is full.
+   * Closing or aborting the process errors an unfinished stdin with EPIPE;
+   * successful writes mean host buffering, not confirmed delivery. Normal
+   * stdin EOF already completed before disposal remains successful.
    *
    * @example Feed input to a command
    * ```ts
@@ -133,6 +136,7 @@ export class ChildProcess implements AsyncDisposable {
   #stdin_tail: Promise<void> = Promise.resolve();
   #stdin_error: unknown = null;
   #stdin_stopped = false;
+  #stdin_controller!: WritableStreamDefaultController;
 
   constructor(init: ChildProcessInit) {
     const { session, pid, stdin, stdout, stderr, signal, release } = init;
@@ -151,6 +155,9 @@ export class ChildProcess implements AsyncDisposable {
       }
     };
     this.stdin = new WritableStream({
+      start: (controller) => {
+        this.#stdin_controller = controller;
+      },
       write: (chunk) => {
         // A blocking injected write returns only once the guest pipe accepts
         // the bytes, and the pipe drains through the child and back out via
@@ -268,6 +275,11 @@ export class ChildProcess implements AsyncDisposable {
   async #close_all(): Promise<void> {
     this.#remove_abort();
     this.#stdin_stopped = true;
+    // Stop accepting input immediately, not only after an asynchronous kill
+    // and reap. Otherwise the host-buffering sink reports success for data
+    // the stopped pump silently discards. error() leaves a closed stream
+    // untouched, so a previously completed EOF retains its successful result.
+    this.#stdin_controller.error(this.#stdin_error ?? new SystemError(E.PIPE));
     // Kill before closing the pipe fds: closing an fd does not unblock a
     // read already in flight on it, but the child dying EOFs the pipe. The
     // reap is intentionally NOT cancelled: it must complete to free the

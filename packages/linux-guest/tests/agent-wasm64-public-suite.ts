@@ -204,6 +204,26 @@ export async function runPublicAgentWasm64Suite(
           await child.close();
         }
       });
+      await check("public exec rejects stdin after process disposal", async () => {
+        const child = await agent.exec(["/bin/cat"]);
+        const writer = child.stdin.getWriter();
+        try {
+          await child.close();
+          await assert.rejects(
+            writer.write(Uint8Array.of(0, 255)),
+            (error) => error instanceof SystemError && error.code === "EPIPE",
+          );
+          await assert.rejects(
+            writer.closed,
+            (error) => error instanceof SystemError && error.code === "EPIPE",
+          );
+        } finally {
+          writer.releaseLock();
+          await child.close();
+        }
+        const next = await agent.run(["/bin/true"]);
+        assert.equal(next.status.success, true);
+      });
     }
     if (attachment) {
       await check("public network reaches a native HTTP server over the attached NIC", async () => {
