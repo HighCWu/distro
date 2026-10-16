@@ -132,7 +132,7 @@
             packages = [
               wasmpkgs.sdk
               pkgs.binutils
-              pkgs.meson
+              wasmpkgs.sdk.meson
               pkgs.autoconf
               pkgs.gnumake
               pkgs.cmake
@@ -158,7 +158,7 @@
             packages = [
               wasmpkgs.sdk-wasm64
               pkgs.binutils
-              pkgs.meson
+              wasmpkgs.sdk-wasm64.meson
               pkgs.autoconf
               pkgs.gnumake
               pkgs.cmake

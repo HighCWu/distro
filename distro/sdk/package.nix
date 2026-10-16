@@ -9,6 +9,7 @@
   zlib,
 }:
 let
+  meson = import ./meson.nix { inherit pkgs; };
   profileConfig = pkgs.writeText "linux-${platform.wasmArch}.cfg" (
     lib.concatMapStringsSep "\n" lib.escapeShellArg (
       [
@@ -112,6 +113,7 @@ let
       mesonFiles
       llvm-toolchain
     ];
+    passthru.meson = meson;
     passthru.checks = {
       wrapper =
         pkgs.runCommand "sdk-wrapper-contract"
@@ -239,7 +241,7 @@ let
         nativeBuildInputs = [
           # Meson probes the build-machine static linker even in cross builds.
           pkgs.binutils
-          pkgs.meson
+          meson
           pkgs.ninja
           pkgs.nodejs
         ];

@@ -1,0 +1,13 @@
+SPDX-License-Identifier: Apache-2.0
+
+Meson emits GNU archive groups for Linux targets. wasm-ld resolves archive
+symbols lazily without group rescans and rejects these GNU-only options.
+Keep native ELF grouping unchanged; do not select Emscripten's driver flags.
+
+--- a/mesonbuild/compilers/mixins/clike.py
++++ b/mesonbuild/compilers/mixins/clike.py
+@@ -75,1 +75,3 @@
+-        if isinstance(self.compiler.linker, (GnuLikeDynamicLinkerMixin, SolarisDynamicLinker, CompCertDynamicLinker)):
++        if (self.compiler.info.cpu_family not in ('wasm32', 'wasm64')
++                and isinstance(self.compiler.linker,
++                               (GnuLikeDynamicLinkerMixin, SolarisDynamicLinker, CompCertDynamicLinker))):
