@@ -102,7 +102,9 @@ discard buffered input while still waiting for an injected write to settle.
 Ten additional dual-width host cases cover disposal before/after reap, abort
 reasons, prior pump errors and normal EOF (72 related host tests pass).
 Native wasm32 and shared wasm64 public-userland assertions are included;
-their execution remains separate from host validation.
+the Chromium run at `fdde5c7` passed all six internal scenarios and its exact
+outer case with zero skips/retries. This does not validate later copy, NUL or
+spawn preflight revisions, and wasm32 remains separate from host validation.
 
 `fs.copyFile()` validates the source and destination using `fstat` on both
 opened descriptors before truncating the destination. Identical device/inode
@@ -133,6 +135,20 @@ and does not spawn later when another child exits. Admission rechecks the
 signal after a grant and returns an unused slot if cancellation won that race.
 Active children still require normal termination and reaping; cancellation of
 a queued request does not cancel them or provide process-group termination.
+
+The v3/v4 spawn serializer accepts at most 256 argv strings (including the
+executable), 256 environment entries (including defaults), and 4096 UTF-8 bytes
+per argv entry, cwd or complete `NAME=value` entry. Embedded NUL and malformed
+environment entries reject with `EINVAL`, as does exceeding those bounds,
+before acquiring a wire lane. This prevents a huge request from triggering
+the executor's 4 MiB framing-disconnect rule. High-level empty argv retains its
+existing `TypeError`. These are current agent protocol limits, not universal
+Linux limits or a promise the kernel can execute every wire-valid request;
+native exec can still return errors such as `E2BIG`. Four added dual-width host
+cases verify rejection and exact byte/count boundaries (91 related host tests
+pass); CI also checks that SDK constants match the native parser and the
+largest permitted body fits its frame. Updated native oversized-input and
+subsequent-execution assertions still require target CI results.
 
 The plugin boots its private EROFS using the GPT partition label
 `LOWLAND_AGENT`, so its position among block-device plugins is irrelevant. The
