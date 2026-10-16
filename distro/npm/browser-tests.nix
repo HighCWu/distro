@@ -137,6 +137,15 @@ let
           project = lib.removePrefix "agent-production-wasm64-" name;
         }
       ))
+      // (lib.genAttrs [ "agent-public-wasm64-chromium" "agent-public-wasm64-firefox" ] (
+        name:
+        playwright.mkCheck {
+          name = "browser-tests-${name}";
+          suite = agentPublicSuite;
+          expectedTests = [ "boots native wasm64 through public guestAgent image selection" ];
+          project = lib.removePrefix "agent-public-wasm64-" name;
+        }
+      ))
       // (lib.genAttrs [ "runtime-wasm32-chromium" "runtime-wasm32-firefox" ] (
         name:
         playwright.mkCheck {
@@ -208,6 +217,33 @@ let
         cp ${source}/server.js $out/server.js
         cp ${runtime.runtimeInitramfs} $out/agent-runtime.cpio
         ${lib.optionalString productionRoot "cp ${runtime.runtimeRootfs} $out/agent-root.erofs"}
+        cp -r ${bytes}/. $out/node_modules/@lowland/bytes/
+        cp -r ${kernel-wasm64}/. $out/node_modules/@lowland/kernel/
+      '';
+
+  agentPublicSuite =
+    let
+      assets = guest-agent.checks.boot-disk-wasm64;
+    in
+    pkgs.runCommand "agent-public-wasm64-browser-tests"
+      {
+        nativeBuildInputs = [ pkgs.esbuild ];
+      }
+      ''
+        mkdir -p $out/node_modules/@lowland/bytes $out/node_modules/@lowland/kernel $out/tests
+        ${playwright.linkRuntime "$out"}
+        esbuild ${../..}/packages/linux-guest/tests/agent-wasm64-public-suite.ts \
+          --bundle --platform=browser --format=esm --target=es2022 \
+          --external:@lowland/kernel --external:@lowland/kernel/plugin \
+          --external:@lowland/bytes --outfile=$out/agent-public-suite.js
+        cp ${source}/agent-public-app.js $out/app.js
+        cp ${source}/agent-assertions.js $out/agent-assertions.js
+        cp ${source}/agent-tests/agent-public.spec.js $out/tests/
+        cp ${source}/memory64-index.html $out/index.html
+        cp ${source}/playwright.config.js $out/playwright.config.js
+        cp ${source}/server.js $out/server.js
+        cp ${assets.runtimeBootDisk} $out/agent-boot.img
+        cp ${assets.runtimeRootfs} $out/agent-root.erofs
         cp -r ${bytes}/. $out/node_modules/@lowland/bytes/
         cp -r ${kernel-wasm64}/. $out/node_modules/@lowland/kernel/
       '';
