@@ -1,0 +1,49 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Linux wasm64 embedding example</title>
+    <script type="importmap">
+      {
+        "imports": {
+          "@lowland/bytes": "/node_modules/@lowland/bytes/dist/index.js",
+          "@lowland/kernel": "/node_modules/@lowland/kernel/dist/index.js",
+          "@lowland/kernel/plugin": "/node_modules/@lowland/kernel/dist/plugin.js"
+        }
+      }
+    </script>
+    <script type="module" src="/app.js"></script>
+  </head>
+  <body>
+    <h1>Linux wasm64 embedding example</h1>
+    <p>
+      This example uses a real Linux kernel and native wasm64 BusyBox. Each start creates a fresh
+      in-memory ext4 disk. Stopping or reloading loses changes; this example does not save to OPFS.
+    </p>
+    <p>
+      Serve on localhost or HTTPS with COOP/COEP headers. Browser support for shared memory and
+      memory64 is required. This is not a security boundary between programs running inside the same
+      Linux instance.
+    </p>
+    <p>
+      <button id="start" disabled>Start Linux</button>
+      <button id="stop" disabled>Stop Linux</button>
+    </p>
+    <p id="state" role="status">loading</p>
+    <button id="uname" disabled>Run uname</button>
+    <p>
+      <label
+        >File contents (at most 4096 characters)<br />
+        <textarea id="contents" maxlength="4096" rows="4" cols="60">
+Hello from native Linux wasm64.</textarea>
+      </label>
+    </p>
+    <button id="file" disabled>Write file and run native cat</button>
+    <button id="read" disabled>Run cat on the existing file</button>
+    <h2>Command output</h2>
+    <pre id="result" aria-live="polite"></pre>
+    <h2>Recent boot console</h2>
+    <pre id="console"></pre>
+  </body>
+</html>

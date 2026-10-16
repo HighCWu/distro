@@ -19,6 +19,7 @@
   site,
   toolchain-smoke-wasm64,
   toolchain-smoke,
+  wasm64-example,
 }:
 
 let
@@ -198,6 +199,15 @@ let
           project = lib.removePrefix "agent-sqlite-root-wasm64-" name;
         }
       ))
+      // (lib.genAttrs [ "wasm64-example-chromium" "wasm64-example-firefox" ] (
+        name:
+        playwright.mkCheck {
+          name = "browser-tests-${name}";
+          suite = wasm64ExampleSuite;
+          expectedTests = [ "embeds native wasm64 Linux using the standalone example controls" ];
+          project = lib.removePrefix "wasm64-example-" name;
+        }
+      ))
       // (lib.genAttrs [ "runtime-wasm32-chromium" "runtime-wasm32-firefox" ] (
         name:
         playwright.mkCheck {
@@ -309,6 +319,15 @@ let
         cp -r ${bytes}/. $out/node_modules/@lowland/bytes/
         cp -r ${kernel-wasm64}/. $out/node_modules/@lowland/kernel/
       '';
+
+  wasm64ExampleSuite = pkgs.runCommand "wasm64-example-browser-tests" { } ''
+    mkdir -p $out/tests
+    cp -r ${wasm64-example}/. $out/
+    ${playwright.linkRuntime "$out"}
+    cp ${../../apps/wasm64-example}/server.mjs $out/server.js
+    cp ${source}/playwright.config.js $out/playwright.config.js
+    cp ${source}/agent-tests/wasm64-example.spec.js $out/tests/
+  '';
 
   agentSystemRootSuite =
     profile:

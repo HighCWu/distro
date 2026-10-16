@@ -231,5 +231,6 @@ lib.makeScope (scope: lib.callPackageWith ({ inherit lib pkgs; } // scope)) (
     linux-guest = callPackage ./npm/linux-guest { repository = bootstrapRepository; };
     runner = callPackage ./npm/runner { };
     browser-tests = callPackage ./npm/browser-tests.nix { };
+    wasm64-example = callPackage ./wasm64-example/package.nix { };
   }
 )
