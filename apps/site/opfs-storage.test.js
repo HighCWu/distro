@@ -1,7 +1,74 @@
 // SPDX-License-Identifier: MIT
 import assert from "node:assert/strict";
 import test from "node:test";
-import { installOpfsStorage } from "./opfs-storage.js";
+import { installOpfsStorage, openOpfsAccessHandle } from "./opfs-storage.js";
+
+test("OPFS lock contention retries with bounded backoff and returns the acquired handle", async () => {
+  const access = {};
+  const waits = [];
+  let attempts = 0;
+  const result = await openOpfsAccessHandle(
+    {
+      async createSyncAccessHandle() {
+        if (++attempts < 3) throw new DOMException("locked", "NoModificationAllowedError");
+        return access;
+      },
+    },
+    async (ms) => {
+      waits.push(ms);
+    },
+  );
+  assert.equal(result, access);
+  assert.equal(attempts, 3);
+  assert.deepEqual(waits, [10, 20]);
+});
+
+test("persistent OPFS lock contention stops after eight attempts", async () => {
+  const failure = new DOMException("locked", "NoModificationAllowedError");
+  const waits = [];
+  let attempts = 0;
+  await assert.rejects(
+    openOpfsAccessHandle(
+      {
+        async createSyncAccessHandle() {
+          attempts++;
+          throw failure;
+        },
+      },
+      async (ms) => {
+        waits.push(ms);
+      },
+    ),
+    (error) => error === failure,
+  );
+  assert.equal(attempts, 8);
+  assert.deepEqual(waits, [10, 20, 40, 80, 160, 320, 640]);
+});
+
+test("OPFS permission and storage failures are not retried", async () => {
+  for (const name of [
+    "NotAllowedError",
+    "NotFoundError",
+    "QuotaExceededError",
+    "InvalidStateError",
+  ]) {
+    const failure = new DOMException("unavailable", name);
+    let attempts = 0;
+    await assert.rejects(
+      openOpfsAccessHandle(
+        {
+          async createSyncAccessHandle() {
+            attempts++;
+            throw failure;
+          },
+        },
+        async () => assert.fail("must not delay unrelated failures"),
+      ),
+      (error) => error === failure,
+    );
+    assert.equal(attempts, 1);
+  }
+});
 
 test("partial OPFS reads and writes advance both the buffer and file offset", () => {
   const file = new Uint8Array(512);

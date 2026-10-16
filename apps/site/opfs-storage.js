@@ -1,5 +1,21 @@
 // SPDX-License-Identifier: MIT
 
+// A replacement page may briefly overlap the old worker's exclusive lock.
+// Retry only lock contention, with a bounded total backoff of 1270 ms.
+export async function openOpfsAccessHandle(
+  handle,
+  delay = (ms) => new Promise((resolve) => setTimeout(resolve, ms)),
+) {
+  for (let attempt = 0; ; attempt++) {
+    try {
+      return await handle.createSyncAccessHandle();
+    } catch (error) {
+      if (error?.name !== "NoModificationAllowedError" || attempt === 7) throw error;
+      await delay(10 * 2 ** attempt);
+    }
+  }
+}
+
 // Takes ownership of an already-open synchronous OPFS access handle.
 export function installOpfsStorage(access, requestedCapacity, install) {
   try {
