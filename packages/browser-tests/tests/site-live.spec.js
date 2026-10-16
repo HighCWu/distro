@@ -1,4 +1,5 @@
 import { expect, test } from "@playwright/test";
+import { sqlitePersistenceCommands } from "../site-sqlite.js";
 
 test("missing cross-origin isolation stops before disk access or kernel startup", async ({
   page,
@@ -113,6 +114,15 @@ test("boots and formats a blank persistent disk into the canonical system", asyn
   );
   await installedInput.press("Enter");
   await expect(installedTerminal).toContainText("persistence-synced", { timeout: 30_000 });
+  await installedInput.pressSequentially(
+    "apk --allow-untrusted add sqlite3 && printf 'sqlite-package-%s\\n' installed",
+  );
+  await installedInput.press("Enter");
+  await expect(installedTerminal).toContainText("sqlite-package-installed", { timeout: 60_000 });
+  const sqlite = sqlitePersistenceCommands("/root/persistence.sqlite");
+  await installedInput.pressSequentially(sqlite.write);
+  await installedInput.press("Enter");
+  await expect(installedTerminal).toContainText("sqlite-persistence-synced", { timeout: 30_000 });
   await page.reload();
   ({ input: installedInput, terminal: installedTerminal } = await waitForGuest(page));
   await installedInput.pressSequentially(
@@ -120,6 +130,9 @@ test("boots and formats a blank persistent disk into the canonical system", asyn
   );
   await installedInput.press("Enter");
   await expect(installedTerminal).toContainText("persistence-restored", { timeout: 15_000 });
+  await installedInput.pressSequentially(sqlite.read);
+  await installedInput.press("Enter");
+  await expect(installedTerminal).toContainText("sqlite-persistence-restored", { timeout: 30_000 });
 
   await installedInput.pressSequentially(
     "printf user-customized > /boot/index.html; apk --allow-untrusted fix --reinstall lowland-boot; grep -qx user-customized /boot/index.html && test -f /boot/index.html.apk-new && printf 'protected-boot-%s\\n' ok",

@@ -194,6 +194,7 @@ let
       cp ${source}/playwright.config.js $out/playwright.config.js
       cp ${source}/server.js $out/server.js
       cp ${source}/tests/site-live.spec.js $out/tests/site-live.spec.js
+      cp ${source}/site-sqlite.js $out/site-sqlite.js
       cp -rL ${site.package}/. $out/
       # Production and previews fetch the independently published repository.
       # The integration test vendors the exact candidate repository so it can
