@@ -195,7 +195,10 @@ let
         playwright.mkCheck {
           name = "browser-tests-${name}";
           suite = agentSystemRootSuite "sqlite";
-          expectedTests = [ "runs installed wasm64 SQLite across fresh browser ext4 root instances" ];
+          expectedTests = [
+            "runs installed wasm64 SQLite across fresh browser ext4 root instances"
+            "persists installed wasm64 SQLite through OPFS across page reload"
+          ];
           project = lib.removePrefix "agent-sqlite-root-wasm64-" name;
         }
       ))
@@ -358,8 +361,11 @@ let
         cp ${source}/server.js $out/server.js
         cp ${assets.runtimeBootDisk} $out/agent-boot.img
         cp ${assets.runtimeRootfs} $out/${rootFilename}
-        ${lib.optionalString (profile == "persistent") ''
+        ${lib.optionalString (profile == "persistent" || profile == "sqlite") ''
           cp ${opfsWorker}/opfs-disk-worker.js $out/opfs-disk-worker.js
+        ''}
+        ${lib.optionalString (profile == "sqlite") ''
+          cp ${../../apps/site/opfs-device.js} $out/opfs-device.js
         ''}
         cp -r ${bytes}/. $out/node_modules/@lowland/bytes/
         cp -r ${kernel-wasm64}/. $out/node_modules/@lowland/kernel/
