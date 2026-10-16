@@ -126,6 +126,23 @@ test("runs SDK time64 relative and absolute timers and ready-fd waits through Li
   expect(output).not.toContain("::vm-test::fail");
 });
 
+test("runs SDK pthread time64 waits, cancellation and broadcast through Linux", async ({
+  page,
+}) => {
+  page.on("console", (message) => console.log(`[browser] ${message.text()}`));
+  page.on("pageerror", (error) => console.error(`[browser] ${error.stack ?? error}`));
+  await page.goto("/");
+  await expect
+    .poll(() => page.evaluate(() => typeof globalThis.bootThreadTimeRuntimeSmoke))
+    .toBe("function");
+  const output = await page.evaluate(() => globalThis.bootThreadTimeRuntimeSmoke());
+  expect(output).toContain(
+    "thread time ABI: wakeups, cancellation, broadcast, timeouts and mutex ownership verified",
+  );
+  expect(output).toContain("::vm-test::pass");
+  expect(output).not.toContain("::vm-test::fail");
+});
+
 test("retries a failed kernel download in the same page with a generic MIME type", async ({
   page,
 }) => {
