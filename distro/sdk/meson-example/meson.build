@@ -33,7 +33,9 @@ foreach language : ['c', 'cpp']
     error(language + ' incorrectly accepted an unresolved external symbol')
   endif
 endforeach
-generator = executable('sdk-generator', 'generator.c', native: true)
+generator_library = static_library('sdk-generator-answer', 'generator-answer.c', native: true)
+generator = executable('sdk-generator', 'generator.c', native: true,
+  link_with: generator_library)
 header = custom_target('generated-answer', output: 'answer.h',
   command: [generator, '@OUTPUT@'])
 dependencies = [dependency('threads')]
