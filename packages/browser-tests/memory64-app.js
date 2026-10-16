@@ -2,7 +2,7 @@
 import { bootMachine, consoleDevice, entropyDevice } from "@lowland/kernel";
 import { runRuntimeSmoke } from "./runtime-smoke.js";
 
-globalThis.bootMemory64Smoke = () =>
+globalThis.bootRuntimeSmoke = () =>
   runRuntimeSmoke({
     bootMachine,
     consoleDevice,

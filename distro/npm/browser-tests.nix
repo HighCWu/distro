@@ -15,6 +15,7 @@
   repository,
   site,
   toolchain-smoke-wasm64,
+  toolchain-smoke,
 }:
 
 let
@@ -48,32 +49,46 @@ let
     tar -xzf ${linux-guest.package}/package.tgz --strip-components=1 -C $out/node_modules/@lowland/guest
   '';
 
-  memory64Initramfs = image.mkInitramfs {
-    name = "memory64-browser-runtime";
-    init = "${toolchain-smoke-wasm64}/smoke-c.wasm";
-  };
-  memory64Suite = pkgs.runCommand "memory64-browser-tests" { } ''
-    mkdir -p \
-      $out/node_modules/@lowland/bytes \
-      $out/node_modules/@lowland/kernel \
-      $out/tests
-    ${playwright.linkRuntime "$out"}
-    cp ${source}/memory64-app.js $out/app.js
-    cp ${source}/runtime-smoke.js $out/runtime-smoke.js
-    cp ${../vm-test/protocol.js} $out/protocol.js
-    cp ${memory64Initramfs} $out/runtime.cpio
-    cp ${source}/memory64-index.html $out/index.html
-    cp ${source}/playwright.config.js $out/playwright.config.js
-    cp ${source}/server.js $out/server.js
-    cp ${source}/memory64-tests/memory64.spec.js $out/tests/
-    cp -r ${bytes}/. $out/node_modules/@lowland/bytes/
-    cp -r ${kernel-wasm64}/. $out/node_modules/@lowland/kernel/
-  '';
+  runtimeSuite =
+    bits:
+    let
+      programs = if bits == 64 then toolchain-smoke-wasm64 else toolchain-smoke;
+      runtimeKernel = if bits == 64 then kernel-wasm64 else kernel;
+      initramfs = image.mkInitramfs {
+        name = "wasm${toString bits}-browser-runtime";
+        init = "${programs}/smoke-c.wasm";
+      };
+    in
+    pkgs.runCommand "wasm${toString bits}-runtime-browser-tests" { } ''
+      mkdir -p \
+        $out/node_modules/@lowland/bytes \
+        $out/node_modules/@lowland/kernel \
+        $out/tests
+      ${playwright.linkRuntime "$out"}
+      cp ${source}/memory64-app.js $out/app.js
+      cp ${source}/runtime-smoke.js $out/runtime-smoke.js
+      cp ${../vm-test/protocol.js} $out/protocol.js
+      cp ${initramfs} $out/runtime.cpio
+      cp ${source}/memory64-index.html $out/index.html
+      cp ${source}/playwright.config.js $out/playwright.config.js
+      cp ${source}/server.js $out/server.js
+      cp ${source}/memory64-tests/memory64.spec.js $out/tests/
+      cp -r ${bytes}/. $out/node_modules/@lowland/bytes/
+      cp -r ${runtimeKernel}/. $out/node_modules/@lowland/kernel/
+    '';
 
   suite = baseSuite // {
     checks = lib.optionalAttrs pkgs.stdenv.hostPlatform.isLinux (
       (lib.genAttrs projects check)
       // (lib.genAttrs memory64Projects memory64Check)
+      // (lib.genAttrs [ "runtime-wasm32-chromium" "runtime-wasm32-firefox" ] (
+        name:
+        playwright.mkCheck {
+          name = "browser-tests-${name}";
+          suite = runtimeSuite 32;
+          project = lib.removePrefix "runtime-wasm32-" name;
+        }
+      ))
       // (lib.genAttrs erofsProjects erofsCheck)
       // {
         site-live = siteCheck;
@@ -105,7 +120,7 @@ let
     name:
     playwright.mkCheck {
       name = "browser-tests-${name}";
-      suite = memory64Suite;
+      suite = runtimeSuite 64;
       project = lib.removePrefix "memory64-" name;
     };
 

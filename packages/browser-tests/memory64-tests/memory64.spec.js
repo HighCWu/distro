@@ -1,14 +1,14 @@
 import { expect, test } from "@playwright/test";
 
-test("runs Memory64 musl allocation, mmap, threads, TLS and signals", async ({ page }) => {
+test("runs musl allocation, mmap, threads, TLS and signals", async ({ page }) => {
   page.on("console", (message) => console.log(`[browser] ${message.text()}`));
   page.on("pageerror", (error) => console.error(`[browser] ${error.stack ?? error}`));
 
   await page.goto("/");
   await expect
-    .poll(() => page.evaluate(() => typeof globalThis.bootMemory64Smoke))
+    .poll(() => page.evaluate(() => typeof globalThis.bootRuntimeSmoke))
     .toBe("function");
-  const output = await page.evaluate(() => globalThis.bootMemory64Smoke());
+  const output = await page.evaluate(() => globalThis.bootRuntimeSmoke());
 
   expect(output).toContain("::vm-test::pass");
   expect(output).not.toContain("::vm-test::fail");
@@ -33,11 +33,11 @@ test("retries a failed kernel download in the same page with a generic MIME type
   });
   await page.goto("/");
   await expect
-    .poll(() => page.evaluate(() => typeof globalThis.bootMemory64Smoke))
+    .poll(() => page.evaluate(() => typeof globalThis.bootRuntimeSmoke))
     .toBe("function");
   const failure = await page.evaluate(async () => {
     try {
-      await globalThis.bootMemory64Smoke();
+      await globalThis.bootRuntimeSmoke();
       return "unexpected success";
     } catch (error) {
       return String(error);
@@ -46,7 +46,7 @@ test("retries a failed kernel download in the same page with a generic MIME type
   expect(failure).toContain("HTTP 503");
   expect(requests).toBe(1);
   // Do not reload: this must use the same imported kernel module and its cache.
-  const output = await page.evaluate(() => globalThis.bootMemory64Smoke());
+  const output = await page.evaluate(() => globalThis.bootRuntimeSmoke());
   expect(requests).toBe(2);
   expect(output).toContain("::vm-test::pass");
   expect(output).not.toContain("::vm-test::fail");
