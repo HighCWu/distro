@@ -7,7 +7,12 @@ import type { AgentAbi, GuestSession } from "../src/conn.ts";
 import { ChildProcess } from "../src/process.ts";
 import { GuestFd } from "../src/syscalls.ts";
 
-function fixture(signal?: AbortSignal, abi: AgentAbi = "wasm64", failClose = false) {
+function fixture(
+  signal?: AbortSignal,
+  abi: AgentAbi = "wasm64",
+  failClose = false,
+  bufferedOutput = false,
+) {
   let finishReap!: () => void;
   const reaped = new Promise<void>((resolve) => {
     finishReap = resolve;
@@ -15,6 +20,7 @@ function fixture(signal?: AbortSignal, abi: AgentAbi = "wasm64", failClose = fal
   let waitStatus = 0;
   let kills = 0;
   let releases = 0;
+  let reads = 0;
   const session = {
     abi,
     async exchange<T>(
@@ -27,6 +33,8 @@ function fixture(signal?: AbortSignal, abi: AgentAbi = "wasm64", failClose = fal
       return fn({
         async write(bytes) {
           request = bytes.slice();
+          if (request[0] === 1 && new DataView(request.buffer).getUint32(1, true) === NR.read)
+            reads++;
         },
         async read(length) {
           const result = new Uint8Array(length);
@@ -40,6 +48,13 @@ function fixture(signal?: AbortSignal, abi: AgentAbi = "wasm64", failClose = fal
             assert.equal(request[0], 1);
             const nr = new DataView(request.buffer).getUint32(1, true);
             assert.ok([NR.kill, NR.read, NR.close].includes(nr));
+            if (nr === NR.read && bufferedOutput) {
+              if (length === 12) new DataView(result.buffer).setBigInt64(0, 1n, true);
+              else {
+                assert.equal(length, 1);
+                result[0] = 65;
+              }
+            }
             if (length === 12 && nr === NR.kill) kills++;
             if (length === 12 && nr === NR.close && failClose) {
               new DataView(result.buffer).setBigInt64(0, -1n, true);
@@ -71,6 +86,9 @@ function fixture(signal?: AbortSignal, abi: AgentAbi = "wasm64", failClose = fal
     get releases() {
       return releases;
     },
+    get reads() {
+      return reads;
+    },
     finish(status = 9) {
       waitStatus = status;
       finishReap();
@@ -79,6 +97,25 @@ function fixture(signal?: AbortSignal, abi: AgentAbi = "wasm64", failClose = fal
 }
 
 for (const abi of ["wasm32", "wasm64"] as const) {
+  test(`closed process output cannot issue reads through a reused descriptor (${abi})`, async () => {
+    const f = fixture(undefined, abi, false, true);
+    await setImmediate(); // each output stream has prefetched one chunk
+    assert.equal(f.reads, 2);
+    const closing = f.child.close();
+    f.finish();
+    await closing;
+    for (const stream of [f.child.stdout, f.child.stderr]) {
+      const reader = stream.getReader();
+      try {
+        assert.deepEqual((await reader.read()).value, Uint8Array.of(65));
+        await assert.rejects(reader.read(), { code: "EBADF" });
+      } finally {
+        reader.releaseLock();
+      }
+    }
+    assert.equal(f.reads, 2);
+  });
+
   test(`process close waits for reap and process-slot release, and is idempotent (${abi})`, async () => {
     const f = fixture(undefined, abi);
     let closed = false;

@@ -18,7 +18,7 @@
 //                    ret) bytes), or the spawn/reap reply body.
 
 import { Bytes, FixedArray, I64LE, Struct, U32LE, U64LE, U8 } from "@lowland/bytes";
-import { AT, NR, Stat, stat_size, SystemError } from "./abi.ts";
+import { AT, E, NR, Stat, stat_size, SystemError } from "./abi.ts";
 import { NR as NR64, Stat as NativeStat, stat_size as native_stat_size } from "./abi-wasm64.ts";
 import type { GuestSession } from "./conn.ts";
 
@@ -81,6 +81,11 @@ export class GuestFd implements AsyncDisposable {
     return (this.#close ??= syscall(this.session, NR.close, this.fd).then(() => {}));
   }
 
+  /** Closing invalidates this owner immediately, even if close later fails. */
+  get closed(): boolean {
+    return this.#close !== undefined;
+  }
+
   async [Symbol.asyncDispose](): Promise<void> {
     await this.close();
   }
@@ -114,6 +119,7 @@ async function syscall(
       head.value.arg_kinds[i] = ARG_SCALAR;
       head.value.arg_values[i] = BigInt.asUintN(64, BigInt(arg));
     } else if (arg instanceof GuestFd) {
+      if (arg.closed) throw new SystemError(E.BADF);
       head.value.arg_kinds[i] = ARG_SCALAR;
       head.value.arg_values[i] = BigInt.asUintN(64, BigInt(arg.fd));
     } else if ("in" in arg) {
@@ -130,6 +136,12 @@ async function syscall(
   }
 
   const { ret, errno, out } = await session.exchange(async (lane) => {
+    // Acquiring a lane may wait while close releases this fd number. Reject
+    // before writing anything, returning errno outside exchange so a local
+    // lifecycle error does not poison the otherwise healthy wire session.
+    // Already dispatched syscalls retain ordinary Linux close/I/O semantics.
+    if (args.some((arg) => arg instanceof GuestFd && arg.closed))
+      return { ret: -1n, errno: E.BADF, out: [] };
     await lane.write(request.array);
     const reply = new ReplyHead(await lane.read(ReplyHead.size));
     if (reply.ret === -1n) return { ret: reply.ret, errno: reply.errno, out: [] };

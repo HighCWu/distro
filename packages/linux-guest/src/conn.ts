@@ -228,8 +228,9 @@ export class GuestSession {
     }
   }
 
-  /** Run one request/reply exchange on a pooled lane. `fn` must write one
-   *  request and read its complete reply. Any exception from `fn` is a wire
+  /** Run one request/reply exchange on a pooled lane. `fn` must either leave
+   *  the lane untouched or write one request and read its complete reply.
+   *  Any exception from `fn` is a wire
    *  violation (semantic errors travel as errno in replies, not exceptions)
    *  and poisons the whole session. */
   async exchange<T>(fn: (lane: Lane) => Promise<T>): Promise<T> {

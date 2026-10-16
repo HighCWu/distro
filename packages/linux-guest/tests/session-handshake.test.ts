@@ -21,7 +21,7 @@ function fixture(changes: ((bytes: Uint8Array) => Uint8Array)[] = []) {
           conn.writes.push(bytes.slice());
         },
         async readExactly(length: number) {
-          if (length === 12 || length === 128) return new Uint8Array(length);
+          if (length === 12 || length === 128 || length === 104) return new Uint8Array(length);
           assert.equal(length, 8);
           const hello = conn.writes[0]!;
           return change ? change(hello.slice()) : hello.slice();
@@ -41,6 +41,41 @@ function fixture(changes: ((bytes: Uint8Array) => Uint8Array)[] = []) {
     },
   } as unknown as VsockDevice;
   return { device, connections, calls };
+}
+
+for (const abi of ["wasm32", "wasm64"] as const) {
+  test(`${abi} close overtakes a waiting fd operation without poisoning the session`, async () => {
+    const f = fixture();
+    const connect = f.device.connect.bind(f.device);
+    let release!: () => void;
+    const gate = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    let waiting = true;
+    f.device.connect = async (...args) => {
+      if (args[0] === 1025 && waiting) {
+        waiting = false;
+        await gate;
+      }
+      return connect(...args);
+    };
+    const session = await GuestSession.connect(f.device, { abi });
+    try {
+      const fd = new GuestFd(session, 42);
+      const pending = fstat64(fd);
+      const rejected = assert.rejects(pending, { code: "EBADF" });
+      await fd.close();
+      release();
+      await rejected;
+      assert.equal(f.connections[2]!.writes.length, 1); // handshake only, no stale stat
+      assert.equal(f.connections[0]!.closed, false);
+      await fstat64(new GuestFd(session, 42)); // replacement owner can use the same number
+      assert.equal(f.connections[2]!.writes.length, 2);
+    } finally {
+      release();
+      session.close();
+    }
+  });
 }
 
 for (const stalledPhase of ["write", "read"] as const) {

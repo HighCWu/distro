@@ -2,7 +2,16 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import type { GuestSession, Lane } from "../src/conn.ts";
-import { fstat64, fstatat64, ftruncate64, GuestFd, llseek } from "../src/syscalls.ts";
+import {
+  fstat64,
+  fstatat64,
+  ftruncate64,
+  fsync,
+  GuestFd,
+  llseek,
+  read,
+  write,
+} from "../src/syscalls.ts";
 import { Stat as Stat32 } from "../src/abi.ts";
 import { Stat as Stat64 } from "../src/abi-wasm64.ts";
 import { FsFile, statToInfo } from "../src/file.ts";
@@ -45,6 +54,26 @@ function request(bytes: Uint8Array) {
 }
 
 for (const abi of ["wasm32", "wasm64"] as const) {
+  for (const closeErrno of [0, 5]) {
+    test(`${abi} closed fd never dispatches again, including failed close (${closeErrno})`, async () => {
+      const f = fixture(abi, closeErrno ? -1n : 0n, new Uint8Array(), closeErrno);
+      const closing = f.fd.close();
+      const closed = closeErrno ? assert.rejects(closing, { code: "EIO" }) : closing;
+      assert.equal(f.fd.close(), closing);
+      for (const operation of [
+        () => read(f.fd, 1),
+        () => write(f.fd, Uint8Array.of(1)),
+        () => fsync(f.fd),
+        () => fstat64(f.fd),
+        () => ftruncate64(f.fd, 1n),
+        () => llseek(f.fd, 0n, 0),
+      ])
+        await assert.rejects(operation(), { code: "EBADF" });
+      await closed;
+      assert.equal(f.requests.length, 1);
+      assert.equal(request(f.requests[0]!).nr, 57);
+    });
+  }
   const native = abi === "wasm64";
   test(`${abi} seek uses its native calling convention and preserves the full result`, async () => {
     const result = 9007199254740993n;
