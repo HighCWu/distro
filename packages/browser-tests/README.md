@@ -212,6 +212,12 @@ The shell lifecycle case also waits for an atomically renamed readiness marker
 from a real running command, aborts `run()`, requires the original abort reason,
 and runs another command successfully after cleanup. This is not merely an
 already-aborted signal rejected before spawning.
+It additionally fills all eight SDK process slots with real `sleep` commands,
+cancels the ninth `exec` before releasing them, requires prompt rejection with
+the original reason, disposes the running children and successfully starts a
+replacement. The same runtime check is included in the wasm32 process corpus;
+host-only tests cover FIFO preservation and cancellation after a grant, but do
+not establish target runtime success.
 
 The pinned NOMMU BusyBox uses hush, not a fully POSIX-compatible shell. In
 particular it supports `set -e` but not `set -u`/nounset. The shared command

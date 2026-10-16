@@ -67,6 +67,14 @@ Disposal does not send another signal after a successful reap. This is not a
 pidfd-based identity guarantee for every concurrent signal/reap race, nor a
 promise to terminate an entire descendant process group.
 
+Process admission is capped at eight live SDK children so blocked process I/O
+does not consume every syscall lane. An `exec()` waiting for capacity is
+abortable: it rejects with the original signal reason, removes its waiter,
+and does not spawn later when another child exits. Admission rechecks the
+signal after a grant and returns an unused slot if cancellation won that race.
+Active children still require normal termination and reaping; cancellation of
+a queued request does not cancel them or provide process-group termination.
+
 The plugin boots its private EROFS using the GPT partition label
 `LOWLAND_AGENT`, so its position among block-device plugins is irrelevant. The
 agent then requires exactly one attached EROFS or ext4 filesystem labeled
