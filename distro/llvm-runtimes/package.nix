@@ -63,6 +63,9 @@ let
     "-DLIBCXXABI_ENABLE_SHARED=OFF"
     "-DLIBCXXABI_USE_COMPILER_RT=ON"
     "-DLIBCXXABI_USE_LLVM_UNWINDER=ON"
+    # musl has no __cxa_thread_atexit_impl. A STATIC_LIBRARY try-compile
+    # cannot detect missing link symbols, so force libc++abi's TSD fallback.
+    "-DLIBCXXABI_HAS_CXA_THREAD_ATEXIT_IMPL=OFF"
     "-DLIBUNWIND_ENABLE_SHARED=OFF"
     "-DLIBUNWIND_HIDE_SYMBOLS=ON"
     "-DLIBUNWIND_USE_COMPILER_RT=ON"
