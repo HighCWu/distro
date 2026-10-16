@@ -43,6 +43,41 @@ function fixture(changes: ((bytes: Uint8Array) => Uint8Array)[] = []) {
   return { device, connections, calls };
 }
 
+for (const stalledPhase of ["write", "read"] as const) {
+  test(`session handshake timeout closes a stalled ${stalledPhase} without reporting ABI rejection`, async () => {
+    let closed = false;
+    let finish: (() => void) | undefined;
+    const blocked = new Promise<void>((resolve) => {
+      finish = resolve;
+    });
+    const device = {
+      async connect() {
+        return {
+          async write() {
+            if (stalledPhase === "write") await blocked;
+          },
+          async readExactly() {
+            await blocked;
+            return new Uint8Array();
+          },
+          close() {
+            closed = true;
+            finish?.();
+          },
+        };
+      },
+    } as unknown as VsockDevice;
+    await assert.rejects(
+      GuestSession.connect(device, { abi: "wasm64", timeoutMs: 10 }),
+      (error: unknown) =>
+        error instanceof Error &&
+        !(error instanceof ProtocolError) &&
+        error.message === "agent v4/wasm64 handshake timed out",
+    );
+    assert.equal(closed, true);
+  });
+}
+
 test("default sessions retain the exact v3 wasm32 handshake and lane identity", async () => {
   const f = fixture();
   const session = await GuestSession.connect(f.device, { timeoutMs: 123 });

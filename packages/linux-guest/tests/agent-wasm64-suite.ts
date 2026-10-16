@@ -61,6 +61,7 @@ export async function runAgentWasm64Suite(
   const t = {
     test(name: string, body: () => Promise<void>) {
       return runCase(name, async () => {
+        writeLine(`native agent starting: ${name}\n`);
         await body();
         passed.push(name);
       });
@@ -108,15 +109,18 @@ export async function runAgentWasm64Suite(
     clearTimeout(timer);
 
     await t.test("native executor rejects legacy v3 and explicit wasm32 identity", async () => {
+      writeLine("native agent handshake: reject legacy v3\n");
       await assert.rejects(
         GuestSession.connect(vsock, { timeoutMs: 3000 }),
         (error) => error instanceof ProtocolError,
       );
+      writeLine("native agent handshake: reject explicit wasm32\n");
       await assert.rejects(
         GuestSession.connect(vsock, { abi: "wasm32", timeoutMs: 3000 }),
         (error) => error instanceof ProtocolError,
       );
     });
+    writeLine("native agent handshake: accept explicit wasm64\n");
     session = await GuestSession.connect(vsock, { abi: "wasm64", timeoutMs: 3000 });
     assert.equal(session.abi, "wasm64");
     assert.equal(session.protocolVersion, 4);
@@ -321,9 +325,11 @@ export async function runAgentWasm64Suite(
   } finally {
     clearTimeout(timer);
     session?.close();
+    writeLine("native agent cleanup: closing machine\n");
     machine.close();
     await machine.closed;
     await bootOutput;
+    writeLine("native agent cleanup: machine closed\n");
   }
   return { passed, closed: true };
 }

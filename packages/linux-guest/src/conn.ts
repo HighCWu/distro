@@ -63,7 +63,11 @@ class VsockLane implements Lane {
   }
 }
 
-async function handshake(conn: VsockConnection, version: 3 | 4, abi: AgentAbi): Promise<void> {
+async function exchange_handshake(
+  conn: VsockConnection,
+  version: 3 | 4,
+  abi: AgentAbi,
+): Promise<void> {
   const bytes = new Bytes(Handshake.size);
   const hello = bytes.alloc(Handshake);
   const tag = version === 3 ? 0 : abi === "wasm64" ? 64 : 32;
@@ -76,6 +80,31 @@ async function handshake(conn: VsockConnection, version: 3 | 4, abi: AgentAbi): 
   const reply = new Handshake(echo);
   if (reply.magic !== HANDSHAKE_MAGIC || reply.version !== version || reply.reserved !== tag) {
     throw new ProtocolError("guest handshake echo mismatch");
+  }
+}
+
+// Transport connection deadlines do not cover stream I/O. Bound both the
+// hello write and echo read, including lane admission. A timeout is not an
+// ABI rejection and must never satisfy callers expecting ProtocolError.
+async function handshake(
+  conn: VsockConnection,
+  version: 3 | 4,
+  abi: AgentAbi,
+  timeoutMs = 5000,
+): Promise<void> {
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  try {
+    await Promise.race([
+      exchange_handshake(conn, version, abi),
+      new Promise<never>((_, reject) => {
+        timer = setTimeout(() => {
+          reject(new Error(`agent v${version}/${abi} handshake timed out`));
+          conn.close();
+        }, timeoutMs);
+      }),
+    ]);
+  } finally {
+    clearTimeout(timer);
   }
 }
 
@@ -107,7 +136,11 @@ export class GuestSession {
    *  any readiness retry loop. */
   static async connect(
     device: VsockDevice,
-    options?: { timeoutMs?: number; abi?: AgentAbi },
+    options?: {
+      /** Separate deadlines for transport connection and session handshake; default 5000 ms each. */
+      timeoutMs?: number;
+      abi?: AgentAbi;
+    },
   ): Promise<GuestSession> {
     const abi = options?.abi ?? "wasm32";
     if (abi !== "wasm32" && abi !== "wasm64") throw new RangeError("unsupported agent ABI");
@@ -119,7 +152,7 @@ export class GuestSession {
       options?.timeoutMs !== undefined ? { timeoutMs: options.timeoutMs } : {},
     );
     try {
-      await handshake(conn, version, abi);
+      await handshake(conn, version, abi, options?.timeoutMs);
     } catch (error) {
       conn.close();
       throw error;
