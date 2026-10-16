@@ -29,6 +29,7 @@ test(
       },
       {
         productionRoot: root !== undefined,
+        traceSessions: process.env.AGENT_WASM64_TRACE === "1",
         args: bootDiskPath
           ? ["root=PARTLABEL=LOWLAND_AGENT", "rootfstype=erofs", "ro", "rootwait", "init=/init"]
           : [],

@@ -57,7 +57,10 @@ export async function runAgentWasm64Suite(
   assert: RuntimeAssertions,
   runCase: (name: string, body: () => Promise<void>) => Promise<void>,
   writeLine: (text: string) => void,
-  options: Pick<BootMachineOptions, "plugins" | "args"> & { productionRoot?: boolean } = {},
+  options: Pick<BootMachineOptions, "plugins" | "args"> & {
+    productionRoot?: boolean;
+    traceSessions?: boolean;
+  } = {},
 ) {
   const passed: string[] = [];
   const t = {
@@ -85,7 +88,7 @@ export async function runAgentWasm64Suite(
   const machine = await bootMachine({
     cpus: 1,
     initcpio,
-    args: ["lowland.agent.trace=1", ...(options.args ?? [])],
+    args: [...(options.traceSessions ? ["lowland.agent.trace=1"] : []), ...(options.args ?? [])],
     plugins: [
       vsock,
       consoleDevice(closed_input(), output(true)),

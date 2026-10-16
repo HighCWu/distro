@@ -3,7 +3,7 @@ import { runAgentWasm64Suite } from "./agent-suite.js";
 import { runtimeAssertions } from "./agent-assertions.js";
 import { blockDevice } from "@lowland/kernel";
 
-globalThis.runNativeAgent = async ({ productionRoot = false } = {}) => {
+globalThis.runNativeAgent = async ({ productionRoot = false, traceSessions = false } = {}) => {
   const response = await fetch("/agent-runtime.cpio");
   if (!response.ok) throw new Error(`agent initramfs load failed: ${response.status}`);
   const plugins = [];
@@ -30,6 +30,6 @@ globalThis.runNativeAgent = async ({ productionRoot = false } = {}) => {
       console.log(`native agent passed: ${name}`);
     },
     (line) => console.log(line.trimEnd()),
-    { productionRoot, plugins },
+    { productionRoot, plugins, traceSessions },
   );
 };
