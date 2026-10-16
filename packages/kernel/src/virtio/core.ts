@@ -3,7 +3,7 @@
 import { Struct, U16LE, U32LE, U64LE } from "@lowland/bytes";
 import { getMachinePlugin, type MachinePlugin, type MachinePluginProvider } from "../plugin.ts";
 import { assert } from "../util.ts";
-import { type Imports, wasm_address_to_number } from "../wasm.ts";
+import { type Imports, type WasmAddressType, wasm_address_to_number } from "../wasm.ts";
 
 const TransportFeatures = {
   VERSION_1: 1n << 32n,
@@ -322,6 +322,8 @@ export interface ConnectedVirtioDevice {
 
 export interface VirtioConnectionContext {
   memory: WebAssembly.Memory;
+  /** Explicit memory width; omitted by legacy wasm32 callers. */
+  memory_address?: WasmAddressType;
   trigger_irq(irq: number): void;
   on_error(error: unknown): void;
   // A remote connection replaces only publication. Queue traversal and the
@@ -616,17 +618,19 @@ export function close_virtio_device(device: VirtioDevice) {
 
 export function virtio_imports({
   memory,
+  memory_address = "i32",
   devices,
   trigger_irq,
   on_error,
 }: {
   memory: WebAssembly.Memory;
+  memory_address?: WasmAddressType;
   devices: readonly VirtioDevice[];
   trigger_irq: (irq: number) => void;
   on_error: (error: unknown) => void;
 }): Imports["virtio"] {
   const connected = devices.map((device) =>
-    device[transport_device].connect({ memory, trigger_irq, on_error }),
+    device[transport_device].connect({ memory, memory_address, trigger_irq, on_error }),
   );
 
   return {

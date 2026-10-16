@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: MIT
 
 import { assert } from "../util.ts";
+import { refresh_memory, type WasmAddressType } from "../wasm.ts";
 import { listen_endpoint, post_endpoint, type Endpoint } from "../endpoint.ts";
 export type { Endpoint } from "../endpoint.ts";
 import {
@@ -54,7 +55,12 @@ type WorkerMessage =
   | { type: "closed"; error?: SerializedError };
 
 type DeviceMessage =
-  | { type: "bind"; memory: WebAssembly.Memory; control: SharedArrayBuffer }
+  | {
+      type: "bind";
+      memory: WebAssembly.Memory;
+      memory_address?: WasmAddressType;
+      control: SharedArrayBuffer;
+    }
   | { type: "features"; features: bigint }
   | { type: "setup"; config_irq: number; config_length: number }
   | {
@@ -241,6 +247,7 @@ function connect_remote_device(
   post_endpoint(endpoint, {
     type: "bind",
     memory: context.memory,
+    memory_address: context.memory_address ?? "i32",
     control: control_buffer,
   } satisfies DeviceMessage);
 
@@ -332,10 +339,17 @@ export function serveDevice(endpoint: Endpoint, device: VirtioDevice): void {
       switch (message?.type) {
         case "bind":
           assert(!connected, "virtio device is already bound");
-          message.memory.grow(0);
+          assert(
+            message.memory_address === undefined ||
+              message.memory_address === "i32" ||
+              message.memory_address === "i64",
+            "invalid remote memory width",
+          );
+          refresh_memory(message.memory, message.memory_address ?? "i32");
           control = new Int32Array(message.control);
           connected = connect_virtio_device(device, {
             memory: message.memory,
+            memory_address: message.memory_address ?? "i32",
             trigger_irq: () => assert(false, "remote interrupts are published with state"),
             on_error: send_error,
             config_target: (length) => new Uint8Array(length),

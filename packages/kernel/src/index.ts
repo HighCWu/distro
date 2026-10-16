@@ -484,6 +484,7 @@ export async function bootMachine(options: BootMachineOptions): Promise<Machine>
       },
       virtio: virtio_imports({
         memory: wasm_memory,
+        memory_address: memory_type.address,
         devices,
         on_error: fail,
         trigger_irq(irq) {
