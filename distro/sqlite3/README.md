@@ -53,6 +53,13 @@ must still be checked in public CI. The lightweight metadata regression verifies
 prefix relocation, static flags, and no host fallback after removing the `.pc`;
 it does not validate Wasm archive contents or target execution.
 
+The first application-root CI built the CLI and verified its Wasm memory ABI,
+but Nix rejected an embedded reference to the SQLite source store path before
+Linux runtime tests began. The recipe now copies the unchanged compilation
+inputs into the build directory and compiles relative source paths for both
+the archive and shell. The empty `allowedReferences` gate remains enabled;
+the corrected target build and runtime still require CI verification.
+
 SQLite's upstream public-domain declaration is retained in the installed
 `share/licenses/sqlite3/sqlite3.h`. Static musl and compiler-rt license texts are
 also installed; those components retain their own terms. The MIT license on the
