@@ -121,6 +121,9 @@ let
         linkerFlags
         ;
       cxxConfiguration = builtins.readFile ../llvm-toolchain/clang++.cfg;
+      linearMemory = {
+        maximumBytes = platform.maximumMemoryBytes;
+      };
       paths = {
         licenseTexts = "${licenseTexts}/share/linux-wasm-sdk/licenses";
         toolchain = "${llvm-toolchain}";
@@ -246,6 +249,9 @@ let
           assert.equal(p.targetTriple, "${platform.targetTriple}");
           assert.equal(p.addressBits, ${toString platform.addressBits});
           assert.equal(p.wasmArch, "${platform.wasmArch}");
+          assert.equal(p.linearMemory.maximumBytes, ${toString platform.maximumMemoryBytes});
+          assert.ok(Number.isSafeInteger(p.linearMemory.maximumBytes));
+          assert.ok(p.linkerFlags.includes("--max-memory=" + p.linearMemory.maximumBytes));
           assert.ok(fs.statSync(p.paths.licenseTexts + "/SHA256SUMS").isFile());
           assert.deepEqual(p.compilerFlags, ${builtins.toJSON platform.compilerFlags});
           assert.deepEqual(p.linkerFlags, ${builtins.toJSON platform.linkerFlags});

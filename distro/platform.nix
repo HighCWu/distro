@@ -14,6 +14,9 @@ rec {
   targetTriple = "${wasmArch}-unknown-linux-musl";
   multiarchTriple = "${wasmArch}-linux-musl";
   apkArch = wasmArch;
+  # This is the module's declared ceiling, not guaranteed host capacity or a
+  # process allocation limit. Keep SDK metadata and linker flags in sync.
+  maximumMemoryBytes = if wasmBits == 32 then 4294967296 else 17179869184;
 
   # The elaborated nixpkgs platform used as the stdenv's host platform. The
   # kernel is Linux but the executable format is not ELF; getting that right
@@ -47,7 +50,7 @@ rec {
   # scripts link, and promoting that to an error breaks every such probe.
   linkerFlags = [
     "--import-memory"
-    "--max-memory=${if wasmBits == 32 then "4294967296" else "17179869184"}"
+    "--max-memory=${toString maximumMemoryBytes}"
     "--shared-memory"
     "--export-table"
     # Pull the direct anonymous mapping runtime into every executable. Raw
