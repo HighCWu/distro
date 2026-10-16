@@ -142,6 +142,16 @@ async function exchange(
         await error_response(EXPECTATION_FAILED);
         return;
       }
+      const url = request_url(hosts[0]![1], target);
+      if ((method === "GET" || method === "HEAD") && framing !== undefined && framing !== 0) {
+        throw new Error(`${method} request cannot carry a Fetch body`);
+      }
+      // Reject a known oversized fallback body before asking the sender to
+      // upload it. Chunked bodies still need the incremental byte limit.
+      if (!streamingRequests && typeof framing === "number" && framing > maxBufferedRequestBytes) {
+        await error_response(PAYLOAD_TOO_LARGE);
+        return;
+      }
       if (expectation === "100-continue") {
         await writer.write(CONTINUE);
       }
@@ -153,10 +163,6 @@ async function exchange(
           : framing === "chunked"
             ? chunked_body(reader)
             : fixed_body(reader, framing);
-      if ((method === "GET" || method === "HEAD") && body) {
-        throw new Error(`${method} request cannot carry a Fetch body`);
-      }
-      const url = request_url(hosts[0]![1], target);
       const requestBody =
         body && !streamingRequests ? await bufferRequestBody(body, maxBufferedRequestBytes) : body;
       abort.signal.throwIfAborted();
