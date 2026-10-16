@@ -743,6 +743,10 @@ export function createNetwork({ connectTcp, resolveDns }: NetworkOptions): Netwo
   }
 
   function udp_datagram(source_port: number, destination_port: number, payload: Uint8Array) {
+    // Reject before allocating/copying a second buffer or encoding a wrapped
+    // 16-bit length. IPv4's limit includes its header and the UDP header.
+    if (payload.byteLength > MAX_IP_PAYLOAD - UdpHeader.size)
+      throw new RangeError("UDP payload is too large");
     const datagram = new Bytes(UdpHeader.size + payload.byteLength);
     datagram.alloc(UdpHeader).value = {
       source_port,
@@ -1415,8 +1419,15 @@ export function createNetwork({ connectTcp, resolveDns }: NetworkOptions): Netwo
     const writable = new WritableStream<Uint8Array>({
       async write(payload) {
         if (flow.closed) throw new Error("UDP connection is closed");
-        const datagram = udp_datagram(host_port, options.port, payload);
-        await send_ip(guest.macAddress, GATEWAY_IP, guest.ip, IpProtocol.UDP, datagram);
+        try {
+          const datagram = udp_datagram(host_port, options.port, payload);
+          await send_ip(guest.macAddress, GATEWAY_IP, guest.ip, IpProtocol.UDP, datagram);
+        } catch (error) {
+          // A failed sink write errors the WritableStream; its abort callback
+          // is not subsequently called. Release the flow and pending reads.
+          close();
+          throw error;
+        }
       },
       close,
       abort: close,
