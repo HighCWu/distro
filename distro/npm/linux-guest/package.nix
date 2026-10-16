@@ -91,43 +91,51 @@ let
     '';
   };
 
-  integration = pkgs.stdenvNoCC.mkDerivation {
-    pname = "linux-guest-integration-test";
-    version = "0.0.0";
-    passthru.ci.heavy = true;
-    src = ../../..;
-    env.CI = "true";
-    pnpmDeps = node-workspace.deps;
-    nativeBuildInputs = [
-      pkgs.nodejs
-      pkgs.pnpmConfigHook
-      node-workspace.pnpm
-    ];
+  integration-test =
+    name: command:
+    pkgs.stdenvNoCC.mkDerivation {
+      pname = name;
+      version = "0.0.0";
+      passthru.ci.heavy = true;
+      src = ../../..;
+      env.CI = "true";
+      pnpmDeps = node-workspace.deps;
+      nativeBuildInputs = [
+        pkgs.nodejs
+        pkgs.pnpmConfigHook
+        node-workspace.pnpm
+      ];
 
-    buildPhase = ''
-      runHook preBuild
+      buildPhase = ''
+        runHook preBuild
 
-      cp ${kernel}/vmlinux.wasm packages/kernel/vmlinux.wasm
-      cp -r ${kernel}/dist packages/kernel/dist
-      cp -r ${bytes}/dist packages/bytes/dist
-      cp ${agentDisk} packages/linux-guest/agent.img
-      pnpm --filter=@lowland/guest-tests check
+        cp ${kernel}/vmlinux.wasm packages/kernel/vmlinux.wasm
+        cp -r ${kernel}/dist packages/kernel/dist
+        cp -r ${bytes}/dist packages/bytes/dist
+        cp ${agentDisk} packages/linux-guest/agent.img
+        pnpm --filter=@lowland/guest-tests check
 
-      LINUX_GUEST_TEST_ASSETS=${test-assets} \
-        timeout --kill-after=5 300 pnpm --filter=@lowland/guest-tests test
+        LINUX_GUEST_TEST_ASSETS=${test-assets} \
+          timeout --kill-after=5 300 ${command}
 
-      runHook postBuild
-    '';
+        runHook postBuild
+      '';
 
-    installPhase = ''
-      mkdir $out
-    '';
-  };
+      installPhase = ''
+        mkdir $out
+      '';
+    };
+
+  integration = integration-test "linux-guest-integration-test" "pnpm --filter=@lowland/guest-tests test";
+  node-filesystem = integration-test "linux-guest-node-filesystem-test" (
+    "pnpm --filter=@lowland/guest-tests exec node --test --test-concurrency=1 "
+    + "virtio-fs-node-guest.test.ts"
+  );
 in
 package
 // {
   checks.tests = {
     assets = test-assets;
-    inherit integration;
+    inherit integration node-filesystem;
   };
 }
