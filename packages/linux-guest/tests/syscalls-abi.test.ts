@@ -9,6 +9,16 @@ import {
   fsync,
   GuestFd,
   llseek,
+  openat,
+  mkdirat,
+  unlinkat,
+  renameat,
+  symlinkat,
+  readlinkat,
+  fchmodat,
+  fchownat,
+  mount,
+  umount2,
   read,
   write,
 } from "../src/syscalls.ts";
@@ -54,6 +64,39 @@ function request(bytes: Uint8Array) {
 }
 
 for (const abi of ["wasm32", "wasm64"] as const) {
+  test(`${abi} embedded NUL never dispatches a C-string syscall or poisons later requests`, async () => {
+    const f = fixture(abi);
+    for (const path of ["\0suffix", "/tmp/keep\0suffix", "/tmp/keep\0"]) {
+      const operations = {
+        open: () => openat(f.session, path, 0, 0),
+        stat: () => fstatat64(f.session, path, 0),
+        mkdir: () => mkdirat(f.session, path, 0o700),
+        unlink: () => unlinkat(f.session, path, 0),
+        renameSource: () => renameat(f.session, path, "/destination"),
+        renameDestination: () => renameat(f.session, "/source", path),
+        symlinkTarget: () => symlinkat(f.session, path, "/link"),
+        symlinkPath: () => symlinkat(f.session, "/target", path),
+        readlink: () => readlinkat(f.session, path, 1),
+        chmod: () => fchmodat(f.session, path, 0o600),
+        chown: () => fchownat(f.session, path, 0, 0),
+        mountSource: () => mount(f.session, path, "/mnt", "ext4", 0, null),
+        mountTarget: () => mount(f.session, null, path, "tmpfs", 0, null),
+        mountType: () => mount(f.session, null, "/mnt", path, 0, null),
+        mountData: () => mount(f.session, null, "/mnt", "tmpfs", 0, path),
+        unmount: () => umount2(f.session, path, 0),
+      };
+      for (const [name, operation] of Object.entries(operations)) {
+        await assert.rejects(operation(), TypeError, name);
+        assert.equal(f.requests.length, 0, name);
+      }
+    }
+    const valid = "/tmp/中文 $HOME\n😀";
+    const fd = await openat(f.session, valid, 0, 0);
+    assert.equal(new TextDecoder().decode(f.requests[0]!.subarray(59)), valid + "\0");
+    await fd.close();
+    assert.equal(f.requests.length, 2);
+  });
+
   for (const closeErrno of [0, 5]) {
     test(`${abi} closed fd never dispatches again, including failed close (${closeErrno})`, async () => {
       const f = fixture(abi, closeErrno ? -1n : 0n, new Uint8Array(), closeErrno);

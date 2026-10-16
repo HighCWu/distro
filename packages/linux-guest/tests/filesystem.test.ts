@@ -64,6 +64,23 @@ guest_test("filesystem", async (t, fixture) => {
     assert.equal(await fs.readTextFile(`${directory}/renamed.txt`), "hello");
   });
 
+  await t.test(
+    "rejects NUL paths without truncating, deleting or renaming their prefixes",
+    async () => {
+      const path = `${directory}/hello.txt`;
+      const destination = `${directory}/nul-destination`;
+      await assert.rejects(fs.writeTextFile(path + "\0suffix", "must not replace data"), TypeError);
+      await assert.rejects(fs.remove(path + "\0suffix"), TypeError);
+      await assert.rejects(fs.rename(path + "\0suffix", destination), TypeError);
+      await assert.rejects(fs.rename(path, destination + "\0suffix"), TypeError);
+      assert.equal(await fs.readTextFile(path), "hello, guest\n");
+      await assert.rejects(
+        fs.stat(destination),
+        (error) => error instanceof SystemError && error.code === "ENOENT",
+      );
+    },
+  );
+
   await t.test("reads, writes, seeks, and syncs open files", async () => {
     const file = await fs.open(`${directory}/open.txt`, {
       create: true,

@@ -420,11 +420,11 @@ export async function reap(session: GuestSession, pid: number): Promise<number> 
   return result.status;
 }
 
-// A path argument: UTF-8 bytes plus a trailing NUL, passed as an in-blob.
-// The agent rejects nothing here — an embedded NUL simply truncates the path
-// the kernel sees, and the resulting ENOENT is a fine answer to a nonsense
-// input on a personal system.
+// A Linux C-string argument: UTF-8 bytes plus one trailing NUL. Reject an
+// embedded terminator before sending anything, rather than silently operating
+// on a different path or truncating mount options at the host/kernel boundary.
 function c_string(value: string): { in: Uint8Array } {
+  if (value.includes("\0")) throw new TypeError("C-string arguments must not contain NUL");
   return { in: new TextEncoder().encode(value + "\0") };
 }
 

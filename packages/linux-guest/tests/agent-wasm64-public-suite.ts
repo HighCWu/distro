@@ -108,6 +108,20 @@ export async function runPublicAgentWasm64Suite(
       try {
         await agent.fs.copyFile(path, copy);
         assert.equal(await agent.fs.readTextFile(copy), "public");
+        await assert.rejects(
+          agent.fs.writeTextFile(path + "\0suffix", "must not truncate"),
+          (error) => error instanceof TypeError,
+        );
+        await assert.rejects(
+          agent.fs.remove(path + "\0suffix"),
+          (error) => error instanceof TypeError,
+        );
+        await assert.rejects(
+          agent.fs.rename(path, copy + "\0suffix"),
+          (error) => error instanceof TypeError,
+        );
+        assert.equal(await agent.fs.readTextFile(path), "public");
+        assert.equal(await agent.fs.readTextFile(copy), "public");
         await agent.fs.symlink(path, alias);
         await assert.rejects(
           agent.fs.copyFile(path, alias),
