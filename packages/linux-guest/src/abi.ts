@@ -55,7 +55,7 @@ function scalar_group<T extends Record<string, number>>(prefix: string, entries:
   return { values: entries, checks };
 }
 
-function define_struct<T extends object>(
+export function define_struct<T extends object>(
   c_type: string,
   layout: { [K in keyof T]: Type<T[K]> },
   options: { assert_sizeof?: boolean } = {},

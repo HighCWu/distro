@@ -3,6 +3,7 @@
   stdenv,
   pkgs,
   kernel,
+  sdk-wasm64,
 }:
 
 let
@@ -55,4 +56,5 @@ in
 package
 // {
   checks.abi = abi;
+  checks.abi-wasm64 = import ./abi-wasm64.nix { inherit bytes pkgs sdk-wasm64; };
 }
