@@ -27,17 +27,21 @@ let
       }
       ''
         mkdir -p $out/bin $out/share/licenses/sqlite3 $dev/include $dev/lib/pkgconfig
+        # Compile relative paths: Wasm file symbols/assertion strings must not
+        # retain the absolute Nix source path in the CLI or installed archive.
+        mkdir sqlite-source
+        cp ${sqlite3.src}/{sqlite3.c,sqlite3.h,shell.c} sqlite-source/
         ${sdk-wasm64}/bin/wasm-linux-cc -O2 -pthread \
           -DSQLITE_THREADSAFE=1 -DSQLITE_OMIT_LOAD_EXTENSION=1 \
           -DSQLITE_OMIT_WAL=1 -DSQLITE_MAX_MMAP_SIZE=0 \
-          -I${sqlite3.src} -c ${sqlite3.src}/sqlite3.c -o sqlite3.o
+          -Isqlite-source -c sqlite-source/sqlite3.c -o sqlite3.o
         ${sdk-wasm64}/bin/llvm-ar rcs $dev/lib/libsqlite3.a sqlite3.o
         cp ${sqlite3.src}/sqlite3.h ${sqlite3.src}/sqlite3ext.h $dev/include/
         cp ${pkgConfig} $dev/lib/pkgconfig/sqlite3.pc
         ${sdk-wasm64}/bin/wasm-linux-cc -O2 -pthread \
           -DSQLITE_THREADSAFE=1 -DSQLITE_OMIT_LOAD_EXTENSION=1 \
           -DSQLITE_OMIT_WAL=1 -DSQLITE_MAX_MMAP_SIZE=0 \
-          -I$dev/include ${sqlite3.src}/shell.c $dev/lib/libsqlite3.a \
+          -I$dev/include sqlite-source/shell.c $dev/lib/libsqlite3.a \
           -lm -o $out/bin/sqlite3
         node ${../busybox/check-binary.mjs} ${../../packages/kernel/src/wasm_binary.ts} \
           $out/bin/sqlite3 64 ${toString platform-wasm64.maximumMemoryBytes}
