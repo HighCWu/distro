@@ -201,6 +201,13 @@ removal. This checks real userland pipes through the public streaming API, not
 just a single-purpose C fixture or a small collected text command. Missing shell
 assets or execution failures are errors, not fallback to the minimal C program.
 No external initramfs, manual boot arguments or session trace flag is supplied.
+
+The pinned hush resets `$?` while skipping a failed condition's `then` branch.
+The corpus therefore captures child status immediately with
+`command || status=$?`, rather than in `else`. The expected status remains 7;
+host regression tests also require successful children and status 23 to fail
+that assertion. This accommodates upstream hush behavior, not a kernel or
+libc wait-status fix, and does not establish full POSIX shell conformance.
 The shell lifecycle case also waits for an atomically renamed readiness marker
 from a real running command, aborts `run()`, requires the original abort reason,
 and runs another command successfully after cleanup. This is not merely an
