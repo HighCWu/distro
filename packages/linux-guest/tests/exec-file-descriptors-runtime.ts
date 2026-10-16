@@ -4,9 +4,9 @@ import type { RuntimeAssertions } from "./agent-wasm64-suite.ts";
 
 export const descriptorCheckScript = `
 [ -d /proc/self/fd ] || exit 20
-/bin/readlink /proc/self/fd/0 >/dev/null || exit 22
+readlink /proc/self/fd/0 >/dev/null || exit 22
 for entry in /proc/self/fd/*; do
-  target=$(/bin/readlink "$entry" 2>/dev/null) || continue
+  target=$(readlink "$entry" 2>/dev/null) || continue
   if [ "$target" = "$1" ] || [ "$target" = "$2" ]; then
     printf 'inherited SDK descriptor: %s\\n' "$target" >&2
     exit 21

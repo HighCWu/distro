@@ -15,7 +15,7 @@ test("native descriptor probe detects a real inherited fd, not just a pathname",
     for (const position of [1, 2]) {
       const paths = position === 1 ? [path, path + "-other"] : [path + "-other", path];
       for (const inherited of [false, true]) {
-        const result = spawnSync("/bin/sh", ["-c", descriptorCheckScript, "probe", ...paths], {
+        const result = spawnSync("sh", ["-c", descriptorCheckScript, "probe", ...paths], {
           encoding: "utf8",
           timeout: 5000,
           stdio: inherited ? ["ignore", "pipe", "pipe", fd] : ["ignore", "pipe", "pipe"],
