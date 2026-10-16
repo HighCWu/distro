@@ -121,6 +121,9 @@ async function exchange(
         await error_response(BAD_GATEWAY);
         return;
       }
+      // Own the stream even when HTTP semantics suppress its body (HEAD), or
+      // downstream headers fail. Custom callbacks need not honor our signal.
+      response_reader = response.body?.getReader();
       if (response.status < 200 || response.status > 599) {
         await error_response(BAD_GATEWAY);
         return;
@@ -131,13 +134,12 @@ async function exchange(
       final_output_started = true;
       await writer.write(serialize_head(`HTTP/1.1 ${response.status} ${response.statusText}`, out));
       if (
-        response.body &&
+        response_reader &&
         method !== "HEAD" &&
         response.status !== 204 &&
         response.status !== 205 &&
         response.status !== 304
       ) {
-        response_reader = response.body.getReader();
         for (;;) {
           const { value, done } = await response_reader.read();
           if (done) break;
