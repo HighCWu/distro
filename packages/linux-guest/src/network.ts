@@ -424,6 +424,8 @@ interface TcpFlow {
   handshake?: PromiseWithResolvers<TcpConnection>;
   handshake_timeout?: ReturnType<typeof setTimeout>;
   readable?: ReadableStreamDefaultController<Uint8Array>;
+  writable?: WritableStreamDefaultController;
+  writable_closing?: boolean;
   activation?: Promise<void>;
   activation_waiter?: PromiseWithResolvers<void>;
   abort?: AbortController;
@@ -808,10 +810,10 @@ export function createNetwork({ connectTcp, resolveDns }: NetworkOptions): Netwo
     await send_tcp(flow, TcpFlag.ACK | TcpFlag.FIN);
     flow.send_sequence = acknowledgement;
     await acked;
-    if (flow.remote_ended) close_tcp_flow(flow);
+    if (flow.remote_ended) close_tcp_flow(flow, undefined, !flow.writable_closing);
   }
 
-  function close_tcp_flow(flow: TcpFlow, error?: unknown) {
+  function close_tcp_flow(flow: TcpFlow, error?: unknown, close_writer = true) {
     if (flow.closed) return;
     flow.closed = true;
     tcp_flows.delete(flow.key);
@@ -829,6 +831,9 @@ export function createNetwork({ connectTcp, resolveDns }: NetworkOptions): Netwo
     flow.activation_waiter?.reject(error ?? new Error("TCP connection closed"));
     flow.activation_waiter = undefined;
     flow.abort?.abort(error ?? new Error("TCP connection closed"));
+    // External teardown must also settle an idle writer. Successful FIN
+    // completion and the sink's own abort keep their native stream result.
+    if (close_writer) flow.writable?.error(error ?? new Error("TCP connection closed"));
     if (error !== undefined) {
       try {
         flow.readable?.error(error);
@@ -845,10 +850,10 @@ export function createNetwork({ connectTcp, resolveDns }: NetworkOptions): Netwo
     }
   }
 
-  function abort_tcp_flow(flow: TcpFlow, error?: unknown) {
+  function abort_tcp_flow(flow: TcpFlow, error?: unknown, close_writer = true) {
     if (flow.closed) return;
     void send_tcp(flow, TcpFlag.RST | TcpFlag.ACK).catch(() => {});
-    close_tcp_flow(flow, error);
+    close_tcp_flow(flow, error, close_writer);
   }
 
   function expire_tcp_handshake(flow: TcpFlow, message: string) {
@@ -890,16 +895,20 @@ export function createNetwork({ connectTcp, resolveDns }: NetworkOptions): Netwo
       },
     );
     const writable = new WritableStream<Uint8Array>({
+      start(controller) {
+        flow.writable = controller;
+      },
       async write(chunk) {
         await activate?.();
         return send_tcp_data(flow, chunk);
       },
       async close() {
+        flow.writable_closing = true;
         await activate?.();
         return send_tcp_fin(flow);
       },
       abort(reason) {
-        abort_tcp_flow(flow, reason);
+        abort_tcp_flow(flow, reason, false);
       },
     });
     return {
@@ -1055,7 +1064,7 @@ export function createNetwork({ connectTcp, resolveDns }: NetworkOptions): Netwo
     }
     await send_tcp(flow, TcpFlag.ACK);
     if (flow.local_ended && flow.remote_ended && flow.ack_waiters.length === 0) {
-      close_tcp_flow(flow);
+      close_tcp_flow(flow, undefined, !flow.writable_closing);
     }
   }
 
