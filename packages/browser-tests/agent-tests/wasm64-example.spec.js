@@ -70,6 +70,12 @@ test("embeds native wasm64 Linux using the standalone example controls", async (
   await page.locator("#uname").click();
   await expect(state).toHaveText("running");
   await expect(page.locator("#result")).toContainText("Linux ");
+  // Whole-machine Stop is an independent escape hatch, not another action
+  // queued behind the application's status or pipe cleanup.
+  await page.locator("#arguments").fill('["wait"]');
+  await page.locator("#run-program").click();
+  await expect(page.locator("#result")).toContainText("uploaded application waiting");
+  await expect(page.locator("#stop")).toBeEnabled();
   await page.locator("#stop").click();
   await expect(state).toHaveText("stopped");
   await expect(page.locator("#uname")).toBeDisabled();

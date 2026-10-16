@@ -61,7 +61,8 @@ Hello from native Linux wasm64.</textarea>
     <button id="cancel-program" disabled>Cancel application</button>
     <p>
       Standard input receives EOF. Recent output is limited to 65,536 characters; stdout/stderr
-      interleaving is not deterministic.
+      interleaving is not deterministic. Stop Linux remains available while an application runs; it
+      stops the whole instance and discards the temporary disk, unlike cancelling one application.
     </p>
     <h2>Command output</h2>
     <pre id="result" aria-live="polite"></pre>

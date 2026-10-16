@@ -8,12 +8,16 @@ const element = (id) => document.getElementById(id);
 let session;
 let busy = false;
 let programController;
+let stopping;
+let generation = 0;
 function state(message) {
   element("state").textContent = message;
-  element("start").disabled = busy || !!session;
-  for (const id of ["stop", "uname", "file", "read", "run-program"])
-    element(id).disabled = busy || !session;
-  element("cancel-program").disabled = !programController || programController.signal.aborted;
+  element("start").disabled = busy || !!session || !!stopping;
+  element("stop").disabled = !session || !!stopping;
+  for (const id of ["uname", "file", "read", "run-program"])
+    element(id).disabled = busy || !session || !!stopping;
+  element("cancel-program").disabled =
+    !!stopping || !programController || programController.signal.aborted;
 }
 function consoleOutput() {
   const decoder = new TextDecoder();
@@ -35,15 +39,18 @@ async function image(path) {
   return new Uint8Array(await response.arrayBuffer());
 }
 async function action(operation) {
-  if (busy) return;
+  if (busy || stopping) return;
+  const ownGeneration = ++generation;
   busy = true;
   state("working");
   try {
     const message = await operation();
+    if (ownGeneration !== generation) return;
     if (message === "running" && !session) throw new Error("Linux stopped during the operation");
     busy = false;
     state(message);
   } catch (error) {
+    if (ownGeneration !== generation) return;
     busy = false;
     state(`error: ${error.message}`);
     console.error(error);
@@ -104,23 +111,37 @@ element("start").addEventListener("click", () =>
     return "running";
   }),
 );
-element("stop").addEventListener("click", () =>
-  action(async () => {
-    const active = session;
-    if (!active) return "stopped";
+element("stop").addEventListener("click", async () => {
+  const active = session;
+  if (!active || stopping) return;
+  // Stop must not queue behind an application, its descendants' pipes, or
+  // outstanding filesystem work. Invalidate their UI ownership immediately.
+  ++generation;
+  stopping = active;
+  busy = true;
+  programController?.abort(new DOMException("Linux stopped", "AbortError"));
+  programController = undefined;
+  state("stopping");
+  let message = "stopped";
+  try {
     active.machine.close();
-    try {
-      await active.machine.closed;
-      await active.output;
-    } finally {
-      if (session === active) session = undefined;
-    }
-    return "stopped";
-  }),
-);
-async function command(args) {
-  if (!session) throw new Error("Linux is not running");
-  const result = await session.agent.run(args);
+    const results = await Promise.allSettled([active.machine.closed, active.output]);
+    const failed = results.find((result) => result.status === "rejected");
+    if (failed) throw failed.reason;
+  } catch (error) {
+    message = `error: ${error.message}`;
+    console.error(error);
+  } finally {
+    if (session === active) session = undefined;
+    stopping = undefined;
+    busy = false;
+    state(message);
+  }
+});
+async function command(args, active = session) {
+  if (!active || session !== active || stopping) throw new Error("Linux is not running");
+  const result = await active.agent.run(args);
+  if (session !== active || stopping) throw new Error("Linux stopped during the operation");
   const decode = (bytes) => new TextDecoder().decode(bytes);
   element("result").textContent = decode(result.stdout) + decode(result.stderr);
   if (!result.status.success)
@@ -130,12 +151,13 @@ async function command(args) {
 element("uname").addEventListener("click", () => action(() => command(["/bin/uname", "-a"])));
 element("file").addEventListener("click", () =>
   action(async () => {
-    if (!session) throw new Error("Linux is not running");
-    await session.agent.fs.writeFile(
+    const active = session;
+    if (!active) throw new Error("Linux is not running");
+    await active.agent.fs.writeFile(
       "/root/example.txt",
       new TextEncoder().encode(element("contents").value),
     );
-    return command(["/bin/cat", "/root/example.txt"]);
+    return command(["/bin/cat", "/root/example.txt"], active);
   }),
 );
 element("read").addEventListener("click", () =>
@@ -145,20 +167,22 @@ state("stopped");
 
 element("run-program").addEventListener("click", () =>
   action(async () => {
-    if (!session) throw new Error("Linux is not running");
+    const active = session;
+    if (!active) throw new Error("Linux is not running");
     const controller = new AbortController();
     programController = controller;
     element("result").textContent = "";
     state("running application");
     try {
       const status = await runProgram(
-        session.agent,
+        active.agent,
         element("program").files[0],
         element("arguments").value,
         {
           signal: controller.signal,
           onOutput(_name, text) {
-            element("result").textContent = outputTail(element("result").textContent, text);
+            if (session === active && !stopping)
+              element("result").textContent = outputTail(element("result").textContent, text);
           },
         },
       );
