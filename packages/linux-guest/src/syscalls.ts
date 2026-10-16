@@ -234,6 +234,12 @@ export async function fstatat64(
   return new Stat(out[0]!);
 }
 
+/** Query the open descriptor itself, including after unlink or replacement. */
+export async function fstat64(fd: GuestFd): Promise<InstanceType<typeof Stat>> {
+  const { out } = await syscall(fd.session, NR.fstat64, fd, { out: stat_size });
+  return new Stat(out[0]!);
+}
+
 export async function mkdirat(session: GuestSession, path: string, mode: number): Promise<void> {
   await syscall(session, NR.mkdirat, AT.FDCWD, c_string(path), mode);
 }

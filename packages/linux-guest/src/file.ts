@@ -4,7 +4,7 @@
 import { E, O, S_IF, Stat, SystemError } from "./abi.ts";
 import {
   CHUNK,
-  fstatat64,
+  fstat64,
   fsync,
   ftruncate64,
   type GuestFd,
@@ -212,9 +212,7 @@ export class FsFile implements AsyncDisposable {
   /** Metadata for the open file. */
   stat(): Promise<FileInfo> {
     return this.#run(async () => {
-      // fstatat64 needs a path; stat the fd through /proc/self/fd/N (the
-      // agent mounts /proc at startup for exactly this and realPath).
-      return statToInfo(await fstatat64(this.#fd.session, `/proc/self/fd/${this.#fd.fd}`, 0));
+      return statToInfo(await fstat64(this.#fd));
     });
   }
 

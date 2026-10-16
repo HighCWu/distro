@@ -94,6 +94,7 @@ const nr = scalar_group("__NR_", {
   write: 64,
   llseek: 62, // __NR3264_lseek -> sys_llseek on ILP32
   fstatat64: 79, // __NR3264_fstatat -> sys_fstatat64 on ILP32
+  fstat64: 80, // __NR3264_fstat -> sys_fstat64 on ILP32
   ftruncate64: 46, // __NR3264_ftruncate -> sys_ftruncate64 on ILP32
   fsync: 82,
   getdents64: 61,
