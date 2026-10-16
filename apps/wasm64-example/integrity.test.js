@@ -36,6 +36,13 @@ test("complete bundle inventory survives relocation and detects changed payloads
     const checked = run(join(relocated, "integrity.mjs"));
     assert.equal(checked.status, 0, checked.stderr);
     assert.match(checked.stdout, /Verified 3 bundle files/);
+    // Nix's usual result directory is a symlink. Node resolves import.meta.url
+    // but preserves the argv entry path; the CLI must not silently skip work.
+    const resultLink = join(temporary, "result");
+    await symlink(relocated, resultLink);
+    const linked = run(join(resultLink, "integrity.mjs"));
+    assert.equal(linked.status, 0, linked.stderr);
+    assert.match(linked.stdout, /Verified 3 bundle files/);
     const path = join(relocated, "root.ext4");
     const saved = await readFile(path);
     await writeFile(path, new Uint8Array([0, 255, 129, 0]));

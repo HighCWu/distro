@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: MIT
 import { createHash } from "node:crypto";
-import { createReadStream } from "node:fs";
+import { createReadStream, realpathSync } from "node:fs";
 import { lstat, readdir, readFile, writeFile } from "node:fs/promises";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
@@ -45,7 +45,7 @@ export async function verifyBundle(root) {
   return actual.files.length;
 }
 
-if (process.argv[1] && import.meta.url === pathToFileURL(resolve(process.argv[1])).href) {
+if (process.argv[1] && import.meta.url === pathToFileURL(realpathSync(process.argv[1])).href) {
   try {
     const mode = process.argv[2] ?? "--check";
     if (!["--check", "--write"].includes(mode) || process.argv.length > 4)
