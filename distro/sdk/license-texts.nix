@@ -9,15 +9,28 @@ let
     builtins.toJSON {
       schemaVersion = 1;
       scope = "Selected upstream license texts only; not an SBOM, full dependency license inventory or corresponding-source archive";
-      # Do not embed full source store paths: that would retain the complete
-      # Linux/LLVM source trees in every SDK's runtime closure.
-      sourceStoreBasenames = lib.mapAttrs (_name: source: builtins.baseNameOf (toString source)) sources;
+      # Nix scans store hashes even without the /nix/store prefix. Split the
+      # identity so it can be reconstructed without retaining source trees.
+      sourceStoreIdentities = lib.mapAttrs (
+        _name: source:
+        let
+          basename = builtins.baseNameOf (toString source);
+        in
+        {
+          hashParts = [
+            (builtins.substring 0 16 basename)
+            (builtins.substring 16 16 basename)
+          ];
+          name = builtins.substring 33 (builtins.stringLength basename) basename;
+        }
+      ) sources;
     }
   );
 in
 pkgs.runCommand "linux-wasm-sdk-license-texts"
   {
     passthru.ci.heavy = true;
+    allowedReferences = [ ];
     nativeBuildInputs = [ pkgs.findutils ];
   }
   ''

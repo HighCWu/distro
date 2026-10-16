@@ -3,8 +3,11 @@
 # Selected SDK license texts
 
 These files are copied unmodified from the exact source inputs selected for
-the toolchain and sysroot. `sources.json` identifies those inputs by their Nix
-store basenames; `SHA256SUMS` verifies the installed files. This directory does
+the toolchain and sysroot. `sources.json` identifies those inputs using the
+store hash split into two `hashParts` and the remaining `name`: join the hash
+parts, then append a hyphen and the name to reconstruct the store basename.
+The split matters because Nix scans bare store hashes as references too.
+`SHA256SUMS` verifies the installed files. This directory does
 not retain the complete upstream source trees in the SDK runtime closure.
 
 The musl COPYRIGHT includes its upstream attribution and component exceptions.

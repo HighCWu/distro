@@ -216,6 +216,11 @@ let
       ''
         wasm-linux-sdk-info > profile.json
         ${pkgs.diffutils}/bin/cmp profile.json ${sdk}/share/linux-wasm-sdk/profile.json
+        # Verify the installed SDK view, not just the standalone bundle build.
+        (
+          cd ${sdk}/share/linux-wasm-sdk/licenses
+          sha256sum --check SHA256SUMS
+        )
         node -e '
           const fs = require("node:fs");
           const assert = require("node:assert/strict");
