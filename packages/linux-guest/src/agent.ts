@@ -16,6 +16,8 @@ import {
 } from "./client.ts";
 import { platform } from "./platform.ts";
 import type { ChildProcess, CommandStatus } from "./process.ts";
+import { select_agent_image, type GuestAgentOptions } from "./agent-image.ts";
+export type { GuestAgentOptions } from "./agent-image.ts";
 
 let agent_image: Promise<Uint8Array<ArrayBuffer>> | undefined;
 
@@ -23,8 +25,8 @@ function load_agent_image() {
   return (agent_image ??= platform.load_asset(new URL("../agent.img", import.meta.url)));
 }
 
-async function agent_device() {
-  const bytes = await load_agent_image();
+async function agent_device(image?: Uint8Array<ArrayBuffer>) {
+  const bytes = image ?? (await load_agent_image());
   return blockDevice({
     capacity: bytes.byteLength,
     read(offset, target) {
@@ -105,9 +107,10 @@ export function wait_for_agent(agent: GuestAgent, machine: Machine): Promise<voi
  * partition label makes discovery independent of virtio device ordering. The
  * plugin does not finish booting until the agent is ready to accept requests.
  */
-export function guestAgent(): GuestAgent {
+export function guestAgent(options: GuestAgentOptions = {}): GuestAgent {
+  const { abi, image } = select_agent_image(options);
   const vsock = vsockDevice();
-  const client = create_guest_client(vsock);
+  const client = create_guest_client(vsock, { abi });
   let configured = false;
   let attached_machine: Machine | undefined;
   let ready: Promise<void> | undefined;
@@ -134,7 +137,7 @@ export function guestAgent(): GuestAgent {
       // Register the vsock before loading the packaged asset so configuration
       // cleanup owns it even when loading the EROFS fails.
       setup.devices.add(vsock);
-      setup.devices.add(await agent_device());
+      setup.devices.add(await agent_device(image));
       setup.args.add(
         "root=PARTLABEL=LOWLAND_AGENT",
         "rootfstype=erofs",

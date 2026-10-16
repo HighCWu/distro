@@ -21,6 +21,20 @@ let
       platform-wasm64
       ;
   };
+  bootDiskCheck = import ./runtime-wasm64.nix {
+    inherit
+      bytes
+      pkgs
+      sdk-wasm64
+      image
+      node-workspace
+      apk
+      platform-wasm64
+      ;
+    kernel = kernel-wasm64;
+    production = nativeWasm64;
+    bootDisk = true;
+  };
   package = stdenv.mkDerivation {
     pname = "linux-guest-agent";
     version = "0.0.0";
@@ -95,18 +109,10 @@ package
     kernel = kernel-wasm64;
     production = nativeWasm64;
   };
-  checks.boot-disk-wasm64 = import ./runtime-wasm64.nix {
-    inherit
-      bytes
-      pkgs
-      sdk-wasm64
-      image
-      node-workspace
-      apk
-      platform-wasm64
-      ;
+  checks.boot-disk-wasm64 = bootDiskCheck;
+  checks.public-wasm64 = import ./public-wasm64.nix {
+    inherit bytes pkgs node-workspace;
     kernel = kernel-wasm64;
-    production = nativeWasm64;
-    bootDisk = true;
+    assets = bootDiskCheck;
   };
 }
