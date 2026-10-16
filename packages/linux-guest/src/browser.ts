@@ -409,12 +409,19 @@ export class BrowserFS implements FS<Node, Handle> {
     });
   }
 
-  // Each successful write closes its stream and commits through the browser
-  // API. There is no additional portable flush primitive on these handles;
-  // this does not promise physical-media durability or crash recovery.
-  async flush() {}
+  // Writes commit when their streams close. Join the per-node mutation queue
+  // so concurrent requests cannot acknowledge synchronization before that
+  // commit. The portable API exposes no additional physical-media flush.
+  async flush(node: Node, handle: Handle) {
+    const current = this.#open_handle(node, handle);
+    await this.#mutate(current, async () => {
+      this.#open_handle(node, handle);
+    });
+  }
 
-  async fsync() {}
+  async fsync(node: Node, handle: Handle, _dataOnly: boolean) {
+    await this.flush(node, handle);
+  }
 
   async opendir(node: Node) {
     this.#directory(node);

@@ -3,6 +3,57 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import { BrowserFS } from "../src/browser.ts";
 
+for (const operation of ["flush", "fsync"] as const) {
+  test(`BrowserFS ${operation} waits for an earlier write to commit`, async () => {
+    const closing = Promise.withResolvers<void>();
+    const release = Promise.withResolvers<void>();
+    let committed = false;
+    const fs = new BrowserFS({
+      kind: "directory",
+      async getDirectoryHandle() {
+        throw new DOMException("file", "TypeMismatchError");
+      },
+      async getFileHandle() {
+        return {
+          kind: "file",
+          async createWritable() {
+            return {
+              async seek() {},
+              async write() {},
+              async close() {
+                closing.resolve();
+                await release.promise;
+                committed = true;
+              },
+            };
+          },
+        };
+      },
+    } as unknown as FileSystemDirectoryHandle);
+    const node = await fs.lookup(fs.root, "file");
+    assert.ok(node);
+    const handle = await fs.open(node, 0);
+    const writing = fs.write(node, handle, 0n, Uint8Array.of(1));
+    await closing.promise;
+    let synchronized = false;
+    const syncing = (
+      operation === "flush" ? fs.flush(node, handle) : fs.fsync(node, handle, false)
+    ).then(() => {
+      synchronized = true;
+    });
+    try {
+      await new Promise<void>((resolve) => setImmediate(resolve));
+      assert.equal(synchronized, false, "synchronization must wait for stream close");
+    } finally {
+      release.resolve();
+      await writing;
+      await syncing;
+    }
+    assert.equal(committed, true);
+    assert.equal(synchronized, true);
+  });
+}
+
 for (const stage of ["seek", "write", "truncate", "close", "success"]) {
   test(`BrowserFS commits only successful writes: ${stage}`, async () => {
     const calls: string[] = [];
