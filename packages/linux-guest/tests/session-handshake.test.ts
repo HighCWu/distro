@@ -21,6 +21,7 @@ function fixture(changes: ((bytes: Uint8Array) => Uint8Array)[] = []) {
           conn.writes.push(bytes.slice());
         },
         async readExactly(length: number) {
+          if (length === 12 || length === 128) return new Uint8Array(length);
           assert.equal(length, 8);
           const hello = conn.writes[0]!;
           return change ? change(hello.slice()) : hello.slice();
@@ -153,15 +154,17 @@ test("unknown ABI is rejected before opening a connection", async () => {
   assert.equal(f.calls.length, 0);
 });
 
-test("native sessions cannot accidentally marshal a legacy stat syscall", async () => {
+test("native sessions use the negotiated ABI for descriptor stat", async () => {
   const f = fixture();
   const session = await GuestSession.connect(f.device, { abi: "wasm64" });
   try {
-    await assert.rejects(
-      fstat64(new GuestFd(session, 42)),
-      /wasm64 agent syscall marshalling is not enabled/,
-    );
-    assert.equal(f.calls.length, 1, "no syscall lane may be opened");
+    const stat = await fstat64(new GuestFd(session, 42));
+    assert.equal(stat.st_mtime, 0n);
+    assert.equal(f.calls.length, 2);
+    const request = f.connections[1]!.writes[1]!;
+    const view = new DataView(request.buffer, request.byteOffset, request.byteLength);
+    assert.equal(view.getUint32(1, true), 80);
+    assert.equal(view.getBigUint64(19, true), 128n);
   } finally {
     session.close();
   }

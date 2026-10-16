@@ -1,4 +1,4 @@
-// The guest syscall table (protocol v3): what the bytes on a lane mean.
+// ABI-aware syscall table (legacy v3 / explicit-ABI v4).
 //
 // Each exported function is one syscall the veneer composes, defined once:
 // wire encoding, reply decoding, 64-bit argument splitting, and errno
@@ -18,8 +18,11 @@
 //                    ret) bytes), or the spawn/reap reply body.
 
 import { Bytes, FixedArray, I64LE, Struct, U32LE, U64LE, U8 } from "@lowland/bytes";
-import { AT, NR, Stat, stat_size, SystemError, ProtocolError } from "./abi.ts";
+import { AT, NR, Stat, stat_size, SystemError } from "./abi.ts";
+import { NR as NR64, Stat as NativeStat, stat_size as native_stat_size } from "./abi-wasm64.ts";
 import type { GuestSession } from "./conn.ts";
+
+export type KernelStat = InstanceType<typeof Stat> | InstanceType<typeof NativeStat>;
 
 /** Host convention for bulk I/O: syscall data payloads are at most 32 KiB. */
 export const CHUNK = 32 * 1024;
@@ -98,12 +101,6 @@ async function syscall(
   ret: bigint;
   out: Uint8Array[]; // one entry per out arg, in order; empty when ret is -1
 }> {
-  // Negotiating an ABI is not enough to enable its syscall marshalling. Keep
-  // native LP64 sessions from accidentally using the legacy ILP32 layouts
-  // until the per-session syscall adapter is connected.
-  if (session.abi === "wasm64") {
-    throw new ProtocolError("wasm64 agent syscall marshalling is not enabled");
-  }
   const request = new Bytes(SyscallReq.size);
   const head = request.alloc(SyscallReq);
   const outs: { capacity: number; ret_sized: boolean }[] = [];
@@ -185,6 +182,12 @@ export async function write(fd: GuestFd, data: Uint8Array): Promise<number> {
 }
 
 export async function llseek(fd: GuestFd, offset: bigint, whence: number): Promise<bigint> {
+  if (BigInt.asIntN(64, offset) !== offset)
+    throw new RangeError("offset exceeds signed 64-bit range");
+  if (fd.session.abi === "wasm64") {
+    const { ret } = await syscall(fd.session, NR64.lseek, fd, offset, whence);
+    return ret;
+  }
   // sys_llseek(fd, offset_high, offset_low, result, whence): the kernel takes
   // the HIGH word first, unlike ftruncate64 below. Asserted by the
   // integration test's seek/truncate round trips.
@@ -202,6 +205,12 @@ export async function llseek(fd: GuestFd, offset: bigint, whence: number): Promi
 }
 
 export async function ftruncate64(fd: GuestFd, length: bigint): Promise<void> {
+  if (BigInt.asIntN(64, length) !== length)
+    throw new RangeError("length exceeds signed 64-bit range");
+  if (fd.session.abi === "wasm64") {
+    await syscall(fd.session, NR64.ftruncate, fd, length);
+    return;
+  }
   // ftruncate64(fd, length) splits its loff_t LOW word first, per the musl
   // wasm32 register pairing.
   const len = BigInt.asUintN(64, length);
@@ -228,22 +237,26 @@ export async function fstatat64(
   session: GuestSession,
   path: string,
   flags: number,
-): Promise<InstanceType<typeof Stat>> {
+): Promise<KernelStat> {
+  const native = session.abi === "wasm64";
   const { out } = await syscall(
     session,
-    NR.fstatat64,
+    native ? NR64.newfstatat : NR.fstatat64,
     AT.FDCWD,
     c_string(path),
-    { out: stat_size },
+    { out: native ? native_stat_size : stat_size },
     flags,
   );
-  return new Stat(out[0]!);
+  return native ? new NativeStat(out[0]!) : new Stat(out[0]!);
 }
 
 /** Query the open descriptor itself, including after unlink or replacement. */
-export async function fstat64(fd: GuestFd): Promise<InstanceType<typeof Stat>> {
-  const { out } = await syscall(fd.session, NR.fstat64, fd, { out: stat_size });
-  return new Stat(out[0]!);
+export async function fstat64(fd: GuestFd): Promise<KernelStat> {
+  const native = fd.session.abi === "wasm64";
+  const { out } = await syscall(fd.session, native ? NR64.fstat : NR.fstat64, fd, {
+    out: native ? native_stat_size : stat_size,
+  });
+  return native ? new NativeStat(out[0]!) : new Stat(out[0]!);
 }
 
 export async function mkdirat(session: GuestSession, path: string, mode: number): Promise<void> {

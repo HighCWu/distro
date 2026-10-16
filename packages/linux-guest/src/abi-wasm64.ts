@@ -1,7 +1,6 @@
 // SPDX-License-Identifier: MIT
-// Native LP64 kernel ABI facts for the future wasm64 agent integration.
-// This module does not select an ABI for an active session or change the
-// existing wasm32 protocol. Validate these facts against target headers before
+// Native LP64 kernel ABI facts selected by explicit wasm64 sessions.
+// The default session remains wasm32. Validate these facts against target headers before
 // using them: libc's public struct stat is not the raw kernel syscall layout.
 import { I32LE, I64LE, U32LE, U64LE } from "@lowland/bytes";
 import { abi_checks as wasm32_checks, define_struct, NR as wasm32_nr } from "./abi.ts";

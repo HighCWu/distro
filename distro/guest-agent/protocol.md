@@ -30,10 +30,10 @@ silent fallback, ABI inference from addresses, or retry with a different ABI.
 Updated wasm32 executors accept both compliant v3 and v4 handshakes, while
 older v3-only executors do not accept v4.
 
-Version 4 transport support is not full wasm64 agent support. Until the
-per-session native syscall adapter is connected, host syscall helpers reject
-wasm64 sessions before opening a request lane instead of sending ILP32 layouts.
-The public high-level integration and packaged image still default to wasm32.
+Version 4 transport support is not full wasm64 agent support. Syscall helpers
+select native lseek/ftruncate/stat arguments and layouts for explicit wasm64
+sessions; common scalar/blob operations keep their checked shared ABI. The
+public high-level integration and packaged image still default to wasm32.
 
 - **Session, port 1024.** One connection, opened first and pinned for the
   session's lifetime. It carries no requests: it exists because a session
@@ -103,8 +103,8 @@ fatal to the whole session.
 
 ## ABI ownership
 
-`packages/linux-guest/src/abi.ts` is the single schema for every guest ABI
-fact the host uses: syscall numbers, `O_*`/`AT_*`/`S_IF*`/`DT_*`/errno/
+`packages/linux-guest/src/abi.ts` owns the common checked ABI facts and
+wasm32-specific layouts: syscall numbers, `O_*`/`AT_*`/`S_IF*`/`DT_*`/errno/
 signal constants, wait-status bit math, and the byte layouts of
 `struct stat64` and `struct dirent64` for wasm32-musl. Each entry carries
 the C expression it mirrors so `distro/guest-agent/gen-abi-check.ts` can
@@ -114,7 +114,13 @@ semantics (argument shapes, 64-bit splitting, which argument is the path)
 live once each in `packages/linux-guest/src/syscalls.ts`.
 The internal `abi-wasm64.ts` separately describes native LP64 syscall aliases
 and the 128-byte kernel `struct stat`, reusing width-independent checked facts.
-Its target compilation check does not yet select that ABI for syscall helpers.
+Syscall helpers select it only when their session explicitly negotiated wasm64.
+Raw seek/stat results retain bigint precision. The number-valued FileInfo API
+rejects unrepresentable integer fields with RangeError; timestamps beyond the
+JavaScript Date range become null. The number-valued file seek result can
+reject after the kernel has already changed the file position. Unsafe numeric
+seek/truncate inputs and offsets beyond signed 64-bit range are rejected before
+sending a syscall; callers must not rely on integer wraparound.
 
 ## Agent startup
 

@@ -1,19 +1,22 @@
 // FsFile: an open guest file as a JS object, plus the public option/info
 // types and the Stat -> FileInfo presentation shared with client.ts.
 
-import { E, O, S_IF, Stat, SystemError } from "./abi.ts";
+import { E, O, S_IF, SystemError } from "./abi.ts";
 import {
   CHUNK,
   fstat64,
   fsync,
   ftruncate64,
   type GuestFd,
+  type KernelStat,
   llseek,
   read,
   write,
 } from "./syscalls.ts";
 
-/** Metadata about a file, as returned by `guest.fs.stat` and friends. */
+/** Metadata about a file, as returned by `guest.fs.stat` and friends.
+ * Integer fields must fit exactly in a JS number, otherwise stat rejects
+ * with RangeError. Dates outside the JS Date range are represented as null. */
 export interface FileInfo {
   readonly isFile: boolean;
   readonly isDirectory: boolean;
@@ -92,23 +95,41 @@ export const SeekMode = {
 
 export type SeekMode = (typeof SeekMode)[keyof typeof SeekMode];
 
-export function statToInfo(st: InstanceType<typeof Stat>): FileInfo {
+function safe_number(value: bigint, field: string): number {
+  const result = Number(value);
+  if (!Number.isSafeInteger(result))
+    throw new RangeError(`${field} exceeds JavaScript's safe integer range`);
+  return result;
+}
+
+function stat_date(seconds: number | bigint, nanoseconds: number | bigint): Date | null {
+  const nanos = BigInt(nanoseconds);
+  if (nanos < 0n || nanos >= 1_000_000_000n) throw new RangeError("invalid stat nanoseconds");
+  // TimeClip truncates toward zero. Combine first so pre-epoch fractions
+  // follow the same rule without rounding through a floating-point second.
+  const total = BigInt(seconds) * 1_000_000_000n + nanos;
+  if (total < -8640000000000000000000n || total > 8640000000000000000000n) return null;
+  const milliseconds = total / 1_000_000n;
+  return new Date(Number(milliseconds));
+}
+
+export function statToInfo(st: KernelStat): FileInfo {
   const type = st.st_mode & S_IF.MT;
   return {
     isFile: type === S_IF.REG,
     isDirectory: type === S_IF.DIR,
     isSymlink: type === S_IF.LNK,
-    size: Number(st.st_size),
-    mtime: new Date(st.st_mtime * 1000 + st.st_mtime_nsec / 1_000_000),
-    atime: new Date(st.st_atime * 1000 + st.st_atime_nsec / 1_000_000),
+    size: safe_number(st.st_size, "file size"),
+    mtime: stat_date(st.st_mtime, st.st_mtime_nsec),
+    atime: stat_date(st.st_atime, st.st_atime_nsec),
     birthtime: null,
-    dev: Number(st.st_dev),
-    ino: Number(st.st_ino),
+    dev: safe_number(st.st_dev, "device number"),
+    ino: safe_number(st.st_ino, "inode number"),
     mode: st.st_mode,
     nlink: st.st_nlink,
     uid: st.st_uid,
     gid: st.st_gid,
-    blocks: Number(st.st_blocks),
+    blocks: safe_number(st.st_blocks, "block count"),
   };
 }
 
@@ -205,8 +226,15 @@ export class FsFile implements AsyncDisposable {
     return this.#run(() => write(this.#fd, buffer.subarray(0, CHUNK)));
   }
 
+  /** Returns a safe-integer offset. If the kernel result is unrepresentable,
+   * rejects with RangeError after the file position has already changed. */
   seek(offset: number | bigint, whence: SeekMode): Promise<number> {
-    return this.#run(async () => Number(await llseek(this.#fd, BigInt(offset), whence)));
+    if (typeof offset === "number" && !Number.isSafeInteger(offset)) {
+      return Promise.reject(new RangeError("offset must be a safe integer or bigint"));
+    }
+    return this.#run(async () =>
+      safe_number(await llseek(this.#fd, BigInt(offset), whence), "seek result"),
+    );
   }
 
   /** Metadata for the open file. */
@@ -218,6 +246,8 @@ export class FsFile implements AsyncDisposable {
 
   /** Truncates the file to `length` bytes, defaulting to empty. */
   truncate(length = 0): Promise<void> {
+    if (!Number.isSafeInteger(length))
+      return Promise.reject(new RangeError("length must be a safe integer"));
     return this.#run(() => ftruncate64(this.#fd, BigInt(length)));
   }
 
