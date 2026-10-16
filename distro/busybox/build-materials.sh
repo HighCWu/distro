@@ -18,5 +18,5 @@ for required in busybox.config LICENSE package.nix build.json README.md build-ma
   test -s "$output/$required"
 done
 cd "$output"
-sha256sum busybox.config LICENSE package.nix build.json README.md build-materials.sh > SHA256SUMS
+sha256sum busybox.config LICENSE package.nix build.json README.md build-materials.sh >SHA256SUMS
 sha256sum --check SHA256SUMS
