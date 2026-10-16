@@ -2,6 +2,7 @@
 
 import { type DeviceTreeNode, generate_devicetree, section_properties } from "./devicetree.ts";
 import { platform, type WorkerHandle } from "./platform.ts";
+import { cache_successful_load } from "./resource-cache.ts";
 import { configure_machine, run_machine_booted } from "./plugin-internal.ts";
 import type { MachinePluginInput } from "./plugin.ts";
 import { settle_user_copy, USER_COPY_TRY_AGAIN } from "./user-copy.ts";
@@ -133,8 +134,7 @@ async function read_resources() {
   };
 }
 
-let resources: ReturnType<typeof read_resources> | undefined;
-const load_resources = () => (resources ??= read_resources());
+const load_resources = cache_successful_load(read_resources);
 
 const PAGE_SIZE = 0x10000;
 // Leave the final wasm32 page out so the physical-memory size fits in u32.
