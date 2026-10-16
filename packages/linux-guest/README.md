@@ -78,7 +78,9 @@ identity; the SDK does not currently provide pidfd-backed signalling.
 Six added dual-width mock-protocol cases (14 lifecycle cases total) verify
 expired-handle rejection without a syscall, live signalling and aborted-reap
 handling. Real wasm32 integration and wasm64 public-userland checks also assert
-the exposed `ESRCH` behavior, but still require results for this revision.
+the exposed `ESRCH` behavior. The wasm64 Node userland run at `50c3439` has
+passed all six tests without failures, cancellations or skips; wasm32 remains
+separate, and this does not validate later stdin or copy revisions.
 
 Descriptor owners become invalid when close begins, including when Linux later
 reports a close error. Further operations reject with `EBADF` without sending
