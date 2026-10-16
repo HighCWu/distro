@@ -75,6 +75,13 @@ lib.makeScope (scope: lib.callPackageWith ({ inherit lib pkgs; } // scope)) (
       llvm-runtimes = self.llvm-runtimes-wasm64;
     };
     toolchain-smoke = callPackage ./toolchain-smoke/package.nix { };
+    sdk = callPackage ./sdk/package.nix { };
+    sdk-wasm64 = callPackage ./sdk/package.nix {
+      platform = self.platform-wasm64;
+      llvm-toolchain = self.llvm-toolchain-wasm64;
+      sysroot = self.sysroot-wasm64;
+      vm-test = vmTestWasm64;
+    };
     toolchain-smoke-runtime = self.vm-test.rawInitramfsTest {
       name = "toolchain-smoke-runtime";
       init = "${self.toolchain-smoke}/smoke-c.wasm";

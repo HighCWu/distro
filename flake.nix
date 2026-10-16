@@ -128,6 +128,36 @@
             ];
             env.sysroot = "${wasmpkgs.sysroot}";
           };
+          sdk = pkgs.mkShellNoCC {
+            packages = [
+              wasmpkgs.sdk
+              pkgs.gnumake
+              pkgs.cmake
+              pkgs.ninja
+            ];
+            env = {
+              CC = "${wasmpkgs.sdk}/bin/wasm-linux-cc";
+              CXX = "${wasmpkgs.sdk}/bin/wasm-linux-c++";
+              AR = "${wasmpkgs.llvm-toolchain}/bin/llvm-ar";
+              RANLIB = "${wasmpkgs.llvm-toolchain}/bin/llvm-ranlib";
+              sysroot = "${wasmpkgs.sysroot}";
+            };
+          };
+          sdk-wasm64 = pkgs.mkShellNoCC {
+            packages = [
+              wasmpkgs.sdk-wasm64
+              pkgs.gnumake
+              pkgs.cmake
+              pkgs.ninja
+            ];
+            env = {
+              CC = "${wasmpkgs.sdk-wasm64}/bin/wasm-linux-cc";
+              CXX = "${wasmpkgs.sdk-wasm64}/bin/wasm-linux-c++";
+              AR = "${wasmpkgs.llvm-toolchain-wasm64}/bin/llvm-ar";
+              RANLIB = "${wasmpkgs.llvm-toolchain-wasm64}/bin/llvm-ranlib";
+              sysroot = "${wasmpkgs.sysroot-wasm64}";
+            };
+          };
 
           # The deploy shell: sign the apk repository and publish the site to
           # Cloudflare. apk-tools-host is the repo's own apk, so the signed
