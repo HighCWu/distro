@@ -31,6 +31,35 @@ struct RetainedException {
     ~RetainedException() { ++*destroyed; }
 };
 
+struct ExceptionPrefix {
+    virtual ~ExceptionPrefix() = default;
+    int tag = 73;
+};
+
+struct DerivedException : ExceptionPrefix, std::runtime_error {
+    int &destroyed;
+    explicit DerivedException(int &count)
+        : std::runtime_error("derived-exception"), destroyed(count) {}
+    ~DerivedException() override { ++destroyed; }
+};
+
+static void inherited_exception_probe()
+{
+    int destroyed = 0;
+    bool caught = false;
+    try {
+        throw DerivedException(destroyed);
+    } catch (const std::exception &base) {
+        const auto *derived = dynamic_cast<const DerivedException *>(&base);
+        const auto *prefix = dynamic_cast<const ExceptionPrefix *>(&base);
+        caught = derived && prefix && prefix->tag == 73 &&
+                 std::string(base.what()) == "derived-exception";
+        if (destroyed != 0) fail("derived exception destroyed during catch");
+    }
+    if (!caught || destroyed != 1)
+        fail("base exception matching, RTTI adjustment or derived destruction");
+}
+
 static void retained_exception_probe()
 {
     int destroyed = 0;
@@ -90,6 +119,10 @@ int main()
         std::fflush(stdout);
         retained_exception_probe();
         std::puts("C++ runtime: retained cross-thread exception cleanup passed");
+        std::fflush(stdout);
+
+        inherited_exception_probe();
+        std::puts("C++ runtime: inherited exception and RTTI adjustment passed");
         std::fflush(stdout);
 
         tls_value = 17;
