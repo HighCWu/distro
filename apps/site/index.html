@@ -100,6 +100,7 @@
       } from "@lowland/kernel";
       import { BrowserFS } from "@lowland/guest/browser";
       import { serveGuest } from "./static/__ASSET_DIRECTORY__/bridge-client.js";
+      import { openDiskWorker } from "./static/__ASSET_DIRECTORY__/opfs-device.js";
 
       // Firefox cannot currently run service workers in the COOP+COEP process
       // used by our module workers, and controlling those workers prevents them
@@ -279,21 +280,16 @@
         const worker = new Worker("./static/__ASSET_DIRECTORY__/opfs-disk-worker.js", {
           type: "module",
         });
-        const devicePromise = workerDevice(worker);
-        worker.postMessage({
-          handle,
-          // The host supplies capacity for a new physical disk; the guest
-          // installer remains solely responsible for its filesystem contents.
-          capacity: file.size === 0 ? 64 * 1024 * 1024 : undefined,
-        });
-        try {
-          const device = await devicePromise;
-          void device.closed.finally(() => worker.terminate()).catch(() => {});
-          return device;
-        } catch (error) {
-          worker.terminate();
-          throw error;
-        }
+        return openDiskWorker(
+          worker,
+          {
+            handle,
+            // The host supplies capacity for a new physical disk; the guest
+            // installer remains solely responsible for its filesystem contents.
+            capacity: file.size === 0 ? 64 * 1024 * 1024 : undefined,
+          },
+          workerDevice,
+        );
       }
 
       // The host adapter upgrades the guest's plaintext HTTP request to HTTPS.

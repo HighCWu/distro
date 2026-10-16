@@ -18,4 +18,5 @@ pkgs.runCommand "site-assets" { } ''
   cp -L ${linux-guest.package}/agent.img $out/agent.img
   cp ${bridge-site.package.client} $out/bridge-client.js
   cp ${opfsDiskWorker}/opfs-disk-worker.js $out/opfs-disk-worker.js
+  cp ${../../apps/site/opfs-device.js} $out/opfs-device.js
 ''
