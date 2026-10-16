@@ -1,5 +1,16 @@
 import { expect, test } from "@playwright/test";
 import { sqlitePersistenceCommands } from "../site-sqlite.js";
+import { installSiteFsTrace } from "../site-fs-trace.js";
+
+test.afterEach(async ({ page }, testInfo) => {
+  if (testInfo.status === testInfo.expectedStatus || page.isClosed()) return;
+  try {
+    const trace = await page.evaluate(() => globalThis.__siteFsTrace?.());
+    console.log(`site filesystem trace: ${JSON.stringify(trace)}`);
+  } catch (error) {
+    console.log(`site filesystem trace unavailable: ${error.name}`);
+  }
+});
 
 test("missing cross-origin isolation stops before disk access or kernel startup", async ({
   page,
@@ -60,6 +71,7 @@ async function waitForGuest(page) {
 
 test("boots and formats a blank persistent disk into the canonical system", async ({ page }) => {
   test.setTimeout(300_000);
+  await page.addInitScript(installSiteFsTrace);
   const rootfsRequests = [];
   page.on("pageerror", (error) => console.log(`browser error: ${error.stack ?? error}`));
   page.on("request", (request) => {
@@ -134,6 +146,7 @@ test("boots and formats a blank persistent disk into the canonical system", asyn
   await installedInput.pressSequentially(sqlite.read);
   await installedInput.press("Enter");
   await expect(installedTerminal).toContainText("sqlite-persistence-restored", { timeout: 30_000 });
+  console.log("site persistence: ordinary file and SQLite verified after reload");
 
   await installedInput.pressSequentially(
     "printf user-customized > /boot/index.html; apk --allow-untrusted fix --reinstall lowland-boot; grep -qx user-customized /boot/index.html && test -f /boot/index.html.apk-new && printf 'protected-boot-%s\\n' ok",
