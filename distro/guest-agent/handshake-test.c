@@ -2,9 +2,64 @@
 /* Exercise the actual executor handshake without booting a kernel or running
  * its PID 1 entry point. Local socket pairs never leave this process. */
 #define main embedded_agent_main
+#define pthread_create test_reaper_create
 #include "agent.c"
+#undef pthread_create
 #undef main
 #include <assert.h>
+
+static int reaper_calls, reaper_error;
+
+/* Only agent.c's pthread creation is intercepted. The real handshake I/O and
+ * pthread attributes remain in use; no background reaper is left in a test. */
+int test_reaper_create(pthread_t *thread, const pthread_attr_t *attr,
+		       void *(*entry)(void *), void *argument)
+{
+	(void)thread;
+	assert(!attr && entry == reap_children && !argument);
+	reaper_calls++;
+	return reaper_error;
+}
+
+static void check_admission(uint16_t version, uint16_t abi, bool accepted,
+			    int create_error)
+{
+	int sockets[2], detached;
+	pthread_attr_t attr;
+	uint8_t hello[8], reply[8];
+
+	assert(socketpair(AF_UNIX, SOCK_STREAM | SOCK_CLOEXEC, 0, sockets) == 0);
+	store_u32(hello, protocol_magic);
+	hello[4] = version;
+	hello[5] = version >> 8;
+	hello[6] = abi;
+	hello[7] = abi >> 8;
+	assert(write_all(sockets[0], hello, sizeof(hello)) == 0);
+	reaper_calls = 0;
+	reaper_error = create_error;
+	session.version = 0;
+	/* NULL makes accidental resource setup before rejection fail immediately. */
+	int result = admit_session(sockets[1], accepted ? &attr : NULL);
+	assert(result == (accepted ? (create_error ? -1 : 1) : 0));
+	assert(reaper_calls == (accepted ? 1 : 0));
+	assert(session.version == (accepted ? version : 0));
+	if (accepted) {
+		if (create_error)
+			assert(errno == create_error);
+		else {
+			assert(pthread_attr_getdetachstate(&attr, &detached) == 0);
+			assert(detached == PTHREAD_CREATE_DETACHED);
+			assert(pthread_attr_destroy(&attr) == 0);
+		}
+		assert(read_all(sockets[0], reply, sizeof(reply)) == 0);
+		assert(memcmp(hello, reply, sizeof(hello)) == 0);
+	} else {
+		assert(recv(sockets[0], reply, sizeof(reply), MSG_DONTWAIT) == -1);
+		assert(errno == EAGAIN || errno == EWOULDBLOCK);
+	}
+	close(sockets[0]);
+	close(sockets[1]);
+}
 
 static void check(uint16_t version, uint16_t abi, bool accepted, bool bad_magic,
 		  uint16_t expected_version)
@@ -78,6 +133,11 @@ int main(void)
 	check(4, protocol_abi, false, true, 0);
 	check(4, protocol_abi, false, false, 3);
 	check(4, protocol_abi, true, false, 4);
+	check_admission(3, 0, protocol_abi == 32, 0);
+	check_admission(4, protocol_abi == 32 ? 64 : 32, false, 0);
+	check_admission(5, protocol_abi, false, 0);
+	check_admission(4, protocol_abi, true, 0);
+	check_admission(4, protocol_abi, true, EAGAIN);
 	printf("agent handshake: native ABI %d, legacy admission and v4 identity verified\n", protocol_abi);
 	return 0;
 }

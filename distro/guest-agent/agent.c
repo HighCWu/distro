@@ -743,11 +743,46 @@ struct session_worker_args {
 	int session_listener;
 };
 
+/* Reject an unsupported identity while the worker is still single-threaded.
+ * No command can run until admission succeeds, so there is nothing to reap
+ * yet. In particular, rejected handshakes need not tear down a pthread. */
+static int admit_session(int fd, pthread_attr_t *worker_attr)
+{
+	pthread_t reaper;
+	int version = handshake(fd, 0);
+	int rc;
+
+	if (version < 0) {
+		trace_session_stage("handshake rejected; exiting session");
+		return 0;
+	}
+	trace_session_stage("handshake accepted");
+	/* Immutable before any lane worker is created in this session process. */
+	session.version = (uint16_t)version;
+	rc = pthread_attr_init(worker_attr);
+	if (rc)
+		goto fail;
+	rc = pthread_attr_setdetachstate(worker_attr, PTHREAD_CREATE_DETACHED);
+	if (!rc) {
+		trace_session_stage("creating reaper");
+		rc = pthread_create(&reaper, NULL, reap_children, NULL);
+	}
+	if (rc) {
+		pthread_attr_destroy(worker_attr);
+		goto fail;
+	}
+	trace_session_stage("reaper created; serving session");
+	return 1;
+fail:
+	trace_session_stage("reaper setup failed");
+	errno = rc;
+	return -1;
+}
+
 static int session_worker(void *opaque)
 {
 	struct session_worker_args *args = opaque;
 	pthread_attr_t worker_attr;
-	pthread_t reaper;
 	int lane_listener, rc;
 
 	trace_session_stage("session worker entered");
@@ -764,27 +799,9 @@ static int session_worker(void *opaque)
 	if (lane_listener == -1)
 		_exit(1);
 	trace_session_stage("lane listener created");
-	rc = pthread_attr_init(&worker_attr);
-	if (!rc)
-		rc = pthread_attr_setdetachstate(&worker_attr,
-					      PTHREAD_CREATE_DETACHED);
-	if (!rc) {
-		trace_session_stage("creating reaper");
-		rc = pthread_create(&reaper, NULL, reap_children, NULL);
-	}
-	if (rc) {
-		trace_session_stage("reaper setup failed");
-		_exit(1);
-	}
-	trace_session_stage("reaper created; awaiting handshake");
-	rc = handshake(args->fd, 0);
-	if (rc < 0) {
-		trace_session_stage("handshake rejected; exiting session");
-		_exit(0);
-	}
-	trace_session_stage("handshake accepted");
-	/* Immutable before any lane worker is created in this session process. */
-	session.version = (uint16_t)rc;
+	rc = admit_session(args->fd, &worker_attr);
+	if (rc <= 0)
+		_exit(rc < 0 ? 1 : 0);
 	rc = serve_session(args->fd, lane_listener, &worker_attr);
 	_exit(rc ? 1 : 0);
 }
