@@ -187,6 +187,11 @@ let
         init = "${programs}/runtime-cxx.wasm";
         cpus = 2;
       };
+      cxx-modern-eh-runtime = vm-test.rawInitramfsTest {
+        name = "sdk-cxx-modern-eh-runtime-${platform.wasmArch}";
+        init = "${modernEhPrograms}/runtime-cxx.wasm";
+        cpus = 2;
+      };
       cmake-runtime = vm-test.rawInitramfsTest {
         name = "sdk-cmake-runtime-${platform.wasmArch}";
         init = "${cmakePrograms}/sdk-example.wasm";
@@ -291,6 +296,28 @@ let
         # Separate compilation is part of the public consumer contract.
         wasm-linux-c++ -std=c++17 -O2 -pthread -Werror -c ${../toolchain-smoke/runtime-cxx.cc} -o runtime.o
         wasm-linux-c++ -pthread -Wl,--fatal-warnings runtime.o -o $out/runtime-cxx.wasm
+        chmod 0755 $out/runtime-cxx.wasm
+      '';
+  # Keep the default ABI/runtime unchanged while validating standard EH
+  # application lowering against the currently installed C++ runtime.
+  modernEhPrograms =
+    pkgs.runCommand "sdk-modern-eh-consumer-${platform.wasmArch}"
+      {
+        nativeBuildInputs = [
+          sdk
+          pkgs.nodejs
+        ];
+      }
+      ''
+        test -s ${profileCheck}/profile.json
+        mkdir $out
+        flags=(-std=c++17 -O2 -pthread -Werror -mllvm -wasm-use-legacy-eh=false)
+        wasm-linux-c++ "''${flags[@]}" -S ${../toolchain-smoke/runtime-cxx.cc} -o runtime.s
+        node ${./check-modern-eh.mjs} runtime.s
+        wasm-linux-c++ "''${flags[@]}" -c ${../toolchain-smoke/runtime-cxx.cc} -o runtime.o
+        wasm-linux-c++ -pthread -Wl,--fatal-warnings runtime.o -o $out/runtime-cxx.wasm
+        node ${../busybox/check-binary.mjs} ${../../packages/kernel/src/wasm_binary.ts} \
+          $out/runtime-cxx.wasm ${toString platform.addressBits} ${toString platform.maximumMemoryBytes}
         chmod 0755 $out/runtime-cxx.wasm
       '';
   cmakePrograms =
