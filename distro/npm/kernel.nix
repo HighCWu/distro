@@ -21,6 +21,7 @@ pkgs.stdenvNoCC.mkDerivation {
     runHook preBuild
 
     cp ${linux}/vmlinux.wasm packages/kernel/vmlinux.wasm
+    cp -r ${linux}/linux-build packages/kernel/linux-build
     cp -rT ${bytes}/dist packages/bytes/dist
     pnpm --filter=@lowland/kernel check
     pnpm --filter=@lowland/kernel test
@@ -35,6 +36,8 @@ pkgs.stdenvNoCC.mkDerivation {
     mkdir -p $out
     node scripts/pack-package.mjs packages/kernel --out $out/package.tgz
     tar -xzf $out/package.tgz --strip-components=1 -C $out
+    # Verify what was actually packed, not only the build-tree copy.
+    (cd $out && sha256sum --check linux-build/SHA256SUMS)
 
     runHook postInstall
   '';

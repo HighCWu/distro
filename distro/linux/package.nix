@@ -17,12 +17,35 @@
   },
 }:
 
+let
+  identity =
+    value:
+    let
+      basename = builtins.baseNameOf "${value}";
+    in
+    {
+      hashParts = [
+        (builtins.substring 0 16 basename)
+        (builtins.substring 16 16 basename)
+      ];
+      name = builtins.substring 33 (builtins.stringLength basename) basename;
+    };
+  buildMetadata = pkgs.writeText "linux-wasm-build.json" (
+    builtins.toJSON {
+      schemaVersion = 1;
+      inherit wasmBits debug mmapCopyTest;
+      sourceIdentity = identity src;
+      llvmToolchainIdentity = identity llvm-toolchain-unwrapped;
+      scope = "Exact kernel build materials; not a complete dependency inventory or corresponding-source archive";
+    }
+  );
+in
 assert lib.assertOneOf "wasmBits" wasmBits [
   32
   64
 ];
 
-pkgs.stdenvNoCC.mkDerivation {
+pkgs.stdenvNoCC.mkDerivation (finalAttrs: {
   pname = "linux-wasm${toString wasmBits}";
   version = "0.0.0";
   inherit src;
@@ -66,6 +89,8 @@ pkgs.stdenvNoCC.mkDerivation {
     make vmlinux.wasm
 
     cp vmlinux.wasm $out/
+    bash ${./build-materials.sh} "$PWD" "$out" ${./package.nix} \
+      ${buildMetadata} ${./build-materials.README.md}
 
     make headers_install INSTALL_HDR_PATH=$headers
 
@@ -73,4 +98,18 @@ pkgs.stdenvNoCC.mkDerivation {
   '';
 
   installPhase = "runHook preInstall; runHook postInstall";
-}
+  passthru.checks.build-materials =
+    pkgs.runCommand "linux-wasm${toString wasmBits}-build-materials-check"
+      {
+        passthru.ci.heavy = true;
+        nativeBuildInputs = [ pkgs.jq ];
+      }
+      ''
+            cd ${finalAttrs.finalPackage}
+            sha256sum --check linux-build/SHA256SUMS
+        jq --exit-status '.schemaVersion == 1 and .wasmBits == ${toString wasmBits} and .debug == ${builtins.toJSON debug} and .mmapCopyTest == ${builtins.toJSON mmapCopyTest}' linux-build/build.json
+            test -s linux-build/kernel.config
+            test -s linux-build/LICENSES/preferred/GPL-2.0
+            touch $out
+      '';
+})

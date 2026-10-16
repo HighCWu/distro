@@ -11,7 +11,8 @@
   },
   "files": [
     "dist",
-    "vmlinux.wasm"
+    "vmlinux.wasm",
+    "linux-build"
   ],
   "type": "module",
   "exports": {
