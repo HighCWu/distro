@@ -12,6 +12,15 @@ test("missing cross-origin isolation stops before disk access or kernel startup"
   });
   await page.addInitScript(() => {
     globalThis.storageAccessAttempts = 0;
+    globalThis.serviceWorkerAccessAttempts = 0;
+    if ("serviceWorker" in navigator) {
+      for (const method of ["register", "getRegistration"]) {
+        navigator.serviceWorker[method] = async () => {
+          globalThis.serviceWorkerAccessAttempts++;
+          throw new Error("service worker state must not change without isolation");
+        };
+      }
+    }
     navigator.storage.getDirectory = async () => {
       globalThis.storageAccessAttempts++;
       throw new Error("disk must not be accessed without isolation");
@@ -32,6 +41,7 @@ test("missing cross-origin isolation stops before disk access or kernel startup"
     .toBe(true);
   expect(await page.evaluate(() => globalThis.crossOriginIsolated)).toBe(false);
   expect(await page.evaluate(() => globalThis.storageAccessAttempts)).toBe(0);
+  expect(await page.evaluate(() => globalThis.serviceWorkerAccessAttempts)).toBe(0);
   expect(kernelRequests).toEqual([]);
 });
 

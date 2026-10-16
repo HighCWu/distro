@@ -107,18 +107,6 @@
       // https://bugzilla.mozilla.org/show_bug.cgi?id=1613912
       const persistentInstallSupported = !navigator.userAgent.includes("Firefox/");
       let bootMode = persistentInstallSupported ? "__BOOT_MODE__" : "live";
-      if ("serviceWorker" in navigator) {
-        if (!persistentInstallSupported) {
-          await (await navigator.serviceWorker.getRegistration("/"))?.unregister();
-          if (navigator.serviceWorker.controller) {
-            location.reload();
-            await new Promise(() => {});
-          }
-        } else if (bootMode === "live" || !navigator.serviceWorker.controller) {
-          await navigator.serviceWorker.register("/service-worker.js", { scope: "/" });
-        }
-      }
-
       const parameters = Object.fromEntries(new URLSearchParams(location.search));
 
       const term = new Terminal({
@@ -143,6 +131,19 @@
           "Cannot start Linux: cross-origin isolation is required. Serve this page with COOP: same-origin and COEP: require-corp over HTTPS or localhost.";
         term.write(`${message}\n`);
         throw new Error(message);
+      }
+
+      // Validate the page before changing persistent service-worker state.
+      if ("serviceWorker" in navigator) {
+        if (!persistentInstallSupported) {
+          await (await navigator.serviceWorker.getRegistration("/"))?.unregister();
+          if (navigator.serviceWorker.controller) {
+            location.reload();
+            await new Promise(() => {});
+          }
+        } else if (bootMode === "live" || !navigator.serviceWorker.controller) {
+          await navigator.serviceWorker.register("/service-worker.js", { scope: "/" });
+        }
       }
 
       let opfs;
