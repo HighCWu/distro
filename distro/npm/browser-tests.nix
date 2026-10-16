@@ -1,5 +1,6 @@
 {
   basic-init,
+  guest-agent,
   bytes,
   image,
   lib,
@@ -118,6 +119,15 @@ let
     checks = lib.optionalAttrs pkgs.stdenv.hostPlatform.isLinux (
       (lib.genAttrs projects check)
       // (lib.genAttrs memory64Projects memory64Check)
+      // (lib.genAttrs [ "agent-wasm64-chromium" "agent-wasm64-firefox" ] (
+        name:
+        playwright.mkCheck {
+          name = "browser-tests-${name}";
+          suite = agentSuite;
+          expectedTests = [ "runs native wasm64 agent sessions, files, processes and cleanup" ];
+          project = lib.removePrefix "agent-wasm64-" name;
+        }
+      ))
       // (lib.genAttrs [ "runtime-wasm32-chromium" "runtime-wasm32-firefox" ] (
         name:
         playwright.mkCheck {
@@ -162,6 +172,28 @@ let
       expectedTests = runtimeTests;
       project = lib.removePrefix "memory64-" name;
     };
+
+  agentSuite =
+    pkgs.runCommand "agent-wasm64-browser-tests"
+      {
+        nativeBuildInputs = [ pkgs.esbuild ];
+      }
+      ''
+        mkdir -p $out/node_modules/@lowland/bytes $out/node_modules/@lowland/kernel $out/tests
+        ${playwright.linkRuntime "$out"}
+        esbuild ${../..}/packages/linux-guest/tests/agent-wasm64-suite.ts \
+          --bundle --platform=browser --format=esm --target=es2022 \
+          --external:@lowland/kernel --external:@lowland/bytes --outfile=$out/agent-suite.js
+        cp ${source}/agent-app.js $out/app.js
+        cp ${source}/agent-assertions.js $out/agent-assertions.js
+        cp ${source}/agent-tests/agent.spec.js $out/tests/
+        cp ${source}/memory64-index.html $out/index.html
+        cp ${source}/playwright.config.js $out/playwright.config.js
+        cp ${source}/server.js $out/server.js
+        cp ${guest-agent.checks.runtime-wasm64.runtimeInitramfs} $out/agent-runtime.cpio
+        cp -r ${bytes}/. $out/node_modules/@lowland/bytes/
+        cp -r ${kernel-wasm64}/. $out/node_modules/@lowland/kernel/
+      '';
 
   erofsProjects = [
     "erofs-wasm32-chromium"

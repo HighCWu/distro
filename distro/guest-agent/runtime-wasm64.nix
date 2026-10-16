@@ -26,6 +26,7 @@ pkgs.stdenvNoCC.mkDerivation {
   version = "0.0.0";
   src = ../..;
   passthru.ci.heavy = true;
+  passthru.runtimeInitramfs = initramfs;
   env.CI = "true";
   pnpmDeps = node-workspace.deps;
   nativeBuildInputs = [

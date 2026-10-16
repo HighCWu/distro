@@ -9,7 +9,7 @@ import {
 // decoder per stream. Only complete lines trigger readiness/error callbacks.
 export function console_line_output(
   consumeLine: (line: string) => void,
-  output: ConsoleOutput = process.stderr,
+  output: ConsoleOutput,
 ): WritableStream<Uint8Array> {
   const decoder = new LineDecoder();
   return new WritableStream({
