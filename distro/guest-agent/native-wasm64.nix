@@ -7,6 +7,7 @@
   platform-wasm64,
   pkgs,
   sdk-wasm64,
+  sqlite3-wasm64,
 }:
 let
   agent =
@@ -61,12 +62,13 @@ let
   # A real minimal system root, without runtime-child or test marker files.
   # Keep it independent of the default wasm32 distribution repository.
   rootfsFor =
-    format:
+    format: withSqlite:
     import ../npm/linux-guest/rootfs.nix {
       inherit format image pkgs;
       size = if format == "ext4" then "64M" else "256M";
       apk = apk-wasm64;
       busybox = busybox-wasm64;
+      extraPackages = pkgs.lib.optional withSqlite sqlite3-wasm64;
       # Identity lookup for the existing root process, not login credentials.
       extraFiles = {
         "/etc/passwd" = pkgs.writeText "passwd" ''
@@ -80,15 +82,19 @@ let
       repository = apk-wasm64.mkRepository {
         name = "native-wasm64-minimal";
         arch = platform-wasm64.apkArch;
-        packages.busybox = busybox-wasm64;
+        packages = {
+          busybox = busybox-wasm64;
+        }
+        // pkgs.lib.optionalAttrs withSqlite { sqlite3 = sqlite3-wasm64; };
       };
     };
 in
 agent
 // {
   inherit bootFilesystem;
-  rootfs = rootfsFor "erofs";
-  rootfsExt4 = rootfsFor "ext4";
+  rootfs = rootfsFor "erofs" false;
+  rootfsExt4 = rootfsFor "ext4" false;
+  rootfsSqliteExt4 = rootfsFor "ext4" true;
   # Native PID 1 directly; no wasm32 shell or BusyBox in this boot image.
   bootDisk = image.mkGptDisk {
     name = "native-agent-wasm64.img";

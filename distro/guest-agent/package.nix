@@ -11,6 +11,7 @@
   platform-wasm64,
   apk-wasm64,
   busybox-wasm64,
+  sqlite3-wasm64,
 }:
 
 let
@@ -19,6 +20,7 @@ let
       apk
       apk-wasm64
       busybox-wasm64
+      sqlite3-wasm64
       image
       pkgs
       sdk-wasm64
@@ -145,6 +147,16 @@ package
     };
     profile = "persistent-root";
     testFile = "agent-wasm64-persistent-root-runtime.ts";
+  };
+  checks.sqlite-root-wasm64 = import ./public-wasm64.nix {
+    inherit bytes pkgs node-workspace;
+    kernel = kernel-wasm64;
+    assets = {
+      runtimeBootDisk = nativeWasm64.bootDisk;
+      runtimeRootfs = nativeWasm64.rootfsSqliteExt4;
+    };
+    profile = "sqlite-root";
+    testFile = "agent-wasm64-sqlite-root-runtime.ts";
   };
   checks.public-userland-wasm64 = import ./public-wasm64.nix {
     inherit bytes pkgs node-workspace;

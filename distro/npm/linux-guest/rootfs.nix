@@ -9,6 +9,7 @@
   size ? "256M",
   extraFiles ? { },
   extraLinks ? { },
+  extraPackages ? [ ],
 }:
 
 image.mkFilesystem {
@@ -17,7 +18,7 @@ image.mkFilesystem {
   root = apk.mkSystem {
     name = "guest";
     repositories = [ repository ];
-    packages = [ busybox ];
+    packages = [ busybox ] ++ extraPackages;
     files = {
       "/etc/resolv.conf" = pkgs.writeText "resolv.conf" ''
         nameserver 192.0.2.1

@@ -189,6 +189,15 @@ let
           }
         )
       )
+      // (lib.genAttrs [ "agent-sqlite-root-wasm64-chromium" "agent-sqlite-root-wasm64-firefox" ] (
+        name:
+        playwright.mkCheck {
+          name = "browser-tests-${name}";
+          suite = agentSystemRootSuite "sqlite";
+          expectedTests = [ "runs installed wasm64 SQLite across fresh browser ext4 root instances" ];
+          project = lib.removePrefix "agent-sqlite-root-wasm64-" name;
+        }
+      ))
       // (lib.genAttrs [ "runtime-wasm32-chromium" "runtime-wasm32-firefox" ] (
         name:
         playwright.mkCheck {
@@ -305,7 +314,7 @@ let
     profile:
     let
       assets = guest-agent.checks."${profile}-root-wasm64";
-      rootFilename = "agent-root.${if profile == "persistent" then "ext4" else "erofs"}";
+      rootFilename = "agent-root.${if profile == "minimal" then "erofs" else "ext4"}";
       opfsWorker = import ../site/opfs-disk-worker.nix {
         inherit bytes pkgs;
         kernel = kernel-wasm64;
