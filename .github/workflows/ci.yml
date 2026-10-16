@@ -182,9 +182,11 @@ jobs:
       - uses: actions/checkout@v6
       - uses: nixbuild/nix-quick-install-action@v35
       - uses: nix-community/cache-nix-action@v7
+        id: heavy-cache
         with:
-          primary-key: nix-ci-${{ runner.os }}-${{ hashFiles('**/*.nix', 'flake.lock') }}
+          primary-key: nix-targeted-v1-${{ runner.os }}-${{ contains(matrix.check, 'wasm64') && 'wasm64' || 'wasm32' }}-${{ hashFiles('distro/llvm-toolchain/**', 'distro/llvm-runtimes/**', 'distro/platform.nix', 'flake.lock') }}
           restore-prefixes-first-match: |
+            nix-targeted-v1-${{ runner.os }}-${{ contains(matrix.check, 'wasm64') && 'wasm64' || 'wasm32' }}-
             ${{ contains(matrix.check, 'wasm64') && format('nix-wasm64-v2-{0}-', runner.os) || format('nix-ci-{0}-', runner.os) }}
             nix-ci-${{ runner.os }}-
           save: false
@@ -199,6 +201,31 @@ jobs:
             nix build --no-link --print-build-logs .#checks.x86_64-linux.formatting
           fi
           nix build --no-link --print-build-logs "$installable"
+      - name: Retain completed toolchain outputs after targeted checks
+        id: retained
+        if: ${{ !cancelled() && needs.plan.outputs.targeted == 'true' && steps.heavy-cache.outcome == 'success' && steps.heavy-cache.outputs.hit-primary-key != 'true' }}
+        env:
+          WASM64_CHECK: ${{ contains(matrix.check, 'wasm64') }}
+        run: |
+          suffix=""
+          if [[ "$WASM64_CHECK" == true ]]; then suffix="-wasm64"; fi
+          for package in llvm-toolchain-unwrapped "llvm-toolchain$suffix" "linux$suffix"; do
+            # Evaluate and root only outputs that already exist. Never start
+            # another compiler build while handling a failed runtime check.
+            output=$(nix eval --raw ".#${package}.outPath")
+            if nix path-info "$output" >/dev/null 2>&1; then
+              nix-store --add-root "$RUNNER_TEMP/cache-$package" --indirect --realise "$output"
+              if [[ "$package" == llvm-toolchain-unwrapped ]]; then
+                echo "ready=true" >> "$GITHUB_OUTPUT"
+              fi
+            fi
+          done
+      - name: Save targeted build dependencies even if the runtime check failed
+        if: ${{ !cancelled() && steps.retained.outputs.ready == 'true' }}
+        uses: nix-community/cache-nix-action/save@v7
+        with:
+          primary-key: ${{ steps.heavy-cache.outputs.primary-key }}
+          gc-max-store-size-linux: 9G
 
   deploy-site:
     name: Deploy site
