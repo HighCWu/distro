@@ -131,6 +131,7 @@
           sdk = pkgs.mkShellNoCC {
             packages = [
               wasmpkgs.sdk
+              pkgs.binutils
               pkgs.meson
               pkgs.autoconf
               pkgs.gnumake
@@ -141,6 +142,8 @@
               CC = "${wasmpkgs.sdk}/bin/wasm-linux-cc";
               CC_FOR_BUILD = "${pkgs.stdenv.cc}/bin/cc";
               CXX_FOR_BUILD = "${pkgs.stdenv.cc}/bin/c++";
+              AR_FOR_BUILD = "${pkgs.binutils}/bin/ar";
+              RANLIB_FOR_BUILD = "${pkgs.binutils}/bin/ranlib";
               PKG_CONFIG_FOR_BUILD = "${pkgs.pkg-config}/bin/pkg-config";
               CXX = "${wasmpkgs.sdk}/bin/wasm-linux-c++";
               PKG_CONFIG = "${wasmpkgs.sdk}/bin/wasm-linux-pkg-config";
@@ -154,6 +157,7 @@
           sdk-wasm64 = pkgs.mkShellNoCC {
             packages = [
               wasmpkgs.sdk-wasm64
+              pkgs.binutils
               pkgs.meson
               pkgs.autoconf
               pkgs.gnumake
@@ -164,6 +168,8 @@
               CC = "${wasmpkgs.sdk-wasm64}/bin/wasm-linux-cc";
               CC_FOR_BUILD = "${pkgs.stdenv.cc}/bin/cc";
               CXX_FOR_BUILD = "${pkgs.stdenv.cc}/bin/c++";
+              AR_FOR_BUILD = "${pkgs.binutils}/bin/ar";
+              RANLIB_FOR_BUILD = "${pkgs.binutils}/bin/ranlib";
               PKG_CONFIG_FOR_BUILD = "${pkgs.pkg-config}/bin/pkg-config";
               CXX = "${wasmpkgs.sdk-wasm64}/bin/wasm-linux-c++";
               PKG_CONFIG = "${wasmpkgs.sdk-wasm64}/bin/wasm-linux-pkg-config";

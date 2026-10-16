@@ -16,6 +16,8 @@ test("Meson runs build-machine generators without executing target probes", () =
     ...process.env,
     CC: "/invalid-target-cc",
     CXX: "/invalid-target-cxx",
+    AR: "/invalid-target-ar",
+    AR_FOR_BUILD: process.env.AR_FOR_BUILD || "ar",
     CC_FOR_BUILD: process.env.CC_FOR_BUILD || "cc",
     CXX_FOR_BUILD: process.env.CXX_FOR_BUILD || "c++",
   };
