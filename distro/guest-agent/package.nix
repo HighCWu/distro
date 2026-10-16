@@ -136,6 +136,16 @@ package
     profile = "minimal-root";
     testFile = "agent-wasm64-minimal-root-runtime.ts";
   };
+  checks.persistent-root-wasm64 = import ./public-wasm64.nix {
+    inherit bytes pkgs node-workspace;
+    kernel = kernel-wasm64;
+    assets = {
+      runtimeBootDisk = nativeWasm64.bootDisk;
+      runtimeRootfs = nativeWasm64.rootfsExt4;
+    };
+    profile = "persistent-root";
+    testFile = "agent-wasm64-persistent-root-runtime.ts";
+  };
   checks.public-userland-wasm64 = import ./public-wasm64.nix {
     inherit bytes pkgs node-workspace;
     kernel = kernel-wasm64;

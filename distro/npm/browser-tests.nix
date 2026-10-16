@@ -170,11 +170,22 @@ let
         name:
         playwright.mkCheck {
           name = "browser-tests-${name}";
-          suite = agentMinimalRootSuite;
+          suite = agentSystemRootSuite "minimal";
           expectedTests = [ "boots the fixture-free native wasm64 minimal system root" ];
           project = lib.removePrefix "agent-minimal-root-wasm64-" name;
         }
       ))
+      // (lib.genAttrs [ "agent-persistent-root-wasm64-chromium" "agent-persistent-root-wasm64-firefox" ]
+        (
+          name:
+          playwright.mkCheck {
+            name = "browser-tests-${name}";
+            suite = agentSystemRootSuite "persistent";
+            expectedTests = [ "persists native wasm64 ext4 root data across fresh browser machines" ];
+            project = lib.removePrefix "agent-persistent-root-wasm64-" name;
+          }
+        )
+      )
       // (lib.genAttrs [ "runtime-wasm32-chromium" "runtime-wasm32-firefox" ] (
         name:
         playwright.mkCheck {
@@ -287,29 +298,31 @@ let
         cp -r ${kernel-wasm64}/. $out/node_modules/@lowland/kernel/
       '';
 
-  agentMinimalRootSuite =
+  agentSystemRootSuite =
+    profile:
     let
-      assets = guest-agent.checks.minimal-root-wasm64;
+      assets = guest-agent.checks."${profile}-root-wasm64";
+      rootFilename = "agent-root.${if profile == "persistent" then "ext4" else "erofs"}";
     in
-    pkgs.runCommand "agent-minimal-root-wasm64-browser-tests"
+    pkgs.runCommand "agent-${profile}-root-wasm64-browser-tests"
       {
         nativeBuildInputs = [ pkgs.esbuild ];
       }
       ''
         mkdir -p $out/node_modules/@lowland/bytes $out/node_modules/@lowland/kernel $out/tests
         ${playwright.linkRuntime "$out"}
-        esbuild ${../..}/packages/linux-guest/tests/agent-wasm64-minimal-root-suite.ts \
+        esbuild ${../..}/packages/linux-guest/tests/agent-wasm64-${profile}-root-suite.ts \
           --bundle --platform=browser --format=esm --target=es2022 \
           --external:@lowland/kernel --external:@lowland/kernel/plugin \
-          --external:@lowland/bytes --outfile=$out/agent-minimal-root-suite.js
-        cp ${source}/agent-minimal-root-app.js $out/app.js
+          --external:@lowland/bytes --outfile=$out/agent-${profile}-root-suite.js
+        cp ${source}/agent-${profile}-root-app.js $out/app.js
         cp ${source}/agent-assertions.js $out/agent-assertions.js
-        cp ${source}/agent-tests/agent-minimal-root.spec.js $out/tests/
+        cp ${source}/agent-tests/agent-${profile}-root.spec.js $out/tests/
         cp ${source}/memory64-index.html $out/index.html
         cp ${source}/playwright.config.js $out/playwright.config.js
         cp ${source}/server.js $out/server.js
         cp ${assets.runtimeBootDisk} $out/agent-boot.img
-        cp ${assets.runtimeRootfs} $out/agent-root.erofs
+        cp ${assets.runtimeRootfs} $out/${rootFilename}
         cp -r ${bytes}/. $out/node_modules/@lowland/bytes/
         cp -r ${kernel-wasm64}/. $out/node_modules/@lowland/kernel/
       '';

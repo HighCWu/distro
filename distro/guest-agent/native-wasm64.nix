@@ -58,32 +58,37 @@ let
       };
     };
   };
+  # A real minimal system root, without runtime-child or test marker files.
+  # Keep it independent of the default wasm32 distribution repository.
+  rootfsFor =
+    format:
+    import ../npm/linux-guest/rootfs.nix {
+      inherit format image pkgs;
+      size = if format == "ext4" then "64M" else "256M";
+      apk = apk-wasm64;
+      busybox = busybox-wasm64;
+      # Identity lookup for the existing root process, not login credentials.
+      extraFiles = {
+        "/etc/passwd" = pkgs.writeText "passwd" ''
+          root:x:0:0:root:/root:/bin/sh
+        '';
+        "/etc/group" = pkgs.writeText "group" ''
+          root:x:0:
+        '';
+      };
+      extraLinks."/etc/mtab" = "/proc/mounts";
+      repository = apk-wasm64.mkRepository {
+        name = "native-wasm64-minimal";
+        arch = platform-wasm64.apkArch;
+        packages.busybox = busybox-wasm64;
+      };
+    };
 in
 agent
 // {
   inherit bootFilesystem;
-  # A real minimal system root, without runtime-child or test marker files.
-  # Keep it independent of the default wasm32 distribution repository.
-  rootfs = import ../npm/linux-guest/rootfs.nix {
-    inherit image pkgs;
-    apk = apk-wasm64;
-    busybox = busybox-wasm64;
-    # Identity lookup for the existing root process, not login credentials.
-    extraFiles = {
-      "/etc/passwd" = pkgs.writeText "passwd" ''
-        root:x:0:0:root:/root:/bin/sh
-      '';
-      "/etc/group" = pkgs.writeText "group" ''
-        root:x:0:
-      '';
-    };
-    extraLinks."/etc/mtab" = "/proc/mounts";
-    repository = apk-wasm64.mkRepository {
-      name = "native-wasm64-minimal";
-      arch = platform-wasm64.apkArch;
-      packages.busybox = busybox-wasm64;
-    };
-  };
+  rootfs = rootfsFor "erofs";
+  rootfsExt4 = rootfsFor "ext4";
   # Native PID 1 directly; no wasm32 shell or BusyBox in this boot image.
   bootDisk = image.mkGptDisk {
     name = "native-agent-wasm64.img";
