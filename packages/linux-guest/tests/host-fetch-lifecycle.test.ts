@@ -3,6 +3,65 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import { hostFetchNetwork } from "../src/host-fetch-network.ts";
 
+for (const [name, request, status] of [
+  ["missing Host", "GET / HTTP/1.1\r\n\r\n", 400],
+  ["duplicate Host", "GET / HTTP/1.1\r\nHost: one.test\r\nHost: two.test\r\n\r\n", 400],
+  [
+    "conflicting framing",
+    "POST / HTTP/1.1\r\nHost: example.test\r\nContent-Length: 0\r\nTransfer-Encoding: chunked\r\n\r\n",
+    400,
+  ],
+  [
+    "duplicate length",
+    "POST / HTTP/1.1\r\nHost: example.test\r\nContent-Length: 0\r\nContent-Length: 0\r\n\r\n",
+    400,
+  ],
+  ["lone LF", "GET / HTTP/1.1\nHost: example.test\n\n", 400],
+  [
+    "unsupported expectation",
+    "POST / HTTP/1.1\r\nHost: example.test\r\nExpect: something-else\r\n\r\n",
+    417,
+  ],
+  ["protocol upgrade", "GET / HTTP/1.1\r\nHost: example.test\r\nUpgrade: websocket\r\n\r\n", 501],
+] as const) {
+  test(`${name} is rejected before Fetch dispatch`, async () => {
+    let calls = 0;
+    const network = hostFetchNetwork({
+      fetch() {
+        calls++;
+        return new Response("unexpected");
+      },
+    });
+    const readable = new ReadableStream<Uint8Array>({
+      start(controller) {
+        controller.enqueue(new TextEncoder().encode(request));
+        controller.close();
+      },
+    });
+    const chunks: Uint8Array[] = [];
+    let closed = false;
+    const writable = new WritableStream<Uint8Array>({
+      write(chunk) {
+        chunks.push(chunk);
+      },
+      close() {
+        closed = true;
+      },
+    });
+    await network.connectTcp!({
+      target: { hostname: "198.18.0.1", port: 80 },
+      signal: new AbortController().signal,
+      readable,
+      writable,
+    });
+    assert.match(Buffer.concat(chunks).toString(), new RegExp(`^HTTP/1\\.1 ${status} `));
+    assert.equal(calls, 0);
+    assert.equal(closed, true);
+    assert.equal(readable.locked, false);
+    assert.equal(writable.locked, false);
+  });
+}
+
 for (const [method, framing, payload] of [
   ["GET", "", ""],
   ["POST", "Content-Length: 5\r\n", "hello"],
