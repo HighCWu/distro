@@ -3,6 +3,49 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import { hostFetchNetwork } from "../src/host-fetch-network.ts";
 
+test("connection abort cancels a pending custom response read", { timeout: 1000 }, async () => {
+  const abort = new AbortController();
+  const reason = new Error("connection closed");
+  let cancelled: unknown;
+  let headersWritten!: () => void;
+  const ready = new Promise<void>((resolve) => {
+    headersWritten = resolve;
+  });
+  const body = new ReadableStream<Uint8Array>({
+    cancel(value) {
+      cancelled = value;
+    },
+  });
+  const network = hostFetchNetwork({ fetch: () => new Response(body) });
+  const writable = new WritableStream<Uint8Array>({
+    write() {
+      headersWritten();
+    },
+  });
+  const handled = Promise.resolve(
+    network.connectTcp!({
+      target: { hostname: "198.18.0.1", port: 80 },
+      signal: abort.signal,
+      readable: new ReadableStream({
+        start(controller) {
+          controller.enqueue(
+            new TextEncoder().encode("GET / HTTP/1.1\r\nHost: example.test\r\n\r\n"),
+          );
+          controller.close();
+        },
+      }),
+      writable,
+    }),
+  );
+  const rejected = assert.rejects(handled, (error) => error === reason);
+  await ready;
+  abort.abort(reason);
+  await rejected;
+  assert.equal(cancelled, reason);
+  assert.equal(body.locked, false);
+  assert.equal(writable.locked, false);
+});
+
 for (const failedWrite of [1, 2]) {
   test(`downstream write ${failedWrite} failure cancels upstream and releases all stream locks`, async () => {
     const failure = new Error("downstream disconnected");

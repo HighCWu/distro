@@ -60,11 +60,16 @@ async function exchange(
   const reader = new ByteReader(session.readable, { strictCrlf: true });
   const writer = session.writable.getWriter();
   const abort = new AbortController();
-  const stop = () => abort.abort(session.signal.reason);
+  let response_reader: ReadableStreamDefaultReader<Uint8Array> | undefined;
+  const stop = () => {
+    abort.abort(session.signal.reason);
+    // Custom Fetch callbacks may return streams unrelated to Request.signal.
+    // Cancel the owned reader to unblock an outstanding read on disconnect.
+    void response_reader?.cancel(session.signal.reason).catch(() => {});
+  };
   session.signal.addEventListener("abort", stop, { once: true });
   if (session.signal.aborted) stop();
   let final_output_started = false;
-  let response_reader: ReadableStreamDefaultReader<Uint8Array> | undefined;
   async function error_response(response: Uint8Array) {
     final_output_started = true;
     await writer.write(response);
@@ -124,6 +129,7 @@ async function exchange(
       // Own the stream even when HTTP semantics suppress its body (HEAD), or
       // downstream headers fail. Custom callbacks need not honor our signal.
       response_reader = response.body?.getReader();
+      abort.signal.throwIfAborted();
       if (response.status < 200 || response.status > 599) {
         await error_response(BAD_GATEWAY);
         return;
@@ -142,12 +148,15 @@ async function exchange(
       ) {
         for (;;) {
           const { value, done } = await response_reader.read();
+          abort.signal.throwIfAborted();
           if (done) break;
           await writer.write(value);
         }
       }
+      abort.signal.throwIfAborted();
       await writer.close();
     } catch (error) {
+      if (abort.signal.aborted) throw abort.signal.reason;
       if (final_output_started) throw error;
       await error_response(BAD_REQUEST);
     }
