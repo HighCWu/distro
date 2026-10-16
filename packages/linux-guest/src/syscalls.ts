@@ -32,6 +32,13 @@ export const CHUNK = 32 * 1024;
 // real traffic far below it; this constant exists only to state the contract.
 const MAX_BLOB = 128 * 1024;
 
+// Match distro/guest-agent/agent.c's v3/v4 spawn parser. With these bounds
+// even the largest valid body is below its 4 MiB framing ceiling. Reject
+// invalid input before exchange: an oversized frame terminates the session.
+const MAX_SPAWN_STRING = 4096;
+const MAX_SPAWN_ARGUMENTS = 256;
+const MAX_SPAWN_ENVIRONMENT = 256;
+
 const REQ_SYSCALL = 1;
 const REQ_SPAWN = 2;
 const REQ_REAP = 3;
@@ -367,9 +374,16 @@ export async function spawn(
   cwd: string,
   env: readonly string[],
 ): Promise<Spawned> {
+  if (argv.length < 1 || argv.length > MAX_SPAWN_ARGUMENTS || env.length > MAX_SPAWN_ENVIRONMENT)
+    throw new SystemError(E.INVAL);
+  if (env.some((entry) => !entry.includes("="))) throw new SystemError(E.INVAL);
   const payload = new Bytes();
   const write_string = (value: string) => {
+    // UTF-8 is never shorter than the JS code-unit count. Avoid encoding a
+    // huge rejected string, then check the exact byte size for Unicode.
+    if (value.length > MAX_SPAWN_STRING || value.includes("\0")) throw new SystemError(E.INVAL);
     const bytes = new TextEncoder().encode(value);
+    if (bytes.byteLength > MAX_SPAWN_STRING) throw new SystemError(E.INVAL);
     payload.alloc(U32LE).value = bytes.byteLength;
     payload.append(bytes);
   };

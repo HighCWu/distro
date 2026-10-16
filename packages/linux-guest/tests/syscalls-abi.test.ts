@@ -19,6 +19,8 @@ import {
   fchownat,
   mount,
   umount2,
+  spawn,
+  getpid,
   read,
   write,
 } from "../src/syscalls.ts";
@@ -64,6 +66,66 @@ function request(bytes: Uint8Array) {
 }
 
 for (const abi of ["wasm32", "wasm64"] as const) {
+  test(`${abi} spawn rejects invalid protocol inputs before reserving a wire lane`, async () => {
+    const f = fixture(abi, 0n, new Uint8Array(16));
+    const invalid: [readonly string[], string, readonly string[]][] = [
+      [[], "/tmp", []],
+      [Array(257).fill("x"), "/tmp", []],
+      [["/bin/true"], "/tmp", Array(257).fill("X=")],
+      [["x".repeat(4 * 1024 * 1024 + 1)], "/tmp", []],
+      [["中".repeat(1366)], "/tmp", []],
+      [["/bin/true"], "x".repeat(4097), []],
+      [["/bin/true"], "/tmp", ["X=" + "x".repeat(4095)]],
+      [["/bin/true\0suffix"], "/tmp", []],
+      [["/bin/true"], "/tmp\0suffix", []],
+      [["/bin/true"], "/tmp", ["X=value\0suffix"]],
+      [["/bin/true"], "/tmp", ["MISSING_SEPARATOR"]],
+    ];
+    for (const [argv, cwd, env] of invalid) {
+      await assert.rejects(spawn(f.session, argv, cwd, env), { code: "EINVAL" });
+      assert.equal(f.requests.length, 0);
+    }
+    await getpid(f.session);
+    assert.equal(f.requests.length, 1);
+  });
+
+  test(`${abi} spawn preserves exact UTF-8 byte and count boundaries`, async () => {
+    const body = new Uint8Array(16);
+    [123, 40, 41, 42].forEach((value, index) =>
+      new DataView(body.buffer).setUint32(index * 4, value, true),
+    );
+    const f = fixture(abi, 0n, body);
+    const text = "中".repeat(1365) + "x"; // 4096 encoded bytes, not JS characters
+    const argv = ["/bin/echo", text, ...Array(254).fill("")];
+    const env = [
+      "X=" + "x".repeat(4094),
+      ...Array.from({ length: 255 }, (_, index) => `V${index}=`),
+    ];
+    const result = await spawn(f.session, argv, text, env);
+    assert.equal(result.pid, 123);
+    const bytes = f.requests[0]!;
+    const view = new DataView(bytes.buffer, bytes.byteOffset, bytes.byteLength);
+    assert.equal(bytes[0], 2);
+    assert.equal(view.getUint32(1, true), bytes.byteLength - 5);
+    let offset = 5;
+    const string = () => {
+      const length = view.getUint32(offset, true);
+      offset += 4;
+      const value = new TextDecoder().decode(bytes.subarray(offset, offset + length));
+      offset += length;
+      return value;
+    };
+    assert.equal(view.getUint32(offset, true), 256);
+    offset += 4;
+    assert.deepEqual(Array.from({ length: 256 }, string), argv);
+    assert.equal(string(), text);
+    assert.equal(view.getUint32(offset, true), 256);
+    offset += 4;
+    assert.deepEqual(Array.from({ length: 256 }, string), env);
+    assert.equal(offset, bytes.byteLength);
+    await Promise.all([result.stdin.close(), result.stdout.close(), result.stderr.close()]);
+  });
+
   test(`${abi} embedded NUL never dispatches a C-string syscall or poisons later requests`, async () => {
     const f = fixture(abi);
     for (const path of ["\0suffix", "/tmp/keep\0suffix", "/tmp/keep\0"]) {

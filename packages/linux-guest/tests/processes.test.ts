@@ -124,6 +124,26 @@ guest_test("processes", async (t, fixture) => {
       });
     });
 
+    await t.test("rejects oversized startup input without losing the session", async () => {
+      for (const argv of [
+        ["true", "x".repeat(4 * 1024 * 1024 + 1)],
+        ["true", "中".repeat(1366)],
+        ["true", ...Array(256).fill("x")],
+      ]) {
+        await assert.rejects(
+          guest.exec(argv),
+          (error) => error instanceof SystemError && error.code === "EINVAL",
+        );
+      }
+      const child = await guest.exec(["true"]);
+      try {
+        await child.stdin.close();
+        assert.equal((await child.status).success, true);
+      } finally {
+        await child.close();
+      }
+    });
+
     await t.test("resolves commands from the supplied PATH and cwd", async () => {
       const bin = `${directory}/custom-bin`;
       await guest.fs.mkdir(bin);

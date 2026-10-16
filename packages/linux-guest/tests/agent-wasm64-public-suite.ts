@@ -135,6 +135,16 @@ export async function runPublicAgentWasm64Suite(
       }
     });
     await check("public run collects native status and forwards process options", async () => {
+      for (const argv of [
+        ["agent-runtime-child", "x".repeat(4 * 1024 * 1024 + 1)],
+        ["agent-runtime-child", "中".repeat(1366)],
+        ["agent-runtime-child", ...Array(256).fill("x")],
+      ]) {
+        await assert.rejects(
+          agent.exec(argv),
+          (error) => error instanceof SystemError && error.code === "EINVAL",
+        );
+      }
       const exited = await agent.run(["agent-runtime-child", "exit"]);
       assert.deepEqual(exited.status, { success: false, code: 23, signal: null });
       assert.equal(exited.stdout.byteLength, 0);
