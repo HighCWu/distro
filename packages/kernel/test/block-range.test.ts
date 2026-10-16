@@ -65,6 +65,7 @@ for (const operation of [0, 1]) {
       try {
         await done.promise;
         assert.equal(view.getUint8(2048), expected);
+        assert.equal(view.getUint32(8, true), operation === 0 && expected === 0 ? 513 : 1);
         assert.deepEqual(accesses, expected === 0 ? [512] : []);
       } finally {
         await close_virtio_device(device);

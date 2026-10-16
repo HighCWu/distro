@@ -60,6 +60,8 @@ for (const operation of [0, 1, 4]) {
           imports.notify(0, 0);
           await interrupt.promise;
           assert.equal(view.getUint8(1024), expected);
+          assert.equal(view.getUint32(8, true), operation === 0 && expected === 0 ? 513 : 1);
+          assert.ok(view.getUint16(14, true) & 2, "completion includes writable status");
           imports.disable_vring(0, 0);
           fail = false;
         }

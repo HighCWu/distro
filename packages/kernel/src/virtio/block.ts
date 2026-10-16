@@ -107,7 +107,7 @@ export function blockDevice(storage: BlockDeviceStorage): VirtioDevice {
         const length = data.reduce((sum, desc) => sum + BigInt(desc.array.byteLength), 0n);
         if (byteOffset + length > BigInt(capacity)) {
           set_status(BlockDeviceStatus.IOERR);
-          chain.release(0);
+          chain.release(1);
           continue;
         }
       }
@@ -154,7 +154,6 @@ export function blockDevice(storage: BlockDeviceStorage): VirtioDevice {
               ok = false;
               break;
             }
-            n += written;
             offset += written;
           }
           set_status(ok ? BlockDeviceStatus.OK : BlockDeviceStatus.IOERR);
@@ -183,7 +182,9 @@ export function blockDevice(storage: BlockDeviceStorage): VirtioDevice {
           set_status(BlockDeviceStatus.UNSUPP);
       }
 
-      chain.release(n);
+      // Only IN data and the status byte are device-written buffers. OUT
+      // payload bytes are consumed by the device, not written back to Linux.
+      chain.release(n + 1);
     }
   }
 
