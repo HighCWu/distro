@@ -68,6 +68,16 @@ agent
     inherit image pkgs;
     apk = apk-wasm64;
     busybox = busybox-wasm64;
+    # Identity lookup for the existing root process, not login credentials.
+    extraFiles = {
+      "/etc/passwd" = pkgs.writeText "passwd" ''
+        root:x:0:0:root:/root:/bin/sh
+      '';
+      "/etc/group" = pkgs.writeText "group" ''
+        root:x:0:
+      '';
+    };
+    extraLinks."/etc/mtab" = "/proc/mounts";
     repository = apk-wasm64.mkRepository {
       name = "native-wasm64-minimal";
       arch = platform-wasm64.apkArch;

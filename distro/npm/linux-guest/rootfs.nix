@@ -7,6 +7,8 @@
   label ? "LOWLAND_ROOT",
   format ? "erofs",
   size ? "256M",
+  extraFiles ? { },
+  extraLinks ? { },
 }:
 
 image.mkFilesystem {
@@ -16,8 +18,12 @@ image.mkFilesystem {
     name = "guest";
     repositories = [ repository ];
     packages = [ busybox ];
-    files."/etc/resolv.conf" = pkgs.writeText "resolv.conf" ''
-      nameserver 192.0.2.1
-    '';
+    files = {
+      "/etc/resolv.conf" = pkgs.writeText "resolv.conf" ''
+        nameserver 192.0.2.1
+      '';
+    }
+    // extraFiles;
+    links = extraLinks;
   };
 }

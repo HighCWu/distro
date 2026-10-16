@@ -36,6 +36,16 @@ test(
     void output.catch(() => {});
     try {
       assert.equal(await agent.fs.readTextFile("/etc/resolv.conf"), "nameserver 192.0.2.1\n");
+      assert.equal(await agent.fs.readTextFile("/etc/passwd"), "root:x:0:0:root:/root:/bin/sh\n");
+      assert.equal(await agent.fs.readTextFile("/etc/group"), "root:x:0:\n");
+      // Read through the link, and compare while the mount set is unchanged.
+      const mounts = await agent.fs.readTextFile("/proc/mounts");
+      assert.ok(mounts.length > 0);
+      assert.equal(await agent.fs.readTextFile("/etc/mtab"), mounts);
+      const identity = await agent.run(["/bin/busybox", "id", "-un"]);
+      assert.deepEqual(identity.status, { success: true, code: 0, signal: null });
+      assert.equal(new TextDecoder().decode(identity.stdout), "root\n");
+      assert.equal(identity.stderr.byteLength, 0);
       for (const path of ["/etc/agent-runtime-root", "/bin/agent-runtime-child"]) {
         await assert.rejects(
           agent.fs.stat(path),
