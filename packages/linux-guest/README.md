@@ -67,6 +67,19 @@ Disposal does not send another signal after a successful reap. This is not a
 pidfd-based identity guarantee for every concurrent signal/reap race, nor a
 promise to terminate an entire descendant process group.
 
+The public `ChildProcess.kill()` also rejects with `SystemError("ESRCH")`
+without dispatching a signal after this handle has confirmed a successful
+reap, including when its `status` rejects because the caller aborted it.
+Signalling a still-live handle retains the normal signal/status semantics.
+This does not prove that a process is still alive before every queued syscall:
+exit and PID reuse can still race a request made before reap was observed.
+Use the child capability while it is live, not its numeric PID as a permanent
+identity; the SDK does not currently provide pidfd-backed signalling.
+Six added dual-width mock-protocol cases (14 lifecycle cases total) verify
+expired-handle rejection without a syscall, live signalling and aborted-reap
+handling. Real wasm32 integration and wasm64 public-userland checks also assert
+the exposed `ESRCH` behavior, but still require results for this revision.
+
 Process admission is capped at eight live SDK children so blocked process I/O
 does not consume every syscall lane. An `exec()` waiting for capacity is
 abortable: it rejects with the original signal reason, removes its waiter,
