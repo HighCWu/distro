@@ -603,11 +603,27 @@ export class NodeFS implements FS<Node, Handle> {
     await this.#path_operation(async () => {
       const old_parts = [...this.#parts(oldParent), valid_name(oldName)];
       const new_parts = [...this.#parts(newParent), valid_name(newName)];
-      if (old_parts.join("/") === new_parts.join("/")) return;
       const source = await this.#validated_path(old_parts);
-      await this.#stats(this.#node(old_parts));
+      const source_stats = await node_call(lstat(source, { bigint: true }));
       const destination = await this.#validated_path(new_parts);
+      let unchanged = old_parts.join("/") === new_parts.join("/");
+      if (!unchanged) {
+        try {
+          // rename is a successful no-op when both names already refer to
+          // one inode. Do not detach either cached node in that case. lstat
+          // matters: distinct symlinks to the same target still replace.
+          const destination_stats = await lstat(destination, { bigint: true });
+          unchanged =
+            source_stats.dev === destination_stats.dev &&
+            source_stats.ino === destination_stats.ino;
+        } catch (error) {
+          if ((error as NodeJS.ErrnoException)?.code !== "ENOENT") filesystem_error(error);
+        }
+      }
+      // Even a no-op must reach the host syscall for source existence and
+      // permission checks; equal path strings alone do not establish success.
       await node_call(rename(source, destination));
+      if (unchanged) return;
 
       this.#forget(new_parts);
       for (const [key, node] of [...this.#nodes]) {

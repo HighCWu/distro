@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import { constants } from "node:fs";
 import {
   lstat,
+  link,
   mkdir,
   mkdtemp,
   readFile,
@@ -331,6 +332,79 @@ test("node virtio-fs adapter preserves inode generations across replacement rena
     filesystem.getattr(destination.node),
     (error) => error instanceof FSError && error.errno === 2,
   );
+});
+
+test("node virtio-fs self rename still validates the source and parent", async () => {
+  const fs = new NodeFS(shared);
+  await assert.rejects(fs.rename(fs.root, "missing-self", fs.root, "missing-self"), { errno: 2 });
+  await writeFile(path.join(shared, "self-file-parent"), "file");
+  const parent = await fs.lookup(fs.root, "self-file-parent");
+  assert(parent);
+  await assert.rejects(fs.rename(parent, "child", parent, "child"), { errno: 20 });
+
+  await symlink(outside, path.join(shared, "self-escape"));
+  const escaped = await fs.lookup(fs.root, "self-escape");
+  assert(escaped);
+  await assert.rejects(fs.rename(escaped, "secret", escaped, "secret"), { errno: 13 });
+});
+
+test("node virtio-fs self rename retains existing file and directory identities", async () => {
+  const fs = new NodeFS(shared);
+  await writeFile(path.join(shared, "self-existing"), "unchanged");
+  await mkdir(path.join(shared, "self-directory"));
+  await writeFile(path.join(shared, "self-directory", "child"), "child");
+  for (const name of ["self-existing", "self-directory"]) {
+    const node = await fs.lookup(fs.root, name);
+    assert(node);
+    const before = await fs.getattr(node);
+    const child = name === "self-directory" ? await fs.lookup(node, "child") : undefined;
+    await fs.rename(fs.root, name, fs.root, name);
+    assert.equal(await fs.lookup(fs.root, name), node);
+    assert.deepEqual(await fs.getattr(node), before);
+    if (child) assert.equal(await fs.lookup(node, "child"), child);
+  }
+});
+
+test("node virtio-fs hard-link rename keeps both names and cached nodes attached", async () => {
+  const fs = new NodeFS(shared);
+  const source = "hardlink-source";
+  const destination = "hardlink-destination";
+  await writeFile(path.join(shared, source), "original");
+  await link(path.join(shared, source), path.join(shared, destination));
+  const left = await fs.lookup(fs.root, source);
+  const right = await fs.lookup(fs.root, destination);
+  assert(left && right);
+  const handle = await fs.open(right, linux_open.readwrite);
+  try {
+    await fs.rename(fs.root, source, fs.root, destination);
+    assert.equal(await fs.lookup(fs.root, source), left);
+    assert.equal(await fs.lookup(fs.root, destination), right);
+    assert.equal((await fs.getattr(left)).nlink, 2);
+    assert.equal((await fs.getattr(right)).nlink, 2);
+    await fs.unlink(fs.root, source);
+    await assert.rejects(fs.getattr(left), { errno: 2 });
+    assert.equal((await fs.getattr(right)).nlink, 1);
+    assert.equal(await fs.write(right, handle, 0n, new TextEncoder().encode("O")), 1);
+    assert.equal(await readFile(path.join(shared, destination), "utf8"), "Original");
+  } finally {
+    await fs.release(right, handle);
+  }
+});
+
+test("node virtio-fs rename compares symlink inodes, not their shared targets", async () => {
+  const fs = new NodeFS(shared);
+  await writeFile(path.join(shared, "same-link-target"), "target");
+  await symlink("same-link-target", path.join(shared, "same-link-source"));
+  await symlink("same-link-target", path.join(shared, "same-link-destination"));
+  const source = await fs.lookup(fs.root, "same-link-source");
+  const destination = await fs.lookup(fs.root, "same-link-destination");
+  assert(source && destination);
+  await fs.rename(fs.root, "same-link-source", fs.root, "same-link-destination");
+  assert.equal(await fs.lookup(fs.root, "same-link-source"), undefined);
+  assert.equal(await fs.lookup(fs.root, "same-link-destination"), source);
+  await assert.rejects(fs.getattr(destination), { errno: 2 });
+  assert.equal(await fs.readlink(source), "same-link-target");
+  assert.equal(await readFile(path.join(shared, "same-link-target"), "utf8"), "target");
 });
 
 test("node virtio-fs adapter enforces read-only shares in the backend", async () => {
