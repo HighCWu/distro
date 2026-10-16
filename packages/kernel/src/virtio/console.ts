@@ -112,6 +112,7 @@ export function consoleDevice(
       if (input_stopped) break;
       const { value, done } = await reader.read();
       if (done) break;
+      if (value.byteLength === 0) continue;
       pending_input.push(value);
       flush_input();
     }
