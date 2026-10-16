@@ -51,6 +51,43 @@ function request_url(host: string, target: string) {
   return url;
 }
 
+function fetch_until_abort(
+  request: Request,
+  do_fetch: (request: Request) => Response | PromiseLike<Response>,
+): Promise<Response> {
+  const { signal } = request;
+  return new Promise((resolve, reject) => {
+    const stop = () => {
+      signal.removeEventListener("abort", stop);
+      reject(signal.reason);
+    };
+    signal.addEventListener("abort", stop, { once: true });
+    if (signal.aborted) stop();
+    void Promise.resolve()
+      .then(() => {
+        signal.throwIfAborted();
+        return do_fetch(request);
+      })
+      .then(
+        (response) => {
+          signal.removeEventListener("abort", stop);
+          if (signal.aborted) {
+            // The exchange has already ended, but a callback that ignored the
+            // signal may still deliver a stream. Do not leave it running.
+            void response.body?.cancel(signal.reason).catch(() => {});
+            reject(signal.reason);
+          } else {
+            resolve(response);
+          }
+        },
+        (error) => {
+          signal.removeEventListener("abort", stop);
+          reject(error);
+        },
+      );
+  });
+}
+
 async function exchange(
   session: TcpSession,
   do_fetch: (request: Request) => Response | PromiseLike<Response>,
@@ -124,7 +161,7 @@ async function exchange(
       let response: Response;
       try {
         abort.signal.throwIfAborted();
-        response = await do_fetch(request);
+        response = await fetch_until_abort(request, do_fetch);
       } catch (error) {
         if (abort.signal.aborted) throw error;
         if (final_output_started) throw error;
