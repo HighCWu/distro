@@ -123,9 +123,18 @@ let
         name:
         playwright.mkCheck {
           name = "browser-tests-${name}";
-          suite = agentSuite;
+          suite = agentSuite false;
           expectedTests = [ "runs native wasm64 agent sessions, files, processes and cleanup" ];
           project = lib.removePrefix "agent-wasm64-" name;
+        }
+      ))
+      // (lib.genAttrs [ "agent-production-wasm64-chromium" "agent-production-wasm64-firefox" ] (
+        name:
+        playwright.mkCheck {
+          name = "browser-tests-${name}";
+          suite = agentSuite true;
+          expectedTests = [ "runs native wasm64 production root pivot, files, processes and cleanup" ];
+          project = lib.removePrefix "agent-production-wasm64-" name;
         }
       ))
       // (lib.genAttrs [ "runtime-wasm32-chromium" "runtime-wasm32-firefox" ] (
@@ -174,7 +183,13 @@ let
     };
 
   agentSuite =
-    pkgs.runCommand "agent-wasm64-browser-tests"
+    productionRoot:
+    let
+      runtime =
+        if productionRoot then guest-agent.checks.production-wasm64 else guest-agent.checks.runtime-wasm64;
+      variant = if productionRoot then "production" else "runtime";
+    in
+    pkgs.runCommand "agent-${variant}-wasm64-browser-tests"
       {
         nativeBuildInputs = [ pkgs.esbuild ];
       }
@@ -186,11 +201,13 @@ let
           --external:@lowland/kernel --external:@lowland/bytes --outfile=$out/agent-suite.js
         cp ${source}/agent-app.js $out/app.js
         cp ${source}/agent-assertions.js $out/agent-assertions.js
-        cp ${source}/agent-tests/agent.spec.js $out/tests/
+        cp ${source}/agent-tests/agent-check.js $out/tests/
+        cp ${source}/agent-tests/agent${lib.optionalString productionRoot "-production"}.spec.js $out/tests/
         cp ${source}/memory64-index.html $out/index.html
         cp ${source}/playwright.config.js $out/playwright.config.js
         cp ${source}/server.js $out/server.js
-        cp ${guest-agent.checks.runtime-wasm64.runtimeInitramfs} $out/agent-runtime.cpio
+        cp ${runtime.runtimeInitramfs} $out/agent-runtime.cpio
+        ${lib.optionalString productionRoot "cp ${runtime.runtimeRootfs} $out/agent-root.erofs"}
         cp -r ${bytes}/. $out/node_modules/@lowland/bytes/
         cp -r ${kernel-wasm64}/. $out/node_modules/@lowland/kernel/
       '';
