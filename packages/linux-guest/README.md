@@ -148,6 +148,28 @@ The default npm assets remain wasm32. This experimental root is not a complete
 distribution release: BusyBox remains GPL-2.0-only, and its included license
 texts do not replace corresponding-source delivery or a full release inventory.
 
+An opt-in writable ext4 variant is available separately; the default root stays
+EROFS and the default npm assets stay wasm32:
+
+```sh
+nix build .#legacyPackages.x86_64-linux.guest-agent.nativeWasm64.rootfsExt4
+nix build .#checks.x86_64-linux.guest-agent-check-persistent-root-wasm64
+```
+
+Use the matching native boot disk and a writable `blockDevice()` whose `read`
+and `write` callbacks access the same retained bytes. `write` returns the number
+of bytes written; `flush` must complete the backing store's synchronization
+contract, rather than merely schedule it. The 64 MiB ext4 image mounts read-write
+without a temporary overlay. Applications must retain their backing storage
+themselves; closing a machine does not export or persist it automatically.
+
+The shared Node/browser check writes a binary file, syncs it, renames it, changes
+permissions, and runs `/bin/sync`, requiring block writes and flush callbacks.
+After closing that machine, a fresh instance verifies the retained block bytes,
+file size/mode, and native `cat` output. This checks in-memory block retention
+across instances, not OPFS, browser reloads, physical durability, or clean system
+shutdown. Wiring the check is not evidence of runtime success.
+
 Pass `"lowland.root.overlay=tmpfs"` as a kernel argument to mount the system
 image read-only beneath a temporary writable OverlayFS:
 

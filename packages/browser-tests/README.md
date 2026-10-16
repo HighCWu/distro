@@ -152,6 +152,25 @@ Run heavy builds in public CI. Wiring the checks does not establish they have
 passed, certify the richer shell/network profiles, or complete distribution
 release compliance. No test executable is installed into this system root.
 
+### Opt-in writable ext4 system root
+
+The persistent-root profile uses `guest-agent.nativeWasm64.rootfsExt4` and the
+matching native boot disk. Node and both browsers share two cases: binary file
+write/sync/rename/chmod with observed block writes and flushes, then exact data
+and metadata readback in a fresh Linux instance after the first is closed.
+The browser gate requires both case names, closure, and zero skips/retries.
+
+```console
+nix build .#checks.x86_64-linux.guest-agent-check-persistent-root-wasm64 -L
+nix build .#checks.x86_64-linux.browser-tests-check-agent-persistent-root-wasm64-chromium -L
+nix build .#checks.x86_64-linux.browser-tests-check-agent-persistent-root-wasm64-firefox -L
+```
+
+Run heavy builds in public CI. Only host block bytes survive between instances;
+these checks do not claim OPFS, browser-restart persistence, physical durability,
+or graceful shutdown. The default EROFS profile is unchanged. These newly wired
+checks still require actual runtime results.
+
 ### Public plugin and GPT boot disk
 
 The public API has separate checks, using the same assertions as
