@@ -12,7 +12,15 @@
 }:
 
 let
-  nativeWasm64 = import ./native-wasm64.nix { inherit image pkgs sdk-wasm64; };
+  nativeWasm64 = import ./native-wasm64.nix {
+    inherit
+      apk
+      image
+      pkgs
+      sdk-wasm64
+      platform-wasm64
+      ;
+  };
   package = stdenv.mkDerivation {
     pname = "linux-guest-agent";
     version = "0.0.0";
@@ -86,5 +94,19 @@ package
       ;
     kernel = kernel-wasm64;
     production = nativeWasm64;
+  };
+  checks.boot-disk-wasm64 = import ./runtime-wasm64.nix {
+    inherit
+      bytes
+      pkgs
+      sdk-wasm64
+      image
+      node-workspace
+      apk
+      platform-wasm64
+      ;
+    kernel = kernel-wasm64;
+    production = nativeWasm64;
+    bootDisk = true;
   };
 }

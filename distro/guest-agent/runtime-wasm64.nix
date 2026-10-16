@@ -9,6 +9,7 @@
   apk ? null,
   platform-wasm64 ? null,
   production ? null,
+  bootDisk ? false,
 }:
 let
   program = pkgs.runCommand "agent-runtime-init-wasm64" { } ''
@@ -55,19 +56,33 @@ let
       files."/etc/agent-runtime-root" = pkgs.writeText "agent-runtime-root-marker" "native-wasm64-root\n";
     };
   };
-  initramfs = if production == null then fixtureInitramfs else production.bootInitramfs;
+  initramfs =
+    if bootDisk then
+      null
+    else if production == null then
+      fixtureInitramfs
+    else
+      production.bootInitramfs;
 in
+assert !bootDisk || production != null;
 pkgs.stdenvNoCC.mkDerivation {
   pname =
-    if production == null then "linux-agent-runtime-wasm64" else "linux-agent-production-wasm64";
+    if bootDisk then
+      "linux-agent-boot-disk-wasm64"
+    else if production == null then
+      "linux-agent-runtime-wasm64"
+    else
+      "linux-agent-production-wasm64";
   version = "0.0.0";
   src = ../..;
   passthru.ci.heavy = true;
   passthru.runtimeInitramfs = initramfs;
   passthru.runtimeRootfs = if production == null then null else rootfs;
+  passthru.runtimeBootDisk = if bootDisk then production.bootDisk else null;
   env.CI = "true";
-  env.AGENT_WASM64_INITRAMFS = initramfs;
+  env.AGENT_WASM64_INITRAMFS = if initramfs == null then "" else initramfs;
   env.AGENT_WASM64_ROOTFS = if production == null then "" else rootfs;
+  env.AGENT_WASM64_BOOT_DISK = if bootDisk then production.bootDisk else "";
   pnpmDeps = node-workspace.deps;
   nativeBuildInputs = [
     pkgs.nodejs
