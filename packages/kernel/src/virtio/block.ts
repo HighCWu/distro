@@ -173,8 +173,9 @@ export function blockDevice(storage: BlockDeviceStorage): VirtioDevice {
           break;
         }
         case BlockDeviceRequestType.GET_ID: {
-          console.log("GET_ID");
-          set_status(BlockDeviceStatus.OK);
+          // No stable device identifier is supplied by the storage interface.
+          // Do not report success with an untouched caller-owned ID buffer.
+          set_status(BlockDeviceStatus.UNSUPP);
           break;
         }
         default:
