@@ -516,8 +516,14 @@ export class BrowserFS implements FS<Node, Handle> {
     if (this.#as_node(child).handle.kind !== "file") {
       throw new FSError("EISDIR");
     }
-    await opfs_call(this.#directory(parent).removeEntry(name));
-    this.#forget([...this.#as_node(parent).parts, name]);
+    // Own writable streams must finish committing or aborting before removal.
+    // Reserve the node queue through detachment so later queued writes cannot
+    // reopen a same-path replacement after this namespace operation succeeds.
+    await this.#mutate(child, async () => {
+      this.#as_node(child);
+      await opfs_call(this.#directory(parent).removeEntry(name));
+      this.#forget([...this.#as_node(parent).parts, name]);
+    });
   }
 
   async rmdir(parent: Node, name: string) {

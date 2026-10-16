@@ -281,6 +281,121 @@ test("BrowserFS file rename waits for pending source writes before copying", asy
   );
 });
 
+for (const operation of ["write", "truncate"] as const) {
+  for (const failed of [false, true]) {
+    test(`BrowserFS unlink waits for an earlier ${operation} (failed: ${failed})`, async () => {
+      const closing = Promise.withResolvers<void>();
+      const release = Promise.withResolvers<void>();
+      let content = "before";
+      let exists = true;
+      let streams = 0;
+      let removals = 0;
+      const fs = new BrowserFS({
+        kind: "directory",
+        async getDirectoryHandle() {
+          throw new DOMException("file", "TypeMismatchError");
+        },
+        async getFileHandle(_name: string, options?: { create?: boolean }) {
+          if (!exists) {
+            if (!options?.create) throw new DOMException("missing", "NotFoundError");
+            exists = true;
+            content = "";
+          }
+          return {
+            kind: "file",
+            async getFile() {
+              return new File([content], "file");
+            },
+            async createWritable() {
+              const first = ++streams === 1;
+              let pending = content;
+              return {
+                async seek() {},
+                async write(data: ArrayBuffer) {
+                  pending = new TextDecoder().decode(data);
+                },
+                async truncate(size: number) {
+                  pending = pending.slice(0, size);
+                },
+                async close() {
+                  if (first) {
+                    closing.resolve();
+                    await release.promise;
+                    if (failed) throw new DOMException("full", "QuotaExceededError");
+                  }
+                  content = pending;
+                },
+                async abort() {},
+              };
+            },
+          };
+        },
+        async removeEntry() {
+          removals++;
+          exists = false;
+        },
+      } as unknown as FileSystemDirectoryHandle);
+      const node = await fs.lookup(fs.root, "file");
+      assert.ok(node);
+      const handle = await fs.open(node, 2);
+      const mutation =
+        operation === "write"
+          ? fs.write(node, handle, 0n, new TextEncoder().encode("after!"))
+          : fs.setattr(node, { size: 2n });
+      const result = failed ? assert.rejects(mutation, { errno: 28 }) : mutation;
+      await closing.promise;
+      const deleting = fs.unlink(fs.root, "file");
+      try {
+        await new Promise<void>((resolve) => setImmediate(resolve));
+        assert.equal(removals, 0, "removal must wait for commit or abort");
+      } finally {
+        release.resolve();
+        await result;
+        await deleting;
+      }
+      assert.equal(removals, 1);
+      const replacement = await fs.create(fs.root, "file", 0xc2, { mode: 0o600, uid: 0, gid: 0 });
+      assert.notEqual(replacement.node, node);
+      const before = streams;
+      await assert.rejects(fs.write(node, handle, 0n, Uint8Array.of(1)), { errno: 2 });
+      assert.equal(streams, before, "stale writes must not open the replacement");
+      await fs.write(replacement.node, replacement.handle, 0n, new TextEncoder().encode("new"));
+      assert.equal(content, "new", "later namespace and file operations still work");
+    });
+  }
+}
+
+test("BrowserFS failed unlink keeps the node usable and releases both queues", async () => {
+  let fail = true;
+  const fs = new BrowserFS({
+    kind: "directory",
+    async getDirectoryHandle() {
+      throw new DOMException("file", "TypeMismatchError");
+    },
+    async getFileHandle() {
+      return {
+        kind: "file",
+        async createWritable() {
+          return { async seek() {}, async write() {}, async close() {} };
+        },
+      };
+    },
+    async removeEntry() {
+      if (fail) {
+        fail = false;
+        throw new DOMException("denied", "NotAllowedError");
+      }
+    },
+  } as unknown as FileSystemDirectoryHandle);
+  const node = await fs.lookup(fs.root, "file");
+  assert.ok(node);
+  const handle = await fs.open(node, 2);
+  await assert.rejects(fs.unlink(fs.root, "file"), { errno: 13 });
+  assert.equal(await fs.write(node, handle, 0n, Uint8Array.of(1)), 1);
+  await fs.unlink(fs.root, "file");
+  await assert.rejects(fs.write(node, handle, 0n, Uint8Array.of(1)), { errno: 2 });
+});
+
 test("BrowserFS same-path rename still requires the source to exist", async () => {
   let exists = false;
   const root = {
