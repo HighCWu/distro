@@ -22,6 +22,7 @@ stdenv.mkDerivation (finalAttrs: {
 
   # busybox builds host tools with HOSTCC during the target build.
   depsBuildBuild = [ pkgs.stdenv.cc ];
+  nativeBuildInputs = [ pkgs.nodejs ];
 
   configurePhase = ''
     runHook preConfigure
@@ -115,6 +116,8 @@ stdenv.mkDerivation (finalAttrs: {
     runHook preBuild
     unset NIX_CFLAGS_LINK
     make -j$NIX_BUILD_CORES CC="$CC" HOSTCC="$CC_FOR_BUILD" CFLAGS_busybox="$linkerFlags" ${lib.optionalString debug "SKIP_STRIP=y"}
+    node ${./check-binary.mjs} ${../../packages/kernel/src/wasm_binary.ts} \
+      busybox ${toString platform.addressBits} ${toString platform.maximumMemoryBytes}
     runHook postBuild
   '';
 
