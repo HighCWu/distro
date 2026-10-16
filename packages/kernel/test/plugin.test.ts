@@ -8,6 +8,32 @@ import { configure_machine, run_machine_booted } from "../src/plugin-internal.ts
 import { getMachinePlugin, type MachinePlugin, type MachinePluginProvider } from "../src/plugin.ts";
 import { VirtioController } from "../src/virtio/core.ts";
 
+for (const fail of [false, true]) {
+  test(`configuration handles are revoked after ${fail ? "failure" : "success"}`, async () => {
+    let setup: Parameters<MachinePlugin["configure"]>[0] | undefined;
+    const failure = new Error("configuration failed");
+    const pending = configure_machine(
+      [],
+      [
+        {
+          configure(value) {
+            setup = value;
+            value.args.add("initial");
+            if (fail) throw failure;
+          },
+        },
+      ],
+    );
+    if (fail) await assert.rejects(pending, (error) => error === failure);
+    else assert.deepEqual((await pending).args, ["initial"]);
+    assert.ok(setup);
+    const saved = setup;
+    assert.throws(() => saved.args.add("late"), /configuration has finished/);
+    assert.throws(() => saved.devices.add(), /configuration has finished/);
+    assert.throws(() => saved.deviceTree.merge({ late: 1 }), /configuration has finished/);
+  });
+}
+
 function machine_stub(): Machine {
   const closed = Promise.resolve();
   return {

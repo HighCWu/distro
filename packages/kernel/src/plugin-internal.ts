@@ -43,19 +43,26 @@ export async function configure_machine(
   const configured_args = [...args];
   const devices: VirtioDevice[] = [];
   const device_tree: DeviceTreeNode = {};
+  let configuring = true;
+  const require_configuration = () => {
+    if (!configuring) throw new Error("machine configuration has finished");
+  };
   const setup: MachineSetup = {
     args: {
       add(...next) {
+        require_configuration();
         configured_args.push(...next);
       },
     },
     devices: {
       add(...next) {
+        require_configuration();
         devices.push(...next);
       },
     },
     deviceTree: {
       merge(fragment) {
+        require_configuration();
         merge_device_tree(device_tree, fragment);
       },
     },
@@ -69,8 +76,11 @@ export async function configure_machine(
       await plugin.configure(setup);
     }
   } catch (error) {
+    configuring = false;
     await Promise.allSettled(devices.map((device) => close_virtio_device(device)));
     throw error;
+  } finally {
+    configuring = false;
   }
 
   return {
