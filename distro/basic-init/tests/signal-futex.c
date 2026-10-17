@@ -24,6 +24,14 @@ static volatile sig_atomic_t delivered, handler_error, ack_fd = -1;
 static _Atomic uint32_t word;
 _Static_assert(sizeof(word) == 4, "Linux futex words are 32-bit");
 
+static long futex_call(long number, long operation, long value, const struct timespec *timeout)
+{
+	/* syscall() consumes six machine-word varargs. Unlike native register
+	 * ABIs, wasm64 does not implicitly widen packed int varargs to long. */
+	return syscall(number, (long)(uintptr_t)&word, operation, value,
+		(long)(uintptr_t)timeout, 0L, 0L);
+}
+
 static int64_t now_ms(void)
 {
 	struct timespec now;
@@ -56,7 +64,7 @@ static void *send_signals(void *opaque)
 			/* Do not change the word: EAGAIN must not masquerade as a
 			 * successfully restarted wait. A return of 1 proves a waiter
 			 * was actually queued when this wake took place. */
-			long woken = syscall(SYS_futex, &word, FUTEX_WAKE_PRIVATE, 1, NULL, NULL, 0);
+			long woken = futex_call(SYS_futex, FUTEX_WAKE_PRIVATE, 1, NULL);
 			if (woken == 1) return NULL;
 			if (woken != 0) return (void *)(uintptr_t)2;
 			sched_yield();
@@ -91,16 +99,19 @@ static void interrupt_wait(int restart, int timed)
 	if (error) { errno = error; test_perror("futex signal sender"); }
 	if (sigprocmask(SIG_UNBLOCK, &blocked, NULL)) test_perror("unblock futex signal");
 	struct timespec timeout = { .tv_sec = 1 };
+	printf("signal futex: handler restart=%d timed=%d\n", restart, timed);
 	errno = 0;
-	long result = syscall(FUTEX_WAIT_SYSCALL, &word, FUTEX_WAIT_PRIVATE, 0,
-		timed ? &timeout : NULL, NULL, 0);
+	long result = futex_call(FUTEX_WAIT_SYSCALL, FUTEX_WAIT_PRIVATE, 0, timed ? &timeout : NULL);
 	int saved_errno = errno;
 	atomic_store(&args.stop, 1);
 	void *sender_result;
 	if (pthread_join(thread, &sender_result) || sender_result)
 		test_fail("futex sender did not complete its signal/wake protocol");
-	if (handler_error || !delivered || atomic_load(&word) != 0)
+	if (handler_error || !delivered || atomic_load(&word) != 0) {
+		printf("futex result=%ld errno=%d delivered=%d handler_error=%d word=%u\n",
+			result, saved_errno, (int)delivered, (int)handler_error, (unsigned)atomic_load(&word));
 		test_fail("futex signal handler or unchanged word check failed");
+	}
 	if (sigprocmask(SIG_SETMASK, NULL, &returned) ||
 	    sigismember(&returned, SIGUSR1) != 0 || sigismember(&returned, SIGUSR2) != 1)
 		test_fail("futex wait leaked handler signal mask");
@@ -114,7 +125,7 @@ static void interrupt_wait(int restart, int timed)
 	}
 	if (timeout.tv_sec != 1 || timeout.tv_nsec != 0)
 		test_fail("futex modified the caller timeout");
-	if (syscall(SYS_futex, &word, FUTEX_WAKE_PRIVATE, 1, NULL, NULL, 0) != 0)
+	if (futex_call(SYS_futex, FUTEX_WAKE_PRIVATE, 1, NULL) != 0)
 		test_fail("finished futex wait left a stale queue entry");
 	if (close(ack[0]) || close(ack[1])) test_perror("close futex acknowledgement");
 	ack_fd = -1;
@@ -137,11 +148,11 @@ int main(void)
 	const struct timespec timeout = { .tv_nsec = 20000000 };
 	int64_t started = now_ms();
 	errno = 0;
-	if (syscall(FUTEX_WAIT_SYSCALL, &word, FUTEX_WAIT_PRIVATE, 0, &timeout, NULL, 0) != -1 ||
+	if (futex_call(FUTEX_WAIT_SYSCALL, FUTEX_WAIT_PRIVATE, 0, &timeout) != -1 ||
 	    errno != ETIMEDOUT || now_ms() - started < 15)
 		test_fail("uninterrupted futex timeout returned early or lost ETIMEDOUT");
 	errno = 0;
-	if (syscall(FUTEX_WAIT_SYSCALL, &word, FUTEX_WAIT_PRIVATE, 1, &timeout, NULL, 0) != -1 || errno != EAGAIN)
+	if (futex_call(FUTEX_WAIT_SYSCALL, FUTEX_WAIT_PRIVATE, 1, &timeout) != -1 || errno != EAGAIN)
 		test_fail("futex mismatch did not return EAGAIN");
 	if (sigaction(SIGUSR1, &previous, NULL) || sigprocmask(SIG_SETMASK, &original, NULL))
 		test_perror("restore futex signal state");
