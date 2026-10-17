@@ -172,6 +172,7 @@ function create_remote_device(endpoint: Endpoint, ready: ReadyMessage): VirtioDe
   void close_completion.promise.catch(() => {});
   let connection: ReturnType<typeof connect_remote_device> | undefined;
   let terminal_error: Error | undefined;
+  let endpoint_failed = false;
   let close_started = false;
 
   let cleanup = () => {};
@@ -200,6 +201,7 @@ function create_remote_device(endpoint: Endpoint, ready: ReadyMessage): VirtioDe
     connection?.receive(message);
   };
   const endpoint_failure = (error: Error) => {
+    endpoint_failed = true;
     cleanup();
     fail(error);
   };
@@ -224,7 +226,15 @@ function create_remote_device(endpoint: Endpoint, ready: ReadyMessage): VirtioDe
       if (close_started) return close_completion.promise;
       close_started = true;
       connection?.revoke();
-      post_endpoint(endpoint, { type: "close" } satisfies DeviceMessage);
+      if (endpoint_failed) {
+        cleanup();
+        return close_completion.promise;
+      }
+      try {
+        post_endpoint(endpoint, { type: "close" } satisfies DeviceMessage);
+      } catch (error) {
+        endpoint_failure(error instanceof Error ? error : new Error(String(error)));
+      }
       return close_completion.promise;
     },
   };
