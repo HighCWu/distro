@@ -62,23 +62,14 @@ let
       "--prefix=/usr"
       "--disable-shared"
       "--with-build-python=${pkgs.python313}/bin/python3"
-      # No pip, and it is not worth chasing. Two independent blockers:
-      # (1) --with-ensurepip=install misfires on a cross build: the Makefile hook
-      #     runs the *build-host* python with --root=/, so pip lands in the host
-      #     interpreter's scheme, never the target site-packages.
-      # (2) Even side-stepping that (unpack the bundled wheel into the guest's
-      #     site-packages by hand; it is pure python and imports fine), pip
-      #     cannot run: its vendored cachecontrol.filewrapper does an
-      #     unconditional `import mmap`, and mmap is disabled here (no
-      #     <sys/mman.h> on wasm), so `pip install --no-index <localwheel>`
-      #     fails at import before doing any work. Revisit only if pip drops
-      #     that mmap dependency or an mmap shim appears on this platform.
+      # Keep pip packaging separate: ensurepip's cross-install hook uses the
+      # build interpreter's installation scheme. Restoring import mmap alone
+      # does not validate pip's file-mapping or installation requirements.
       "--with-ensurepip=no"
       "--disable-test-modules" # skip the _test* C extensions and Lib/test
 
-      # mimalloc (default on) and the mmap module both need <sys/mman.h>, which
-      # this sysroot omits because wasm has no mmap. obmalloc falls back to
-      # malloc-based arenas, so pymalloc still works.
+      # Retain the tested allocator policy. Available anonymous mappings do
+      # not establish mimalloc's reserve/commit/protection requirements.
       "--without-mimalloc"
 
       # Cross builds can't probe for /dev/ptmx; the guest mounts devpts and has
@@ -105,15 +96,17 @@ let
 
       # Module selection. py_cv_module_<name>=n/a forces a module off.
       "py_cv_module__posixsubprocess=n/a" # fork_exec: no usable fork(); see patch
-      "py_cv_module_mmap=n/a" # no <sys/mman.h>
+      # Let upstream detect mmap from the installed musl headers. Only private
+      # anonymous read/write mappings are supported by the default kernel;
+      # notably Python's default MAP_SHARED request still fails explicitly.
       "py_cv_module__ctypes=n/a" # no libffi by platform policy
 
       # Cross compilation cannot run CPython's sem_open and sem_getvalue
       # probes. The kernel/musl VM regression establishes both behaviors.
       "ac_cv_posix_semaphores_enabled=yes"
       "ac_cv_broken_sem_getvalue=no"
-      # POSIX shared memory remains unusable without mmap; it is independent
-      # of the now-working named semaphore backend.
+      # POSIX shared memory needs shared/file mappings, not merely import mmap;
+      # it is independent of the working named semaphore backend.
       "py_cv_module__posixshmem=n/a"
     ];
 
@@ -158,6 +151,17 @@ let
     '';
 
     passthru.checks = {
+      mmap = vm-test.installedTest {
+        name = "python-private-anonymous-mmap";
+        init = ./mmap-test.sh;
+        contents = [
+          busybox
+          ncurses
+          openssl
+          finalAttrs.finalPackage
+        ];
+        files."/mmap-test.py" = ./mmap-test.py;
+      };
       interpreter = vm-test.installedTest {
         name = "python-interpreter";
         # A larger stack than the toolchain default is unnecessary here; the
