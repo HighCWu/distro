@@ -2,6 +2,7 @@
 """Exercise timeouts, binary pipe recovery, signals and child reaping."""
 
 import os
+import fcntl
 import select
 import signal
 import subprocess
@@ -10,6 +11,9 @@ import sys
 
 STDOUT = bytes(range(256)) + b"\x00stdout\xff"
 STDERR = b"\xffstderr\x00" + bytes(reversed(range(256)))
+LARGE_STDOUT = bytes(range(256)) * 2048 + b"\x00stdout-end\xff"
+LARGE_STDERR = bytes(reversed(range(256))) * 2048 + b"\xffstderr-end\x00"
+LARGE_INPUT = bytes(range(256)) * 2048 + b"\x00input-end\xff"
 
 
 def child(ready, ignore_term):
@@ -32,6 +36,54 @@ def require_timeout(operation):
     except subprocess.TimeoutExpired as error:
         return error
     raise AssertionError("live child did not report a timeout")
+
+
+def duplex_child():
+    # Write both streams before reading stdin. The parent verifies each stream
+    # exceeds its actual pipe capacity, not an assumed default page size.
+    sys.stdout.buffer.write(LARGE_STDOUT)
+    sys.stdout.buffer.flush()
+    sys.stderr.buffer.write(LARGE_STDERR)
+    sys.stderr.buffer.flush()
+    incoming = sys.stdin.buffer.read()
+    sys.stdout.buffer.write(incoming[::-1])
+    sys.stderr.buffer.write(b"input-bytes=" + str(len(incoming)).encode("ascii") + b"\n")
+
+
+def exercise_backpressure():
+    process = subprocess.Popen(
+        [sys.executable, __file__, "--duplex"],
+        stdin=subprocess.PIPE,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        pipesize=4096,
+    )
+    try:
+        for stream, data in ((process.stdin, LARGE_INPUT), (process.stdout, LARGE_STDOUT),
+                             (process.stderr, LARGE_STDERR)):
+            capacity = fcntl.fcntl(stream.fileno(), fcntl.F_GETPIPE_SZ)
+            assert 0 < capacity < len(data), (capacity, len(data))
+        output, errors = process.communicate(LARGE_INPUT, timeout=20)
+        assert process.returncode == 0, (process.returncode, errors[-512:])
+        assert output == LARGE_STDOUT + LARGE_INPUT[::-1], "large duplex stdout lost or duplicated bytes"
+        expected_errors = LARGE_STDERR + b"input-bytes=" + str(len(LARGE_INPUT)).encode("ascii") + b"\n"
+        assert errors == expected_errors, "large duplex stderr or input byte count differs"
+        try:
+            result = os.waitpid(process.pid, os.WNOHANG)
+        except ChildProcessError:
+            pass
+        else:
+            raise AssertionError("duplex child was not reaped: " + repr(result))
+    finally:
+        try:
+            if process.poll() is None:
+                process.kill()
+            process.wait(timeout=10)
+        finally:
+            for stream in (process.stdin, process.stdout, process.stderr):
+                if stream is not None:
+                    stream.close()
+    print("Python process: large duplex binary pipes preserve backpressure, bytes and child cleanup")
 
 
 def exercise_lifecycle():
@@ -107,12 +159,27 @@ def verify_native_negative_control():
             raise AssertionError("injected duplicate output was accepted")
     print("Python process fixture: injected retry output duplication rejected")
 
+    def truncate_input(self, incoming=None, *args, **kwargs):
+        return original(self, incoming[:-1] if incoming else incoming, *args, **kwargs)
+
+    with patch.object(subprocess.Popen, "communicate", truncate_input):
+        try:
+            exercise_backpressure()
+        except AssertionError as error:
+            assert "large duplex stdout lost or duplicated bytes" in str(error), error
+        else:
+            raise AssertionError("injected input truncation was accepted")
+    print("Python process fixture: injected duplex input truncation rejected")
+
 
 if __name__ == "__main__":
-    if len(sys.argv) == 4 and sys.argv[1] == "--child":
+    if sys.argv[1:] == ["--duplex"]:
+        duplex_child()
+    elif len(sys.argv) == 4 and sys.argv[1] == "--child":
         child(int(sys.argv[2]), bool(int(sys.argv[3])))
     else:
         assert sys.argv[1:] in ([], ["--native-controls"]), sys.argv
         exercise_lifecycle()
+        exercise_backpressure()
         if sys.argv[1:]:
             verify_native_negative_control()

@@ -214,7 +214,7 @@ test("Python process timeouts preserve binary pipes and terminated children are 
       fileURLToPath(new URL("./process-lifecycle-test.py", import.meta.url)),
       "--native-controls",
     ],
-    { encoding: "utf8", timeout: 15_000 },
+    { encoding: "utf8", timeout: 45_000 },
   );
   assert.equal(result.status, 0, `${result.error ?? ""}\n${result.stdout}\n${result.stderr}`);
   assert.match(
@@ -222,6 +222,11 @@ test("Python process timeouts preserve binary pipes and terminated children are 
     /timeout recovery, binary pipes, terminate, kill and reaping verified/,
   );
   assert.match(result.stdout, /injected retry output duplication rejected/);
+  assert.match(
+    result.stdout,
+    /large duplex binary pipes preserve backpressure, bytes and child cleanup/,
+  );
+  assert.match(result.stdout, /injected duplex input truncation rejected/);
   const recipe = readFileSync(new URL("./package.nix", import.meta.url), "utf8");
   assert.ok(
     recipe.includes('files."/python-process-lifecycle-test.py" = ./process-lifecycle-test.py;'),

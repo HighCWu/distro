@@ -12,6 +12,7 @@ for (const [variant, title, stages] of [
       "Python spawn: repeated failed launches preserve parent fds, CLOEXEC and child cleanup",
       "Python spawn: descriptor exhaustion preserves parent fds and child cleanup",
       "Python process: timeout recovery, binary pipes, terminate, kill and reaping verified",
+      "Python process: large duplex binary pipes preserve backpressure, bytes and child cleanup",
     ],
   ],
   [
