@@ -46,6 +46,12 @@ export interface BlockDeviceStorage {
   flush?(): MaybePromise<void>;
   /** Releases storage resources when the device closes. */
   close?(): MaybePromise<void>;
+  /** Synchronously starts cancellation when the device closes, before waiting
+   * for in-flight I/O. Must arrange for pending operations to settle; it must
+   * not release resources still used by them. Final disposal belongs in close.
+   * Optional: existing storage without it is still drained before close.
+   */
+  stop?(): void;
   /** Total bytes: a nonnegative safe integer multiple of 512, snapshotted at creation. */
   capacity: number;
 }
@@ -75,9 +81,11 @@ export function blockDevice(storage: BlockDeviceStorage): VirtioDevice {
   let features = 0n;
   if (storage.flush) features |= BlockDeviceFeatures.FLUSH;
   if (!storage.write) features |= BlockDeviceFeatures.RO;
+  let stopping = false;
 
   async function notify(queue: Virtqueue) {
     for (const chain of queue) {
+      if (stopping) return;
       const descs = [...chain];
       const header = descs[0];
       const status = descs[descs.length - 1];
@@ -125,6 +133,7 @@ export function blockDevice(storage: BlockDeviceStorage): VirtioDevice {
               ok = false;
               break;
             }
+            if (stopping) return;
             if (read !== desc.array.byteLength) {
               ok = false;
               break;
@@ -150,6 +159,7 @@ export function blockDevice(storage: BlockDeviceStorage): VirtioDevice {
               ok = false;
               break;
             }
+            if (stopping) return;
             if (written !== desc.array.byteLength) {
               ok = false;
               break;
@@ -185,12 +195,20 @@ export function blockDevice(storage: BlockDeviceStorage): VirtioDevice {
 
       // Only IN data and the status byte are device-written buffers. OUT
       // payload bytes are consumed by the device, not written back to Linux.
+      if (stopping) return;
       chain.release(n + 1);
     }
   }
 
   return new VirtioController(
     { deviceId: 2, features, config },
-    { queues: [notify], close: () => storage.close?.() },
+    {
+      queues: [notify],
+      stop() {
+        stopping = true;
+        storage.stop?.();
+      },
+      close: () => storage.close?.(),
+    },
   ).device;
 }
