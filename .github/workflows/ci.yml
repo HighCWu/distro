@@ -188,7 +188,7 @@ jobs:
       - uses: nix-community/cache-nix-action@v7
         id: heavy-cache
         with:
-          primary-key: nix-targeted-v1-${{ runner.os }}-${{ (contains(matrix.check, 'wasm64') || contains(matrix.check, 'memory64')) && 'wasm64' || 'wasm32' }}-${{ hashFiles('distro/llvm-toolchain/**', 'distro/llvm-runtimes/**', 'distro/platform.nix', 'flake.lock') }}
+          primary-key: nix-targeted-v1-${{ runner.os }}-${{ (contains(matrix.check, 'wasm64') || contains(matrix.check, 'memory64')) && 'wasm64' || 'wasm32' }}-${{ hashFiles('distro/llvm-toolchain/**', 'distro/llvm-runtimes/**', 'distro/platform.nix', 'distro/linux/package.nix', 'distro/linux/fetch-source.nix', 'flake.lock') }}
           restore-prefixes-first-match: |
             nix-targeted-v1-${{ runner.os }}-${{ (contains(matrix.check, 'wasm64') || contains(matrix.check, 'memory64')) && 'wasm64' || 'wasm32' }}-
             ${{ (contains(matrix.check, 'wasm64') || contains(matrix.check, 'memory64')) && format('nix-wasm64-v2-{0}-', runner.os) || format('nix-ci-{0}-', runner.os) }}
@@ -252,6 +252,7 @@ jobs:
         run: |
           suffix=""
           if [[ "$WASM64_CHECK" == true ]]; then suffix="-wasm64"; fi
+          compiler_ready=false
           for package in llvm-toolchain-unwrapped "llvm-toolchain$suffix" "linux$suffix"; do
             # Evaluate and root only outputs that already exist. Never start
             # another compiler build while handling a failed runtime check.
@@ -259,17 +260,30 @@ jobs:
             if nix path-info "$output" >/dev/null 2>&1; then
               nix-store --add-root "$RUNNER_TEMP/cache-$package" --indirect --realise "$output"
               if [[ "$package" == llvm-toolchain-unwrapped ]]; then
-                echo "ready=true" >> "$GITHUB_OUTPUT"
+                compiler_ready=true
               fi
             fi
           done
+          # A compiled kernel need not retain its build-time source in its
+          # runtime closure. Keep the exact fixed-output source explicitly.
+          source_ready=false
+          source_output=$(nix eval --raw ".#linux$suffix.src.outPath")
+          if nix path-info "$source_output" >/dev/null 2>&1; then
+            nix-store --add-root "$RUNNER_TEMP/cache-linux-source" --indirect --realise "$source_output"
+            source_ready=true
+          fi
+          # Do not permanently occupy an immutable primary key with a partial
+          # cache that cannot reuse both the compiler and this kernel's source.
+          if [[ $compiler_ready == true && $source_ready == true ]]; then
+            echo "ready=true" >> "$GITHUB_OUTPUT"
+          fi
       - name: Save targeted build dependencies even if the runtime check failed
         if: ${{ !cancelled() && steps.retained.outputs.ready == 'true' }}
         uses: nix-community/cache-nix-action/save@v7
         with:
           # Pass the same key explicitly: the restore step returned an empty
           # primary-key output in the save:false job, despite declaring it.
-          primary-key: nix-targeted-v1-${{ runner.os }}-${{ (contains(matrix.check, 'wasm64') || contains(matrix.check, 'memory64')) && 'wasm64' || 'wasm32' }}-${{ hashFiles('distro/llvm-toolchain/**', 'distro/llvm-runtimes/**', 'distro/platform.nix', 'flake.lock') }}
+          primary-key: nix-targeted-v1-${{ runner.os }}-${{ (contains(matrix.check, 'wasm64') || contains(matrix.check, 'memory64')) && 'wasm64' || 'wasm32' }}-${{ hashFiles('distro/llvm-toolchain/**', 'distro/llvm-runtimes/**', 'distro/platform.nix', 'distro/linux/package.nix', 'distro/linux/fetch-source.nix', 'flake.lock') }}
           gc-max-store-size-linux: 9G
 
   deploy-site:
