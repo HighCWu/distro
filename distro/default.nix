@@ -193,6 +193,7 @@ lib.makeScope (scope: lib.callPackageWith ({ inherit lib pkgs; } // scope)) (
       platform = self.platform-wasm64;
       openssl = self.openssl-wasm64;
       zlib = self.zlib-wasm64;
+      sdk = self.sdk-wasm64;
       busybox = self.busybox-wasm64;
       vm-test = vmTestWasm64;
     };

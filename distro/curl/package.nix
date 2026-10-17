@@ -12,6 +12,7 @@
   busybox,
   platform,
   image,
+  sdk,
 }:
 
 stdenv.mkDerivation (finalAttrs: {
@@ -117,6 +118,62 @@ stdenv.mkDerivation (finalAttrs: {
     "ca-certificates"
   ];
 
+  # A separate, copyable development installation. Do not move headers or
+  # curl-config out of the existing runtime output as part of this addition.
+  passthru.development =
+    pkgs.runCommand "libcurl-development-${platform.wasmArch}"
+      {
+        nativeBuildInputs = [ pkgs.nodejs ];
+        passthru.apk.license = finalAttrs.passthru.apk.license;
+      }
+      ''
+        mkdir -p $out/include $out/lib/pkgconfig $out/share/licenses $out/share/doc/libcurl/examples
+        for package in ${finalAttrs.finalPackage} ${openssl} ${zlib}; do
+          cp -rL "$package/include/." $out/include/
+          cp "$package"/lib/*.a $out/lib/
+          cp "$package"/lib/pkgconfig/*.pc $out/lib/pkgconfig/
+        done
+        # Keep upstream static dependency declarations, but use the copied layout.
+        node ${./relocate-metadata.mjs} $out ${finalAttrs.finalPackage} ${openssl} ${zlib}
+        cp -r ${finalAttrs.finalPackage}/share/licenses/curl $out/share/licenses/
+        cp ${./fetch-example.c} $out/share/doc/libcurl/examples/fetch.c
+        cp ${./development-README.md} $out/share/doc/libcurl/examples/README.md
+        cp ${../sdk/LICENSE.MIT} $out/share/doc/libcurl/examples/LICENSE.MIT
+      '';
+
+  passthru.developmentApplication =
+    pkgs.runCommand "libcurl-installed-application-${platform.wasmArch}"
+      {
+        nativeBuildInputs = [ pkgs.nodejs ];
+        passthru.apk.license = finalAttrs.passthru.apk.license;
+      }
+      ''
+        mkdir -p $out/bin $out/share/licenses relocated
+        cp -r ${finalAttrs.finalPackage.development}/. original/
+        mv original relocated/installation
+        export WASM_PKG_CONFIG_PATH="$PWD/relocated/installation/lib/pkgconfig"
+        export WASM_PKG_CONFIG_SYSROOT_DIR=/
+        cflags_text=$(${sdk}/bin/wasm-linux-pkg-config --cflags libcurl)
+        libs_text=$(${sdk}/bin/wasm-linux-pkg-config --libs libcurl)
+        read -ra cflags <<< "$cflags_text"
+        read -ra libs <<< "$libs_text"
+        case "$cflags_text $libs_text" in
+          *${finalAttrs.finalPackage.development}*|*"$PWD/original"*|*/nix/store/*)
+            echo 'libcurl flags escaped the relocated development installation' >&2; exit 1 ;;
+        esac
+        case "$cflags_text $libs_text" in
+          *"$PWD/relocated/installation"*) ;;
+          *) echo 'libcurl flags did not select the copied installation' >&2; exit 1 ;;
+        esac
+        cp relocated/installation/share/doc/libcurl/examples/fetch.c fetch.c
+        ${sdk}/bin/wasm-linux-cc -O2 -Wall -Wextra -Werror \
+          "''${cflags[@]}" fetch.c "''${libs[@]}" -o $out/bin/libcurl-fetch
+        node ${../busybox/check-binary.mjs} ${../../packages/kernel/src/wasm_binary.ts} \
+          $out/bin/libcurl-fetch ${toString platform.addressBits} ${toString platform.maximumMemoryBytes}
+        cp -r relocated/installation/share/licenses/curl $out/share/licenses/
+        cp relocated/installation/share/doc/libcurl/examples/LICENSE.MIT $out/share/licenses/curl/example-MIT
+      '';
+
   passthru.runtimeAssets = rec {
     init = ./tests/https-test.sh;
     contents = [
@@ -132,6 +189,16 @@ stdenv.mkDerivation (finalAttrs: {
   };
 
   passthru.checks = {
+    development = vm-test.installedTest {
+      name = "libcurl-installed-application-${platform.wasmArch}";
+      init = ./tests/development-test.sh;
+      contents = [
+        busybox
+        ca-certificates
+        openssl
+        finalAttrs.finalPackage.developmentApplication
+      ];
+    };
     https = vm-test.installedTest {
       name = "curl-verified-https-${platform.wasmArch}";
       inherit (finalAttrs.finalPackage.runtimeAssets) init contents;
