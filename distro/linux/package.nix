@@ -9,7 +9,8 @@
   wasmBits ? 32,
   mmapCopyTest ? false,
   llvm-toolchain-unwrapped,
-  src ? pkgs.fetchFromGitHub {
+  src ? import ./fetch-source.nix {
+    inherit pkgs;
     owner = "HighCWu";
     repo = "linux";
     rev = "e81f9ad0e25670bb5fc4608b4c0b7e92b2ecb89e";
@@ -90,7 +91,7 @@ pkgs.stdenvNoCC.mkDerivation (finalAttrs: {
 
     cp vmlinux.wasm $out/
     bash ${./build-materials.sh} "$PWD" "$out" ${./package.nix} \
-      ${buildMetadata} ${./build-materials.README.md}
+      ${buildMetadata} ${./build-materials.README.md} ${./fetch-source.nix}
 
     make headers_install INSTALL_HDR_PATH=$headers
 
@@ -98,6 +99,18 @@ pkgs.stdenvNoCC.mkDerivation (finalAttrs: {
   '';
 
   installPhase = "runHook preInstall; runHook postInstall";
+  # Fetch/unpack/hash validation only: no LLVM or kernel build dependency.
+  passthru.checks.source =
+    pkgs.runCommand "linux-pinned-source-check"
+      {
+        passthru.ci.heavy = true;
+      }
+      ''
+        test -s ${src}/Makefile
+        test -s ${src}/arch/wasm/Kconfig
+        test -s ${src}/COPYING
+        touch $out
+      '';
   passthru.checks.build-materials =
     pkgs.runCommand "linux-wasm${toString wasmBits}-build-materials-check"
       {

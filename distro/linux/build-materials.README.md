@@ -13,8 +13,9 @@ Join each identity's two `hashParts`, a hyphen and `name` to recover its store
 basename. Splitting the hash avoids retaining complete build inputs through
 Nix reference scanning. These identities are provenance, not public download
 URLs or a complete dependency inventory. `package.nix` is the integration
-recipe; its default source pin is not necessarily the selected source when an
-override was used. Rebuilding also requires the matching distro sources,
+recipe, accompanied by its `fetch-source.nix` helper; its default source pin is
+not necessarily the selected source when an override was used. Rebuilding also
+requires the matching distro sources,
 flake.lock, Nix dependencies and compiler sources.
 
 From the kernel package root, verify the binary and these materials with:

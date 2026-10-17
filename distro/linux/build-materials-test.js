@@ -8,6 +8,7 @@ import test from "node:test";
 import { createHash } from "node:crypto";
 
 const recipe = new URL("./package.nix", import.meta.url);
+const fetchRecipe = new URL("./fetch-source.nix", import.meta.url);
 const script = new URL("./build-materials.sh", import.meta.url);
 const readme = new URL("./build-materials.README.md", import.meta.url);
 
@@ -17,6 +18,7 @@ for (const failure of [
   "empty GPL",
   "missing exception",
   "different binary",
+  "empty fetch recipe",
 ]) {
   test(`kernel build materials use exact compiled inputs and fail closed: ${failure}`, () => {
     const root = mkdtempSync(join(tmpdir(), "kernel-materials-"));
@@ -44,9 +46,20 @@ for (const failure of [
       if (failure === "missing exception")
         rmSync(join(source, "LICENSES/exceptions/Linux-syscall-note"));
       if (failure === "different binary") put(join(output, "vmlinux.wasm"), "wrong binary");
+      const selectedFetchRecipe =
+        failure === "empty fetch recipe" ? join(root, "empty.nix") : fetchRecipe.pathname;
+      if (failure === "empty fetch recipe") put(selectedFetchRecipe, "");
       const built = spawnSync(
         "bash",
-        [script.pathname, source, output, recipe.pathname, metadata, readme.pathname],
+        [
+          script.pathname,
+          source,
+          output,
+          recipe.pathname,
+          metadata,
+          readme.pathname,
+          selectedFetchRecipe,
+        ],
         { encoding: "utf8" },
       );
       if (failure !== "none") {
@@ -62,6 +75,10 @@ for (const failure of [
         assert.deepEqual(readFileSync(join(output, destination)), Buffer.from(contents));
       }
       assert.deepEqual(readFileSync(join(output, "linux-build/package.nix")), readFileSync(recipe));
+      assert.deepEqual(
+        readFileSync(join(output, "linux-build/fetch-source.nix")),
+        readFileSync(fetchRecipe),
+      );
       assert.deepEqual(
         readFileSync(join(output, "linux-build/build-materials.sh")),
         readFileSync(script),
