@@ -248,6 +248,7 @@ class Handle {
   readonly node: Node;
   readonly file: FileHandle | undefined;
   readonly directory: boolean;
+  closed = false;
 
   constructor(node: Node, file?: FileHandle, directory = false) {
     this.node = node;
@@ -333,7 +334,7 @@ export class NodeFS implements FS<Node, Handle> {
 
   #handle(node: Node, handle: Handle) {
     this.#owned_node(node);
-    if (!(handle instanceof Handle) || handle.node !== node) {
+    if (!(handle instanceof Handle) || handle.node !== node || handle.closed) {
       throw new FSError("EBADF", "handle does not belong to this node");
     }
     return handle;
@@ -560,6 +561,7 @@ export class NodeFS implements FS<Node, Handle> {
   async release(node: Node, handle: Handle) {
     await this.#path_operation(async () => {
       const file = this.#file(node, handle);
+      handle.closed = true;
       try {
         await node_call(file.close());
       } finally {
@@ -589,6 +591,7 @@ export class NodeFS implements FS<Node, Handle> {
     const current = this.#handle(node, handle);
     if (!current.directory) throw new FSError("EBADF", "not a directory handle");
     if (current.file) await this.release(node, current);
+    else current.closed = true;
   }
 
   async readdir(node: Node, handle: Handle): Promise<FSDirectoryEntry<Node>[]> {

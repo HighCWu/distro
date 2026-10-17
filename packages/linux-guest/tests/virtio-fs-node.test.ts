@@ -89,6 +89,9 @@ test("node virtio-fs synchronizes and closes an opened directory after unlink", 
     assert.equal((await file.stat({ bigint: true })).ino, ino);
     await fs.releasedir(node, handle);
     released = true;
+    await assert.rejects(fs.readdir(node, handle), { errno: 9 });
+    await assert.rejects(fs.fsync(node, handle, false), { errno: 9 });
+    await assert.rejects(fs.releasedir(node, handle), { errno: 9 });
     await assert.rejects(file.stat(), { code: "EBADF" });
     await assert.rejects(fs.getattr(node), { errno: 2 });
   } finally {
