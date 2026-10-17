@@ -18,6 +18,10 @@ for (const [fixture, finalStage] of [
     "signal I/O: partial progress, explicit suffix retry, EINTR/restart and single child reaping verified",
   ],
   [
+    "signal-futex",
+    "signal futex: untimed restart, timed EINTR, explicit wake and queue cleanup verified",
+  ],
+  [
     "thread-time-abi",
     "thread time ABI: wakeups, cancellation, broadcast, timeouts and mutex ownership verified",
   ],

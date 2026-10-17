@@ -175,6 +175,21 @@ test("runs SDK partial pipe I/O and interrupted child reaping through Linux", as
   expect(output).not.toContain("::vm-test::fail");
 });
 
+test("runs SDK futex signal restart and timed interruption through Linux", async ({ page }) => {
+  page.on("console", (message) => console.log(`[browser] ${message.text()}`));
+  page.on("pageerror", (error) => console.error(`[browser] ${error.stack ?? error}`));
+  await page.goto("/");
+  await expect
+    .poll(() => page.evaluate(() => typeof globalThis.bootSignalFutexRuntimeSmoke))
+    .toBe("function");
+  const output = await page.evaluate(() => globalThis.bootSignalFutexRuntimeSmoke());
+  expect(output).toContain(
+    "signal futex: untimed restart, timed EINTR, explicit wake and queue cleanup verified",
+  );
+  expect(output).toContain("::vm-test::pass");
+  expect(output).not.toContain("::vm-test::fail");
+});
+
 test("retries a failed kernel download in the same page with a generic MIME type", async ({
   page,
 }) => {
