@@ -10,6 +10,7 @@ for (const [program, sourceNotice] of [
   ["quickjs", "LICENSE"],
   ["lua", "doc/readme.html"],
   ["openssl", "LICENSE.txt"],
+  ["curl", "COPYING"],
 ]) {
   test(`${program} runtime license checks match the unchanged installed payload paths`, () => {
     const root = mkdtempSync(join(tmpdir(), `linux-wasm-${program}-notices-`));
@@ -25,16 +26,29 @@ for (const [program, sourceNotice] of [
       put(join(source, sourceNotice), `${program} unmodified source notice fixture\n`);
       put(join(musl, "COPYRIGHT"), "musl original notice fixture\n");
       put(join(runtime, "compiler-rt/LICENSE.TXT"), "compiler-rt original notice fixture\n");
+      const openssl = join(root, "openssl");
+      const zlib = join(root, "zlib");
+      if (program === "curl") {
+        for (const name of ["LICENSE.txt", "musl-COPYRIGHT", "compiler-rt-LICENSE.TXT"])
+          put(
+            join(openssl, "share/licenses/openssl", name),
+            `Original linked notice fixture: ${name}\n`,
+          );
+        put(join(zlib, "zlib.h"), "Original zlib header notice fixture\n");
+      }
       const recipe = readFileSync(new URL(`../${program}/package.nix`, import.meta.url), "utf8");
       const copy = recipe.match(
         new RegExp(
-          `    mkdir -p \\$out/share/licenses/${program}\\n([\\s\\S]*?)${program === "openssl" ? "\\n  '';" : "    runHook postInstall"}`,
+          `    mkdir -p \\$out/share/licenses/${program}\\n([\\s\\S]*?)${["openssl", "curl"].includes(program) ? "\\n  '';" : "    runHook postInstall"}`,
         ),
       );
       assert.ok(copy, "execute actual package license-copy block");
       const shell = (`mkdir -p "$out/share/licenses/${program}"\n` + copy[1])
         .replaceAll("${musl.src}", musl)
-        .replaceAll("${llvm-runtimes.src}", runtime);
+        .replaceAll("${llvm-runtimes.src}", runtime)
+        .replaceAll("${zlib.src}", zlib)
+        .replaceAll("${openssl}", openssl)
+        .replaceAll("${../sdk/LICENSE.MIT}", new URL("../sdk/LICENSE.MIT", import.meta.url).pathname);
       assert.doesNotMatch(shell, /\$\{/, "no unhandled Nix interpolation");
       const installed = spawnSync("sh", ["-eu", "-c", shell], {
         cwd: source,
@@ -51,7 +65,7 @@ for (const [program, sourceNotice] of [
       }
       const script = readFileSync(
         new URL(
-          `../${program}/${program === "openssl" ? "tests/cli-test.sh" : "language-test.sh"}`,
+          `../${program}/${program === "openssl" ? "tests/cli-test.sh" : program === "curl" ? "tests/https-test.sh" : "language-test.sh"}`,
           import.meta.url,
         ),
         "utf8",

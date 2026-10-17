@@ -10,12 +10,15 @@
   zlib,
   vm-test,
   busybox,
+  platform,
 }:
 
 stdenv.mkDerivation (finalAttrs: {
   pname = "curl";
   version = "8.21.0";
   inherit src;
+  meta.license = pkgs.lib.licenses.curl;
+  passthru.apk.license = "curl AND Zlib AND Apache-2.0 AND MIT AND Apache-2.0 WITH LLVM-exception";
 
   buildInputs = [
     openssl
@@ -28,15 +31,19 @@ stdenv.mkDerivation (finalAttrs: {
   # installed metadata, so pkg-config's presence is part of the build contract:
   # declare it to make the resolution -- and therefore the produced metadata --
   # deterministic regardless of the build environment.
-  nativeBuildInputs = [ pkgs.pkg-config ];
+  nativeBuildInputs = [
+    pkgs.pkg-config
+    pkgs.nodejs
+  ];
 
   # Static-only, OpenSSL backend, zlib for content encoding. Everything that
   # would pull in an unavailable transport or a library we do not ship is
   # turned off explicitly so the cross configure cannot latch onto a stray
   # host copy. Plain HTTP/HTTPS/FILE transfers need no fork; the threaded
   # resolver is disabled so name lookups stay in-process (numeric addresses
-  # in the VM check resolve without DNS regardless). Guest HTTPS is bridged by
-  # the host Fetch implementation, so the package carries no CA trust store.
+  # in the Linux check resolve without DNS regardless). Direct HTTPS uses
+  # OpenSSL and an explicit --cacert file in this profile. The optional host
+  # Fetch adapter is a separate plaintext HTTP transport, not a TLS tunnel.
   configureFlags = [
     "--disable-shared"
     "--enable-static"
@@ -64,6 +71,21 @@ stdenv.mkDerivation (finalAttrs: {
     "--without-ca-path"
     "--without-ca-embed"
   ];
+
+  postBuild = ''
+    node ${../busybox/check-binary.mjs} ${../../packages/kernel/src/wasm_binary.ts} \
+      src/curl ${toString platform.addressBits} ${toString platform.maximumMemoryBytes}
+  '';
+
+  postInstall = ''
+    mkdir -p $out/share/licenses/curl
+    cp COPYING $out/share/licenses/curl/curl-COPYING
+    cp ${../sdk/LICENSE.MIT} $out/share/licenses/curl/integration-MIT
+    cp ${zlib.src}/zlib.h $out/share/licenses/curl/zlib.h
+    cp ${openssl}/share/licenses/openssl/LICENSE.txt $out/share/licenses/curl/openssl-LICENSE.txt
+    cp ${openssl}/share/licenses/openssl/musl-COPYRIGHT $out/share/licenses/curl/musl-COPYRIGHT
+    cp ${openssl}/share/licenses/openssl/compiler-rt-LICENSE.TXT $out/share/licenses/curl/compiler-rt-LICENSE.TXT
+  '';
 
   # Configure must find the Nix-staged OpenSSL and zlib while cross-building,
   # but the installed metadata (curl-config, libcurl.la, libcurl.pc) describes
@@ -95,6 +117,16 @@ stdenv.mkDerivation (finalAttrs: {
   ];
 
   passthru.checks = {
+    https = vm-test.installedTest {
+      name = "curl-verified-https-${platform.wasmArch}";
+      init = ./tests/https-test.sh;
+      contents = [
+        busybox
+        ca-certificates
+        openssl
+        finalAttrs.finalPackage
+      ];
+    };
     transfers = vm-test.installedTest {
       name = "curl-transfers";
       init = ./tests/transfers-test.sh;

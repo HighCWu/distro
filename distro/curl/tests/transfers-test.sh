@@ -19,8 +19,8 @@ for p in file http https; do
   echo "$protocols" | grep -qw "$p" || fail "protocol $p missing from: $protocols"
 done
 
-# HTTPS leaves the guest through the host Fetch bridge, so curl must not bake a
-# nonexistent guest trust-store path into the package.
+# This profile has no compiled-in CA path. Direct TLS needs an explicit CA
+# file; the optional plaintext HTTP-to-Fetch adapter is a separate transport.
 [ -z "$(curl-config --ca)" ] || fail "unexpected default CA bundle: $(curl-config --ca)"
 
 # (b) file:// round trip: fetch a local file through curl and byte-compare.

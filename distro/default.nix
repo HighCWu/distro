@@ -188,6 +188,14 @@ lib.makeScope (scope: lib.callPackageWith ({ inherit lib pkgs; } // scope)) (
     ca-certificates = callPackage ./ca-certificates/package.nix { };
     coreutils = callPackage ./coreutils/package.nix { };
     curl = callPackage ./curl/package.nix { };
+    curl-wasm64 = self.curl.override {
+      stdenv = self.stdenv-wasm64;
+      platform = self.platform-wasm64;
+      openssl = self.openssl-wasm64;
+      zlib = self.zlib-wasm64;
+      busybox = self.busybox-wasm64;
+      vm-test = vmTestWasm64;
+    };
     diffutils = callPackage ./diffutils/package.nix { };
     dropbear = callPackage ./dropbear/package.nix { };
     e2fsprogs = callPackage ./e2fsprogs/package.nix { };
@@ -242,6 +250,11 @@ lib.makeScope (scope: lib.callPackageWith ({ inherit lib pkgs; } // scope)) (
     vim = callPackage ./vim/package.nix { };
     xz = callPackage ./xz/package.nix { };
     zlib = callPackage ./zlib/package.nix { };
+    zlib-wasm64 = self.zlib.override {
+      stdenv = self.stdenv-wasm64;
+      busybox = self.busybox-wasm64;
+      vm-test = vmTestWasm64;
+    };
     zstd = callPackage ./zstd/package.nix {
       vm-test-file = self.vm-test.override {
         kernel = self.kernel.override {
