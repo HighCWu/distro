@@ -552,6 +552,7 @@ export class BrowserFS implements FS<Node, Handle> {
       return entries.map(([name, handle]) => ({
         name,
         node: this.#remember([...current.parts, name], handle),
+        type: handle.kind,
       }));
     }
   }

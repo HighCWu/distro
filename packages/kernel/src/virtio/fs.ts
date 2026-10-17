@@ -161,6 +161,10 @@ export interface FSSetAttributes {
 export interface FSDirectoryEntry<TNode> {
   name: string;
   node: TNode;
+  /** Type already known by enumeration. Omit to derive it through getattr.
+   * This is dirent metadata, not a substitute for stat or access checks.
+   */
+  type?: keyof typeof DirentType;
 }
 
 export interface FSStat {
@@ -1161,13 +1165,21 @@ export function fileSystemDevice<TNode extends object, THandle, T extends FS<TNo
           { name: "..", record: handle.node.parent },
         ];
         const limit = Math.min(request.size, capacity - FuseOutHeader.size);
-        async function append_entry(name: Uint8Array, record: NodeRecord<TNode>, index: number) {
-          const attributes = await filesystem.getattr(record.node);
+        async function append_entry(
+          name: Uint8Array,
+          record: NodeRecord<TNode>,
+          index: number,
+          type?: keyof typeof DirentType,
+        ) {
+          const kind = type ?? mode_type((await filesystem.getattr(record.node)).mode);
+          if (!Object.hasOwn(DirentType, kind)) {
+            throw new FSError("EIO", "filesystem returned an invalid directory entry type");
+          }
           payload.alloc(FuseDirent).value = {
             ino: record.id,
             off: BigInt(index + 1),
             namelen: name.byteLength,
-            type: DirentType[mode_type(attributes.mode)],
+            type: DirentType[kind],
           };
           payload.append(name);
           payload.bump(-payload.length & 7);
@@ -1194,7 +1206,7 @@ export function fileSystemDevice<TNode extends object, THandle, T extends FS<TNo
           if (!fits(name)) break;
           const record = record_for_node(entry.node, handle.node);
           try {
-            await append_entry(name, record, position);
+            await append_entry(name, record, position, entry.type);
           } finally {
             collect_record(record);
           }

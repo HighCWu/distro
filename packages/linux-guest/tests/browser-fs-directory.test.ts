@@ -3,6 +3,33 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import { BrowserFS } from "../src/browser.ts";
 
+test("BrowserFS exposes enumeration kinds without reading child file metadata", async () => {
+  const root = {
+    kind: "directory",
+    async *entries() {
+      yield [
+        "file",
+        {
+          kind: "file",
+          getFile() {
+            throw new Error("unexpected metadata read");
+          },
+        },
+      ];
+      yield ["directory", { kind: "directory" }];
+    },
+  } as unknown as FileSystemDirectoryHandle;
+  const fs = new BrowserFS(root);
+  const entries = await fs.readdir(fs.root, await fs.opendir(fs.root));
+  assert.deepEqual(
+    entries.map(({ name, type }) => [name, type]),
+    [
+      ["file", "file"],
+      ["directory", "directory"],
+    ],
+  );
+});
+
 function directoryFixture() {
   const files = new Map([
     ["source/known", "before"],

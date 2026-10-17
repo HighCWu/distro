@@ -4,8 +4,13 @@ import test from "node:test";
 import { fileSystemDevice, FSError } from "../src/virtio/fs.ts";
 import { close_virtio_device, virtio_imports } from "../src/virtio/core.ts";
 
-for (const asynchronous of [false, true]) {
-  test(`FUSE readdir streams pages and closes iterators, async=${asynchronous}`, async () => {
+for (const [asynchronous, typed] of [
+  [false, false],
+  [false, true],
+  [true, false],
+  [true, true],
+]) {
+  test(`FUSE readdir streams pages and closes iterators, async=${asynchronous}, typed=${typed}`, async () => {
     const root = {},
       nodes = [{}, {}, {}];
     let opened = 0,
@@ -13,12 +18,17 @@ for (const asynchronous of [false, true]) {
       closed = 0,
       attributes = 0;
     let failAttributes = false;
+    let invalidType = false;
     function* entries() {
       opened++;
       try {
         for (const [index, node] of nodes.entries()) {
           yielded++;
-          yield { name: String.fromCharCode(97 + index), node };
+          yield {
+            name: String.fromCharCode(97 + index),
+            node,
+            type: typed ? ((invalidType ? "invalid" : "file") as "file") : undefined,
+          };
         }
         throw new Error("must not traverse beyond the requested page");
       } finally {
@@ -92,13 +102,14 @@ for (const asynchronous of [false, true]) {
         input.setBigUint64(8, BigInt(offset), true);
         input.setUint32(16, size, true);
         await request(28, body, errno);
-        const result: { name: string; offset: bigint; ino: bigint }[] = [];
+        const result: { name: string; offset: bigint; ino: bigint; type: number }[] = [];
         for (let cursor = 1040; cursor < 1024 + view.getUint32(1024, true);) {
           const length = view.getUint32(cursor + 16, true);
           result.push({
             name: new TextDecoder().decode(bytes.subarray(cursor + 24, cursor + 24 + length)),
             offset: view.getBigUint64(cursor + 8, true),
             ino: view.getBigUint64(cursor, true),
+            type: view.getUint32(cursor + 20, true),
           });
           cursor += (24 + length + 7) & ~7;
         }
@@ -112,7 +123,8 @@ for (const asynchronous of [false, true]) {
       const first = await page(2, 32);
       assert.equal(first[0]!.name, "a");
       assert.equal(first[0]!.offset, 3n);
-      assert.deepEqual([opened, yielded, closed, attributes], [1, 1, 1, 3]);
+      assert.equal(first[0]!.type, 8, "regular-file d_type is preserved");
+      assert.deepEqual([opened, yielded, closed, attributes], [1, 1, 1, typed ? 2 : 3]);
       const remaining = await page(3, 64);
       assert.deepEqual(
         remaining.map((e) => [e.name, e.offset]),
@@ -121,10 +133,16 @@ for (const asynchronous of [false, true]) {
           ["c", 5n],
         ],
       );
-      assert.deepEqual([opened, yielded, closed, attributes], [2, 4, 2, 5]);
+      assert.deepEqual([opened, yielded, closed, attributes], [2, 4, 2, typed ? 2 : 5]);
       assert.equal((await page(2, 32))[0]!.ino, first[0]!.ino, "stable inode across pages");
       failAttributes = true;
-      await page(2, 32, 13);
+      const withoutMetadata = await page(2, 32, typed ? 0 : 13);
+      if (typed) {
+        assert.equal(withoutMetadata[0]!.name, "a", "typed entries do not require stat");
+        assert.equal(attributes, 2, "only dot entries needed getattr");
+        invalidType = true;
+        await page(2, 32, 5);
+      }
       assert.equal(closed, opened, "attribute failure also closes the backend iterator");
     } finally {
       await close_virtio_device(device);

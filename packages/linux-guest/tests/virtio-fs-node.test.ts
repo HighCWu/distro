@@ -37,6 +37,24 @@ await mkdir(shared);
 await mkdir(outside);
 after(() => rm(temporary, { recursive: true, force: true }));
 
+test("node virtio-fs directory entries preserve file, directory and symlink kinds", async () => {
+  const directory = await mkdtemp(path.join(temporary, "entry-types-"));
+  await writeFile(path.join(directory, "file"), "data");
+  await mkdir(path.join(directory, "directory"));
+  await symlink("file", path.join(directory, "link"));
+  await symlink("missing", path.join(directory, "dangling"));
+  const fs = new NodeFS(directory);
+  const handle = await fs.opendir(fs.root);
+  // Directory handles are logical objects, not host directory descriptors.
+  const entries = await fs.readdir(fs.root, handle);
+  assert.deepEqual(entries.map(({ name, type }) => [name, type]).sort(), [
+    ["dangling", "symlink"],
+    ["directory", "directory"],
+    ["file", "file"],
+    ["link", "symlink"],
+  ]);
+});
+
 test("node virtio-fs preserves sub-millisecond and pre-epoch timestamps", async () => {
   const fs = new NodeFS(shared);
   const { node, handle } = await fs.create(fs.root, "timestamp-check", linux_open.readwrite, {

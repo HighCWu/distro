@@ -578,6 +578,21 @@ export class NodeFS implements FS<Node, Handle> {
         result.push({
           name: entry.name,
           node: this.#node([...parts, entry.name]),
+          type: entry.isFile()
+            ? "file"
+            : entry.isDirectory()
+              ? "directory"
+              : entry.isSymbolicLink()
+                ? "symlink"
+                : entry.isFIFO()
+                  ? "fifo"
+                  : entry.isCharacterDevice()
+                    ? "character"
+                    : entry.isBlockDevice()
+                      ? "block"
+                      : entry.isSocket()
+                        ? "socket"
+                        : undefined,
         });
       }
       return result;
