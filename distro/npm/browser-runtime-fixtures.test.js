@@ -22,14 +22,16 @@ const fixtures = [
     title: "runs SDK futex time64 waits, wake operations and waitv through Linux",
     entry: "bootFutexRuntimeSmoke",
     path: "/runtime-futex.cpio",
-    stage: "futex ABI: relative wait, wake operation and private/shared waitv timeouts verified",
+    stages: ["futex ABI: relative wait, wake operation and private/shared waitv timeouts verified"],
   },
   {
     title: "runs SDK robust mutex owner-death recovery through Linux",
     entry: "bootRobustMutexRuntimeSmoke",
     path: "/runtime-robust-mutex.cpio",
-    stage:
+    stages: [
+      "robust mutex: four contending threads serialize one owner-dead repair verified",
       "robust mutex: owner death, consistent recovery, unrecoverable state and cancellation verified",
+    ],
   },
 ];
 
@@ -96,11 +98,16 @@ for (const fixture of fixtures) {
   });
 
   test(`${fixture.entry} requires its stage, pass and absence of failure`, async () => {
+    const stage = fixture.stages.join("\n");
     for (const [output, accepted] of [
-      [`${fixture.stage}\n::vm-test::pass\n`, true],
+      [`${stage}\n::vm-test::pass\n`, true],
       ["::vm-test::pass\n", false],
-      [`${fixture.stage}\n`, false],
-      [`${fixture.stage}\n::vm-test::pass\n::vm-test::fail: broken\n`, false],
+      [`${stage}\n`, false],
+      [`${stage}\n::vm-test::pass\n::vm-test::fail: broken\n`, false],
+      ...fixture.stages.map((missing) => [
+        `${fixture.stages.filter((value) => value !== missing).join("\n")}\n::vm-test::pass\n`,
+        false,
+      ]),
     ]) {
       let calls = 0;
       const cases = loadCases({
