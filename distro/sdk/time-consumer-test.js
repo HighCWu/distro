@@ -14,6 +14,10 @@ for (const [fixture, finalStage] of [
     "signal waits: pending/concurrent mask handoff, EINTR, timeout and readiness verified",
   ],
   [
+    "signal-io",
+    "signal I/O: partial progress, explicit suffix retry and single child reaping verified",
+  ],
+  [
     "thread-time-abi",
     "thread time ABI: wakeups, cancellation, broadcast, timeouts and mutex ownership verified",
   ],

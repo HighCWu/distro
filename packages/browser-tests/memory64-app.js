@@ -21,3 +21,4 @@ globalThis.bootSocketRuntimeSmoke = () => bootRuntime("/runtime-sockets.cpio");
 globalThis.bootTimeRuntimeSmoke = () => bootRuntime("/runtime-time.cpio");
 globalThis.bootThreadTimeRuntimeSmoke = () => bootRuntime("/runtime-thread-time.cpio");
 globalThis.bootSignalWaitRuntimeSmoke = () => bootRuntime("/runtime-signal-waits.cpio");
+globalThis.bootSignalIoRuntimeSmoke = () => bootRuntime("/runtime-signal-io.cpio");

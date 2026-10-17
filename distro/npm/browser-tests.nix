@@ -33,6 +33,7 @@ let
     "runs SDK time64 relative and absolute timers and ready-fd waits through Linux"
     "runs SDK pthread time64 waits, cancellation and broadcast through Linux"
     "runs SDK ppoll and pselect signal-mask handoff through Linux"
+    "runs SDK partial pipe I/O and interrupted child reaping through Linux"
     "retries a failed kernel download in the same page with a generic MIME type"
   ];
 
@@ -97,6 +98,10 @@ let
         name = "wasm${toString bits}-browser-runtime-signal-waits";
         init = (if bits == 64 then sdk-wasm64 else sdk).signalWaitProgram;
       };
+      signalIoInitramfs = image.mkInitramfs {
+        name = "wasm${toString bits}-browser-runtime-signal-io";
+        init = (if bits == 64 then sdk-wasm64 else sdk).signalIoProgram;
+      };
     in
     pkgs.runCommand "wasm${toString bits}-runtime-browser-tests" { } ''
       mkdir -p \
@@ -114,6 +119,7 @@ let
       cp ${timeInitramfs} $out/runtime-time.cpio
       cp ${threadTimeInitramfs} $out/runtime-thread-time.cpio
       cp ${signalWaitInitramfs} $out/runtime-signal-waits.cpio
+      cp ${signalIoInitramfs} $out/runtime-signal-io.cpio
       cp ${source}/memory64-index.html $out/index.html
       cp ${source}/playwright.config.js $out/playwright.config.js
       cp ${source}/server.js $out/server.js
