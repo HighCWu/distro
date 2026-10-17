@@ -236,6 +236,10 @@ let
         init = "${signalFutexPrograms}/sdk-signal-futex.wasm";
         cpus = 2;
       };
+      futex-runtime = vm-test.rawInitramfsTest {
+        name = "sdk-futex-runtime-${platform.wasmArch}";
+        init = "${futexPrograms}/sdk-futex.wasm";
+      };
       autoconf-runtime = vm-test.rawInitramfsTest {
         name = "sdk-autoconf-runtime-${platform.wasmArch}";
         init = "${autoconfPrograms}/sdk-autoconf.wasm";
@@ -406,6 +410,11 @@ let
     mkdir $out
     ${cc}/bin/wasm-linux-cc -O2 -pthread -Wall -Wextra -Werror \
       -I${../basic-init/tests} ${../basic-init/tests/signal-futex.c} -o $out/sdk-signal-futex.wasm
+  '';
+  futexPrograms = pkgs.runCommand "sdk-futex-consumer-${platform.wasmArch}" { } ''
+    mkdir $out
+    ${cc}/bin/wasm-linux-cc -O2 -Wall -Wextra -Werror \
+      -I${../basic-init/tests} ${../basic-init/tests/futex.c} -o $out/sdk-futex.wasm
   '';
   sqlitePrograms = pkgs.runCommand "sdk-sqlite-consumer-${platform.wasmArch}" { } ''
     mkdir $out
