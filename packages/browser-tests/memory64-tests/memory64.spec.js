@@ -143,6 +143,21 @@ test("runs SDK pthread time64 waits, cancellation and broadcast through Linux", 
   expect(output).not.toContain("::vm-test::fail");
 });
 
+test("runs SDK ppoll and pselect signal-mask handoff through Linux", async ({ page }) => {
+  page.on("console", (message) => console.log(`[browser] ${message.text()}`));
+  page.on("pageerror", (error) => console.error(`[browser] ${error.stack ?? error}`));
+  await page.goto("/");
+  await expect
+    .poll(() => page.evaluate(() => typeof globalThis.bootSignalWaitRuntimeSmoke))
+    .toBe("function");
+  const output = await page.evaluate(() => globalThis.bootSignalWaitRuntimeSmoke());
+  expect(output).toContain(
+    "signal waits: pending/concurrent mask handoff, EINTR, timeout and readiness verified",
+  );
+  expect(output).toContain("::vm-test::pass");
+  expect(output).not.toContain("::vm-test::fail");
+});
+
 test("retries a failed kernel download in the same page with a generic MIME type", async ({
   page,
 }) => {

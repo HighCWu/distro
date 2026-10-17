@@ -10,6 +10,10 @@ import test from "node:test";
 for (const [fixture, finalStage] of [
   ["time-abi", "time ABI: relative/absolute timers, expiration and ready-fd waits verified"],
   [
+    "signal-waits",
+    "signal waits: pending/concurrent mask handoff, EINTR, timeout and readiness verified",
+  ],
+  [
     "thread-time-abi",
     "thread time ABI: wakeups, cancellation, broadcast, timeouts and mutex ownership verified",
   ],

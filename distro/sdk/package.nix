@@ -163,6 +163,7 @@ let
     passthru.socketProgram = "${socketPrograms}/sdk-socket.wasm";
     passthru.timeProgram = "${timePrograms}/sdk-time.wasm";
     passthru.threadTimeProgram = "${threadTimePrograms}/sdk-thread-time.wasm";
+    passthru.signalWaitProgram = "${signalWaitPrograms}/sdk-signal-waits.wasm";
     passthru.checks = {
       licenses = licenseTexts;
       profile = profileCheck;
@@ -216,6 +217,11 @@ let
       thread-time-runtime = vm-test.rawInitramfsTest {
         name = "sdk-thread-time-runtime-${platform.wasmArch}";
         init = "${threadTimePrograms}/sdk-thread-time.wasm";
+        cpus = 2;
+      };
+      signal-waits-runtime = vm-test.rawInitramfsTest {
+        name = "sdk-signal-waits-runtime-${platform.wasmArch}";
+        init = "${signalWaitPrograms}/sdk-signal-waits.wasm";
         cpus = 2;
       };
       autoconf-runtime = vm-test.rawInitramfsTest {
@@ -373,6 +379,11 @@ let
     mkdir $out
     ${cc}/bin/wasm-linux-cc -O2 -pthread -Wall -Wextra -Werror \
       -I${../basic-init/tests} ${../basic-init/tests/thread-time-abi.c} -o $out/sdk-thread-time.wasm
+  '';
+  signalWaitPrograms = pkgs.runCommand "sdk-signal-waits-consumer-${platform.wasmArch}" { } ''
+    mkdir $out
+    ${cc}/bin/wasm-linux-cc -O2 -pthread -Wall -Wextra -Werror \
+      -I${../basic-init/tests} ${../basic-init/tests/signal-waits.c} -o $out/sdk-signal-waits.wasm
   '';
   sqlitePrograms = pkgs.runCommand "sdk-sqlite-consumer-${platform.wasmArch}" { } ''
     mkdir $out

@@ -20,3 +20,4 @@ globalThis.bootSqliteRuntimeSmoke = () => bootRuntime("/runtime-sqlite.cpio");
 globalThis.bootSocketRuntimeSmoke = () => bootRuntime("/runtime-sockets.cpio");
 globalThis.bootTimeRuntimeSmoke = () => bootRuntime("/runtime-time.cpio");
 globalThis.bootThreadTimeRuntimeSmoke = () => bootRuntime("/runtime-thread-time.cpio");
+globalThis.bootSignalWaitRuntimeSmoke = () => bootRuntime("/runtime-signal-waits.cpio");
