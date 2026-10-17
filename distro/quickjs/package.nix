@@ -12,6 +12,7 @@
   platform,
   musl,
   llvm-runtimes,
+  image,
 }:
 
 stdenv.mkDerivation (finalAttrs: {
@@ -84,6 +85,30 @@ stdenv.mkDerivation (finalAttrs: {
     cp ${llvm-runtimes.src}/compiler-rt/LICENSE.TXT $out/share/licenses/quickjs/compiler-rt-LICENSE.TXT
     runHook postInstall
   '';
+
+  # Run the exact installed-system workload in a disposable browser initramfs.
+  # Keep the installed license paths used by that workload without pretending
+  # this is a package-manager installation or a persistent root filesystem.
+  passthru.browserInitramfs = image.mkInitramfs {
+    name = "quickjs-language-${platform.wasmArch}";
+    init = ./language-test.sh;
+    contents = [
+      busybox
+      finalAttrs.finalPackage
+    ];
+    files = builtins.listToAttrs (
+      map
+        (license: {
+          name = "/usr/share/licenses/quickjs/${license}";
+          value = "${finalAttrs.finalPackage}/share/licenses/quickjs/${license}";
+        })
+        [
+          "quickjs-LICENSE"
+          "musl-COPYRIGHT"
+          "compiler-rt-LICENSE.TXT"
+        ]
+    );
+  };
 
   passthru.checks = {
     language = vm-test.installedTest {

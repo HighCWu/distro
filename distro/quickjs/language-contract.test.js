@@ -40,3 +40,23 @@ test("wasm64 QuickJS uses matching toolchain, dependencies and runtime", () => {
   }
   assert.match(override[1], /vm-test = vmTestWasm64;/);
 });
+
+test("browser image reuses the full target workload and matching package outputs", () => {
+  const recipe = readFileSync(new URL("./package.nix", import.meta.url), "utf8");
+  const fixture = recipe.match(
+    /passthru\.browserInitramfs = image\.mkInitramfs \{([\s\S]*?)\n  \};/,
+  );
+  assert.ok(fixture);
+  assert.match(fixture[1], /init = \.\/language-test\.sh;/);
+  assert.match(fixture[1], /contents = \[\s*busybox\s+finalAttrs\.finalPackage\s*\];/);
+  assert.ok(fixture[1].includes('name = "/usr/share/licenses/quickjs/${license}";'));
+  assert.ok(
+    fixture[1].includes('value = "${finalAttrs.finalPackage}/share/licenses/quickjs/${license}";'),
+  );
+  const browser = readFileSync(new URL("../npm/browser-tests.nix", import.meta.url), "utf8");
+  assert.ok(
+    browser.includes(
+      "cp ${(if bits == 64 then quickjs-wasm64 else quickjs).browserInitramfs} $out/runtime-quickjs.cpio",
+    ),
+  );
+});

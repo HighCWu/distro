@@ -19,6 +19,12 @@ const titles = [
 ].map((match) => match[1]);
 const fixtures = [
   {
+    title: "runs QuickJS language, file I/O, spawn, Worker, timers and bytecode through Linux",
+    entry: "bootQuickjsRuntimeSmoke",
+    path: "/runtime-quickjs.cpio",
+    stages: ["QuickJS: language, file I/O, spawn, Worker, timers and bytecode generation verified"],
+  },
+  {
     title: "runs SDK C++ filesystem copies, links, time64 metadata and errors through Linux",
     entry: "bootFilesystemRuntimeSmoke",
     path: "/runtime-filesystem.cpio",
@@ -72,7 +78,7 @@ function loadCases(globals = {}) {
 
 test("Nix report gate exactly matches all registered runtime cases", () => {
   assert.deepEqual([...loadCases().keys()].sort(), [...titles].sort());
-  assert.equal(titles.length, 15);
+  assert.equal(titles.length, 16);
   const report = {
     suites: [
       {

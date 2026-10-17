@@ -28,3 +28,4 @@ globalThis.bootRobustMutexRuntimeSmoke = () => bootRuntime("/runtime-robust-mute
 globalThis.bootSemaphoreDeadlineRuntimeSmoke = () =>
   bootRuntime("/runtime-semaphore-deadline.cpio");
 globalThis.bootFilesystemRuntimeSmoke = () => bootRuntime("/runtime-filesystem.cpio");
+globalThis.bootQuickjsRuntimeSmoke = () => bootRuntime("/runtime-quickjs.cpio");

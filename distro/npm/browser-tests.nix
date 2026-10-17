@@ -13,6 +13,8 @@
   linux-guest,
   pkgs,
   playwright,
+  quickjs,
+  quickjs-wasm64,
   repository,
   sdk,
   sdk-wasm64,
@@ -41,6 +43,7 @@ let
     "runs SDK robust mutex owner-death recovery through Linux"
     "runs SDK named and unnamed semaphore deadline boundaries through Linux"
     "runs SDK C++ filesystem copies, links, time64 metadata and errors through Linux"
+    "runs QuickJS language, file I/O, spawn, Worker, timers and bytecode through Linux"
     "retries a failed kernel download in the same page with a generic MIME type"
   ];
 
@@ -152,6 +155,7 @@ let
       cp ${robustMutexInitramfs} $out/runtime-robust-mutex.cpio
       cp ${semaphoreDeadlineInitramfs} $out/runtime-semaphore-deadline.cpio
       cp ${filesystemInitramfs} $out/runtime-filesystem.cpio
+      cp ${(if bits == 64 then quickjs-wasm64 else quickjs).browserInitramfs} $out/runtime-quickjs.cpio
       cp ${source}/memory64-index.html $out/index.html
       cp ${source}/playwright.config.js $out/playwright.config.js
       cp ${source}/server.js $out/server.js
