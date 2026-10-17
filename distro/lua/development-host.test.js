@@ -3,6 +3,7 @@ import assert from "node:assert/strict";
 import { spawnSync } from "node:child_process";
 import {
   cpSync,
+  existsSync,
   mkdirSync,
   mkdtempSync,
   readFileSync,
@@ -19,6 +20,19 @@ import test from "node:test";
 const metadata = readFileSync(new URL("./lua.pc.in", import.meta.url), "utf8");
 const stage =
   "Lua embedding: installed archive, C callbacks, integer64, errors and coroutine verified";
+
+function hostDirectory(query, variable, option, prefix, file) {
+  // Some distributions use includedir=/usr/include but Cflags names a versioned
+  // subdirectory. Likewise a multiarch -L may be more specific than libdir.
+  const flags = query(option).trim().split(/\s+/);
+  const candidates = flags
+    .filter((flag) => flag.startsWith(prefix))
+    .map((flag) => flag.slice(prefix.length));
+  candidates.push(query(`--variable=${variable}`).trim());
+  const directory = candidates.find((path) => path && existsSync(join(path, file)));
+  assert.ok(directory, `native Lua ${file} not found; configure LUA_HOST_INCLUDE/LUA_HOST_ARCHIVE`);
+  return directory;
+}
 
 test("explicit development layout survives Nix multiple-output fixup policy", () => {
   const recipe = readFileSync(new URL("./package.nix", import.meta.url), "utf8");
@@ -86,22 +100,71 @@ test("Lua static metadata follows a relocated dev output and forbids host fallba
   });
 });
 
+test("native Lua discovery honors versioned headers and multiarch flags rather than parent variables", () => {
+  workspace(({ original, query }) => {
+    const include = join(original, "include/lua5.4");
+    const library = join(original, "lib/test-multiarch");
+    mkdirSync(include);
+    mkdirSync(library);
+    writeFileSync(join(include, "lua.h"), "/* discovery fixture */\n");
+    writeFileSync(join(library, "liblua5.4.a"), "discovery fixture\n");
+    writeFileSync(
+      join(original, "lib/pkgconfig/native-lua.pc"),
+      `
+Name: Native Lua discovery fixture
+Description: Parent variables deliberately do not contain headers/archive
+Version: 5.4
+includedir=${original}/include
+libdir=${original}/lib
+Cflags: -I${include}
+Libs: -L${library} -llua5.4
+`,
+    );
+    const nativeQuery = (option) => {
+      const result = query(original, [option, "native-lua"]);
+      assert.equal(result.status, 0, result.stderr);
+      return result.stdout;
+    };
+    assert.equal(
+      hostDirectory(nativeQuery, "includedir", "--cflags-only-I", "-I", "lua.h"),
+      include,
+    );
+    assert.equal(
+      hostDirectory(nativeQuery, "libdir", "--libs-only-L", "-L", "liblua5.4.a"),
+      library,
+    );
+    unlinkSync(join(include, "lua.h"));
+    assert.throws(
+      () => hostDirectory(nativeQuery, "includedir", "--cflags-only-I", "-I", "lua.h"),
+      /not found/,
+    );
+  });
+});
+
 test("C embedding consumer uses copied native headers and archive with GCC and Clang", () => {
   workspace(({ root, original, relocated, query }) => {
-    const hostPath = (variable) => {
-      const result = spawnSync("pkg-config", [`--variable=${variable}`, "lua5.4"], {
+    const hostQuery = (option) => {
+      const result = spawnSync("pkg-config", [option, "lua5.4"], {
         encoding: "utf8",
+        env: {
+          ...process.env,
+          PKG_CONFIG_ALLOW_SYSTEM_CFLAGS: "1",
+          PKG_CONFIG_ALLOW_SYSTEM_LIBS: "1",
+        },
       });
       assert.equal(
         result.status,
         0,
         "install liblua5.4-dev or configure LUA_HOST_INCLUDE/LUA_HOST_ARCHIVE",
       );
-      assert.ok(result.stdout.trim());
       return result.stdout.trim();
     };
-    const include = process.env.LUA_HOST_INCLUDE ?? hostPath("includedir");
-    const archive = process.env.LUA_HOST_ARCHIVE ?? join(hostPath("libdir"), "liblua5.4.a");
+    const include =
+      process.env.LUA_HOST_INCLUDE ??
+      hostDirectory(hostQuery, "includedir", "--cflags-only-I", "-I", "lua.h");
+    const archive =
+      process.env.LUA_HOST_ARCHIVE ??
+      join(hostDirectory(hostQuery, "libdir", "--libs-only-L", "-L", "liblua5.4.a"), "liblua5.4.a");
     for (const header of ["lua.h", "luaconf.h", "lauxlib.h", "lualib.h"])
       cpSync(join(include, header), join(original, "include", header));
     cpSync(archive, join(original, "lib/liblua.a"));
