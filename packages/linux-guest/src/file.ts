@@ -157,9 +157,9 @@ export class FsFile implements AsyncDisposable {
   #close?: Promise<void>;
   readonly #fd: GuestFd;
 
-  /** The file as a byte stream, read from the current offset to the end. */
+  /** Reads from the current offset; EOF, cancellation or I/O failure closes the file. */
   readonly readable: ReadableStream<Uint8Array>;
-  /** The file as a byte sink; each write goes to the current offset. */
+  /** Writes at the current offset; completion, abort or I/O failure closes the file. */
   readonly writable: WritableStream<Uint8Array>;
 
   constructor(fd: GuestFd) {
@@ -169,7 +169,12 @@ export class FsFile implements AsyncDisposable {
       type: "bytes",
       pull: async (controller) => {
         const buffer = new Uint8Array(CHUNK);
-        const length = await this.read(buffer);
+        let length;
+        try {
+          length = await this.read(buffer);
+        } catch (error) {
+          return this.#stream_error(error);
+        }
         if (length === null) {
           await this.close();
           controller.close();
@@ -181,18 +186,35 @@ export class FsFile implements AsyncDisposable {
     });
     this.writable = new WritableStream({
       write: async (chunk) => {
-        let offset = 0;
-        while (offset < chunk.byteLength) {
-          const written = await this.write(chunk.subarray(offset));
-          if (written === 0) {
-            throw new SystemError(E.IO);
+        try {
+          let offset = 0;
+          while (offset < chunk.byteLength) {
+            const written = await this.write(chunk.subarray(offset));
+            if (written === 0) {
+              throw new SystemError(E.IO);
+            }
+            offset += written;
           }
-          offset += written;
+        } catch (error) {
+          return this.#stream_error(error);
         }
       },
       close: () => this.close(),
       abort: () => this.close(),
     });
+  }
+
+  // A failed underlying stream operation errors the stream, but Web Streams
+  // do not then call cancel/abort. Close explicitly rather than leaking its fd.
+  async #stream_error(error: unknown): Promise<never> {
+    try {
+      await this.close();
+    } catch (cleanupError) {
+      throw new AggregateError([error, cleanupError], "file stream and cleanup failed", {
+        cause: error,
+      });
+    }
+    throw error;
   }
 
   // Reads and writes share a file offset in the guest, so operations on an

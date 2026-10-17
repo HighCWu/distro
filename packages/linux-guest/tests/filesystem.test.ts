@@ -4,6 +4,7 @@ import { guest_test } from "./fixture.ts";
 import { pattern_bytes } from "./helpers.ts";
 import { checkExecFileDescriptors } from "./exec-file-descriptors-runtime.ts";
 import { checkLockedWriteInput } from "./write-file-runtime.ts";
+import { checkFileStreamErrors } from "./file-stream-runtime.ts";
 
 guest_test("filesystem", async (t, fixture) => {
   const agent = await fixture.spawn();
@@ -23,6 +24,10 @@ guest_test("filesystem", async (t, fixture) => {
 
   await t.test("locked write input neither truncates nor creates destination files", async () => {
     await checkLockedWriteInput(fs, assert, `${directory}/locked-input`);
+  });
+
+  await t.test("file streams close their handles after native I/O errors", async () => {
+    await checkFileStreamErrors(fs, assert, `${directory}/stream-errors`);
   });
 
   await t.test("stats files", async () => {
