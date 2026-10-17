@@ -23,3 +23,5 @@ globalThis.bootThreadTimeRuntimeSmoke = () => bootRuntime("/runtime-thread-time.
 globalThis.bootSignalWaitRuntimeSmoke = () => bootRuntime("/runtime-signal-waits.cpio");
 globalThis.bootSignalIoRuntimeSmoke = () => bootRuntime("/runtime-signal-io.cpio");
 globalThis.bootSignalFutexRuntimeSmoke = () => bootRuntime("/runtime-signal-futex.cpio");
+globalThis.bootFutexRuntimeSmoke = () => bootRuntime("/runtime-futex.cpio");
+globalThis.bootRobustMutexRuntimeSmoke = () => bootRuntime("/runtime-robust-mutex.cpio");

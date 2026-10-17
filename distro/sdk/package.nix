@@ -166,6 +166,8 @@ let
     passthru.signalWaitProgram = "${signalWaitPrograms}/sdk-signal-waits.wasm";
     passthru.signalIoProgram = "${signalIoPrograms}/sdk-signal-io.wasm";
     passthru.signalFutexProgram = "${signalFutexPrograms}/sdk-signal-futex.wasm";
+    passthru.futexProgram = "${futexPrograms}/sdk-futex.wasm";
+    passthru.robustMutexProgram = "${robustMutexPrograms}/sdk-robust-mutex.wasm";
     passthru.checks = {
       licenses = licenseTexts;
       profile = profileCheck;

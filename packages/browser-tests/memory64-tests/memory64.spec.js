@@ -190,6 +190,36 @@ test("runs SDK futex signal restart and timed interruption through Linux", async
   expect(output).not.toContain("::vm-test::fail");
 });
 
+test("runs SDK futex time64 waits, wake operations and waitv through Linux", async ({ page }) => {
+  page.on("console", (message) => console.log(`[browser] ${message.text()}`));
+  page.on("pageerror", (error) => console.error(`[browser] ${error.stack ?? error}`));
+  await page.goto("/");
+  await expect
+    .poll(() => page.evaluate(() => typeof globalThis.bootFutexRuntimeSmoke))
+    .toBe("function");
+  const output = await page.evaluate(() => globalThis.bootFutexRuntimeSmoke());
+  expect(output).toContain(
+    "futex ABI: relative wait, wake operation and private/shared waitv timeouts verified",
+  );
+  expect(output).toContain("::vm-test::pass");
+  expect(output).not.toContain("::vm-test::fail");
+});
+
+test("runs SDK robust mutex owner-death recovery through Linux", async ({ page }) => {
+  page.on("console", (message) => console.log(`[browser] ${message.text()}`));
+  page.on("pageerror", (error) => console.error(`[browser] ${error.stack ?? error}`));
+  await page.goto("/");
+  await expect
+    .poll(() => page.evaluate(() => typeof globalThis.bootRobustMutexRuntimeSmoke))
+    .toBe("function");
+  const output = await page.evaluate(() => globalThis.bootRobustMutexRuntimeSmoke());
+  expect(output).toContain(
+    "robust mutex: owner death, consistent recovery, unrecoverable state and cancellation verified",
+  );
+  expect(output).toContain("::vm-test::pass");
+  expect(output).not.toContain("::vm-test::fail");
+});
+
 test("retries a failed kernel download in the same page with a generic MIME type", async ({
   page,
 }) => {

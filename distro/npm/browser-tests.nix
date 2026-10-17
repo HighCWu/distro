@@ -35,6 +35,8 @@ let
     "runs SDK ppoll, pselect and sigsuspend signal-mask handoff through Linux"
     "runs SDK partial pipe I/O and interrupted child reaping through Linux"
     "runs SDK futex signal restart and timed interruption through Linux"
+    "runs SDK futex time64 waits, wake operations and waitv through Linux"
+    "runs SDK robust mutex owner-death recovery through Linux"
     "retries a failed kernel download in the same page with a generic MIME type"
   ];
 
@@ -107,6 +109,14 @@ let
         name = "wasm${toString bits}-browser-runtime-signal-futex";
         init = (if bits == 64 then sdk-wasm64 else sdk).signalFutexProgram;
       };
+      futexInitramfs = image.mkInitramfs {
+        name = "wasm${toString bits}-browser-runtime-futex";
+        init = (if bits == 64 then sdk-wasm64 else sdk).futexProgram;
+      };
+      robustMutexInitramfs = image.mkInitramfs {
+        name = "wasm${toString bits}-browser-runtime-robust-mutex";
+        init = (if bits == 64 then sdk-wasm64 else sdk).robustMutexProgram;
+      };
     in
     pkgs.runCommand "wasm${toString bits}-runtime-browser-tests" { } ''
       mkdir -p \
@@ -126,6 +136,8 @@ let
       cp ${signalWaitInitramfs} $out/runtime-signal-waits.cpio
       cp ${signalIoInitramfs} $out/runtime-signal-io.cpio
       cp ${signalFutexInitramfs} $out/runtime-signal-futex.cpio
+      cp ${futexInitramfs} $out/runtime-futex.cpio
+      cp ${robustMutexInitramfs} $out/runtime-robust-mutex.cpio
       cp ${source}/memory64-index.html $out/index.html
       cp ${source}/playwright.config.js $out/playwright.config.js
       cp ${source}/server.js $out/server.js

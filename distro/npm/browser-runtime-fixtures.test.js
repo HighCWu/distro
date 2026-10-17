@@ -1,0 +1,119 @@
+// SPDX-License-Identifier: MIT
+import assert from "node:assert/strict";
+import { readFileSync } from "node:fs";
+import test from "node:test";
+import { runInNewContext } from "node:vm";
+import { checkReport } from "./browser-report-check.mjs";
+
+const app = readFileSync(
+  new URL("../../packages/browser-tests/memory64-app.js", import.meta.url),
+  "utf8",
+);
+const spec = readFileSync(
+  new URL("../../packages/browser-tests/memory64-tests/memory64.spec.js", import.meta.url),
+  "utf8",
+);
+const recipe = readFileSync(new URL("./browser-tests.nix", import.meta.url), "utf8");
+const titles = [
+  ...recipe.match(/runtimeTests = \[([\s\S]*?)\n  \];/)[1].matchAll(/"([^"]+)"/g),
+].map((match) => match[1]);
+const fixtures = [
+  {
+    title: "runs SDK futex time64 waits, wake operations and waitv through Linux",
+    entry: "bootFutexRuntimeSmoke",
+    path: "/runtime-futex.cpio",
+    stage: "futex ABI: relative wait, wake operation and private/shared waitv timeouts verified",
+  },
+  {
+    title: "runs SDK robust mutex owner-death recovery through Linux",
+    entry: "bootRobustMutexRuntimeSmoke",
+    path: "/runtime-robust-mutex.cpio",
+    stage:
+      "robust mutex: owner death, consistent recovery, unrecoverable state and cancellation verified",
+  },
+];
+
+function loadCases(globals = {}) {
+  const cases = new Map();
+  const expect = (actual) => ({
+    toContain: (value) => assert.ok(actual.includes(value), `missing ${value}`),
+    not: { toContain: (value) => assert.ok(!actual.includes(value), `unexpected ${value}`) },
+  });
+  expect.poll = (callback) => ({ toBe: async (value) => assert.equal(await callback(), value) });
+  runInNewContext(spec.replace('import { expect, test } from "@playwright/test";', ""), {
+    expect,
+    test: (title, callback) => {
+      assert.ok(!cases.has(title), `duplicate case ${title}`);
+      cases.set(title, callback);
+    },
+    console,
+    ...globals,
+  });
+  return cases;
+}
+
+test("Nix report gate exactly matches all registered runtime cases", () => {
+  assert.deepEqual([...loadCases().keys()].sort(), [...titles].sort());
+  assert.equal(titles.length, 13);
+  const report = {
+    suites: [
+      {
+        specs: titles.map((title) => ({
+          title,
+          tests: [{ status: "expected", results: [{ status: "passed", retry: 0 }] }],
+        })),
+      },
+    ],
+    stats: { expected: titles.length, skipped: 0, unexpected: 0, flaky: 0 },
+    errors: [],
+  };
+  checkReport(report, titles);
+  for (const { title } of fixtures) {
+    const missing = structuredClone(report);
+    missing.suites[0].specs = missing.suites[0].specs.filter((entry) => entry.title !== title);
+    assert.throws(() => checkReport(missing, titles));
+  }
+});
+
+for (const fixture of fixtures) {
+  test(`${fixture.entry} fetches its own initramfs through the shared runtime`, async () => {
+    const requests = [];
+    const context = {
+      bootMachine: () => {},
+      consoleDevice: () => {},
+      entropyDevice: () => {},
+      async fetch(path) {
+        requests.push(path);
+        return { ok: true, arrayBuffer: async () => Uint8Array.of(1, 2).buffer };
+      },
+      runRuntimeSmoke: (options) => options.loadInitramfs(),
+    };
+    runInNewContext(app.replace(/^import .*;\n/gm, ""), context);
+    assert.deepEqual(Array.from(await context[fixture.entry]()), [1, 2]);
+    assert.deepEqual(requests, [fixture.path]);
+    context.fetch = async () => ({ ok: false, status: 503 });
+    await assert.rejects(context[fixture.entry](), /runtime initramfs load failed: 503/);
+  });
+
+  test(`${fixture.entry} requires its stage, pass and absence of failure`, async () => {
+    for (const [output, accepted] of [
+      [`${fixture.stage}\n::vm-test::pass\n`, true],
+      ["::vm-test::pass\n", false],
+      [`${fixture.stage}\n`, false],
+      [`${fixture.stage}\n::vm-test::pass\n::vm-test::fail: broken\n`, false],
+    ]) {
+      let calls = 0;
+      const cases = loadCases({
+        [fixture.entry]: () => {
+          calls++;
+          return output;
+        },
+      });
+      const page = { on() {}, goto: async () => {}, evaluate: async (callback) => callback() };
+      const run = cases.get(fixture.title)({ page });
+      if (accepted) await run;
+      else await assert.rejects(run);
+      assert.equal(calls, 1);
+    }
+  });
+}
