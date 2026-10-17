@@ -10,9 +10,14 @@ async function load(path) {
 }
 
 globalThis.runErofsCopies = async (scenario = "copies") => {
-  if (scenario !== "copies" && scenario !== "errors")
+  if (!["copies", "errors", "standard", "zstd"].includes(scenario))
     throw new RangeError("unknown EROFS test scenario");
-  const asset = scenario === "errors" ? "erofs-errors" : "erofs";
+  const asset = {
+    copies: "erofs",
+    errors: "erofs-errors",
+    standard: "file-mmap",
+    zstd: "zstd-mmap",
+  }[scenario];
   let machine;
   let finished = false;
   let timeout;
@@ -74,7 +79,7 @@ globalThis.runErofsCopies = async (scenario = "copies") => {
             consoleDevice(input.readable, consoleOutput()),
             entropyDevice(),
             snapshot_block_device(image),
-            ...(scenario === "copies" ? [ordinary] : []),
+            ...(scenario !== "errors" ? [ordinary] : []),
           ],
         });
         // A boot that finishes after the watchdog must not leak its Workers.

@@ -215,6 +215,7 @@ lib.makeScope (scope: lib.callPackageWith ({ inherit lib pkgs; } // scope)) (
       };
     };
     zstd-wasm64 = self.zstd.override {
+      image = self.image-wasm64;
       stdenv = self.stdenv-wasm64;
       busybox = self.busybox-wasm64;
       musl = self.musl-wasm64;

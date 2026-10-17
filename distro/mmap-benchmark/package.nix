@@ -86,6 +86,13 @@ let
 in
 pkgs.runCommand "mmap-benchmark-artifacts-${platform.wasmArch}"
   {
+    passthru.fileBrowserAssets = {
+      initramfs = image.mkInitramfs {
+        name = "mmap-file-candidate-${platform.wasmArch}-initramfs";
+        init = "${executables}/file.wasm";
+      };
+      disk = provenanceImage;
+    };
     passthru.erofsBrowserAssets = {
       initramfs = image.mkInitramfs {
         name = "mmap-erofs-browser-${platform.wasmArch}";

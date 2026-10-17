@@ -20,6 +20,8 @@
   toolchain-smoke-wasm64,
   toolchain-smoke,
   wasm64-example,
+  zstd,
+  zstd-wasm64,
 }:
 
 let
@@ -251,6 +253,7 @@ let
         }
       ))
       // (lib.genAttrs erofsProjects erofsCheck)
+      // (lib.genAttrs fileMmapProjects fileMmapCheck)
       // {
         site-live = siteCheck;
         service-worker = serviceWorkerCheck;
@@ -447,6 +450,49 @@ let
       name = "browser-tests-${name}";
       suite = erofsSuite bits;
       project = if lib.hasSuffix "chromium" name then "chromium" else "firefox";
+    };
+
+  fileMmapProjects = [
+    "file-mmap-wasm32-chromium"
+    "file-mmap-wasm32-firefox"
+    "file-mmap-wasm64-chromium"
+    "file-mmap-wasm64-firefox"
+  ];
+  fileMmapSuite =
+    bits:
+    let
+      assets = (if bits == 32 then mmap-benchmark else mmap-benchmark-wasm64).fileBrowserAssets;
+      zstdAssets = (if bits == 32 then zstd else zstd-wasm64).checks.file.browserAssets;
+      testKernel = (if bits == 32 then kernel else kernel-wasm64).override {
+        linux = (if bits == 32 then linux else linux-wasm64).override { fileMmapCandidate = true; };
+      };
+    in
+    pkgs.runCommand "file-mmap-wasm${toString bits}-browser-tests" { } ''
+      mkdir -p $out/node_modules/@lowland/bytes $out/node_modules/@lowland/kernel $out/tests
+      ${playwright.linkRuntime "$out"}
+      cp ${source}/erofs-app.js $out/app.js
+      cp ${source}/memory64-index.html $out/index.html
+      cp ${source}/playwright.config.js $out/playwright.config.js
+      cp ${source}/server.js $out/server.js
+      cp ${source}/file-mmap-tests/file-mmap.spec.js $out/tests/
+      cp ${../vm-test/protocol.js} $out/protocol.js
+      cp ${assets.initramfs} $out/file-mmap.cpio
+      cp ${assets.disk} $out/file-mmap.img
+      cp ${zstdAssets.initramfs} $out/zstd-mmap.cpio
+      cp ${zstdAssets.disk} $out/zstd-mmap.img
+      cp -r ${bytes}/. $out/node_modules/@lowland/bytes/
+      cp -r ${testKernel}/. $out/node_modules/@lowland/kernel/
+    '';
+  fileMmapCheck =
+    name:
+    playwright.mkCheck {
+      name = "browser-tests-${name}";
+      suite = fileMmapSuite (if lib.hasInfix "wasm64" name then 64 else 32);
+      project = if lib.hasSuffix "chromium" name then "chromium" else "firefox";
+      expectedTests = [
+        "standard immutable file mmap preserves content, offsets and refusal semantics"
+        "Zstandard forces immutable dictionary mmap and rejects unsupported sources"
+      ];
     };
 
   siteSuite = pkgs.runCommand "site-browser-tests" { } ''

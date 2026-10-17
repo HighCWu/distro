@@ -9,6 +9,7 @@
   musl,
   llvm-runtimes,
   platform,
+  image,
   vm-test,
   vm-test-file,
 }:
@@ -83,6 +84,17 @@ stdenv.mkDerivation (finalAttrs: {
       pkgs.runCommand "zstd-file-mmap-checks-${platform.wasmArch}"
         {
           passthru.ci.heavy = true;
+          passthru.browserAssets = {
+            initramfs = image.mkInitramfs {
+              name = "zstd-file-mmap-${platform.wasmArch}-initramfs";
+              init = ./file-mmap-test.sh;
+              contents = [
+                candidate
+                busybox
+              ];
+            };
+            disk = dictionaries;
+          };
           mapped = vm-test-file.rawInitramfsTest {
             name = "zstd-file-mmap-${platform.wasmArch}";
             init = ./file-mmap-test.sh;
