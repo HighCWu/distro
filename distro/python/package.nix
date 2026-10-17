@@ -193,6 +193,7 @@ let
         # 8 MiB platform default covers CPython's recursion in these tests.
         init = ./python-test.sh;
         files."/python-application-test.py" = ./application-test.py;
+        files."/python-spawn-errors-test.py" = ./spawn-errors-test.py;
         files."/python-abi-test.py" = ./abi-test.py;
         files."/python-address-bits" = builtins.toFile "python-address-bits" (
           toString platform.addressBits + "\n"

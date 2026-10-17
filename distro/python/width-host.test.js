@@ -146,3 +146,17 @@ test("relocated compressed Python application runs without its original source t
   const script = readFileSync(new URL("./python-test.sh", import.meta.url), "utf8");
   assert.match(script, /python3 \/python-application-test\.py \|\| fail/);
 });
+
+test("fork-less PATH fallback preserves error precedence and caller executable names", () => {
+  const result = spawnSync(
+    "python3",
+    ["-B", fileURLToPath(new URL("./spawn-errors-test.py", import.meta.url)), "--patch-logic"],
+    { encoding: "utf8", timeout: 15_000 },
+  );
+  assert.equal(result.status, 0, `${result.error ?? ""}\n${result.stdout}\n${result.stderr}`);
+  assert.equal((result.stdout.match(/PATH error precedence/g) || []).length, 2);
+  const recipe = readFileSync(new URL("./package.nix", import.meta.url), "utf8");
+  assert.ok(recipe.includes('files."/python-spawn-errors-test.py" = ./spawn-errors-test.py;'));
+  const script = readFileSync(new URL("./python-test.sh", import.meta.url), "utf8");
+  assert.match(script, /python3 \/python-spawn-errors-test\.py \|\| fail/);
+});

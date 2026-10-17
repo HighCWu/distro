@@ -627,6 +627,7 @@ test ! -s /tmp/mperr ||
   fail "multiprocessing test emitted stderr: $(tr '\n' '|' </tmp/mperr)"
 
 python3 /python-application-test.py || fail "relocated Python application failed"
+python3 /python-spawn-errors-test.py || fail "Python spawn error compatibility failed"
 
 echo "::vm-test::pass"
 while :; do :; done

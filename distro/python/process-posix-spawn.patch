@@ -164,7 +164,7 @@ mmap-dependent _posixshmem module.
  
              if file_actions:
                  kwargs['file_actions'] = file_actions
-@@ -1858,6 +1897,53 @@ class Popen:
+@@ -1858,6 +1897,54 @@ class Popen:
  
              sys.audit("subprocess.Popen", executable, args, cwd, env)
  
@@ -211,14 +211,15 @@ mmap-dependent _posixshmem module.
 +                        last_exc = exc
 +                        if saved_exc is None:
 +                            saved_exc = exc
-+                if saved_exc is not None:
-+                    raise saved_exc
-+                raise last_exc
++                error = saved_exc if saved_exc is not None else last_exc
++                # Like the fork launcher, report the caller's executable,
++                # not an internal PATH candidate; preserve errno precedence.
++                raise OSError(error.errno, error.strerror, executable)
 +
              if (_USE_POSIX_SPAWN
                      and os.path.dirname(executable)
                      and preexec_fn is None
-@@ -1874,7 +1959,9 @@ class Popen:
+@@ -1874,7 +1960,9 @@ class Popen:
                      and uid is None
                      and umask < 0):
                  self._posix_spawn(args, executable, env, restore_signals, close_fds,
