@@ -68,6 +68,26 @@ This platform's NOMMU model is not an isolation boundary between mutually
 untrusted Linux programs. Browser isolation does not make such programs safe
 to run together in one instance.
 
+## Downloading generated files
+
+Enter an absolute Linux path under **Download a Linux file**, choose **Prepare
+download**, then **Save prepared file**. This retrieves exact binary bytes,
+including NUL and non-UTF-8 data, without passing through the text preview or
+uploading them to the server. The browser chooses where to save the file.
+
+Only regular files up to 16 MiB are supported in this small example. Metadata
+is checked before open and again on the opened handle; actual bytes read are
+also capped in case the file grows. Preparation buffers the file in browser
+memory and closes the handle before publishing a Blob URL. Read/close errors
+do not offer a partial download. The next preparation, Stop, or unexpected
+machine closure revokes the old link; stale operations cannot publish into a
+replacement instance. A saved local file is independent of the temporary disk.
+
+Finish writing before preparation. This is not snapshot isolation against
+concurrent writers, a security boundary against path replacement, a large-file
+streaming export, or persistent Linux storage. Stop remains available during
+preparation; the example does not offer a separate download-cancel operation.
+
 ## Importing your own program
 
 Compile a static executable with the matching Linux wasm64 SDK, for example
