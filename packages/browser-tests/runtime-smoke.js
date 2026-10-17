@@ -38,7 +38,8 @@ export async function runRuntimeSmoke({
         if (status?.passed) {
           reportedPass = true;
           resolveResult();
-        } else if (status) reportFailure(new Error(status.reason));
+        } else if (status)
+          reportFailure(new Error(`${status.reason}\nRuntime console:\n${output}`));
         else if (line.includes("Kernel panic - not syncing")) reportFailure(new Error(line));
       }
     };

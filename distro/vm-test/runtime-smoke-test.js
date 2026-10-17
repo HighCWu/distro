@@ -99,6 +99,24 @@ test("a shutdown rejection overrides a user-program pass", async () => {
   assert.equal(state.closed, true);
 });
 
+test("a failed program retains its preceding console traceback in the reported error", async () => {
+  const state = fixture([
+    "Python stage before failure\nTraceback (most recent call last):\n",
+    "AssertionError: concrete failure\n::vm-test::fa",
+    "il\n",
+  ]);
+  await assert.rejects(runRuntimeSmoke(state.options), (error) => {
+    assert.match(error.message, /guest reported failure/);
+    assert.match(error.message, /Runtime console:/);
+    assert.match(error.message, /Python stage before failure/);
+    assert.match(error.message, /Traceback \(most recent call last\):/);
+    assert.match(error.message, /AssertionError: concrete failure/);
+    assert.match(error.message, /::vm-test::fail/);
+    return true;
+  });
+  assert.equal(state.closed, true);
+});
+
 test("a pass cannot hide a later failure or panic in the same console stream", async () => {
   for (const lines of [
     ["::vm-test::pass\n::vm-test::fail: failure after pass\n"],
