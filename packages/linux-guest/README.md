@@ -108,6 +108,24 @@ the Chromium run at `fdde5c7` passed all six internal scenarios and its exact
 outer case with zero skips/retries. This does not validate later copy, NUL or
 spawn preflight revisions, and wasm32 remains separate from host validation.
 
+File writes accept `Uint8Array` (including Node Buffer views), Blob, or a
+ReadableStream of Uint8Array chunks. Use `fs.writeTextFile()` for text; strings,
+ArrayBuffer, DataView and wider typed arrays are not byte-write inputs. Invalid
+whole-file inputs and already-locked streams reject before opening/truncating
+the destination. A malformed later stream chunk rejects with TypeError, cancels
+the source and releases the file, but earlier writes or truncation are not
+rolled back. Empty byte arrays and empty Blobs remain valid empty-file inputs.
+
+`FsFile.writable` serializes each already-started chunk before other operations
+on the same FsFile, while splitting syscalls into at most 32 KiB. A direct
+`file.close()` waits for that started operation, not all chunks still queued
+inside Web Streams: finish with `writer.close()` or `pipeTo()` when all queued
+stream input must be delivered. File streams close the file on completion,
+cancellation/abort or an I/O/type error; direct read/write/seek/stat methods
+retain caller ownership on errors. These are per-handle ordering rules, not cross-process
+atomicity or failure rollback. SDK file descriptors are close-on-exec and are
+not inherited by subsequent `exec()`/`run()` calls.
+
 `fs.copyFile()` validates the source and destination using `fstat` on both
 opened descriptors before truncating the destination. Identical device/inode
 pairs reject with `EINVAL`, including symlink or hard-link aliases introduced
