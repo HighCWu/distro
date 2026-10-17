@@ -25,6 +25,10 @@ for (const [fixture, finalStage] of [
     "thread-time-abi",
     "thread time ABI: wakeups, cancellation, broadcast, timeouts and mutex ownership verified",
   ],
+  [
+    "robust-mutex",
+    "robust mutex: owner death, consistent recovery, unrecoverable state and cancellation verified",
+  ],
 ]) {
   const source = fileURLToPath(new URL(`../basic-init/tests/${fixture}.c`, import.meta.url));
   for (const compiler of ["gcc", "clang"]) {
@@ -52,14 +56,23 @@ for (const [fixture, finalStage] of [
         assert.ok(run.stdout.split(/\r?\n/).includes(finalStage), run.stdout);
         assert.match(run.stdout, /^::vm-test::pass\r?$/m);
         assert.doesNotMatch(run.stdout, /::vm-test::fail/);
-        if (fixture === "signal-io") {
-          // Negative control: removing SA_RESTART must make the wait assertion
-          // fail, rather than accidentally passing without exercising a signal.
+        if (fixture === "signal-io" || fixture === "robust-mutex") {
+          // Negative controls must fail at the semantic assertion, not merely
+          // compile or hang without exercising the intended lifecycle.
+          const [before, after, failure] =
+            fixture === "signal-io"
+              ? [
+                  "action.sa_flags = restart ? SA_RESTART : 0;",
+                  "action.sa_flags = 0;",
+                  "SA_RESTART wait exposed EINTR or lost the child exit status",
+                ]
+              : [
+                  'checked(pthread_mutex_consistent(mutex), "make mutex consistent");',
+                  'checked(0, "make mutex consistent");',
+                  "repaired mutex was not reusable",
+                ];
           const original = readFileSync(source, "utf8");
-          const disabled = original.replace(
-            "action.sa_flags = restart ? SA_RESTART : 0;",
-            "action.sa_flags = 0;",
-          );
+          const disabled = original.replace(before, after);
           assert.notEqual(disabled, original);
           const compileDisabled = spawnSync(
             compiler,
@@ -70,7 +83,7 @@ for (const [fixture, finalStage] of [
               "-Wall",
               "-Wextra",
               "-Werror",
-              "-I",
+              "-iquote",
               dirname(source),
               "-x",
               "c",
@@ -89,13 +102,9 @@ for (const [fixture, finalStage] of [
           });
           assert.equal(rejected.error?.code, "ETIMEDOUT");
           assert.equal(rejected.signal, "SIGKILL");
-          assert.match(
+          assert.ok(
+            rejected.stdout.split(/\r?\n/).includes(`::vm-test::fail: ${failure}`),
             rejected.stdout,
-            /SA_RESTART wait exposed EINTR or lost the child exit status/,
-          );
-          assert.match(
-            rejected.stdout,
-            /^::vm-test::fail: SA_RESTART wait exposed EINTR or lost the child exit status\r?$/m,
           );
           assert.doesNotMatch(rejected.stdout, /::vm-test::pass/);
         }

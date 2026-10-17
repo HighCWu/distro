@@ -240,6 +240,11 @@ let
         name = "sdk-futex-runtime-${platform.wasmArch}";
         init = "${futexPrograms}/sdk-futex.wasm";
       };
+      robust-mutex-runtime = vm-test.rawInitramfsTest {
+        name = "sdk-robust-mutex-runtime-${platform.wasmArch}";
+        init = "${robustMutexPrograms}/sdk-robust-mutex.wasm";
+        cpus = 2;
+      };
       autoconf-runtime = vm-test.rawInitramfsTest {
         name = "sdk-autoconf-runtime-${platform.wasmArch}";
         init = "${autoconfPrograms}/sdk-autoconf.wasm";
@@ -415,6 +420,11 @@ let
     mkdir $out
     ${cc}/bin/wasm-linux-cc -O2 -Wall -Wextra -Werror \
       -I${../basic-init/tests} ${../basic-init/tests/futex.c} -o $out/sdk-futex.wasm
+  '';
+  robustMutexPrograms = pkgs.runCommand "sdk-robust-mutex-consumer-${platform.wasmArch}" { } ''
+    mkdir $out
+    ${cc}/bin/wasm-linux-cc -O2 -pthread -Wall -Wextra -Werror \
+      -I${../basic-init/tests} ${../basic-init/tests/robust-mutex.c} -o $out/sdk-robust-mutex.wasm
   '';
   sqlitePrograms = pkgs.runCommand "sdk-sqlite-consumer-${platform.wasmArch}" { } ''
     mkdir $out
