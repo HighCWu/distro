@@ -48,7 +48,10 @@ for (const [program, sourceNotice] of [
         .replaceAll("${llvm-runtimes.src}", runtime)
         .replaceAll("${zlib.src}", zlib)
         .replaceAll("${openssl}", openssl)
-        .replaceAll("${../sdk/LICENSE.MIT}", new URL("../sdk/LICENSE.MIT", import.meta.url).pathname);
+        .replaceAll(
+          "${../sdk/LICENSE.MIT}",
+          new URL("../sdk/LICENSE.MIT", import.meta.url).pathname,
+        );
       assert.doesNotMatch(shell, /\$\{/, "no unhandled Nix interpolation");
       const installed = spawnSync("sh", ["-eu", "-c", shell], {
         cwd: source,
