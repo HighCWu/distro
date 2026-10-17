@@ -8,6 +8,7 @@ import subprocess
 import sys
 import tempfile
 import zipapp
+import zipfile
 
 
 def exercise_application():
@@ -63,5 +64,30 @@ def exercise_application():
     print("Python application: relocated compressed archive, metadata, resources and binary pipes verified")
 
 
+def exercise_published_example(archive):
+    with tempfile.TemporaryDirectory(prefix="python-published-app-") as directory:
+        installed = Path(directory) / "relocated.pyz"
+        shutil.copyfile(archive, installed)
+        with zipfile.ZipFile(installed) as bundle:
+            assert "MIT License" in bundle.read("LICENSE").decode("utf-8")
+            payload = bundle.read("sampleapp/payload.txt")
+        incoming = bytes(range(256)) * 33 + b"\x00end\xff"
+        result = subprocess.run(
+            [sys.executable, str(installed)],
+            input=incoming,
+            capture_output=True,
+            cwd=directory,
+            env={name: value for name, value in os.environ.items()
+                 if not name.startswith("PYTHON")},
+            check=True,
+        )
+        assert result.stdout == payload + incoming[::-1], result.stdout
+        assert result.stderr == b"", result.stderr
+    print("Python application: published MIT zipapp, resources, metadata and binary pipes verified")
+
+
 if __name__ == "__main__":
+    assert sys.argv[1:] == [] or (len(sys.argv) == 3 and sys.argv[1] == "--example"), sys.argv
     exercise_application()
+    if sys.argv[1:]:
+        exercise_published_example(sys.argv[2])

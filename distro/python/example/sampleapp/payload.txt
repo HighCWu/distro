@@ -1,0 +1,1 @@
+Linux/Wasm Python example — UTF-8 resource

@@ -20,10 +20,18 @@
 }:
 
 let
+  applicationExample = pkgs.runCommand "linux-wasm-python-application-example" { } ''
+    mkdir -p $out/source
+    cp -r ${./example} $out/source/example
+    cp ${./build-example.py} $out/source/build-example.py
+    cp ${./example/LICENSE} $out/LICENSE
+    ${pkgs.python313}/bin/python3 $out/source/build-example.py $out/application.pyz
+  '';
   package = stdenv.mkDerivation (finalAttrs: {
     pname = "python";
     version = "3.13.14";
     inherit src;
+    passthru.applicationExample = applicationExample;
     passthru.apk.depends = [
       "ncurses"
       "openssl"
@@ -193,6 +201,7 @@ let
         # 8 MiB platform default covers CPython's recursion in these tests.
         init = ./python-test.sh;
         files."/python-application-test.py" = ./application-test.py;
+        files."/python-example.pyz" = "${applicationExample}/application.pyz";
         files."/python-spawn-errors-test.py" = ./spawn-errors-test.py;
         files."/python-process-lifecycle-test.py" = ./process-lifecycle-test.py;
         files."/python-abi-test.py" = ./abi-test.py;

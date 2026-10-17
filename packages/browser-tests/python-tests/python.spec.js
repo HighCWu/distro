@@ -7,6 +7,7 @@ for (const [variant, title, stages] of [
     "runs installed full Python and relocated applications through Linux",
     [
       "Python application: relocated compressed archive, metadata, resources and binary pipes verified",
+      "Python application: published MIT zipapp, resources, metadata and binary pipes verified",
       "Python spawn: PATH error precedence and original str/bytes executable verified",
       "Python spawn: repeated failed launches preserve parent fds, CLOEXEC and child cleanup",
       "Python spawn: descriptor exhaustion preserves parent fds and child cleanup",

@@ -144,7 +144,29 @@ test("relocated compressed Python application runs without its original source t
   const recipe = readFileSync(new URL("./package.nix", import.meta.url), "utf8");
   assert.ok(recipe.includes('files."/python-application-test.py" = ./application-test.py;'));
   const script = readFileSync(new URL("./python-test.sh", import.meta.url), "utf8");
-  assert.match(script, /python3 \/python-application-test\.py \|\| fail/);
+  assert.match(
+    script,
+    /python3 \/python-application-test\.py --example \/python-example\.pyz \|\| fail/,
+  );
+});
+
+test("published Python example is reproducible, relocatable and retains package metadata", () => {
+  const result = spawnSync(
+    "python3",
+    ["-B", fileURLToPath(new URL("./example-host-test.py", import.meta.url))],
+    { encoding: "utf8", timeout: 20_000 },
+  );
+  assert.equal(result.status, 0, `${result.error ?? ""}\n${result.stdout}\n${result.stderr}`);
+  const recipe = readFileSync(new URL("./package.nix", import.meta.url), "utf8");
+  assert.match(recipe, /passthru\.applicationExample = applicationExample/);
+  assert.ok(
+    recipe.includes('files."/python-example.pyz" = "${applicationExample}/application.pyz";'),
+  );
+  assert.ok(
+    recipe.includes(
+      "${pkgs.python313}/bin/python3 $out/source/build-example.py $out/application.pyz",
+    ),
+  );
 });
 
 test("fork-less PATH fallback preserves error precedence and caller executable names", () => {
