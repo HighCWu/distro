@@ -750,6 +750,8 @@ export function fileSystemDevice<TNode extends object, THandle, T extends FS<TNo
   let next_handle = 1n;
   let finalize_promise: Promise<void> | undefined;
   let stopping = false;
+  let destroying = false;
+  const requests = new Set<Promise<void>>();
 
   function record_for_node(node: TNode, parent: NodeRecord<TNode>) {
     let record = by_node.get(node);
@@ -1253,7 +1255,7 @@ export function fileSystemDevice<TNode extends object, THandle, T extends FS<TNo
         if (capacity < minimum_response_capacity(header.opcode)) {
           throw new FSError("EINVAL", "FUSE response buffer is too small");
         }
-        const payload = await process(header, body, capacity);
+        const payload = await dispatch(header, body, capacity);
         if (stopping) return;
         if (payload === undefined) {
           chain.release(0);
@@ -1291,6 +1293,26 @@ export function fileSystemDevice<TNode extends object, THandle, T extends FS<TNo
         scatter(buffers, response.array);
         chain.release(FuseOutHeader.size);
       }
+    }
+  }
+
+  async function dispatch(header: FuseInHeaderValue, body: Reader, capacity: number) {
+    if (header.opcode === FuseOpcode.DESTROY) {
+      // Do not count DESTROY itself: it may arrive on the other queue while
+      // an OPEN or other resource-owning operation is awaiting its backend.
+      destroying = true;
+      await Promise.all([...requests]);
+      return process(header, body, capacity);
+    }
+    if (destroying) throw new FSError("EIO", "filesystem is being destroyed");
+    // Register before calling backend code, which can reenter notification.
+    const completion = Promise.withResolvers<void>();
+    requests.add(completion.promise);
+    try {
+      return await process(header, body, capacity);
+    } finally {
+      requests.delete(completion.promise);
+      completion.resolve();
     }
   }
 
