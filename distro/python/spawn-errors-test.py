@@ -14,6 +14,92 @@ def subprocess_launch(executable, environment):
     subprocess.run([executable], env=environment, check=True)
 
 
+def open_descriptors():
+    descriptors = set()
+    for name in os.listdir("/proc/self/fd"):
+        fd = int(name)
+        try:
+            os.fstat(fd)
+        except OSError as error:
+            # listdir's own directory descriptor has already been closed.
+            assert error.errno == errno.EBADF, error
+        else:
+            descriptors.add(fd)
+    return descriptors
+
+
+def check_failed_launch_cleanup():
+    with tempfile.TemporaryDirectory(prefix="python-spawn-cleanup-") as directory:
+        read_fd, write_fd = os.pipe()
+        try:
+            assert not os.get_inheritable(read_fd)
+            baseline = open_descriptors()
+            for _ in range(64):
+                try:
+                    subprocess.Popen(
+                        ["linux-wasm-spawn-error-fixture"],
+                        env={"PATH": directory},
+                        stdin=subprocess.PIPE,
+                        stdout=subprocess.PIPE,
+                        stderr=subprocess.PIPE,
+                        pass_fds=(read_fd,),
+                    )
+                except FileNotFoundError:
+                    pass
+                else:
+                    raise AssertionError("missing executable unexpectedly launched")
+                assert not os.get_inheritable(read_fd), "pass_fds modified parent FD_CLOEXEC"
+                current = open_descriptors()
+                assert current == baseline, ("failed launch leaked parent descriptors", baseline, current)
+            # This is a fresh fixture process with no legitimate child. Do not
+            # silently reap a leaked spawn helper and make the test pass.
+            try:
+                child = os.waitpid(-1, os.WNOHANG)
+            except ChildProcessError:
+                pass
+            else:
+                raise AssertionError("failed launch left a child: " + repr(child))
+        finally:
+            os.close(read_fd)
+            os.close(write_fd)
+    print("Python spawn: repeated failed launches preserve parent fds, CLOEXEC and child cleanup")
+
+
+def verify_cleanup_negative_controls():
+    # Native-only injected regressions prove the guards detect actual leaked
+    # descriptors and parent flag mutation. Never inject them into the target.
+    from unittest.mock import patch
+
+    original = subprocess.Popen
+    for mode, expected in (
+        ("fds", "failed launch leaked parent descriptors"),
+        ("cloexec", "pass_fds modified parent FD_CLOEXEC"),
+    ):
+        leaked = []
+
+        def broken_launch(*args, **kwargs):
+            if mode == "fds":
+                leaked.extend(os.pipe())
+            try:
+                return original(*args, **kwargs)
+            finally:
+                if mode == "cloexec":
+                    os.set_inheritable(kwargs["pass_fds"][0], True)
+
+        try:
+            with patch.object(subprocess, "Popen", broken_launch):
+                try:
+                    check_failed_launch_cleanup()
+                except AssertionError as error:
+                    assert expected in str(error), error
+                else:
+                    raise AssertionError("injected cleanup regression was accepted")
+        finally:
+            for fd in leaked:
+                os.close(fd)
+    print("Python spawn fixture: injected native fd and CLOEXEC leaks rejected")
+
+
 def check_errors(launch):
     with tempfile.TemporaryDirectory(prefix="python-spawn-errors-") as directory:
         root = Path(directory)
@@ -74,5 +160,7 @@ def patched_path_launcher():
 if __name__ == "__main__":
     assert sys.argv[1:] in ([], ["--patch-logic"]), sys.argv
     check_errors(subprocess_launch)
+    check_failed_launch_cleanup()
     if sys.argv[1:]:
         check_errors(patched_path_launcher())
+        verify_cleanup_negative_controls()

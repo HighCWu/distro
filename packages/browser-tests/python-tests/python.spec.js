@@ -8,6 +8,7 @@ for (const [variant, title, stages] of [
     [
       "Python application: relocated compressed archive, metadata, resources and binary pipes verified",
       "Python spawn: PATH error precedence and original str/bytes executable verified",
+      "Python spawn: repeated failed launches preserve parent fds, CLOEXEC and child cleanup",
     ],
   ],
   [

@@ -155,6 +155,11 @@ test("fork-less PATH fallback preserves error precedence and caller executable n
   );
   assert.equal(result.status, 0, `${result.error ?? ""}\n${result.stdout}\n${result.stderr}`);
   assert.equal((result.stdout.match(/PATH error precedence/g) || []).length, 2);
+  assert.match(
+    result.stdout,
+    /repeated failed launches preserve parent fds, CLOEXEC and child cleanup/,
+  );
+  assert.match(result.stdout, /injected native fd and CLOEXEC leaks rejected/);
   const recipe = readFileSync(new URL("./package.nix", import.meta.url), "utf8");
   assert.ok(recipe.includes('files."/python-spawn-errors-test.py" = ./spawn-errors-test.py;'));
   const script = readFileSync(new URL("./python-test.sh", import.meta.url), "utf8");
