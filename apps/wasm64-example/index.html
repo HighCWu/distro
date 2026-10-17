@@ -84,6 +84,18 @@ Hello from native Linux wasm64.</textarea>
       application runs; it stops the whole instance and discards the temporary disk, unlike
       cancelling one application.
     </p>
+    <h2>Download a Linux file</h2>
+    <p>
+      <label>Absolute path <input id="download-path" value="/root/example.txt" size="60" /></label>
+      <button id="download" disabled>Prepare download</button>
+      <a id="download-link" hidden>Save prepared file</a>
+    </p>
+    <p>
+      Regular files up to 16 MiB are buffered as exact bytes in browser memory, not uploaded. After
+      preparing, choose Save prepared file. Stop, restart or another preparation discards the
+      previous link. Finish writing the file first: this is not a snapshot of concurrent writes, a
+      large-file streaming export or persistent Linux storage.
+    </p>
     <h2>Command output</h2>
     <pre id="result" aria-live="polite"></pre>
     <h2>Recent boot console</h2>

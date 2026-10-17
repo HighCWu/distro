@@ -3,6 +3,7 @@ import { blockDevice, bootMachine, consoleDevice, entropyDevice } from "@lowland
 import { guestAgent } from "@lowland/guest";
 import { assertBrowserSupport } from "./browser-support.js";
 import { outputTail, runProgram } from "./program.js";
+import { prepareDownload } from "./download.js";
 
 const element = (id) => document.getElementById(id);
 let session;
@@ -10,11 +11,18 @@ let busy = false;
 let programController;
 let stopping;
 let generation = 0;
+let downloadUrl;
+function clearDownload() {
+  if (downloadUrl) URL.revokeObjectURL(downloadUrl);
+  downloadUrl = undefined;
+  element("download-link").hidden = true;
+  element("download-link").removeAttribute("href");
+}
 function state(message) {
   element("state").textContent = message;
   element("start").disabled = busy || !!session || !!stopping;
   element("stop").disabled = !session || !!stopping;
-  for (const id of ["uname", "file", "read", "run-program"])
+  for (const id of ["uname", "file", "read", "run-program", "download"])
     element(id).disabled = busy || !session || !!stopping;
   element("cancel-program").disabled =
     !!stopping || !programController || programController.signal.aborted;
@@ -59,6 +67,7 @@ async function action(operation) {
 element("start").addEventListener("click", () =>
   action(async () => {
     assertBrowserSupport();
+    clearDownload();
     element("console").textContent = "";
     element("result").textContent = "";
     const [boot, root] = await Promise.all([image("/agent-boot.img"), image("/root.ext4")]);
@@ -100,6 +109,7 @@ element("start").addEventListener("click", () =>
       if (session !== active || stopping) return;
       ++generation;
       session = undefined;
+      clearDownload();
       busy = false;
       programController?.abort(reason);
       programController = undefined;
@@ -118,6 +128,7 @@ element("stop").addEventListener("click", async () => {
   // Stop must not queue behind an application, its descendants' pipes, or
   // outstanding filesystem work. Invalidate their UI ownership immediately.
   ++generation;
+  clearDownload();
   stopping = active;
   busy = true;
   programController?.abort(new DOMException("Linux stopped", "AbortError"));
@@ -163,6 +174,21 @@ element("file").addEventListener("click", () =>
 );
 element("read").addEventListener("click", () =>
   action(() => command(["/bin/cat", "/root/example.txt"])),
+);
+element("download").addEventListener("click", () =>
+  action(async () => {
+    const active = session;
+    if (!active) throw new Error("Linux is not running");
+    clearDownload();
+    const prepared = await prepareDownload(active.agent.fs, element("download-path").value);
+    if (session !== active || stopping) throw new Error("Linux stopped during the download");
+    downloadUrl = URL.createObjectURL(prepared.blob);
+    const link = element("download-link");
+    link.href = downloadUrl;
+    link.download = prepared.name;
+    link.hidden = false;
+    return "running";
+  }),
 );
 state("stopped");
 

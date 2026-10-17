@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: MIT
 import assert from "node:assert/strict";
 import { spawnSync } from "node:child_process";
-import { mkdtempSync, rmSync } from "node:fs";
+import { mkdtempSync, readFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -43,6 +43,11 @@ test("native input fixture verifies every binary byte and rejects corruption", (
     }
     bytes[40000] ^= 1;
     assert.equal(spawnSync(binary, ["pattern"], { input: bytes, timeout: 5000 }).status, 7);
+    const output = join(directory, "result.bin");
+    const generated = spawnSync(binary, ["output", output], { timeout: 5000 });
+    assert.equal(generated.status, 0, generated.stderr?.toString());
+    bytes[40000] ^= 1;
+    assert.deepEqual(readFileSync(output), bytes.subarray(0, 65536 + 17));
   } finally {
     rmSync(directory, { recursive: true, force: true });
   }

@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: MIT
 import { expect, test } from "@playwright/test";
+import { readFile } from "node:fs/promises";
 
 test("embeds native wasm64 Linux using the standalone example controls", async ({ page }) => {
   page.on("pageerror", (error) => console.error(error.stack ?? error));
@@ -41,6 +42,18 @@ test("embeds native wasm64 Linux using the standalone example controls", async (
   await expect(state).toHaveText("running");
   await expect(page.locator("#result")).toHaveText(text);
   expect(await page.locator("#result").textContent()).toBe(text);
+  const savePreparedFile = async (name, bytes) => {
+    const pending = page.waitForEvent("download");
+    await page.locator("#download-link").click();
+    const download = await pending;
+    expect(download.suggestedFilename()).toBe(name);
+    expect(await download.failure()).toBeNull();
+    expect(await readFile(await download.path())).toEqual(bytes);
+  };
+  await page.locator("#download").click();
+  await expect(state).toHaveText("running");
+  await expect(page.locator("#download-link")).toBeVisible();
+  await savePreparedFile("example.txt", Buffer.from(text));
   // Import a separately SDK-built executable through the actual file picker,
   // not a program installed into the default root or a JavaScript callback.
   const binary = await page.request.get("/upload-program.wasm");
@@ -103,6 +116,18 @@ test("embeds native wasm64 Linux using the standalone example controls", async (
   await expect(page.locator("#result")).toHaveText("input bytes: 0, sum: 0\n");
   await page.locator("#stdin-source").selectOption("text");
   await page.locator("#stdin").fill("");
+  await page.locator("#arguments").fill('["output"]');
+  await page.locator("#run-program").click();
+  await expect(state).toHaveText("running");
+  await expect(page.locator("#result")).toHaveText("created /root/result.bin\n");
+  await page.locator("#download-path").fill("/root/result.bin");
+  await page.locator("#download").click();
+  await expect(state).toHaveText("running");
+  await savePreparedFile("result.bin", inputBytes.subarray(0, 65536 + 17));
+  await page.locator("#download-path").fill("/root/missing.bin");
+  await page.locator("#download").click();
+  await expect(state).toContainText("error:");
+  await expect(page.locator("#download-link")).toBeHidden();
   await page.locator("#arguments").fill('["fail"]');
   await page.locator("#run-program").click();
   await expect(state).toContainText('"code":37');
@@ -124,6 +149,7 @@ test("embeds native wasm64 Linux using the standalone example controls", async (
   await expect(page.locator("#stop")).toBeEnabled();
   await page.locator("#stop").click();
   await expect(state).toHaveText("stopped");
+  await expect(page.locator("#download-link")).toBeHidden();
   await expect(page.locator("#uname")).toBeDisabled();
   await page.locator("#start").click();
   await expect(state).toHaveText("running", { timeout: 120000 });

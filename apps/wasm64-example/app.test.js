@@ -7,7 +7,7 @@ import { outputTail } from "./program.js";
 
 const source = readFileSync(new URL("./app.js", import.meta.url), "utf8");
 const imports = /^import .* from "[^"]+";$/gm;
-assert.equal([...source.matchAll(imports)].length, 4);
+assert.equal([...source.matchAll(imports)].length, 5);
 const success = {
   status: { success: true, code: 0, signal: null },
   stdout: new TextEncoder().encode("Linux fixture\n"),
@@ -23,6 +23,9 @@ function harness({ closeError, deferClose = false } = {}) {
         value: id === "arguments" ? "[]" : "text",
         files: [{}],
         listeners: {},
+        removeAttribute(name) {
+          delete this[name];
+        },
         addEventListener(name, listener) {
           this.listeners[name] = listener;
         },
@@ -32,6 +35,8 @@ function harness({ closeError, deferClose = false } = {}) {
   const machines = [];
   const applications = [];
   const agents = [];
+  const downloads = [];
+  const revoked = [];
   const context = {
     document: { getElementById: nodes },
     console: { error() {} },
@@ -42,6 +47,15 @@ function harness({ closeError, deferClose = false } = {}) {
     WritableStream,
     AbortController,
     DOMException,
+    URL: {
+      createObjectURL: () => "blob:fixture",
+      revokeObjectURL: (url) => revoked.push(url),
+    },
+    prepareDownload(fs, path) {
+      const result = Promise.withResolvers();
+      downloads.push({ fs, path, result });
+      return result.promise;
+    },
     assertBrowserSupport() {},
     outputTail,
     fetch: async () => ({ ok: true, arrayBuffer: async () => new ArrayBuffer(8) }),
@@ -92,8 +106,51 @@ function harness({ closeError, deferClose = false } = {}) {
     },
   };
   runInNewContext(source.replace(imports, ""), context);
-  return { nodes, agents, machines, applications, click: (id) => nodes(id).listeners.click() };
+  return {
+    nodes,
+    agents,
+    machines,
+    applications,
+    downloads,
+    revoked,
+    click: (id) => nodes(id).listeners.click(),
+  };
 }
+
+test("prepared download is revoked on replacement and Stop", async () => {
+  const h = harness();
+  await h.click("start");
+  h.nodes("download-path").value = "/root/result.bin";
+  for (let i = 0; i < 2; i++) {
+    const preparing = h.click("download");
+    assert.equal(h.downloads[i].path, "/root/result.bin");
+    assert.equal(h.nodes("stop").disabled, false);
+    assert.equal(h.nodes("download-link").hidden, true);
+    h.downloads[i].result.resolve({ blob: {}, name: "result.bin" });
+    await preparing;
+    assert.equal(h.nodes("download-link").href, "blob:fixture");
+    assert.equal(h.nodes("download-link").download, "result.bin");
+    assert.equal(h.nodes("download-link").hidden, false);
+  }
+  assert.equal(h.revoked.length, 1);
+  await h.click("stop");
+  assert.equal(h.revoked.length, 2);
+  assert.equal(h.nodes("download-link").hidden, true);
+  assert.equal(h.nodes("download-link").href, undefined);
+});
+
+test("stale download cannot publish a link after Stop and restart", async () => {
+  const h = harness();
+  await h.click("start");
+  const preparing = h.click("download");
+  await h.click("stop");
+  await h.click("start");
+  h.downloads[0].result.resolve({ blob: {}, name: "old.bin" });
+  await preparing;
+  assert.equal(h.nodes("download-link").hidden, true);
+  assert.equal(h.nodes("download-link").href, undefined);
+  assert.equal(h.nodes("state").textContent, "running");
+});
 
 test("Stop Linux remains usable during an application and old output cannot affect a restart", async () => {
   const h = harness();

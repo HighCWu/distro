@@ -6,7 +6,19 @@
 
 int main(int argc, char **argv)
 {
-    if (argc != 2) return 2;
+    if (argc != 2 && !(argc == 3 && !strcmp(argv[1], "output"))) return 2;
+    if (!strcmp(argv[1], "output")) {
+        FILE *output = fopen(argc == 3 ? argv[2] : "/root/result.bin", "wb");
+        if (!output) return 8;
+        int failed = 0;
+        for (size_t i = 0; i < 65536 + 17; i++) {
+            if (fputc((unsigned char)(i * 37 + 11), output) == EOF) { failed = 1; break; }
+        }
+        if (fclose(output)) failed = 1;
+        if (failed) return 9;
+        puts("created /root/result.bin");
+        return 0;
+    }
     if (!strcmp(argv[1], "wait")) {
         puts("uploaded application waiting");
         fflush(stdout);
