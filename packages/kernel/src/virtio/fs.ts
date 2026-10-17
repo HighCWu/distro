@@ -231,6 +231,11 @@ export interface FS<TNode, THandle> {
   /** Consumes a handle once, even on failure. The device does not retry it. */
   release?(node: TNode, handle: THandle): MaybePromise<void>;
   opendir?(node: TNode, flags: number): MaybePromise<THandle>;
+  /** Restart enumeration on each call. Pages skip by entry index, not by a
+   * backend cookie. Iterators may be closed early once a page is full; use
+   * return()/finally for per-enumeration cleanup. Ordering must remain stable
+   * between pages when the directory has not changed.
+   */
   readdir?(
     node: TNode,
     handle: THandle,
@@ -680,12 +685,6 @@ function create_context(header: FuseInHeaderValue, mode: number, umask: number):
     uid: header.uid,
     gid: header.gid,
   };
-}
-
-async function async_iterable<T>(source: Iterable<T> | AsyncIterable<T>): Promise<T[]> {
-  const result: T[] = [];
-  for await (const item of source) result.push(item);
-  return result;
 }
 
 /**
@@ -1153,44 +1152,53 @@ export function fileSystemDevice<TNode extends object, THandle, T extends FS<TNo
         const offset = checked_number(request.offset);
         const handle = handle_record(request.fh, true, node!);
         // The guest resumes readdir by `off`, which is an index into the
-        // entry array we rebuild here: the caller's directory plus the "." and
-        // ".." entries this device injects. Each request re-reads the whole
-        // directory and skips `off` entries, so no directory position state is
-        // kept between requests.
+        // entry sequence we rebuild here: the caller's directory plus the "." and
+        // ".." entries this device injects. Each request restarts enumeration
+        // and skips `off` entries, then stops once the page is full. No directory
+        // position state is kept between requests.
         const entries = [
           { name: ".", record: handle.node },
           { name: "..", record: handle.node.parent },
         ];
-        const directory_entries = await filesystem.readdir(handle.node.node, handle.handle);
-        const transient: NodeRecord<TNode>[] = [];
         const limit = Math.min(request.size, capacity - FuseOutHeader.size);
-        try {
-          for (const entry of await async_iterable(directory_entries)) {
-            const record = record_for_node(entry.node, handle.node);
-            transient.push(record);
-            entries.push({
-              name: validate_name(entry.name),
-              record,
-            });
+        async function append_entry(name: Uint8Array, record: NodeRecord<TNode>, index: number) {
+          const attributes = await filesystem.getattr(record.node);
+          payload.alloc(FuseDirent).value = {
+            ino: record.id,
+            off: BigInt(index + 1),
+            namelen: name.byteLength,
+            type: DirentType[mode_type(attributes.mode)],
+          };
+          payload.append(name);
+          payload.bump(-payload.length & 7);
+        }
+        function fits(name: Uint8Array) {
+          // FUSE dirents are padded to 8 bytes: 24-byte header + name.
+          return payload.length + ((24 + name.byteLength + 7) & ~7) <= limit;
+        }
+        for (let index = offset; index < entries.length; index++) {
+          const entry = entries[index]!;
+          const name = utf8_encoder.encode(entry.name);
+          if (!fits(name)) return payload;
+          await append_entry(name, entry.record, index);
+        }
+        // Even the shortest dirent takes 32 bytes. Do not open an iterator
+        // when no further entry can fit. Breaking for-await closes generators.
+        if (limit - payload.length < 32) break;
+        const directory_entries = await filesystem.readdir(handle.node.node, handle.handle);
+        let index = entries.length;
+        for await (const entry of directory_entries) {
+          const position = index++;
+          if (position < offset) continue;
+          const name = utf8_encoder.encode(validate_name(entry.name));
+          if (!fits(name)) break;
+          const record = record_for_node(entry.node, handle.node);
+          try {
+            await append_entry(name, record, position);
+          } finally {
+            collect_record(record);
           }
-          for (let index = offset; index < entries.length; index++) {
-            const entry = entries[index]!;
-            const name = utf8_encoder.encode(entry.name);
-            // FUSE dirents are padded to 8 bytes: 24-byte header + name.
-            const record_length = (24 + name.byteLength + 7) & ~7;
-            if (payload.length + record_length > limit) break;
-            const attributes = await filesystem.getattr(entry.record.node);
-            payload.alloc(FuseDirent).value = {
-              ino: entry.record.id,
-              off: BigInt(index + 1),
-              namelen: name.byteLength,
-              type: DirentType[mode_type(attributes.mode)],
-            };
-            payload.append(name);
-            payload.bump(-payload.length & 7);
-          }
-        } finally {
-          for (const record of transient) collect_record(record);
+          if (limit - payload.length < 32) break;
         }
         break;
       }
