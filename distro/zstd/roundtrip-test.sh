@@ -31,18 +31,38 @@ cmp /tmp/data /tmp/dict.out || fail "default dictionary roundtrip differed"
 
 # Production kernels reject file mmap. Require the actual mapping failure,
 # not a crash, missing option/file or silent fallback; neither mode emits data.
-for mode in compress decompress; do
-  status=0
-  if test "$mode" = compress; then
-    zstd --mmap-dict -D /tmp/dictionary -q -c /tmp/data >/tmp/mapped.out 2>/tmp/mapped.err || status=$?
-  else
-    zstd --mmap-dict -D /tmp/dictionary -d -q -c /tmp/dict.zst >/tmp/mapped.out 2>/tmp/mapped.err || status=$?
-  fi
-  test "$status" -eq 34 || fail "forced mapping did not return dictionary error 34: $mode"
-  grep -F 'Invalid argument' /tmp/mapped.err >/dev/null || fail "forced mapping did not report EINVAL: $mode"
-  test ! -s /tmp/mapped.out || fail "rejected mapping emitted output: $mode"
-done
+reject_mapping() {
+  dictionary=$1
+  compressed=$2
+  for mode in compress decompress; do
+    status=0
+    if test "$mode" = compress; then
+      zstd --mmap-dict -D "$dictionary" -q -c /tmp/data >/tmp/mapped.out 2>/tmp/mapped.err || status=$?
+    else
+      zstd --mmap-dict -D "$dictionary" -d -q -c "$compressed" >/tmp/mapped.out 2>/tmp/mapped.err || status=$?
+    fi
+    test "$status" -eq 34 || fail "forced mapping did not return dictionary error 34: $mode $dictionary"
+    grep -F 'Invalid argument' /tmp/mapped.err >/dev/null || fail "forced mapping did not report EINVAL: $mode $dictionary"
+    test ! -s /tmp/mapped.out || fail "rejected mapping emitted output: $mode $dictionary"
+  done
+}
+reject_mapping /tmp/dictionary /tmp/dict.zst
 echo "zstd: malloc dictionaries verified; forced file mapping rejected"
+
+# Pin the real-application boundary corpus before enabling any file mmap.
+# The experimental copy ceiling is two 64-KiB pages, not an application ABI.
+# These are mutable files: future immutable-source admission must still reject
+# forced mmap here, even after a supported immutable mapping path is added.
+dd if=/dev/zero of=/tmp/dictionary-seed bs=131073 count=1 || fail "dictionary seed generation failed"
+for size in 65535 65536 65537 131071 131072 131073; do
+  head -c "$size" /tmp/dictionary-seed >/tmp/boundary-dictionary || fail "boundary dictionary preparation failed"
+  test "$(wc -c </tmp/boundary-dictionary)" -eq "$size" || fail "boundary dictionary size mismatch"
+  zstd -D /tmp/boundary-dictionary -q -c /tmp/data >/tmp/boundary.zst || fail "boundary default dictionary compression failed"
+  zstd --no-mmap-dict -D /tmp/boundary-dictionary -d -q -c /tmp/boundary.zst >/tmp/boundary.out || fail "boundary malloc dictionary decompression failed"
+  cmp /tmp/data /tmp/boundary.out || fail "boundary dictionary roundtrip differed"
+  reject_mapping /tmp/boundary-dictionary /tmp/boundary.zst
+  echo "zstd: dictionary boundary $size verified"
+done
 
 # Binary bytes and multiple syscall-sized chunks must survive file and pipe I/O.
 dd if=/dev/zero of=/tmp/binary bs=65536 count=16 || fail "binary generation failed"

@@ -52,6 +52,12 @@ test("Zstandard workload roundtrips malloc dictionaries, binary files and pipes"
   assert.equal(result.status, 0, result.error?.message ?? result.stdout + result.stderr);
   assert.match(result.stdout, /::vm-test::pass/);
   assert.match(result.stdout, /malloc dictionaries verified; forced file mapping rejected/);
+  assert.deepEqual(
+    [...result.stdout.matchAll(/zstd: dictionary boundary (\d+) verified/g)].map((match) =>
+      Number(match[1]),
+    ),
+    [65535, 65536, 65537, 131071, 131072, 131073],
+  );
   assert.doesNotMatch(result.stdout, /::vm-test::fail/);
 });
 
@@ -66,6 +72,24 @@ test("ordinary dictionary failure cannot be mistaken for successful coverage", (
   const result = run(`case "$*" in *'-D '*) return 19 ;; esac`);
   assert.equal(result.status, 1, result.error?.message ?? result.stdout + result.stderr);
   assert.match(result.stdout, /default dictionary compression failed/);
+  assert.doesNotMatch(result.stdout, /::vm-test::pass/);
+});
+
+test("a boundary dictionary failure cannot be hidden by the smaller smoke dictionary", () => {
+  const result = run(`case "$*" in *boundary-dictionary*) return 19 ;; esac`);
+  assert.equal(result.status, 1, result.error?.message ?? result.stdout + result.stderr);
+  assert.match(result.stdout, /boundary default dictionary compression failed/);
+  assert.doesNotMatch(result.stdout, /::vm-test::pass/);
+});
+
+test("boundary mapping cannot silently succeed after the smaller rejection checks", () => {
+  const result = run(
+    "",
+    `case "$*" in *boundary-dictionary*) return 0 ;; esac
+    echo "Invalid argument" >&2; return 34`,
+  );
+  assert.equal(result.status, 1, result.error?.message ?? result.stdout + result.stderr);
+  assert.match(result.stdout, /did not return dictionary error 34/);
   assert.doesNotMatch(result.stdout, /::vm-test::pass/);
 });
 
