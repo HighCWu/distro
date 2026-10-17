@@ -191,7 +191,7 @@ let
               inherit (platform) addressBits maximumMemoryBytes;
               sourceIdentity = builtins.baseNameOf "${src}";
               compilerIdentity = builtins.baseNameOf "${llvm-toolchain}";
-              configureFlags = finalAttrs.configureFlags;
+              inherit (finalAttrs) configureFlags;
               patches = map (patch: builtins.baseNameOf "${patch}") finalAttrs.patches;
               dependencies =
                 map
