@@ -90,6 +90,63 @@ test("development metadata copies are writable without modifying read-only packa
     }
   }));
 
+test("both consumers can move an immutable development copy without changing its inputs", () =>
+  workspace((root) => {
+    const packageRoot = join(root, "immutable development");
+    const directory = metadata(packageRoot);
+    const originals = new Map(
+      readdirSync(directory).map((name) => [name, readFileSync(join(directory, name))]),
+    );
+    const directories = [packageRoot, join(packageRoot, "lib"), directory];
+    try {
+      for (const name of originals.keys()) chmodSync(join(directory, name), 0o444);
+      for (const path of directories) chmodSync(path, 0o555);
+      const recipe = readFileSync(new URL("../package.nix", import.meta.url), "utf8");
+      const copies = [
+        ...recipe.matchAll(
+          /cp -r \$\{finalAttrs\.finalPackage\.development\}\/\. original\/\n\s*chmod u\+w original\n\s*mv original relocated\/installation/g,
+        ),
+      ];
+      assert.equal(
+        copies.length,
+        2,
+        "direct and CMake consumers must both make only the copied root writable before moving it",
+      );
+      for (const [index, match] of copies.entries()) {
+        const work = join(root, `consumer-${index}`);
+        mkdirSync(work);
+        const result = spawnSync(
+          "sh",
+          [
+            "-eu",
+            "-c",
+            "mkdir -p relocated\n" +
+              match[0].replace("${finalAttrs.finalPackage.development}", '"$package"'),
+          ],
+          {
+            cwd: work,
+            env: { ...process.env, package: packageRoot },
+            encoding: "utf8",
+          },
+        );
+        assert.equal(result.status, 0, result.stderr);
+        const moved = join(work, "relocated/installation");
+        assert.equal(statSync(moved).mode & 0o777, 0o755);
+        assert.equal(statSync(join(moved, "lib/pkgconfig")).mode & 0o777, 0o555);
+        for (const [name, contents] of originals) {
+          assert.equal(statSync(join(moved, "lib/pkgconfig", name)).mode & 0o777, 0o444);
+          assert.deepEqual(readFileSync(join(moved, "lib/pkgconfig", name)), contents);
+          assert.deepEqual(readFileSync(join(directory, name)), contents);
+        }
+        for (const path of directories) assert.equal(statSync(path).mode & 0o777, 0o555);
+      }
+    } finally {
+      // Only temporary fixture trees; restore write access for workspace cleanup.
+      const cleanup = spawnSync("chmod", ["-R", "u+w", root], { encoding: "utf8" });
+      assert.equal(cleanup.status, 0, cleanup.stderr);
+    }
+  }));
+
 test("copied libcurl metadata retains static dependencies, relocates twice and rejects native fallback", () =>
   workspace((root) => {
     const original = join(root, "original");

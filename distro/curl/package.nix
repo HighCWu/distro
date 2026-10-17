@@ -151,6 +151,7 @@ stdenv.mkDerivation (finalAttrs: {
       ''
         mkdir -p $out/bin $out/share/licenses relocated
         cp -r ${finalAttrs.finalPackage.development}/. original/
+        chmod u+w original
         mv original relocated/installation
         export WASM_PKG_CONFIG_PATH="$PWD/relocated/installation/lib/pkgconfig"
         export WASM_PKG_CONFIG_SYSROOT_DIR=/
@@ -190,6 +191,7 @@ stdenv.mkDerivation (finalAttrs: {
       ''
         mkdir -p $out/bin $out/share/licenses relocated
         cp -r ${finalAttrs.finalPackage.development}/. original/
+        chmod u+w original
         mv original relocated/installation
         export WASM_PKG_CONFIG_PATH="$PWD/relocated/installation/lib/pkgconfig"
         export WASM_PKG_CONFIG_SYSROOT_DIR=/
