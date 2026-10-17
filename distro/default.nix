@@ -185,6 +185,11 @@ lib.makeScope (scope: lib.callPackageWith ({ inherit lib pkgs; } // scope)) (
       vm-test = vmTestWasm64;
     };
     bzip2 = callPackage ./bzip2/package.nix { };
+    bzip2-wasm64 = self.bzip2.override {
+      stdenv = self.stdenv-wasm64;
+      busybox = self.busybox-wasm64;
+      vm-test = vmTestWasm64;
+    };
     ca-certificates = callPackage ./ca-certificates/package.nix { };
     coreutils = callPackage ./coreutils/package.nix { };
     curl = callPackage ./curl/package.nix { };
@@ -219,6 +224,11 @@ lib.makeScope (scope: lib.callPackageWith ({ inherit lib pkgs; } // scope)) (
     };
     make = callPackage ./make/package.nix { };
     ncurses = callPackage ./ncurses/package.nix { };
+    ncurses-wasm64 = self.ncurses.override {
+      stdenv = self.stdenv-wasm64;
+      busybox = self.busybox-wasm64;
+      vm-test = vmTestWasm64;
+    };
     openssl = callPackage ./openssl/package.nix { };
     openssl-wasm64 = self.openssl.override {
       stdenv = self.stdenv-wasm64;
@@ -230,6 +240,22 @@ lib.makeScope (scope: lib.callPackageWith ({ inherit lib pkgs; } // scope)) (
     };
     patch = callPackage ./patch/package.nix { };
     python = callPackage ./python/package.nix { };
+    python-wasm64 = self.python.override {
+      stdenv = self.stdenv-wasm64;
+      platform = self.platform-wasm64;
+      llvm-toolchain = self.llvm-toolchain-wasm64;
+      zlib = self.zlib-wasm64;
+      bzip2 = self.bzip2-wasm64;
+      xz = self.xz-wasm64;
+      # Use the installed archive/headers, not the CLI output or a wasm32 lib.
+      # Loadable extensions and WAL remain disabled in this SQLite profile.
+      sqlite3 = self.sqlite3-wasm64.dev;
+      readline = self.readline-wasm64;
+      ncurses = self.ncurses-wasm64;
+      openssl = self.openssl-wasm64;
+      busybox = self.busybox-wasm64;
+      vm-test = vmTestWasm64;
+    };
     quickjs = callPackage ./quickjs/package.nix { };
     quickjs-wasm64 = self.quickjs.override {
       stdenv = self.stdenv-wasm64;
@@ -240,6 +266,12 @@ lib.makeScope (scope: lib.callPackageWith ({ inherit lib pkgs; } // scope)) (
       vm-test = vmTestWasm64;
     };
     readline = callPackage ./readline/package.nix { };
+    readline-wasm64 = self.readline.override {
+      stdenv = self.stdenv-wasm64;
+      ncurses = self.ncurses-wasm64;
+      busybox = self.busybox-wasm64;
+      vm-test = vmTestWasm64;
+    };
     rust-smoke = callPackage ./rust-smoke/package.nix { };
     sed = callPackage ./sed/package.nix { };
     sqlite3 = callPackage ./sqlite3/package.nix { };
@@ -250,6 +282,11 @@ lib.makeScope (scope: lib.callPackageWith ({ inherit lib pkgs; } // scope)) (
     util-linux = callPackage ./util-linux/package.nix { };
     vim = callPackage ./vim/package.nix { };
     xz = callPackage ./xz/package.nix { };
+    xz-wasm64 = self.xz.override {
+      stdenv = self.stdenv-wasm64;
+      busybox = self.busybox-wasm64;
+      vm-test = vmTestWasm64;
+    };
     zlib = callPackage ./zlib/package.nix { };
     zlib-wasm64 = self.zlib.override {
       stdenv = self.stdenv-wasm64;

@@ -12,6 +12,7 @@ export HOME=/tmp
 
 mount -t proc proc /proc || fail "mounting proc failed"
 /vm-test-setup-dev-fd || fail "creating /dev/fd links failed"
+python3 /python-abi-test.py "$(cat /python-address-bits)" || fail "Python ABI check failed"
 
 # Generate an ephemeral P-256 self-signed cert/key for the in-memory TLS test
 # below, using the ported openssl CLI. Doing it in-guest means the validity

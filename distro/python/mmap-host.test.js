@@ -21,6 +21,7 @@ test("target fixture requires explicit kernel rejection checks, without overridi
   assert.match(recipe, /mmap = vm-test\.installedTest/);
   assert.ok(recipe.includes('files."/mmap-test.py" = ./mmap-test.py;'));
   const script = readFileSync(new URL("./mmap-test.sh", import.meta.url), "utf8");
-  assert.match(script, /if python3 \/mmap-test.py --kernel-boundaries; then/);
+  assert.match(script, /python3 \/mmap-test.py --kernel-boundaries; then/);
+  assert.match(script, /python3 \/python-abi-test.py "\$\(cat \/python-address-bits\)"/);
   assert.equal(spawnSync("sh", ["-n"], { input: script }).status, 0);
 });

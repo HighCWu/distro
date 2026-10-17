@@ -1,6 +1,7 @@
 {
   pkgs,
   stdenv,
+  platform,
   src ? pkgs.fetchzip {
     url = "https://www.python.org/ftp/python/3.13.14/Python-3.13.14.tar.xz";
     hash = "sha256-v1lJgk5aS5tS19HH8k6cs5NlFpTDtmFOWSepvldlVm8=";
@@ -32,6 +33,7 @@ let
     # version to run the freeze/regen steps; --with-build-python below points
     # at it. The build platform also compiles a few helper generators.
     depsBuildBuild = [ pkgs.stdenv.cc ];
+    nativeBuildInputs = [ pkgs.nodejs ];
 
     # Statically linked extension modules for the batteries this distro ships.
     # cc-wrapper injects each buildInput's -isystem/-L, so CPython's configure
@@ -125,6 +127,11 @@ let
 
     installFlags = [ "DESTDIR=$(out)" ];
 
+    postBuild = ''
+      node ${../busybox/check-binary.mjs} ${../../packages/kernel/src/wasm_binary.ts} \
+        python ${toString platform.addressBits} ${toString platform.maximumMemoryBytes}
+    '';
+
     # A minimal smoke test at build time: the interpreter binary is wasm, so it
     # cannot run here; just confirm it and the stdlib landed.
     postInstall = ''
@@ -146,6 +153,19 @@ let
         --replace-fail ${openssl} /usr
       rm -f $out/usr/lib/python3.13/__pycache__/_sysconfigdata__linux_.*.pyc
 
+      # Preserve actual upstream notices for this statically linked build.
+      # In particular Readline's GPL terms are not replaced by integration MIT.
+      notices=$out/share/licenses/python
+      mkdir -p "$notices/xz" "$notices/openssl"
+      cp LICENSE "$notices/python-LICENSE"
+      cp ${bzip2.src}/LICENSE "$notices/bzip2-LICENSE"
+      cp ${xz.src}/COPYING* ${xz.src}/AUTHORS "$notices/xz/"
+      cp ${ncurses.src}/COPYING "$notices/ncurses-COPYING"
+      cp ${readline.src}/COPYING "$notices/readline-COPYING"
+      cp ${zlib.src}/zlib.h "$notices/zlib.h"
+      cp ${sqlite3}/include/sqlite3.h "$notices/sqlite3.h"
+      cp ${openssl}/share/licenses/openssl/* "$notices/openssl/"
+
       # _curses is statically linked. Its compiled terminal descriptions are
       # supplied by the typed ncurses APK runtime dependency above.
     '';
@@ -161,12 +181,20 @@ let
           finalAttrs.finalPackage
         ];
         files."/mmap-test.py" = ./mmap-test.py;
+        files."/python-abi-test.py" = ./abi-test.py;
+        files."/python-address-bits" = builtins.toFile "python-address-bits" (
+          toString platform.addressBits + "\n"
+        );
       };
       interpreter = vm-test.installedTest {
         name = "python-interpreter";
         # A larger stack than the toolchain default is unnecessary here; the
         # 8 MiB platform default covers CPython's recursion in these tests.
         init = ./python-test.sh;
+        files."/python-abi-test.py" = ./abi-test.py;
+        files."/python-address-bits" = builtins.toFile "python-address-bits" (
+          toString platform.addressBits + "\n"
+        );
         # openssl CLI generates the ephemeral TLS test cert/key in-guest, so
         # its validity window tracks the guest clock (no build-vs-guest time
         # skew) and no PEM fixture has to be baked into the image.
