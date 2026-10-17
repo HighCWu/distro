@@ -30,6 +30,17 @@ guest_test("Node directory sharing through Linux", async (t, fixture) => {
       assert.equal(await readFile(path.join(shared, "renamed"), "utf8"), "Linux data");
     });
 
+    await t.test("synchronizes the shared directory through Linux FSYNCDIR", async () => {
+      const directory = await guest.fs.open("/tmp/shared", { read: true });
+      try {
+        await guest.fs.writeTextFile("/tmp/shared/synced-entry", "published");
+        await directory.sync();
+        assert.equal(await readFile(path.join(shared, "synced-entry"), "utf8"), "published");
+      } finally {
+        await directory.close();
+      }
+    });
+
     await t.test("rejects missing self rename and preserves an existing self rename", async () => {
       await assert.rejects(
         guest.fs.rename("/tmp/shared/missing-self", "/tmp/shared/missing-self"),

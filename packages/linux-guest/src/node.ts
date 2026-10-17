@@ -247,10 +247,12 @@ class Node {
 class Handle {
   readonly node: Node;
   readonly file: FileHandle | undefined;
+  readonly directory: boolean;
 
-  constructor(node: Node, file?: FileHandle) {
+  constructor(node: Node, file?: FileHandle, directory = false) {
     this.node = node;
     this.file = file;
+    this.directory = directory;
     if (file) node.files.add(file);
   }
 }
@@ -545,8 +547,14 @@ export class NodeFS implements FS<Node, Handle> {
   }
 
   async fsync(node: Node, handle: Handle, dataOnly: boolean) {
+    const current = this.#handle(node, handle);
+    if (current.directory && !current.file) {
+      throw new FSError("EOPNOTSUPP", "host directory synchronization is unavailable");
+    }
     const file = this.#file(node, handle);
-    await node_call(dataOnly ? file.datasync() : file.sync());
+    // Directories have namespace metadata, not ordinary file data. Use fsync
+    // for FSYNCDIR even when FUSE supplies its data-only hint.
+    await node_call(dataOnly && !current.directory ? file.datasync() : file.sync());
   }
 
   async release(node: Node, handle: Handle) {
@@ -564,8 +572,23 @@ export class NodeFS implements FS<Node, Handle> {
     return await this.#path_operation(async () => {
       const stats = await this.#stats(node);
       if (!stats.isDirectory()) throw new FSError("ENOTDIR");
-      return new Handle(node);
+      // Windows does not expose directory opens through Node's regular open
+      // API. Keep enumeration available there; fsync reports unsupported.
+      if (process.platform === "win32" || constants.O_DIRECTORY === undefined) {
+        return new Handle(node, undefined, true);
+      }
+      const target = await this.#validated_path(this.#parts(node));
+      const file = await node_call(
+        open(target, constants.O_RDONLY | constants.O_DIRECTORY | constants.O_NOFOLLOW),
+      );
+      return new Handle(node, file, true);
     });
+  }
+
+  async releasedir(node: Node, handle: Handle) {
+    const current = this.#handle(node, handle);
+    if (!current.directory) throw new FSError("EBADF", "not a directory handle");
+    if (current.file) await this.release(node, current);
   }
 
   async readdir(node: Node, handle: Handle): Promise<FSDirectoryEntry<Node>[]> {

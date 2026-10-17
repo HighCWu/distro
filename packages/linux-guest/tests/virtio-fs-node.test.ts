@@ -45,14 +45,55 @@ test("node virtio-fs directory entries preserve file, directory and symlink kind
   await symlink("missing", path.join(directory, "dangling"));
   const fs = new NodeFS(directory);
   const handle = await fs.opendir(fs.root);
-  // Directory handles are logical objects, not host directory descriptors.
-  const entries = await fs.readdir(fs.root, handle);
-  assert.deepEqual(entries.map(({ name, type }) => [name, type]).sort(), [
-    ["dangling", "symlink"],
-    ["directory", "directory"],
-    ["file", "file"],
-    ["link", "symlink"],
-  ]);
+  try {
+    const entries = await fs.readdir(fs.root, handle);
+    assert.deepEqual(entries.map(({ name, type }) => [name, type]).sort(), [
+      ["dangling", "symlink"],
+      ["directory", "directory"],
+      ["file", "file"],
+      ["link", "symlink"],
+    ]);
+  } finally {
+    await fs.releasedir(fs.root, handle);
+  }
+});
+
+test("node virtio-fs synchronizes and closes an opened directory after unlink", async () => {
+  const directory = await mkdtemp(path.join(temporary, "sync-dir-"));
+  await mkdir(path.join(directory, "child"));
+  const fs = new NodeFS(directory);
+  const node = (await fs.lookup(fs.root, "child"))!;
+  const handle = await fs.opendir(node);
+  let released = false;
+  try {
+    assert.ok(handle.file, "supported hosts must retain the opened directory descriptor");
+    const file = handle.file;
+    const ino = (await file.stat({ bigint: true })).ino;
+    const sync = file.sync.bind(file);
+    let syncs = 0;
+    file.sync = async () => {
+      syncs++;
+      await sync();
+    };
+    await fs.fsync(node, handle, false);
+    await fs.fsync(node, handle, true);
+    assert.equal(syncs, 2, "both directory synchronization hints use fsync");
+    file.sync = async () => {
+      throw Object.assign(new Error("injected fsync failure"), { code: "EIO" });
+    };
+    await assert.rejects(fs.fsync(node, handle, false), { errno: 5 });
+    file.sync = sync;
+    await fs.rmdir(fs.root, "child");
+    await fs.fsync(node, handle, false);
+    assert.equal((await fs.getattr(node)).mode & 0o170000, 0o040000);
+    assert.equal((await file.stat({ bigint: true })).ino, ino);
+    await fs.releasedir(node, handle);
+    released = true;
+    await assert.rejects(file.stat(), { code: "EBADF" });
+    await assert.rejects(fs.getattr(node), { errno: 2 });
+  } finally {
+    if (!released && handle.file) await fs.releasedir(node, handle);
+  }
 });
 
 test("node virtio-fs preserves sub-millisecond and pre-epoch timestamps", async () => {
@@ -197,8 +238,14 @@ test("node virtio-fs binds nodes and handles to their adapter and file", async (
       }
     }
     const directory = await right.opendir(right.root);
-    await assert.rejects(left.readdir(left.root, directory), { errno: 9 });
-    await assert.rejects(left.readdir(right.root, directory), { errno: 22 });
+    try {
+      await assert.rejects(left.readdir(left.root, directory), { errno: 9 });
+      await assert.rejects(left.readdir(right.root, directory), { errno: 22 });
+      await assert.rejects(left.releasedir(left.root, directory), { errno: 9 });
+      await assert.rejects(left.fsync(left.root, directory, false), { errno: 9 });
+    } finally {
+      await right.releasedir(right.root, directory);
+    }
     assert.equal(new TextDecoder().decode(await left.read(a.node, a.handle, 0n, 5)), "left");
     assert.equal(new TextDecoder().decode(await right.read(b.node, b.handle, 0n, 5)), "right");
     assert.equal((await left.getattr(sibling.node, sibling.handle)).size, 0n);
