@@ -72,6 +72,7 @@ grep -qx 'TLS verification: rejected localhost (18)' /tmp/verified-hsout || fail
 grep -qx 'TLS verification: rejected wrong.invalid (62)' /tmp/verified-hsout || fail "hostname rejection stage missing"
 grep -qx 'OpenSSL: verified TLS1.3, binary I/O, untrusted certificate and wrong hostname rejection' /tmp/verified-hsout ||
   fail "verified TLS completion stage missing"
+cat /tmp/verified-hsout
 
 echo "OpenSSL: CLI defaults, entropy, digest, X.509 and verified TLS consumers complete"
 echo "::vm-test::pass"

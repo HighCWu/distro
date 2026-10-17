@@ -31,3 +31,4 @@ globalThis.bootFilesystemRuntimeSmoke = () => bootRuntime("/runtime-filesystem.c
 globalThis.bootQuickjsRuntimeSmoke = () => bootRuntime("/runtime-quickjs.cpio");
 globalThis.bootLuaRuntimeSmoke = () => bootRuntime("/runtime-lua.cpio");
 globalThis.bootLuaDevelopmentRuntimeSmoke = () => bootRuntime("/runtime-lua-development.cpio");
+globalThis.bootOpensslRuntimeSmoke = () => bootRuntime("/runtime-openssl.cpio");

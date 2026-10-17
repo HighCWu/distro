@@ -19,6 +19,18 @@ const titles = [
 ].map((match) => match[1]);
 const fixtures = [
   {
+    title: "runs OpenSSL CLI and verified TLS1.3 certificate and hostname checks through Linux",
+    entry: "bootOpensslRuntimeSmoke",
+    path: "/runtime-openssl.cpio",
+    stages: [
+      "TLS verification: trusted localhost TLSv1.3 binary roundtrip",
+      "TLS verification: rejected localhost (18)",
+      "TLS verification: rejected wrong.invalid (62)",
+      "OpenSSL: verified TLS1.3, binary I/O, untrusted certificate and wrong hostname rejection",
+      "OpenSSL: CLI defaults, entropy, digest, X.509 and verified TLS consumers complete",
+    ],
+  },
+  {
     title: "runs Lua integer64, modules, coroutine cleanup, spawn and bytecode through Linux",
     entry: "bootLuaRuntimeSmoke",
     path: "/runtime-lua.cpio",
@@ -94,7 +106,7 @@ function loadCases(globals = {}) {
 
 test("Nix report gate exactly matches all registered runtime cases", () => {
   assert.deepEqual([...loadCases().keys()].sort(), [...titles].sort());
-  assert.equal(titles.length, 18);
+  assert.equal(titles.length, 19);
   const report = {
     suites: [
       {

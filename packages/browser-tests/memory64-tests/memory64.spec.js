@@ -304,6 +304,29 @@ test("runs installed Lua C callbacks, errors and coroutine through Linux", async
   expect(output).not.toContain("::vm-test::fail");
 });
 
+test("runs OpenSSL CLI and verified TLS1.3 certificate and hostname checks through Linux", async ({
+  page,
+}) => {
+  page.on("console", (message) => console.log(`[browser] ${message.text()}`));
+  page.on("pageerror", (error) => console.error(`[browser] ${error.stack ?? error}`));
+  await page.goto("/");
+  await expect
+    .poll(() => page.evaluate(() => typeof globalThis.bootOpensslRuntimeSmoke))
+    .toBe("function");
+  const output = await page.evaluate(() => globalThis.bootOpensslRuntimeSmoke());
+  expect(output).toContain("TLS verification: trusted localhost TLSv1.3 binary roundtrip");
+  expect(output).toContain("TLS verification: rejected localhost (18)");
+  expect(output).toContain("TLS verification: rejected wrong.invalid (62)");
+  expect(output).toContain(
+    "OpenSSL: verified TLS1.3, binary I/O, untrusted certificate and wrong hostname rejection",
+  );
+  expect(output).toContain(
+    "OpenSSL: CLI defaults, entropy, digest, X.509 and verified TLS consumers complete",
+  );
+  expect(output).toContain("::vm-test::pass");
+  expect(output).not.toContain("::vm-test::fail");
+});
+
 test("retries a failed kernel download in the same page with a generic MIME type", async ({
   page,
 }) => {

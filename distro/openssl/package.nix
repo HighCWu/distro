@@ -11,6 +11,7 @@
   platform,
   musl,
   llvm-runtimes,
+  image,
 }:
 
 stdenv.mkDerivation (finalAttrs: {
@@ -111,7 +112,7 @@ stdenv.mkDerivation (finalAttrs: {
   # path for HTTPS repositories.
   passthru.apk.depends = [ "ca-certificates" ];
 
-  passthru.checks =
+  passthru.runtimeAssets =
     let
       # A C program linked against the installed libssl.a/libcrypto.a that runs
       # a full TLS handshake in memory (see handshake.c). Proves the libraries
@@ -140,16 +141,22 @@ stdenv.mkDerivation (finalAttrs: {
         '';
       };
     in
-    {
-      cli = vm-test.installedTest {
-        name = "openssl-cli";
-        init = ./tests/cli-test.sh;
-        contents = [
-          busybox
-          ca-certificates
-          finalAttrs.finalPackage
-          handshake
-        ];
+    rec {
+      init = ./tests/cli-test.sh;
+      contents = [
+        busybox
+        ca-certificates
+        finalAttrs.finalPackage
+        handshake
+      ];
+      cliInitramfs = image.mkInitramfs {
+        name = "openssl-cli-${platform.wasmArch}";
+        inherit init contents;
       };
     };
+
+  passthru.checks.cli = vm-test.installedTest {
+    name = "openssl-cli";
+    inherit (finalAttrs.finalPackage.runtimeAssets) init contents;
+  };
 })

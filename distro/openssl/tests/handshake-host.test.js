@@ -78,3 +78,21 @@ test("OpenSSL width, dependencies, ABI and installed consumers stay wired togeth
   const syntax = spawnSync("sh", ["-n"], { input: script, encoding: "utf8" });
   assert.equal(syntax.status, 0, syntax.stderr);
 });
+
+test("browser and Node share the complete OpenSSL script and installed consumer outputs", () => {
+  const recipe = readFileSync(new URL("../package.nix", import.meta.url), "utf8");
+  assert.equal([...recipe.matchAll(/init = \.\/tests\/cli-test.sh;/g)].length, 1);
+  assert.match(recipe, /passthru\.runtimeAssets =/);
+  assert.match(recipe, /cliInitramfs = image\.mkInitramfs/);
+  assert.match(recipe, /inherit init contents;/);
+  assert.match(recipe, /inherit \(finalAttrs\.finalPackage\.runtimeAssets\) init contents;/);
+  const browser = readFileSync(new URL("../../npm/browser-tests.nix", import.meta.url), "utf8");
+  assert.ok(
+    browser.includes(
+      "opensslAssets = (if bits == 64 then openssl-wasm64 else openssl).runtimeAssets;",
+    ),
+  );
+  assert.ok(browser.includes("cp ${opensslAssets.cliInitramfs} $out/runtime-openssl.cpio"));
+  const script = readFileSync(new URL("./cli-test.sh", import.meta.url), "utf8");
+  assert.match(script, /cat \/tmp\/verified-hsout/);
+});
