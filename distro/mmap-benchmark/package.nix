@@ -38,6 +38,7 @@ let
         clang ${compileFlags} -Wl,--export=__wasm_mmap_init_v1 ${../basic-init/tests/mmap-staging.c} -o $out/staging.wasm
         clang ${compileFlags} ${../basic-init/tests/mmap-staging-legacy.c} -o $out/staging-legacy.wasm
         clang ${compileFlags} -Wl,--export=__wasm_mmap_init_v1 ${../basic-init/tests/mmap-file.c} -o $out/file.wasm
+        clang ${compileFlags} -pthread -Wl,--export=__wasm_mmap_init_v1 ${../basic-init/tests/mmap-file-lifetime.c} -o $out/file-lifetime.wasm
         clang ${compileFlags} -DFILE_MMAP_MODE=2 ${../basic-init/tests/mmap-file.c} -o $out/file-legacy.wasm
         clang ${compileFlags} -DFILE_MMAP_MODE=0 -Wl,--export=__wasm_mmap_init_v1 ${../basic-init/tests/mmap-file.c} -o $out/file-default.wasm
         clang ${compileFlags} -Wl,--export=__wasm_mmap_init_v1 ${../basic-init/tests/mmap-vfs.c} -o $out/vfs.wasm
@@ -177,6 +178,15 @@ pkgs.runCommand "mmap-benchmark-artifacts-${platform.wasmArch}"
           ln -s "$releaseConfig" $out/default
           ln -s "$regression" $out/regression
         '';
+    passthru.checks.file-lifetime = vm-test-file.rawInitramfsTest {
+      name = "mmap-file-lifetime-${platform.wasmArch}";
+      init = "${executables}/file-lifetime.wasm";
+      disks = [ provenanceImage ];
+      snapshotFirstDisk = true;
+      readOnlyDisks = true;
+      cpus = 4;
+      heavy = true;
+    };
     passthru.checks.vfs-lifetime =
       pkgs.runCommand "mmap-vfs-lifetime-checks-${platform.wasmArch}"
         {
