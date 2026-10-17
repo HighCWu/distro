@@ -15,12 +15,15 @@ static volatile sig_atomic_t handler_error;
 static pthread_t receiver;
 static int commands[2], acknowledgements[2];
 
+enum wait_kind { WAIT_PPOLL, WAIT_PSELECT, WAIT_SIGSUSPEND };
+
 static void handler(int signal_number)
 {
 	int saved_errno = errno;
 	sigset_t mask;
 	if (signal_number != SIGUSR1 || sigprocmask(SIG_SETMASK, NULL, &mask) ||
-	    sigismember(&mask, SIGUSR1) != 1 || sigismember(&mask, SIGUSR2) != 1)
+	    sigismember(&mask, SIGUSR1) != 1 || sigismember(&mask, SIGUSR2) != 1 ||
+	    sigismember(&mask, SIGTERM) != 1)
 		handler_error = 1;
 	delivered++;
 	errno = saved_errno;
@@ -50,13 +53,18 @@ static void check_mask(const sigset_t *expected)
 }
 
 /* The libc wrappers must not modify the caller's timeout. No retry loop:
- * ppoll/pselect are interruptible even when the handler uses SA_RESTART. */
-static int wait_once(int select_mode, int fd, const sigset_t *mask,
+ * All three waits are interruptible even with SA_RESTART. sigsuspend has no
+ * timeout; the test runner's watchdog bounds a lost signal in that path. */
+static int wait_once(enum wait_kind mode, int fd, const sigset_t *mask,
 		     const struct timespec *timeout)
 {
+	if (mode == WAIT_SIGSUSPEND) {
+		if (fd != -1) test_fail("sigsuspend cannot wait on a descriptor");
+		return sigsuspend(mask);
+	}
 	struct timespec copy = *timeout;
 	int result, saved_errno;
-	if (select_mode) {
+	if (mode == WAIT_PSELECT) {
 		fd_set reads;
 		FD_ZERO(&reads);
 		if (fd >= FD_SETSIZE) test_fail("fixture descriptor exceeds FD_SETSIZE");
@@ -78,12 +86,12 @@ static int wait_once(int select_mode, int fd, const sigset_t *mask,
 	return result;
 }
 
-static void expect_interrupt(int select_mode, const sigset_t *temporary,
+static void expect_interrupt(enum wait_kind mode, const sigset_t *temporary,
 			     const sigset_t *blocked)
 {
 	const struct timespec bounded = { .tv_sec = 2 };
 	errno = 0;
-	int result = wait_once(select_mode, -1, temporary, &bounded);
+	int result = wait_once(mode, -1, temporary, &bounded);
 	int error = errno;
 	check_mask(blocked);
 	if (result != -1 || error != EINTR)
@@ -95,7 +103,7 @@ static void expect_interrupt(int select_mode, const sigset_t *temporary,
 		test_fail("delivered signal remained pending");
 }
 
-static void test_handoff(int select_mode, int concurrent,
+static void test_handoff(enum wait_kind mode, int concurrent,
 			 const sigset_t *temporary, const sigset_t *blocked)
 {
 	for (int i = 0; i < 16; i++) {
@@ -111,7 +119,7 @@ static void test_handoff(int select_mode, int concurrent,
 			if (sigpending(&pending) || sigismember(&pending, SIGUSR1) != 1 || delivered)
 				test_fail("blocked signal was not pending before wait");
 		}
-		expect_interrupt(select_mode, temporary, blocked);
+		expect_interrupt(mode, temporary, blocked);
 		if (concurrent) {
 			char byte;
 			if (read(acknowledgements[0], &byte, 1) != 1 || byte != 'A')
@@ -120,7 +128,7 @@ static void test_handoff(int select_mode, int concurrent,
 	}
 }
 
-static void test_blocked_timeout_and_readiness(int select_mode,
+static void test_blocked_timeout_and_readiness(enum wait_kind mode,
 			const sigset_t *temporary, const sigset_t *blocked)
 {
 	const struct timespec timeout = { .tv_nsec = 40000000 };
@@ -133,7 +141,7 @@ static void test_blocked_timeout_and_readiness(int select_mode,
 	int error = pthread_kill(receiver, SIGUSR1);
 	if (error) { errno = error; test_perror("queue timeout signal"); }
 	if (clock_gettime(CLOCK_MONOTONIC, &before)) test_perror("timeout start");
-	if (wait_once(select_mode, -1, blocked, &timeout) != 0)
+	if (wait_once(mode, -1, blocked, &timeout) != 0)
 		test_fail("blocked signal prevented a genuine wait timeout");
 	if (clock_gettime(CLOCK_MONOTONIC, &after)) test_perror("timeout finish");
 	int64_t elapsed = (int64_t)(after.tv_sec - before.tv_sec) * 1000000000 +
@@ -144,16 +152,16 @@ static void test_blocked_timeout_and_readiness(int select_mode,
 		test_fail("timeout consumed or delivered a blocked signal");
 	if (pipe(descriptors) || write(descriptors[1], "R", 1) != 1)
 		test_perror("prepare ready pipe");
-	if (wait_once(select_mode, descriptors[0], blocked, &bounded) != 1)
+	if (wait_once(mode, descriptors[0], blocked, &bounded) != 1)
 		test_fail("blocked signal lost ready-fd result");
 	check_mask(blocked);
 	if (delivered || read(descriptors[0], &byte, 1) != 1 || byte != 'R')
 		test_fail("ready wait consumed data or delivered blocked signal");
 	const struct timespec zero = { 0 };
-	if (wait_once(select_mode, descriptors[0], blocked, &zero) != 0)
+	if (wait_once(mode, descriptors[0], blocked, &zero) != 0)
 		test_fail("consumed pipe data remained readable");
 	if (close(descriptors[0]) || close(descriptors[1])) test_perror("close ready pipe");
-	expect_interrupt(select_mode, temporary, blocked);
+	expect_interrupt(mode, temporary, blocked);
 }
 
 int main(void)
@@ -161,10 +169,14 @@ int main(void)
 	sigset_t original, blocked, temporary;
 	struct sigaction previous;
 	struct sigaction action = { .sa_handler = handler };
-	if (sigemptyset(&action.sa_mask) || sigprocmask(SIG_SETMASK, NULL, &original))
+	if (sigemptyset(&action.sa_mask) || sigaddset(&action.sa_mask, SIGTERM) ||
+	    sigprocmask(SIG_SETMASK, NULL, &original))
 		test_perror("initial signal state");
 	blocked = original;
+	/* SIGTERM is blocked only by the handler's sa_mask, not either wait
+	 * mask. Full-mask comparison below must detect any leak after return. */
 	if (sigaddset(&blocked, SIGUSR1) || sigaddset(&blocked, SIGUSR2) ||
+	    sigdelset(&blocked, SIGTERM) ||
 	    sigprocmask(SIG_SETMASK, &blocked, NULL)) test_perror("block fixture signals");
 	temporary = blocked;
 	if (sigdelset(&temporary, SIGUSR1)) test_perror("temporary unmask");
@@ -177,10 +189,11 @@ int main(void)
 	for (int restart = 0; restart < 2; restart++) {
 		action.sa_flags = restart ? SA_RESTART : 0;
 		if (sigaction(SIGUSR1, &action, NULL)) test_perror("set restart policy");
-		for (int select_mode = 0; select_mode < 2; select_mode++) {
-			test_handoff(select_mode, 0, &temporary, &blocked);
-			test_handoff(select_mode, 1, &temporary, &blocked);
-			test_blocked_timeout_and_readiness(select_mode, &temporary, &blocked);
+		for (enum wait_kind mode = WAIT_PPOLL; mode <= WAIT_SIGSUSPEND; mode++) {
+			test_handoff(mode, 0, &temporary, &blocked);
+			test_handoff(mode, 1, &temporary, &blocked);
+			if (mode != WAIT_SIGSUSPEND)
+				test_blocked_timeout_and_readiness(mode, &temporary, &blocked);
 		}
 	}
 	if (write(commands[1], "Q", 1) != 1) test_perror("stop signal sender");
@@ -191,6 +204,6 @@ int main(void)
 	    close(acknowledgements[1])) test_perror("close signal fixture pipes");
 	if (sigaction(SIGUSR1, &previous, NULL) || sigprocmask(SIG_SETMASK, &original, NULL))
 		test_perror("restore signal state");
-	puts("signal waits: pending/concurrent mask handoff, EINTR, timeout and readiness verified");
+	puts("signal waits: ppoll/pselect/sigsuspend mask handoff, EINTR, timeout and readiness verified");
 	test_pass();
 }

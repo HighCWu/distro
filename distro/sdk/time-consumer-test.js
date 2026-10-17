@@ -11,7 +11,7 @@ for (const [fixture, finalStage] of [
   ["time-abi", "time ABI: relative/absolute timers, expiration and ready-fd waits verified"],
   [
     "signal-waits",
-    "signal waits: pending/concurrent mask handoff, EINTR, timeout and readiness verified",
+    "signal waits: ppoll/pselect/sigsuspend mask handoff, EINTR, timeout and readiness verified",
   ],
   [
     "signal-io",

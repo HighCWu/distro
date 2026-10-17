@@ -32,7 +32,7 @@ let
     "runs SDK Unix and TCP socket readiness and half-close through Linux"
     "runs SDK time64 relative and absolute timers and ready-fd waits through Linux"
     "runs SDK pthread time64 waits, cancellation and broadcast through Linux"
-    "runs SDK ppoll and pselect signal-mask handoff through Linux"
+    "runs SDK ppoll, pselect and sigsuspend signal-mask handoff through Linux"
     "runs SDK partial pipe I/O and interrupted child reaping through Linux"
     "retries a failed kernel download in the same page with a generic MIME type"
   ];
