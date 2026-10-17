@@ -215,6 +215,10 @@ let
         name = "sdk-socket-runtime-${platform.wasmArch}";
         init = "${socketPrograms}/sdk-socket.wasm";
       };
+      filesystem-runtime = vm-test.rawInitramfsTest {
+        name = "sdk-filesystem-${platform.wasmArch}";
+        init = "${filesystemPrograms}/sdk-filesystem.wasm";
+      };
       time-runtime = vm-test.rawInitramfsTest {
         name = "sdk-time-runtime-${platform.wasmArch}";
         init = "${timePrograms}/sdk-time.wasm";
@@ -440,6 +444,11 @@ let
         ${cc}/bin/wasm-linux-cc -O2 -pthread -Wall -Wextra -Werror \
           -I${../basic-init/tests} ${../basic-init/tests/semaphore-deadline.c} -o $out/sdk-semaphore-deadline.wasm
       '';
+  filesystemPrograms = pkgs.runCommand "sdk-filesystem-consumer-${platform.wasmArch}" { } ''
+    mkdir $out
+    ${cxx}/bin/wasm-linux-c++ -std=c++17 -O2 -Wall -Wextra -Werror \
+      ${./filesystem-example.cc} -o $out/sdk-filesystem.wasm
+  '';
   sqlitePrograms = pkgs.runCommand "sdk-sqlite-consumer-${platform.wasmArch}" { } ''
     mkdir $out
     # Rebuild the upstream amalgamation with this SDK, not the wasm32
