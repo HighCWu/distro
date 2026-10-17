@@ -188,10 +188,10 @@ jobs:
       - uses: nix-community/cache-nix-action@v7
         id: heavy-cache
         with:
-          primary-key: nix-targeted-v1-${{ runner.os }}-${{ contains(matrix.check, 'wasm64') && 'wasm64' || 'wasm32' }}-${{ hashFiles('distro/llvm-toolchain/**', 'distro/llvm-runtimes/**', 'distro/platform.nix', 'flake.lock') }}
+          primary-key: nix-targeted-v1-${{ runner.os }}-${{ (contains(matrix.check, 'wasm64') || contains(matrix.check, 'memory64')) && 'wasm64' || 'wasm32' }}-${{ hashFiles('distro/llvm-toolchain/**', 'distro/llvm-runtimes/**', 'distro/platform.nix', 'flake.lock') }}
           restore-prefixes-first-match: |
-            nix-targeted-v1-${{ runner.os }}-${{ contains(matrix.check, 'wasm64') && 'wasm64' || 'wasm32' }}-
-            ${{ contains(matrix.check, 'wasm64') && format('nix-wasm64-v2-{0}-', runner.os) || format('nix-ci-{0}-', runner.os) }}
+            nix-targeted-v1-${{ runner.os }}-${{ (contains(matrix.check, 'wasm64') || contains(matrix.check, 'memory64')) && 'wasm64' || 'wasm32' }}-
+            ${{ (contains(matrix.check, 'wasm64') || contains(matrix.check, 'memory64')) && format('nix-wasm64-v2-{0}-', runner.os) || format('nix-ci-{0}-', runner.os) }}
             nix-ci-${{ runner.os }}-
           save: false
       - uses: cachix/cachix-action@v17
@@ -208,7 +208,7 @@ jobs:
       - name: Collect the validated kernel source bundle
         if: ${{ success() && startsWith(matrix.check, 'kernel') && endsWith(matrix.check, '-check-source-bundle') }}
         env:
-          WASM64_CHECK: ${{ contains(matrix.check, 'wasm64') }}
+          WASM64_CHECK: ${{ (contains(matrix.check, 'wasm64') || contains(matrix.check, 'memory64')) }}
         run: |
           package=kernel
           if [[ "$WASM64_CHECK" == true ]]; then package=kernel-wasm64; fi
@@ -227,7 +227,7 @@ jobs:
       - name: Collect the validated BusyBox source bundle
         if: ${{ success() && startsWith(matrix.check, 'busybox') && endsWith(matrix.check, '-check-source-bundle') }}
         env:
-          WASM64_CHECK: ${{ contains(matrix.check, 'wasm64') }}
+          WASM64_CHECK: ${{ (contains(matrix.check, 'wasm64') || contains(matrix.check, 'memory64')) }}
         run: |
           package=busybox
           if [[ "$WASM64_CHECK" == true ]]; then package=busybox-wasm64; fi
@@ -248,7 +248,7 @@ jobs:
         id: retained
         if: ${{ !cancelled() && needs.plan.outputs.targeted == 'true' && steps.heavy-cache.outcome == 'success' && steps.heavy-cache.outputs.hit-primary-key != 'true' }}
         env:
-          WASM64_CHECK: ${{ contains(matrix.check, 'wasm64') }}
+          WASM64_CHECK: ${{ (contains(matrix.check, 'wasm64') || contains(matrix.check, 'memory64')) }}
         run: |
           suffix=""
           if [[ "$WASM64_CHECK" == true ]]; then suffix="-wasm64"; fi
@@ -269,7 +269,7 @@ jobs:
         with:
           # Pass the same key explicitly: the restore step returned an empty
           # primary-key output in the save:false job, despite declaring it.
-          primary-key: nix-targeted-v1-${{ runner.os }}-${{ contains(matrix.check, 'wasm64') && 'wasm64' || 'wasm32' }}-${{ hashFiles('distro/llvm-toolchain/**', 'distro/llvm-runtimes/**', 'distro/platform.nix', 'flake.lock') }}
+          primary-key: nix-targeted-v1-${{ runner.os }}-${{ (contains(matrix.check, 'wasm64') || contains(matrix.check, 'memory64')) && 'wasm64' || 'wasm32' }}-${{ hashFiles('distro/llvm-toolchain/**', 'distro/llvm-runtimes/**', 'distro/platform.nix', 'flake.lock') }}
           gc-max-store-size-linux: 9G
 
   deploy-site:
