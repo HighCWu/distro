@@ -9,6 +9,7 @@ import test from "node:test";
 for (const [program, sourceNotice] of [
   ["quickjs", "LICENSE"],
   ["lua", "doc/readme.html"],
+  ["openssl", "LICENSE.txt"],
 ]) {
   test(`${program} runtime license checks match the unchanged installed payload paths`, () => {
     const root = mkdtempSync(join(tmpdir(), `linux-wasm-${program}-notices-`));
@@ -27,7 +28,7 @@ for (const [program, sourceNotice] of [
       const recipe = readFileSync(new URL(`../${program}/package.nix`, import.meta.url), "utf8");
       const copy = recipe.match(
         new RegExp(
-          `    mkdir -p \\$out/share/licenses/${program}\\n([\\s\\S]*?)    runHook postInstall`,
+          `    mkdir -p \\$out/share/licenses/${program}\\n([\\s\\S]*?)${program === "openssl" ? "\\n  '';" : "    runHook postInstall"}`,
         ),
       );
       assert.ok(copy, "execute actual package license-copy block");
@@ -49,7 +50,10 @@ for (const [program, sourceNotice] of [
           );
       }
       const script = readFileSync(
-        new URL(`../${program}/language-test.sh`, import.meta.url),
+        new URL(
+          `../${program}/${program === "openssl" ? "tests/cli-test.sh" : "language-test.sh"}`,
+          import.meta.url,
+        ),
         "utf8",
       );
       const check = script.match(/for license in [^\n]+; do\n[\s\S]*?\ndone/);

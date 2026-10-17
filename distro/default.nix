@@ -211,6 +211,14 @@ lib.makeScope (scope: lib.callPackageWith ({ inherit lib pkgs; } // scope)) (
     make = callPackage ./make/package.nix { };
     ncurses = callPackage ./ncurses/package.nix { };
     openssl = callPackage ./openssl/package.nix { };
+    openssl-wasm64 = self.openssl.override {
+      stdenv = self.stdenv-wasm64;
+      platform = self.platform-wasm64;
+      musl = self.musl-wasm64;
+      llvm-runtimes = self.llvm-runtimes-wasm64;
+      busybox = self.busybox-wasm64;
+      vm-test = vmTestWasm64;
+    };
     patch = callPackage ./patch/package.nix { };
     python = callPackage ./python/package.nix { };
     quickjs = callPackage ./quickjs/package.nix { };

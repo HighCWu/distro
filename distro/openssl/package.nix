@@ -8,23 +8,30 @@
   vm-test,
   busybox,
   ca-certificates,
+  platform,
+  musl,
+  llvm-runtimes,
 }:
 
 stdenv.mkDerivation (finalAttrs: {
   pname = "openssl";
   version = "3.5.7";
   inherit src;
+  meta.license = pkgs.lib.licenses.asl20;
+  passthru.apk.license = "Apache-2.0 AND MIT AND Apache-2.0 WITH LLVM-exception";
 
-  # apps/speed.c calls mlock() under a bare OPENSSL_SYS_LINUX guard, but
-  # musl-wasm declares no <sys/mman.h> functions (they sit behind #ifndef
-  # __wasm__), so the CLI would not compile. The patch makes `-mlock` report
-  # "not supported" on wasm like the other platforms that lack it.
+  # Keep apps/speed.c's optional -mlock mode explicitly unsupported. Bounded
+  # direct anonymous mappings do not provide locked/protected secure pages.
+  # This existing port patch is not a replacement for kernel page protection.
   patches = [ ./speed-no-mlock-on-wasm.patch ];
 
   # Configure and the generated build scripts are perl; the wasm stdenv brings
   # no interpreter of its own, and #!/usr/bin/env perl has no /usr/bin/env in
   # the sandbox, so hand Configure to the build-platform perl directly.
-  nativeBuildInputs = [ pkgs.perl ];
+  nativeBuildInputs = [
+    pkgs.perl
+    pkgs.nodejs
+  ];
 
   # OpenSSL ships its own perl Configure rather than autotools, so it never
   # reads the stdenv's CONFIG_SITE (the mmap/dlopen answers there are for
@@ -32,7 +39,7 @@ stdenv.mkDerivation (finalAttrs: {
   # configurePhase, which would append --host/--build/--prefix flags Configure
   # rejects. CC/AR/RANLIB come from the wasm toolchain the stdenv exports.
   #
-  # Base target linux-generic32: the wasm32 host is 32-bit, has no OpenSSL
+  # Select the matching generic C target for each pointer width, with no OpenSSL
   # assembly (no asm_arch in this target, so Configure takes the pure-C bignum
   # and hash paths), and uses pthreads, which musl provides on this platform.
   #
@@ -47,12 +54,10 @@ stdenv.mkDerivation (finalAttrs: {
   #       it, so it is removed.
   #   no-tests     -- the test suite is not built or run in the cross sandbox
   #       (the VM checks below exercise the result instead).
-  #   no-secure-memory -- crypto/mem_sec.c calls mmap/mprotect/mlock/madvise/
-  #       munmap for its mlocked, non-swappable "secure arena"; those are
-  #       unavailable here (the mman prototypes are not even visible, so it
-  #       fails to compile). Disabling it makes CRYPTO_secure_malloc fall back
-  #       to the ordinary heap. No real guarantee is lost: wasm has no mmap,
-  #       mlock or swap for the arena to have protected in the first place.
+  #   no-secure-memory -- the secure arena requires mlock and page protection,
+  #       not merely the platform's bounded direct anonymous mmap support.
+  #       CRYPTO_secure_malloc falls back to the ordinary heap; do not present
+  #       it as protected/locked storage or claim an equivalent secure arena.
   #   no-apps is deliberately NOT set: the `openssl` CLI is useful userland
   #       and is installed to $out/bin.
   #
@@ -61,7 +66,7 @@ stdenv.mkDerivation (finalAttrs: {
   # care about do not use it.
   configurePhase = ''
     runHook preConfigure
-    perl ./Configure linux-generic32 \
+    perl ./Configure linux-generic${toString platform.addressBits} \
       "CC=$CC" "AR=$AR" "RANLIB=$RANLIB" \
       -DHAVE_FORK=0 \
       --prefix=/ \
@@ -79,6 +84,11 @@ stdenv.mkDerivation (finalAttrs: {
 
   enableParallelBuilding = true;
 
+  postBuild = ''
+    node ${../busybox/check-binary.mjs} ${../../packages/kernel/src/wasm_binary.ts} \
+      apps/openssl ${toString platform.addressBits} ${toString platform.maximumMemoryBytes}
+  '';
+
   # install_sw installs the static libs, headers and the openssl binary;
   # install_ssldirs adds the default openssl.cnf the CLI loads (req/genpkey
   # want it present). Documentation targets are skipped: they run pod2man,
@@ -88,6 +98,13 @@ stdenv.mkDerivation (finalAttrs: {
     "install_ssldirs"
   ];
   installFlags = [ "DESTDIR=$(out)" ];
+
+  postInstall = ''
+    mkdir -p $out/share/licenses/openssl
+    cp LICENSE.txt $out/share/licenses/openssl/LICENSE.txt
+    cp ${musl.src}/COPYRIGHT $out/share/licenses/openssl/musl-COPYRIGHT
+    cp ${llvm-runtimes.src}/compiler-rt/LICENSE.TXT $out/share/licenses/openssl/compiler-rt-LICENSE.TXT
+  '';
 
   # X509_get_default_cert_file() resolves /etc/ssl/cert.pem in the guest. The
   # shared trust bundle is packaged separately because apk-tools uses the same
@@ -104,13 +121,22 @@ stdenv.mkDerivation (finalAttrs: {
         inherit (finalAttrs) version;
         dontUnpack = true;
         buildInputs = [ finalAttrs.finalPackage ];
+        nativeBuildInputs = [ pkgs.nodejs ];
         buildPhase = ''
           $CC -Wall -Wextra -Werror -o handshake ${./tests/handshake.c} \
             -lssl -lcrypto
+          $CC -Wall -Wextra -Werror -o verified-handshake ${./tests/verified-handshake.c} \
+            -lssl -lcrypto
+          for program in handshake verified-handshake; do
+            node ${../busybox/check-binary.mjs} ${../../packages/kernel/src/wasm_binary.ts} \
+              "$program" ${toString platform.addressBits} ${toString platform.maximumMemoryBytes}
+          done
         '';
         installPhase = ''
           mkdir -p $out/bin
-          cp handshake $out/bin/
+          cp handshake verified-handshake $out/bin/
+          mkdir -p $out/share/licenses/openssl-tests
+          cp ${../sdk/LICENSE.MIT} $out/share/licenses/openssl-tests/verified-handshake-MIT
         '';
       };
     in

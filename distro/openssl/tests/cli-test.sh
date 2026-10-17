@@ -1,7 +1,7 @@
 #!/bin/busybox sh
 
 fail() {
-  printf 'vm test guest failure: %s\n' "$*"
+  printf 'OpenSSL failure: %s\n' "$*"
   echo "::vm-test::fail"
   while :; do :; done
 }
@@ -18,12 +18,16 @@ case "$ver" in
 *) fail "unexpected version: $ver" ;;
 esac
 
-# Runtime defaults must name guest paths and the fragment must carry both the
+# Runtime defaults must name Linux paths and the fragment must carry both the
 # configuration and trust bundle at those paths.
 default_dir=$(openssl version -d 2>&1) || fail "openssl version -d failed: $default_dir"
 [ "$default_dir" = 'OPENSSLDIR: "/etc/ssl"' ] || fail "wrong OPENSSLDIR: $default_dir"
 [ -s /etc/ssl/openssl.cnf ] || fail "default openssl.cnf is missing"
 [ -s /etc/ssl/cert.pem ] || fail "default CA bundle is missing"
+for license in LICENSE.txt musl-COPYRIGHT compiler-rt-LICENSE.TXT; do
+  [ -s "/share/licenses/openssl/$license" ] || fail "missing license: $license"
+done
+[ -s /share/licenses/openssl-tests/verified-handshake-MIT ] || fail "missing test license"
 
 # (b) SHA-256 known-answer: dgst of "abc" must equal the FIPS-180 vector. This
 # runs the digest through the default provider end to end.
@@ -58,5 +62,17 @@ grep -q 'cert.pem: OK' /tmp/verout || fail "verify did not report OK: $(cat /tmp
 handshake >/tmp/hsout 2>&1 || fail "tls handshake test failed: $(cat /tmp/hsout)"
 grep -q '^handshake ok$' /tmp/hsout || fail "handshake marker missing: $(cat /tmp/hsout)"
 
+# Certificate validation is a separate consumer: it uses an explicit ephemeral
+# trust anchor, validates the SAN hostname, and must reject both missing trust
+# and a mismatched hostname with the specific X.509 verification errors.
+verified-handshake >/tmp/verified-hsout 2>&1 || fail "verified TLS consumer failed"
+grep -qx 'TLS verification: trusted localhost TLSv1.3 binary roundtrip' /tmp/verified-hsout ||
+  fail "verified TLS roundtrip stage missing"
+grep -qx 'TLS verification: rejected localhost (18)' /tmp/verified-hsout || fail "untrusted certificate stage missing"
+grep -qx 'TLS verification: rejected wrong.invalid (62)' /tmp/verified-hsout || fail "hostname rejection stage missing"
+grep -qx 'OpenSSL: verified TLS1.3, binary I/O, untrusted certificate and wrong hostname rejection' /tmp/verified-hsout ||
+  fail "verified TLS completion stage missing"
+
+echo "OpenSSL: CLI defaults, entropy, digest, X.509 and verified TLS consumers complete"
 echo "::vm-test::pass"
 while :; do :; done
