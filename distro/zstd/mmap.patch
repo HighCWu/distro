@@ -1,10 +1,11 @@
-Keep the POSIX dictionary loader and recognize mapping failures.
+Recognize POSIX dictionary mapping failures.
 
-Linux/Wasm now supports private file mappings backed by real linear-memory
-addresses. Do not force Wasm into the malloc fallback. POSIX mmap signals
-failure with MAP_FAILED, not NULL; reject it before handing the dictionary
-to the compressor. This source change remains under Zstandard's upstream
-dual license; this package selects the BSD-3-Clause option.
+The default Linux/Wasm kernel rejects file mappings. Ordinary dictionaries
+use the upstream malloc/read path; --no-mmap-dict also selects it explicitly.
+Keep --mmap-dict as a real mapping request, not a silently emulated success.
+POSIX mmap signals failure with MAP_FAILED, not NULL; reject it before handing
+the dictionary to the compressor. This source change remains under Zstandard's
+upstream dual license; this package selects the BSD-3-Clause option.
 
 diff --git a/programs/fileio.c b/programs/fileio.c
 --- a/programs/fileio.c

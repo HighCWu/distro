@@ -2,12 +2,13 @@
 # SPDX-License-Identifier: MIT
 
 fail() {
-  printf 'vm test guest failure: %s\n' "$*"
+  printf 'vm test failure: %s\n' "$*"
   echo "::vm-test::fail"
   while :; do :; done
 }
 
 export PATH=/bin:/sbin:/usr/bin:/usr/sbin
+export LC_ALL=C
 
 seq 1 4000 >/tmp/data || fail "generating test data failed"
 
@@ -15,14 +16,29 @@ zstd -q -c /tmp/data >/tmp/data.zst || fail "compression failed"
 zstd -d -q -c /tmp/data.zst >/tmp/data.out || fail "decompression failed"
 cmp /tmp/data /tmp/data.out || fail "round-tripped data did not match the original"
 
-# Exercise the upstream POSIX dictionary loader, not its malloc fallback.
-# Both compression and decompression must work after the dictionary fd closes.
+# Default and explicit malloc/read dictionaries must work without file mmap.
 cp /tmp/data /tmp/dictionary || fail "dictionary preparation failed"
-zstd --mmap-dict -D /tmp/dictionary -q -c /tmp/data >/tmp/dict.zst || fail "mapped dictionary compression failed"
-zstd --mmap-dict -D /tmp/dictionary -d -q -c /tmp/dict.zst >/tmp/dict.out || fail "mapped dictionary decompression failed"
-cmp /tmp/data /tmp/dict.out || fail "mapped dictionary roundtrip differed"
-zstd --no-mmap-dict -D /tmp/dictionary -d -q -c /tmp/dict.zst >/tmp/dict.out || fail "malloc dictionary interoperability failed"
+zstd -D /tmp/dictionary -q -c /tmp/data >/tmp/dict.zst || fail "default dictionary compression failed"
+zstd --no-mmap-dict -D /tmp/dictionary -d -q -c /tmp/dict.zst >/tmp/dict.out || fail "malloc dictionary decompression failed"
 cmp /tmp/data /tmp/dict.out || fail "malloc dictionary roundtrip differed"
+zstd --no-mmap-dict -D /tmp/dictionary -q -c /tmp/data >/tmp/dict.zst || fail "malloc dictionary compression failed"
+zstd -D /tmp/dictionary -d -q -c /tmp/dict.zst >/tmp/dict.out || fail "default dictionary decompression failed"
+cmp /tmp/data /tmp/dict.out || fail "default dictionary roundtrip differed"
+
+# Production kernels reject file mmap. Require the actual mapping failure,
+# not a crash, missing option/file or silent fallback; neither mode emits data.
+for mode in compress decompress; do
+  status=0
+  if test "$mode" = compress; then
+    zstd --mmap-dict -D /tmp/dictionary -q -c /tmp/data >/tmp/mapped.out 2>/tmp/mapped.err || status=$?
+  else
+    zstd --mmap-dict -D /tmp/dictionary -d -q -c /tmp/dict.zst >/tmp/mapped.out 2>/tmp/mapped.err || status=$?
+  fi
+  test "$status" -eq 34 || fail "forced mapping did not return dictionary error 34: $mode"
+  grep -F 'Invalid argument' /tmp/mapped.err >/dev/null || fail "forced mapping did not report EINVAL: $mode"
+  test ! -s /tmp/mapped.out || fail "rejected mapping emitted output: $mode"
+done
+echo "zstd: malloc dictionaries verified; forced file mapping rejected"
 
 # Binary bytes and multiple syscall-sized chunks must survive file and pipe I/O.
 dd if=/dev/zero of=/tmp/binary bs=65536 count=16 2>/dev/null || fail "binary generation failed"
