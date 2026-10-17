@@ -198,11 +198,11 @@ stdenv.mkDerivation (finalAttrs: {
           -DCMAKE_TOOLCHAIN_FILE=${sdk}/share/cmake/linux-wasm.cmake \
           -DCMAKE_STAGING_PREFIX="$PWD/relocated/installation"
         cmake --build build --verbose
-        cp build/libcurl-fetch.wasm $out/bin/libcurl-fetch
+        cmake --install build --prefix "$PWD/installed"
+        cp installed/bin/libcurl-fetch.wasm $out/bin/libcurl-fetch
         node ${../busybox/check-binary.mjs} ${../../packages/kernel/src/wasm_binary.ts} \
           $out/bin/libcurl-fetch ${toString platform.addressBits} ${toString platform.maximumMemoryBytes}
-        cp -r relocated/installation/share/licenses/curl $out/share/licenses/
-        cp relocated/installation/share/doc/libcurl/examples/LICENSE.MIT $out/share/licenses/curl/example-MIT
+        cp -r installed/share/licenses/curl $out/share/licenses/
         # A fresh configure must not recover a missing target dependency from
         # host packages or the successful build's CMake/pkg-config cache.
         cp -r relocated/installation missing

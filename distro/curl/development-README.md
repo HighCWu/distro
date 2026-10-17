@@ -33,6 +33,7 @@ cmake -S "$development/share/doc/libcurl/examples" -B build-fetch -G Ninja \
   -DCMAKE_TOOLCHAIN_FILE="$sdk/share/cmake/linux-wasm.cmake" \
   -DCMAKE_STAGING_PREFIX="$development"
 cmake --build build-fetch
+cmake --install build-fetch --prefix "$PWD/installed-fetch"
 ```
 
 Here `sdk` and `development` are absolute matching-width installations. Use a
@@ -41,6 +42,11 @@ explicit copied dependency paths outside the libc sysroot; it does not enable
 host package discovery. `PkgConfig::LIBCURL` obtains all static dependencies
 through the SDK wrapper. The result is `build-fetch/libcurl-fetch.wasm`; CMake
 configures and links cross probes without executing the Wasm binary on the host.
+Installation places the application in `installed-fetch/bin/libcurl-fetch.wasm`
+and the example and dependency notices in `installed-fetch/share/licenses/curl`.
+The installed application does not need the build directory, SDK, headers or
+static archives at runtime. Do not omit those notices when distributing it;
+their inclusion is not a complete release compliance audit.
 
 Run the compiled application on Linux/Wasm, not as a host Node/WASI program:
 
@@ -53,8 +59,8 @@ The example writes arbitrary binary response bytes to stdout and reports status
 on stderr, then exits normally. It disables proxies, bounds connect/transfer
 time, restricts supported protocols, and keeps certificate and hostname checks
 enabled. HTTPS is restricted to TLS 1.3 for this example; omission of the CA
-argument (or `-`) uses libcurl's default trust configuration. An optional fourth
-argument supplies one libcurl resolve entry such as `localhost:9445:127.0.0.1`.
+argument (or `-`) uses libcurl's default trust configuration. The optional
+`resolve-entry` supplies one libcurl entry such as `localhost:9445:127.0.0.1`.
 Redirects are not followed. HTTP status is reported, not converted to a transfer
 error. A curl error code becomes the process exit code.
 

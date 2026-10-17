@@ -339,17 +339,34 @@ test("both widths use installed example, SDK flags, ABI guard and complete notic
   assert.equal(spawnSync("sh", ["-n"], { input: script }).status, 0);
 });
 
-test("installed CMake project builds the ordinary C consumer with GCC and Clang", () =>
+test("installed CMake project builds and installs the ordinary C consumer with GCC and Clang", () =>
   workspace((root) => {
     const original = join(root, "original");
-    mkdirSync(original);
-    writeFileSync(join(original, "fetch.c"), source);
+    const examples = join(original, "share/doc/libcurl/examples");
+    mkdirSync(examples, { recursive: true });
+    writeFileSync(join(examples, "fetch.c"), source);
     writeFileSync(
-      join(original, "CMakeLists.txt"),
+      join(examples, "CMakeLists.txt"),
       readFileSync(new URL("../CMakeLists.txt", import.meta.url)),
     );
-    const moved = join(root, "relocated");
+    const exampleLicense = readFileSync(new URL("../../sdk/LICENSE.MIT", import.meta.url));
+    writeFileSync(join(examples, "LICENSE.MIT"), exampleLicense);
+    const notices = [
+      "curl-COPYING",
+      "integration-MIT",
+      "zlib.h",
+      "openssl-LICENSE.txt",
+      "musl-COPYRIGHT",
+      "compiler-rt-LICENSE.TXT",
+    ];
+    const noticeDirectory = join(original, "share/licenses/curl");
+    mkdirSync(noticeDirectory, { recursive: true });
+    // Synthetic notice bytes test installation, not release license completeness.
+    for (const name of notices)
+      writeFileSync(join(noticeDirectory, name), `Native fixture: ${name}\n`);
+    const moved = join(root, "relocated installation");
     renameSync(original, moved);
+    const project = join(moved, "share/doc/libcurl/examples");
     const nativeMetadata = join(root, "native-metadata");
     mkdirSync(nativeMetadata);
     const nativeFlags = (option) => {
@@ -363,10 +380,9 @@ test("installed CMake project builds the ordinary C consumer with GCC and Clang"
       join(nativeMetadata, "libcurl.pc"),
       `Name: native-libcurl-fixture\nDescription: Host consumer fixture only\nVersion: 1.0\nRequires.private: native-fixture-private\nLibs: ${nativeFlags("--libs")}\nCflags: ${nativeFlags("--cflags")}\n`,
     );
-    writeFileSync(
-      join(nativeMetadata, "native-fixture-private.pc"),
-      "Name: native-fixture-private\nDescription: Native metadata dependency only\nVersion: 1.0\n",
-    );
+    const privateMetadata =
+      "Name: native-fixture-private\nDescription: Native metadata dependency only\nVersion: 1.0\n";
+    writeFileSync(join(nativeMetadata, "native-fixture-private.pc"), privateMetadata);
     const wrapper = join(root, "native-fixture-pkg-config");
     writeFileSync(
       wrapper,
@@ -384,35 +400,53 @@ test("installed CMake project builds the ordinary C consumer with GCC and Clang"
     writeFileSync(input, bytes);
     for (const compiler of ["gcc", "clang"]) {
       const build = join(root, compiler);
+      const installed = join(root, `${compiler} installed`);
       for (const args of [
         [
           "-S",
-          moved,
+          project,
           "-B",
           build,
           "-G",
           "Ninja",
           "-DCMAKE_BUILD_TYPE=Release",
+          `-DCMAKE_STAGING_PREFIX=${moved}`,
           `-DCMAKE_C_COMPILER=${compiler}`,
           `-DPKG_CONFIG_EXECUTABLE=${wrapper}`,
         ],
         ["--build", build, "--verbose"],
+        ["--install", build, "--prefix", installed],
       ]) {
         const result = spawnSync("cmake", args, { env, encoding: "utf8", timeout: 60_000 });
         assert.equal(result.status, 0, `${result.error || ""}\n${result.stdout}\n${result.stderr}`);
       }
-      const binary = join(build, "libcurl-fetch.wasm");
+      rmSync(build, { recursive: true, force: true });
+      const binary = join(installed, "bin/libcurl-fetch.wasm");
       const result = spawnSync(binary, [`file://${input}`]);
       assert.equal(result.status, 0, result.stderr?.toString());
       assert.deepEqual(result.stdout, bytes);
       assert.equal(spawnSync(binary, []).status, 2);
+      for (const name of notices)
+        assert.equal(
+          readFileSync(join(installed, "share/licenses/curl", name), "utf8"),
+          `Native fixture: ${name}\n`,
+        );
+      assert.deepEqual(
+        readFileSync(join(installed, "share/licenses/curl/example-MIT")),
+        exampleLicense,
+      );
+      assert.throws(
+        () => statSync(join(moved, "bin")),
+        { code: "ENOENT" },
+        "explicit install prefix must not install into the development bundle",
+      );
     }
     unlinkSync(join(nativeMetadata, "native-fixture-private.pc"));
     const missing = spawnSync(
       "cmake",
       [
         "-S",
-        moved,
+        project,
         "-B",
         join(root, "missing-metadata"),
         "-G",
@@ -427,6 +461,30 @@ test("installed CMake project builds the ordinary C consumer with GCC and Clang"
       "missing explicit private metadata must not use host libcurl",
     );
     assert.match(missing.stdout + missing.stderr, /native-fixture-private/);
+    writeFileSync(join(nativeMetadata, "native-fixture-private.pc"), privateMetadata);
+    unlinkSync(join(moved, "share/licenses/curl/zlib.h"));
+    const missingNotice = spawnSync(
+      "cmake",
+      [
+        "-S",
+        project,
+        "-B",
+        join(root, "missing-notice"),
+        "-G",
+        "Ninja",
+        `-DPKG_CONFIG_EXECUTABLE=${wrapper}`,
+      ],
+      { env, encoding: "utf8", timeout: 60_000 },
+    );
+    assert.notEqual(
+      missingNotice.status,
+      0,
+      "a missing dependency notice must not be silently omitted",
+    );
+    assert.match(
+      missingNotice.stdout + missingNotice.stderr,
+      /Missing installed dependency notice: zlib.h/,
+    );
   }));
 
 test("CMake target consumer uses the copied project, SDK, staged libraries and shared runtime checks", () => {
@@ -440,6 +498,9 @@ test("CMake target consumer uses the copied project, SDK, staged libraries and s
   assert.ok(cmake.includes("mv original relocated/installation"));
   assert.ok(cmake.includes("cmake -S relocated/installation/share/doc/libcurl/examples"));
   assert.ok(cmake.includes("-DCMAKE_TOOLCHAIN_FILE=${sdk}/share/cmake/linux-wasm.cmake"));
+  assert.ok(cmake.includes('cmake --install build --prefix "$PWD/installed"'));
+  assert.ok(cmake.includes("cp installed/bin/libcurl-fetch.wasm $out/bin/libcurl-fetch"));
+  assert.ok(cmake.includes("cp -r installed/share/licenses/curl $out/share/licenses/"));
   assert.ok(cmake.includes('-DCMAKE_STAGING_PREFIX="$PWD/relocated/installation"'));
   assert.ok(cmake.includes("rm missing/lib/pkgconfig/libcrypto.pc"));
   assert.ok(cmake.includes("-B missing-build"));
