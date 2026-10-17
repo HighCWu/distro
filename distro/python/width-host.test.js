@@ -167,3 +167,27 @@ test("fork-less PATH fallback preserves error precedence and caller executable n
   const script = readFileSync(new URL("./python-test.sh", import.meta.url), "utf8");
   assert.match(script, /python3 \/python-spawn-errors-test\.py \|\| fail/);
 });
+
+test("Python process timeouts preserve binary pipes and terminated children are reaped", () => {
+  const result = spawnSync(
+    "python3",
+    [
+      "-B",
+      fileURLToPath(new URL("./process-lifecycle-test.py", import.meta.url)),
+      "--native-controls",
+    ],
+    { encoding: "utf8", timeout: 15_000 },
+  );
+  assert.equal(result.status, 0, `${result.error ?? ""}\n${result.stdout}\n${result.stderr}`);
+  assert.match(
+    result.stdout,
+    /timeout recovery, binary pipes, terminate, kill and reaping verified/,
+  );
+  assert.match(result.stdout, /injected retry output duplication rejected/);
+  const recipe = readFileSync(new URL("./package.nix", import.meta.url), "utf8");
+  assert.ok(
+    recipe.includes('files."/python-process-lifecycle-test.py" = ./process-lifecycle-test.py;'),
+  );
+  const script = readFileSync(new URL("./python-test.sh", import.meta.url), "utf8");
+  assert.match(script, /python3 \/python-process-lifecycle-test\.py \|\| fail/);
+});

@@ -10,6 +10,7 @@ for (const [variant, title, stages] of [
       "Python spawn: PATH error precedence and original str/bytes executable verified",
       "Python spawn: repeated failed launches preserve parent fds, CLOEXEC and child cleanup",
       "Python spawn: descriptor exhaustion preserves parent fds and child cleanup",
+      "Python process: timeout recovery, binary pipes, terminate, kill and reaping verified",
     ],
   ],
   [
