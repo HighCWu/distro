@@ -19,6 +19,22 @@ const titles = [
 ].map((match) => match[1]);
 const fixtures = [
   {
+    title: "runs Lua integer64, modules, coroutine cleanup, spawn and bytecode through Linux",
+    entry: "bootLuaRuntimeSmoke",
+    path: "/runtime-lua.cpio",
+    stages: [
+      "Lua: integer64, modules, I/O, coroutine cleanup, spawn and bytecode roundtrips verified",
+    ],
+  },
+  {
+    title: "runs installed Lua C callbacks, errors and coroutine through Linux",
+    entry: "bootLuaDevelopmentRuntimeSmoke",
+    path: "/runtime-lua-development.cpio",
+    stages: [
+      "Lua embedding: installed archive, C callbacks, integer64, errors and coroutine verified",
+    ],
+  },
+  {
     title: "runs QuickJS language, file I/O, spawn, Worker, timers and bytecode through Linux",
     entry: "bootQuickjsRuntimeSmoke",
     path: "/runtime-quickjs.cpio",
@@ -78,7 +94,7 @@ function loadCases(globals = {}) {
 
 test("Nix report gate exactly matches all registered runtime cases", () => {
   assert.deepEqual([...loadCases().keys()].sort(), [...titles].sort());
-  assert.equal(titles.length, 16);
+  assert.equal(titles.length, 18);
   const report = {
     suites: [
       {

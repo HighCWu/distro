@@ -11,6 +11,7 @@
   musl,
   llvm-runtimes,
   sdk,
+  image,
 }:
 
 stdenv.mkDerivation (finalAttrs: {
@@ -73,7 +74,7 @@ stdenv.mkDerivation (finalAttrs: {
     runHook postInstall
   '';
 
-  passthru.checks =
+  passthru.runtimeAssets =
     let
       consumer =
         pkgs.runCommand "lua-installed-consumer-${platform.wasmArch}"
@@ -102,27 +103,39 @@ stdenv.mkDerivation (finalAttrs: {
             node ${../busybox/check-binary.mjs} ${../../packages/kernel/src/wasm_binary.ts} \
               $out/lua-consumer.wasm ${toString platform.addressBits} ${toString platform.maximumMemoryBytes}
           '';
-      check =
-        name: init:
-        vm-test.installedTest {
-          name = "lua-${name}";
-          inherit init;
-          contents = [
-            finalAttrs.finalPackage
-            busybox
-          ];
-          files = {
-            "/usr/share/lua/5.4/platform_test.lua" = builtins.toFile "platform-test.lua" ''
-              return { answer = 42 }
-            '';
-          };
-        };
+      files = {
+        "/usr/share/lua/5.4/platform_test.lua" = builtins.toFile "platform-test.lua" ''
+          return { answer = 42 }
+        '';
+      };
     in
     {
-      language = check "language" ./language-test.sh;
-      development = vm-test.rawInitramfsTest {
-        name = "lua-installed-development-${platform.wasmArch}";
-        init = "${consumer}/lua-consumer.wasm";
+      inherit files;
+      languageInitramfs = image.mkInitramfs {
+        name = "lua-language-${platform.wasmArch}";
+        init = ./language-test.sh;
+        contents = [
+          finalAttrs.finalPackage
+          busybox
+        ];
+        inherit files;
       };
+      developmentProgram = "${consumer}/lua-consumer.wasm";
     };
+
+  passthru.checks = {
+    language = vm-test.installedTest {
+      name = "lua-language";
+      init = ./language-test.sh;
+      contents = [
+        finalAttrs.finalPackage
+        busybox
+      ];
+      files = finalAttrs.finalPackage.runtimeAssets.files;
+    };
+    development = vm-test.rawInitramfsTest {
+      name = "lua-installed-development-${platform.wasmArch}";
+      init = finalAttrs.finalPackage.runtimeAssets.developmentProgram;
+    };
+  };
 })

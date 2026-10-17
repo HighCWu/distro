@@ -8,6 +8,8 @@
   kernel-wasm64,
   linux,
   linux-wasm64,
+  lua,
+  lua-wasm64,
   mmap-benchmark,
   mmap-benchmark-wasm64,
   linux-guest,
@@ -44,6 +46,8 @@ let
     "runs SDK named and unnamed semaphore deadline boundaries through Linux"
     "runs SDK C++ filesystem copies, links, time64 metadata and errors through Linux"
     "runs QuickJS language, file I/O, spawn, Worker, timers and bytecode through Linux"
+    "runs Lua integer64, modules, coroutine cleanup, spawn and bytecode through Linux"
+    "runs installed Lua C callbacks, errors and coroutine through Linux"
     "retries a failed kernel download in the same page with a generic MIME type"
   ];
 
@@ -79,6 +83,7 @@ let
     bits:
     let
       programs = if bits == 64 then toolchain-smoke-wasm64 else toolchain-smoke;
+      luaAssets = (if bits == 64 then lua-wasm64 else lua).runtimeAssets;
       runtimeKernel = if bits == 64 then kernel-wasm64 else kernel;
       initramfs = image.mkInitramfs {
         name = "wasm${toString bits}-browser-runtime";
@@ -132,6 +137,10 @@ let
         name = "wasm${toString bits}-browser-runtime-filesystem";
         init = (if bits == 64 then sdk-wasm64 else sdk).filesystemProgram;
       };
+      luaDevelopmentInitramfs = image.mkInitramfs {
+        name = "wasm${toString bits}-browser-runtime-lua-development";
+        init = luaAssets.developmentProgram;
+      };
     in
     pkgs.runCommand "wasm${toString bits}-runtime-browser-tests" { } ''
       mkdir -p \
@@ -156,6 +165,8 @@ let
       cp ${semaphoreDeadlineInitramfs} $out/runtime-semaphore-deadline.cpio
       cp ${filesystemInitramfs} $out/runtime-filesystem.cpio
       cp ${(if bits == 64 then quickjs-wasm64 else quickjs).browserInitramfs} $out/runtime-quickjs.cpio
+      cp ${luaAssets.languageInitramfs} $out/runtime-lua.cpio
+      cp ${luaDevelopmentInitramfs} $out/runtime-lua-development.cpio
       cp ${source}/memory64-index.html $out/index.html
       cp ${source}/playwright.config.js $out/playwright.config.js
       cp ${source}/server.js $out/server.js

@@ -272,6 +272,38 @@ test("runs QuickJS language, file I/O, spawn, Worker, timers and bytecode throug
   expect(output).not.toContain("::vm-test::fail");
 });
 
+test("runs Lua integer64, modules, coroutine cleanup, spawn and bytecode through Linux", async ({
+  page,
+}) => {
+  page.on("console", (message) => console.log(`[browser] ${message.text()}`));
+  page.on("pageerror", (error) => console.error(`[browser] ${error.stack ?? error}`));
+  await page.goto("/");
+  await expect
+    .poll(() => page.evaluate(() => typeof globalThis.bootLuaRuntimeSmoke))
+    .toBe("function");
+  const output = await page.evaluate(() => globalThis.bootLuaRuntimeSmoke());
+  expect(output).toContain(
+    "Lua: integer64, modules, I/O, coroutine cleanup, spawn and bytecode roundtrips verified",
+  );
+  expect(output).toContain("::vm-test::pass");
+  expect(output).not.toContain("::vm-test::fail");
+});
+
+test("runs installed Lua C callbacks, errors and coroutine through Linux", async ({ page }) => {
+  page.on("console", (message) => console.log(`[browser] ${message.text()}`));
+  page.on("pageerror", (error) => console.error(`[browser] ${error.stack ?? error}`));
+  await page.goto("/");
+  await expect
+    .poll(() => page.evaluate(() => typeof globalThis.bootLuaDevelopmentRuntimeSmoke))
+    .toBe("function");
+  const output = await page.evaluate(() => globalThis.bootLuaDevelopmentRuntimeSmoke());
+  expect(output).toContain(
+    "Lua embedding: installed archive, C callbacks, integer64, errors and coroutine verified",
+  );
+  expect(output).toContain("::vm-test::pass");
+  expect(output).not.toContain("::vm-test::fail");
+});
+
 test("retries a failed kernel download in the same page with a generic MIME type", async ({
   page,
 }) => {

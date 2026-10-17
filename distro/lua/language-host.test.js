@@ -71,7 +71,23 @@ test("Lua wasm64 package explicitly matches all cross-platform dependencies", ()
   assert.match(recipe, /runHook postBuild/);
   assert.ok(recipe.includes("cp doc/readme.html $out/share/licenses/lua/lua-readme.html"));
   assert.ok(recipe.includes('"/usr/share/lua/5.4/platform_test.lua"'));
-  assert.match(recipe, /language = check "language" \.\/language-test\.sh;/);
+  assert.match(recipe, /language = vm-test\.installedTest/);
   const syntax = spawnSync("sh", ["-n"], { input: script, encoding: "utf8" });
   assert.equal(syntax.status, 0, syntax.stderr);
+});
+
+test("browser language and C consumers reuse Node target fixtures without alternate scripts", () => {
+  const recipe = readFileSync(new URL("./package.nix", import.meta.url), "utf8");
+  assert.equal([...recipe.matchAll(/return \{ answer = 42 \}/g)].length, 1);
+  assert.match(recipe, /languageInitramfs = image\.mkInitramfs/);
+  assert.match(recipe, /files = finalAttrs\.finalPackage\.runtimeAssets\.files;/);
+  assert.match(recipe, /init = finalAttrs\.finalPackage\.runtimeAssets\.developmentProgram;/);
+  assert.ok(recipe.includes('developmentProgram = "${consumer}/lua-consumer.wasm";'));
+  const browser = readFileSync(new URL("../npm/browser-tests.nix", import.meta.url), "utf8");
+  assert.ok(
+    browser.includes("luaAssets = (if bits == 64 then lua-wasm64 else lua).runtimeAssets;"),
+  );
+  assert.ok(browser.includes("init = luaAssets.developmentProgram;"));
+  assert.ok(browser.includes("cp ${luaAssets.languageInitramfs} $out/runtime-lua.cpio"));
+  assert.ok(browser.includes("cp ${luaDevelopmentInitramfs} $out/runtime-lua-development.cpio"));
 });
