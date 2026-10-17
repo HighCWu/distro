@@ -70,6 +70,9 @@ test("both Python runtime checks require actual pointer ABI and the full interpr
   assert.ok(recipe.includes("init = ./python-test.sh;"));
   const full = readFileSync(new URL("./python-test.sh", import.meta.url), "utf8");
   assert.match(full, /python3 \/python-abi-test\.py "\$\(cat \/python-address-bits\)"/);
+  assert.match(full, /--installed-layout \|\| fail/);
+  const mapping = readFileSync(new URL("./mmap-test.sh", import.meta.url), "utf8");
+  assert.match(mapping, /--installed-layout &&/);
   for (const feature of [
     "import bz2",
     "import lzma",
@@ -94,4 +97,15 @@ test("both Python runtime checks require actual pointer ABI and the full interpr
     assert.ok(recipe.includes(notice) && full.includes(notice), notice);
   assert.ok(recipe.includes('cp ${xz.src}/COPYING* ${xz.src}/AUTHORS "$notices/xz/"'));
   assert.match(full, /missing Python dependency notice/);
+});
+
+test("installed layout fixture rejects build prefixes and operational flag leaks", () => {
+  const result = spawnSync(
+    "python3",
+    ["-B", fileURLToPath(new URL("./layout-test.py", import.meta.url))],
+    { encoding: "utf8", timeout: 10_000 },
+  );
+  assert.equal(result.status, 0, result.stdout + result.stderr);
+  assert.match(result.stderr, /Ran 6 tests/);
+  assert.match(result.stderr, /\bOK\b/);
 });

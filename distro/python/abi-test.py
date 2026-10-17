@@ -24,6 +24,34 @@ def check(bits):
     print("Python ABI: pointer, size_t, long and sysconfig match %d bits" % bits)
 
 
+def check_installed_layout(paths, config):
+    root = "/usr/lib/python3.13"
+    expected = {
+        "stdlib": root,
+        "platstdlib": root,
+        "purelib": root + "/site-packages",
+        "platlib": root + "/site-packages",
+        "include": "/usr/include/python3.13",
+        "platinclude": "/usr/include/python3.13",
+        "scripts": "/usr/bin",
+        "data": "/usr",
+    }
+    for name, value in expected.items():
+        assert paths.get(name) == value, (name, paths.get(name), value)
+    for name in ("prefix", "exec_prefix"):
+        assert config.get(name) == "/usr", (name, config.get(name))
+    # Only operational fields, not historical source/build provenance. This
+    # does not assert that a compiler or dynamic module loader is installed.
+    for name in ("CC", "CXX", "AR", "CFLAGS", "CPPFLAGS", "LDFLAGS", "LIBS"):
+        value = config.get(name)
+        assert isinstance(value, str), (name, value)
+        assert "/nix/store/" not in value, (name, value)
+    print("Python layout: installed paths and operational flags exclude build-store paths")
+
+
 if __name__ == "__main__":
-    assert len(sys.argv) == 2, sys.argv
+    assert len(sys.argv) in (2, 3), sys.argv
     check(int(sys.argv[1]))
+    if len(sys.argv) == 3:
+        assert sys.argv[2] == "--installed-layout", sys.argv
+        check_installed_layout(sysconfig.get_paths(), sysconfig.get_config_vars())

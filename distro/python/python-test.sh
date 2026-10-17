@@ -15,7 +15,7 @@ mount -t proc proc /proc || fail "mounting proc failed"
 for notice in python-LICENSE bzip2-LICENSE ncurses-COPYING readline-COPYING zlib.h sqlite3.h xz/COPYING xz/AUTHORS openssl/LICENSE.txt openssl/musl-COPYRIGHT openssl/compiler-rt-LICENSE.TXT; do
   test -s "/share/licenses/python/$notice" || fail "missing Python dependency notice: $notice"
 done
-python3 /python-abi-test.py "$(cat /python-address-bits)" || fail "Python ABI check failed"
+python3 /python-abi-test.py "$(cat /python-address-bits)" --installed-layout || fail "Python ABI or installed layout check failed"
 
 # Generate an ephemeral P-256 self-signed cert/key for the in-memory TLS test
 # below, using the ported openssl CLI. Doing it in-guest means the validity
