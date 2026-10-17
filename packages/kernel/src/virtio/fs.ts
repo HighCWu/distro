@@ -852,12 +852,16 @@ export function fileSystemDevice<TNode extends object, THandle, T extends FS<TNo
     return finalize_promise;
   }
 
-  async function lookup(parent: NodeRecord<TNode>, name: string) {
-    const node = await filesystem.lookup(parent.node, validate_name(name));
-    if (!node) throw new FSError("ENOENT");
-    const record = record_for_node(node, parent);
+  async function write_lookup_entry(payload: Bytes, record: NodeRecord<TNode>) {
+    // Hold the record while getattr is in flight, but do not retain a kernel
+    // lookup reference for a reply which failed before it could be published.
     record.lookups += 1n;
-    return record;
+    try {
+      write_entry(payload, record, await filesystem.getattr(record.node), validity);
+    } catch (error) {
+      forget(record, 1n);
+      throw error;
+    }
   }
 
   async function process(header: FuseInHeaderValue, body: Reader, capacity: number) {
@@ -900,8 +904,9 @@ export function fileSystemDevice<TNode extends object, THandle, T extends FS<TNo
         break;
       }
       case FuseOpcode.LOOKUP: {
-        const record = await lookup(node!, body.cstring());
-        write_entry(payload, record, await filesystem.getattr(record.node), validity);
+        const found = await filesystem.lookup(node!.node, validate_name(body.cstring()));
+        if (!found) throw new FSError("ENOENT");
+        await write_lookup_entry(payload, record_for_node(found, node!));
         break;
       }
       case FuseOpcode.FORGET: {
@@ -976,8 +981,7 @@ export function fileSystemDevice<TNode extends object, THandle, T extends FS<TNo
           create_context(header, FileType.symlink | 0o777, 0),
         );
         const record = record_for_node(linked, node!);
-        record.lookups += 1n;
-        write_entry(payload, record, await filesystem.getattr(linked), validity);
+        await write_lookup_entry(payload, record);
         break;
       }
       case FuseOpcode.MKDIR: {
@@ -989,8 +993,7 @@ export function fileSystemDevice<TNode extends object, THandle, T extends FS<TNo
           create_context(header, FileType.directory | request.mode, request.umask),
         );
         const record = record_for_node(made, node!);
-        record.lookups += 1n;
-        write_entry(payload, record, await filesystem.getattr(made), validity);
+        await write_lookup_entry(payload, record);
         break;
       }
       case FuseOpcode.UNLINK:
@@ -1050,8 +1053,19 @@ export function fileSystemDevice<TNode extends object, THandle, T extends FS<TNo
           create_context(header, FileType.file | request.mode, request.umask),
         );
         const record = record_for_node(created.node, node!);
-        record.lookups += 1n;
-        write_entry(payload, record, await filesystem.getattr(created.node), validity);
+        try {
+          await write_lookup_entry(payload, record);
+        } catch (error) {
+          // CREATE already acquired a backend handle, but Linux has not
+          // received its fh. Dispose it once, preserving the original error.
+          // The created file itself is not rolled back.
+          try {
+            await filesystem.release?.(created.node, created.handle);
+          } catch {
+            // Failed cleanup must not replace the failed entry operation.
+          }
+          throw error;
+        }
         payload.alloc(FuseOpenOut).value = {
           fh: add_handle(record, created.handle, false),
           // CREATE returns the same open flags as OPEN; direct I/O is
