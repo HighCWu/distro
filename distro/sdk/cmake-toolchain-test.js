@@ -105,3 +105,61 @@ test("CMake toolchain links feature probes without running target programs", () 
     rmSync(root, { recursive: true, force: true });
   }
 });
+
+test("static Wasm policy prevents Ninja install-time non-ELF RPATH relinking", () => {
+  const root = mkdtempSync(join(tmpdir(), "sdk-cmake-install-rpath-"));
+  try {
+    const dependency = join(root, "dependency");
+    mkdirSync(dependency);
+    // A synthetic imported library makes CMake consider a runtime search path.
+    // Nothing is linked here; this tests generation, not target library support.
+    writeFileSync(join(dependency, "libprobe.so"), "generation-only fixture\n");
+    writeFileSync(join(root, "main.c"), "int main(void) { return 0; }\n");
+    writeFileSync(
+      join(root, "CMakeLists.txt"),
+      `cmake_minimum_required(VERSION 3.20)
+project(rpath_generation C)
+set(CMAKE_EXECUTABLE_FORMAT WASM)
+add_library(probe UNKNOWN IMPORTED)
+set_target_properties(probe PROPERTIES IMPORTED_LOCATION "${dependency}/libprobe.so")
+add_executable(example main.c)
+target_link_libraries(example PRIVATE probe)
+install(TARGETS example RUNTIME DESTINATION bin)
+`,
+    );
+    let template = readFileSync(new URL("./linux-wasm.cmake.in", import.meta.url), "utf8");
+    for (const [key, value] of Object.entries({
+      wasmArch: "sdk-probe-host",
+      cc: "cc",
+      cxx: "c++",
+      ar: "ar",
+      ranlib: "ranlib",
+      sysroot: "/",
+      pkgConfig: "pkg-config",
+    }))
+      template = template.replaceAll(`@${key}@`, value);
+    for (const [name, policy, succeeds] of [
+      ["sdk", template, true],
+      ["without-policy", template.replace(/^set\(CMAKE_SKIP_RPATH .*\)\n/m, ""), false],
+    ]) {
+      const toolchain = join(root, `${name}.cmake`);
+      writeFileSync(toolchain, policy);
+      const result = spawnSync(
+        "cmake",
+        ["-S", root, "-B", join(root, name), "-G", "Ninja", `-DCMAKE_TOOLCHAIN_FILE=${toolchain}`],
+        { encoding: "utf8", timeout: 15_000 },
+      );
+      if (succeeds) assert.equal(result.status, 0, result.stdout + result.stderr);
+      else {
+        assert.notEqual(
+          result.status,
+          0,
+          "fixture must reproduce the missing RPATH policy failure",
+        );
+        assert.match(result.stdout + result.stderr, /requires changing an RPATH/);
+      }
+    }
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});

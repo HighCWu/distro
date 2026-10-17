@@ -19,3 +19,6 @@ set(CMAKE_FIND_ROOT_PATH_MODE_PACKAGE ONLY)
 set(CMAKE_EXECUTABLE_SUFFIX ".wasm")
 # This SDK currently provides static target libraries only.
 set_property(GLOBAL PROPERTY TARGET_SUPPORTS_SHARED_LIBS FALSE)
+# Wasm has no ELF runtime library search path. In particular, Ninja must not
+# attempt an install-time RPATH relink for dependencies found via pkg-config.
+set(CMAKE_SKIP_RPATH TRUE CACHE BOOL "Wasm has no runtime library search path" FORCE)
