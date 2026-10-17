@@ -19,8 +19,15 @@ static void rejected(int fd, size_t length, int prot, int flags,
 		     off_t offset, int expected)
 {
 	errno = 0;
-	if (mmap(NULL, length, prot, flags, fd, offset) != MAP_FAILED || errno != expected)
+	void *result = mmap(NULL, length, prot, flags, fd, offset);
+	int actual = errno;
+	if (result != MAP_FAILED || actual != expected) {
+		printf("file mmap refusal: fd=%d length=%zu prot=%#x flags=%#x "
+		       "offset=%llu result=%p errno=%d expected=%d\n",
+		       fd, length, prot, flags, (unsigned long long)offset,
+		       result, actual, expected);
 		test_fail("standard file mmap refusal mismatch");
+	}
 }
 
 #if FILE_MMAP_MODE == 1
@@ -71,7 +78,8 @@ int main(void)
 	rejected(ordinary, page, PROT_READ, MAP_PRIVATE, 0, EOPNOTSUPP);
 	rejected(init, page, PROT_READ, MAP_PRIVATE, 0, EOPNOTSUPP);
 	rejected(directory, page, PROT_READ, MAP_PRIVATE, 0, EOPNOTSUPP);
-	rejected(path, page, PROT_READ, MAP_PRIVATE, 0, EACCES);
+	/* fget() excludes O_PATH descriptors before the FMODE_READ check. */
+	rejected(path, page, PROT_READ, MAP_PRIVATE, 0, EBADF);
 	rejected(empty, page, PROT_READ, MAP_PRIVATE, 0, EINVAL);
 	rejected(fd, 0, PROT_READ, MAP_PRIVATE, 0, EINVAL);
 	rejected(fd, 2 * page + 1, PROT_READ, MAP_PRIVATE, 0, ENOMEM);
