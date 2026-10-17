@@ -11,6 +11,8 @@ export async function runRuntimeSmoke({
   let machine;
   let finished = false;
   let failed = false;
+  let reportedPass = false;
+  let runtimeFailure;
   let phase = "user runtime";
   let timer;
   let output = "";
@@ -21,6 +23,10 @@ export async function runRuntimeSmoke({
     rejectResult = reject;
   });
   void result.catch(() => {});
+  const reportFailure = (error) => {
+    runtimeFailure ??= error instanceof Error ? error : new Error(String(error));
+    rejectResult(runtimeFailure);
+  };
   const consoleOutput = (required) => {
     const decoder = new LineDecoder();
     const consume = (lines) => {
@@ -29,9 +35,11 @@ export async function runRuntimeSmoke({
         // Only the user console owns the test protocol. Boot diagnostics must
         // remain visible, but cannot certify that the user program ran.
         const status = required ? parseResult(line) : undefined;
-        if (status?.passed) resolveResult();
-        else if (status) rejectResult(new Error(status.reason));
-        else if (line.includes("Kernel panic - not syncing")) rejectResult(new Error(line));
+        if (status?.passed) {
+          reportedPass = true;
+          resolveResult();
+        } else if (status) reportFailure(new Error(status.reason));
+        else if (line.includes("Kernel panic - not syncing")) reportFailure(new Error(line));
       }
     };
     return new WritableStream({
@@ -40,10 +48,14 @@ export async function runRuntimeSmoke({
       },
       close() {
         consume(decoder.close());
-        if (required) rejectResult(new Error("user console closed before completion"));
+        if (required && !reportedPass)
+          reportFailure(new Error("user console closed before completion"));
       },
       abort(error) {
-        rejectResult(error);
+        consume(decoder.close());
+        // ConsoleDevice.stop intentionally aborts with no reason. Preserve
+        // actual errors, and inspect buffered output even for that normal stop.
+        if (!finished || error !== undefined) reportFailure(error);
       },
     });
   };
@@ -66,16 +78,17 @@ export async function runRuntimeSmoke({
           await machine.closed.catch(() => {});
           return;
         }
-        void machine.bootConsole.pipeTo(consoleOutput(false)).catch(rejectResult);
-        void machine.closed.then(
-          () => rejectResult(new Error("machine closed before completion")),
-          rejectResult,
-        );
+        void machine.bootConsole.pipeTo(consoleOutput(false)).catch((error) => {
+          if (!finished || error !== undefined) reportFailure(error);
+        });
+        void machine.closed.then(() => {
+          if (!finished) reportFailure(new Error("machine closed before completion"));
+        }, reportFailure);
         await result;
       })(),
       watchdog,
     ]);
-    return output;
+    if (runtimeFailure) throw runtimeFailure;
   } catch (error) {
     failed = true;
     throw error;
@@ -90,9 +103,13 @@ export async function runRuntimeSmoke({
     } catch (error) {
       // A program pass is provisional until device flush/close completes.
       // Preserve an earlier program failure or timeout if cleanup also fails.
-      if (!failed) throw error;
+      if (!failed) throw runtimeFailure ?? error;
     } finally {
       clearTimeout(timer);
     }
   }
+  // A pass remains provisional until shutdown and its final console callbacks
+  // complete. Return the final text, not a snapshot taken before the await.
+  if (runtimeFailure) throw runtimeFailure;
+  return output;
 }

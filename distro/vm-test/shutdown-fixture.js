@@ -19,7 +19,14 @@ export const blockDevice = (storage) => {
 
 export async function bootMachine({ plugins }) {
   const writer = plugins[0].output.getWriter();
-  await writer.write(new TextEncoder().encode("::vm-test::pass\n"));
+  const scenario = process.env.RUNNER_FIXTURE_SCENARIO;
+  const write = (line) => writer.write(new TextEncoder().encode(line));
+  if (scenario !== "boot-pass") {
+    await write(
+      "::vm-test::pass\n" + (scenario === "same-chunk" ? "::vm-test::fail: late failure\n" : ""),
+    );
+    if (scenario === "separate-chunk") await write("::vm-test::fail: late failure\n");
+  }
   if (process.env.RUNNER_FIXTURE_BOOT_FAIL === "1")
     throw new Error("fixture boot failed after pass");
   const closed = Promise.withResolvers();
@@ -28,6 +35,16 @@ export async function bootMachine({ plugins }) {
     memory: new WebAssembly.Memory({ initial: 1 }),
     bootConsole: new ReadableStream({
       start(controller) {
+        if (scenario === "boot-panic")
+          controller.enqueue(
+            new TextEncoder().encode("Kernel panic - not syncing: late boot failure"),
+          );
+        if (scenario === "boot-pass") {
+          controller.enqueue(new TextEncoder().encode("::vm-test::pass\n"));
+          setTimeout(() => {
+            void write("::vm-test::fail: no user pass\n");
+          }, 10);
+        }
         controller.close();
       },
     }),
@@ -35,6 +52,14 @@ export async function bootMachine({ plugins }) {
     close() {
       setImmediate(async () => {
         try {
+          if (scenario === "shutdown-fail") await write("::vm-test::fail: late failure\n");
+          if (scenario === "shutdown-panic")
+            await write("Kernel panic - not syncing: late failure\n");
+          if (scenario === "buffered-fail") await write("::vm-test::fail: late failure");
+          if (["normal-abort", "error-abort", "buffered-fail"].includes(scenario))
+            await writer.abort(
+              scenario === "error-abort" ? new Error("late console error") : undefined,
+            );
           const bytes = new Uint8Array(512);
           if ((await plugins[2].storage.read(0, bytes)) !== 512 || bytes[0] !== 0x37)
             throw new Error("fixture disk mismatch");

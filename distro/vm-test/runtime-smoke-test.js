@@ -39,6 +39,8 @@ function fixture(
   };
   return {
     finishClose,
+    write: (line) => writer.write(new TextEncoder().encode(line)),
+    abort: (error) => writer.abort(error),
     get closed() {
       return closed;
     },
@@ -95,6 +97,59 @@ test("a shutdown rejection overrides a user-program pass", async () => {
   const state = fixture(["::vm-test::pass\n"], { closeError });
   await assert.rejects(runRuntimeSmoke(state.options), (error) => error === closeError);
   assert.equal(state.closed, true);
+});
+
+test("a pass cannot hide a later failure or panic in the same console stream", async () => {
+  for (const lines of [
+    ["::vm-test::pass\n::vm-test::fail: failure after pass\n"],
+    ["::vm-test::pass\n", "::vm-test::fail: failure after pass\n"],
+    ["::vm-test::pass\n", "Kernel panic - not syncing: failure after pass\n"],
+  ]) {
+    const state = fixture(lines);
+    await assert.rejects(runRuntimeSmoke(state.options), /failure after pass/);
+    assert.equal(state.closed, true);
+  }
+});
+
+test("failures during pending shutdown override a provisional pass", async () => {
+  for (const tail of [
+    "::vm-test::fail: shutdown failure\n",
+    "Kernel panic - not syncing: shutdown failure\n",
+  ]) {
+    const state = fixture(["::vm-test::pass\n"], { closeDelay: true });
+    const check = runRuntimeSmoke(state.options);
+    await new Promise((resolve) => setImmediate(resolve));
+    assert.equal(state.closed, true);
+    await state.write(tail);
+    state.finishClose();
+    await assert.rejects(check, /shutdown failure/);
+  }
+});
+
+test("runtime output includes diagnostics received before shutdown completes", async () => {
+  const state = fixture(["::vm-test::pass\n"], { closeDelay: true });
+  const check = runRuntimeSmoke(state.options);
+  await new Promise((resolve) => setImmediate(resolve));
+  await state.write("late shutdown diagnostics\n");
+  state.finishClose();
+  assert.match(await check, /late shutdown diagnostics/);
+});
+
+test("intentional console abort is allowed but named errors and buffered failures are not", async () => {
+  for (const [tail, reason, expected] of [
+    ["", undefined, undefined],
+    ["", new Error("console shutdown error"), /console shutdown error/],
+    ["::vm-test::fail: buffered failure", undefined, /buffered failure/],
+  ]) {
+    const state = fixture(["::vm-test::pass\n"], { closeDelay: true });
+    const check = runRuntimeSmoke(state.options);
+    await new Promise((resolve) => setImmediate(resolve));
+    if (tail) await state.write(tail);
+    await state.abort(reason);
+    state.finishClose();
+    if (expected) await assert.rejects(check, expected);
+    else assert.match(await check, /::vm-test::pass/);
+  }
 });
 
 test("the watchdog also bounds a pending shutdown after a program pass", async () => {

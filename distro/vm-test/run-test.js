@@ -37,6 +37,8 @@ const result = new Promise((resolve) => {
   resolveResult = resolve;
 });
 let settled = false;
+let runtimeFailure;
+let shuttingDown = false;
 let machine;
 let initialMemoryBytes;
 let observingMemoryGrowth = false;
@@ -47,12 +49,19 @@ const KERNEL_MEMORY_MAXIMUM_BYTES = 0xffff * 0x10000;
 const MAXIMUM_EXPECTED_INITIAL_MEMORY_BYTES = 16 * 0x100000;
 
 function finish(value) {
+  // A pass wakes the runner so shutdown can begin; it does not erase errors
+  // subsequently observed while the device and console queues are draining.
+  if (!value.passed) runtimeFailure ??= value;
   if (settled) return;
   settled = true;
   resolveResult(value);
 }
 
-function consumeLine(line) {
+function consumeLine(line, acceptTestResult = true) {
+  if (!acceptTestResult) {
+    if (line.includes("Kernel panic - not syncing")) finish({ passed: false, reason: line });
+    return;
+  }
   if (line === "::kernel-memory::ready") {
     observingMemoryGrowth = true;
     console.log(`kernel memory after spawn: ${initialMemoryBytes} bytes`);
@@ -110,15 +119,17 @@ function observeMemoryGrowth(stage) {
   if (stage < 2) void inputWriter.write(new Uint8Array([0x0a]));
 }
 
-function consoleOutput({ failWhenClosed }) {
+function consoleOutput({ failWhenClosed, acceptTestResult = true }) {
   const decoder = new LineDecoder();
+  const consume = (lines) =>
+    writeConsoleLines(process.stdout, lines, (line) => consumeLine(line, acceptTestResult));
   return new WritableStream({
     write(chunk) {
-      writeConsoleLines(process.stdout, decoder.write(chunk), consumeLine);
+      consume(decoder.write(chunk));
     },
     close() {
-      writeConsoleLines(process.stdout, decoder.close(), consumeLine);
-      if (failWhenClosed) {
+      consume(decoder.close());
+      if (failWhenClosed && !settled) {
         finish({
           passed: false,
           reason: "guest console closed before reporting a result",
@@ -126,7 +137,10 @@ function consoleOutput({ failWhenClosed }) {
       }
     },
     abort(error) {
-      finish({ passed: false, reason: `guest console failed: ${error}` });
+      consume(decoder.close());
+      // The console device uses a reasonless abort for intentional shutdown.
+      if (!shuttingDown || error !== undefined)
+        finish({ passed: false, reason: `user console failed: ${error}` });
     },
   });
 }
@@ -192,14 +206,18 @@ try {
 if (machine) initialMemoryBytes = machine.memory.buffer.byteLength;
 
 void machine?.bootConsole
-  .pipeTo(consoleOutput({ failWhenClosed: false }), { preventClose: true })
-  .catch((error) => finish({ passed: false, reason: `boot console failed: ${error}` }));
+  .pipeTo(consoleOutput({ failWhenClosed: false, acceptTestResult: false }))
+  .catch((error) => {
+    if (!shuttingDown || error !== undefined)
+      finish({ passed: false, reason: `boot console failed: ${error}` });
+  });
 void machine?.closed.catch((error) => {
   finish({ passed: false, reason: `machine failed: ${error}` });
 });
 
 const outcome = await result;
 let cleanupFailed = false;
+shuttingDown = true;
 try {
   await closeTestResources(machine, disks);
 } catch (error) {
@@ -207,5 +225,6 @@ try {
   cleanupFailed = true;
 }
 
-if (!outcome.passed) console.error(`vm test failed: ${outcome.reason}`);
-process.exitCode = outcome.passed && !startupFailed && !cleanupFailed ? 0 : 1;
+const finalOutcome = runtimeFailure ?? outcome;
+if (!finalOutcome.passed) console.error(`vm test failed: ${finalOutcome.reason}`);
+process.exitCode = finalOutcome.passed && !startupFailed && !cleanupFailed ? 0 : 1;

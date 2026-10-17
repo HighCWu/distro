@@ -116,3 +116,51 @@ for (const scenario of ["boot", "setup"]) {
     }
   });
 }
+
+for (const scenario of [
+  "same-chunk",
+  "separate-chunk",
+  "shutdown-fail",
+  "shutdown-panic",
+  "buffered-fail",
+  "normal-abort",
+  "error-abort",
+  "boot-pass",
+  "boot-panic",
+]) {
+  test(`real runner preserves provisional pass semantics: ${scenario}`, () => {
+    const temp = mkdtempSync(join(tmpdir(), "linux-wasm-runner-result-"));
+    try {
+      const initramfs = join(temp, "initramfs");
+      const disk = join(temp, "disk");
+      writeFileSync(initramfs, new Uint8Array([1]));
+      writeFileSync(disk, new Uint8Array(512).fill(0x37));
+      const result = spawnSync(
+        process.execPath,
+        [
+          fileURLToPath(new URL("./run-test.js", import.meta.url)),
+          "--readonly-disks",
+          fileURLToPath(new URL("./shutdown-fixture.js", import.meta.url)),
+          initramfs,
+          disk,
+        ],
+        {
+          encoding: "utf8",
+          timeout: 10000,
+          env: { ...process.env, RUNNER_FIXTURE_FAIL: "0", RUNNER_FIXTURE_SCENARIO: scenario },
+        },
+      );
+      assert.ifError(result.error);
+      assert.equal(
+        result.status,
+        scenario === "normal-abort" ? 0 : 1,
+        result.stdout + result.stderr,
+      );
+      assert.match(result.stdout, /fixture: late disk read completed/);
+      if (scenario !== "normal-abort") assert.match(result.stderr, /vm test failed:/);
+      if (scenario === "boot-pass") assert.match(result.stderr, /no user pass/);
+    } finally {
+      rmSync(temp, { recursive: true, force: true });
+    }
+  });
+}
