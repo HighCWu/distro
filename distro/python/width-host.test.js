@@ -109,3 +109,23 @@ test("installed layout fixture rejects build prefixes and operational flag leaks
   assert.match(result.stderr, /Ran 6 tests/);
   assert.match(result.stderr, /\bOK\b/);
 });
+
+test("both installed Python systems include OpenSSL's certificate package dependency", () => {
+  const recipe = readFileSync(new URL("./package.nix", import.meta.url), "utf8");
+  const checks = recipe.slice(recipe.indexOf("passthru.checks = {"));
+  const systems = [...checks.matchAll(/contents = \[([\s\S]*?)\];/g)];
+  assert.equal(systems.length, 2);
+  for (const [, contents] of systems) {
+    const packages = contents.trim().split(/\s+/);
+    for (const name of [
+      "busybox",
+      "ca-certificates",
+      "ncurses",
+      "openssl",
+      "finalAttrs.finalPackage",
+    ])
+      assert.ok(packages.includes(name), `missing installed-system dependency: ${name}`);
+  }
+  const openssl = readFileSync(new URL("../openssl/package.nix", import.meta.url), "utf8");
+  assert.match(openssl, /passthru\.apk\.depends[\s\S]*?"ca-certificates"/);
+});

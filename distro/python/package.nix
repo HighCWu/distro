@@ -176,6 +176,7 @@ let
         init = ./mmap-test.sh;
         contents = [
           busybox
+          ca-certificates
           ncurses
           openssl
           finalAttrs.finalPackage
