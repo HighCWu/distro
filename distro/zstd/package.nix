@@ -11,7 +11,6 @@
   platform,
   vm-test,
   vm-test-file,
-  initializedFileMmap ? false,
 }:
 
 stdenv.mkDerivation (finalAttrs: {
@@ -36,9 +35,6 @@ stdenv.mkDerivation (finalAttrs: {
 
   patches = [ ./mmap.patch ];
 
-  # Opt-in test variant only. Ordinary packages must not acquire this export.
-  NIX_CFLAGS_LINK = pkgs.lib.optionalString initializedFileMmap "-Wl,--export=__wasm_mmap_init_v1";
-
   postBuild = ''
     node ${../busybox/check-binary.mjs} ${../../packages/kernel/src/wasm_binary.ts} \
       programs/zstd ${toString platform.addressBits} ${toString platform.maximumMemoryBytes}
@@ -57,7 +53,7 @@ stdenv.mkDerivation (finalAttrs: {
     runHook postInstall
   '';
 
-  passthru.checks = pkgs.lib.optionalAttrs (!initializedFileMmap) {
+  passthru.checks = {
     roundtrip = vm-test.installedTest {
       name = "zstd-roundtrip";
       init = ./roundtrip-test.sh;
@@ -68,7 +64,12 @@ stdenv.mkDerivation (finalAttrs: {
     };
     file =
       let
-        candidate = finalAttrs.finalPackage.override { initializedFileMmap = true; };
+        # finalPackage has overrideAttrs, not callPackage's outer override.
+        # Keep the export test-local and omit recursive checks on the variant.
+        candidate = finalAttrs.finalPackage.overrideAttrs (previous: {
+          NIX_CFLAGS_LINK = (previous.NIX_CFLAGS_LINK or "") + " -Wl,--export=__wasm_mmap_init_v1";
+          passthru = builtins.removeAttrs (previous.passthru or { }) [ "checks" ];
+        });
         dictionaries =
           pkgs.runCommand "zstd-mmap-dictionaries.erofs" { nativeBuildInputs = [ pkgs.erofs-utils ]; }
             ''
