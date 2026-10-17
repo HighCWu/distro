@@ -99,6 +99,37 @@ test("node virtio-fs synchronizes and closes an opened directory after unlink", 
   }
 });
 
+for (const closeFails of [false, true]) {
+  test(`node virtio-fs rejects directory reads queued behind release, close fails=${closeFails}`, async () => {
+    const fs = new NodeFS(shared);
+    const handle = await fs.opendir(fs.root);
+    assert.ok(handle.file);
+    const close = handle.file.close.bind(handle.file);
+    handle.file.close = async () => {
+      await close();
+      if (closeFails) throw Object.assign(new Error("injected close failure"), { code: "EIO" });
+    };
+    // release queues its close, but has not started it when readdir is called.
+    // The queued read must recheck ownership/liveness at execution time.
+    const releasing = fs.releasedir(fs.root, handle);
+    const reading = fs.readdir(fs.root, handle);
+    await Promise.all([
+      closeFails ? assert.rejects(releasing, { errno: 5 }) : releasing,
+      assert.rejects(reading, { errno: 9 }),
+    ]);
+    await assert.rejects(handle.file.stat(), { code: "EBADF" });
+    const replacement = await fs.opendir(fs.root);
+    try {
+      assert.ok(
+        Array.isArray(await fs.readdir(fs.root, replacement)),
+        "the path queue remains usable",
+      );
+    } finally {
+      await fs.releasedir(fs.root, replacement);
+    }
+  });
+}
+
 test("node virtio-fs preserves sub-millisecond and pre-epoch timestamps", async () => {
   const fs = new NodeFS(shared);
   const { node, handle } = await fs.create(fs.root, "timestamp-check", linux_open.readwrite, {

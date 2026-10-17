@@ -597,6 +597,9 @@ export class NodeFS implements FS<Node, Handle> {
   async readdir(node: Node, handle: Handle): Promise<FSDirectoryEntry<Node>[]> {
     this.#handle(node, handle);
     return await this.#path_operation(async () => {
+      // A release already ahead of this read may have closed the handle
+      // after its initial admission check, including when close reports error.
+      this.#handle(node, handle);
       const parts = this.#parts(node);
       const target = await this.#validated_path(parts);
       const result: FSDirectoryEntry<Node>[] = [];
