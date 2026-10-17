@@ -237,6 +237,11 @@ export interface FS<TNode, THandle> {
   releasedir?(node: TNode, handle: THandle): MaybePromise<void>;
   access?(node: TNode, mask: number): MaybePromise<void>;
   statfs?(node: TNode): MaybePromise<FSStat>;
+  /** Starts cancellation during device shutdown, before in-flight requests drain.
+   * Must not release resources still used by a request. Final disposal belongs
+   * in release/releasedir/destroy. Without this hook, requests drain normally.
+   */
+  stop?(): void;
   destroy?(): MaybePromise<void>;
 }
 
@@ -742,6 +747,7 @@ export function fileSystemDevice<TNode extends object, THandle, T extends FS<TNo
   const handles = new Map<bigint, HandleRecord<TNode, THandle>>();
   let next_handle = 1n;
   let finalize_promise: Promise<void> | undefined;
+  let stopping = false;
 
   function record_for_node(node: TNode, parent: NodeRecord<TNode>) {
     let record = by_node.get(node);
@@ -1204,6 +1210,7 @@ export function fileSystemDevice<TNode extends object, THandle, T extends FS<TNo
 
   async function notify(queue: Virtqueue) {
     for (const chain of queue) {
+      if (stopping) return;
       const buffers = [...chain];
       const request = concatenate(buffers, false);
       const capacity = buffers
@@ -1228,6 +1235,7 @@ export function fileSystemDevice<TNode extends object, THandle, T extends FS<TNo
           throw new FSError("EINVAL", "FUSE response buffer is too small");
         }
         const payload = await process(header, body, capacity);
+        if (stopping) return;
         if (payload === undefined) {
           chain.release(0);
           continue;
@@ -1242,6 +1250,7 @@ export function fileSystemDevice<TNode extends object, THandle, T extends FS<TNo
         scatter(buffers, response.array);
         chain.release(response.array.byteLength);
       } catch (error) {
+        if (stopping) return;
         if (capacity < FuseOutHeader.size) {
           chain.release(0);
           continue;
@@ -1269,6 +1278,13 @@ export function fileSystemDevice<TNode extends object, THandle, T extends FS<TNo
   return new VirtioController(
     // 26 is the virtio-fs device ID.
     { deviceId: 26, config },
-    { queues: [notify, notify], close: finalize },
+    {
+      queues: [notify, notify],
+      stop() {
+        stopping = true;
+        filesystem.stop?.();
+      },
+      close: finalize,
+    },
   ).device;
 }
