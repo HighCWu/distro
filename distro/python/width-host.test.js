@@ -83,4 +83,15 @@ test("both Python runtime checks require actual pointer ABI and the full interpr
   assert.match(recipe, /py_cv_module__posixshmem=n\/a/);
   assert.match(recipe, /--with-ensurepip=no/);
   assert.match(recipe, /--without-mimalloc/);
+  for (const notice of [
+    "python-LICENSE",
+    "bzip2-LICENSE",
+    "ncurses-COPYING",
+    "readline-COPYING",
+    "zlib.h",
+    "sqlite3.h",
+  ])
+    assert.ok(recipe.includes(notice) && full.includes(notice), notice);
+  assert.ok(recipe.includes('cp ${xz.src}/COPYING* ${xz.src}/AUTHORS "$notices/xz/"'));
+  assert.match(full, /missing Python dependency notice/);
 });
