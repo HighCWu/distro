@@ -121,17 +121,23 @@ static void test_partial_io(int restart)
 	free(output);
 }
 
-struct wait_sender { int ack; atomic_int stop; };
+struct wait_sender { int ack, release; atomic_int stop; };
 
 static void *interrupt_wait(void *opaque)
 {
 	struct wait_sender *args = opaque;
 	int64_t deadline = now_ms() + 2000;
+	unsigned int acknowledged = 0;
 	while (!atomic_load(&args->stop)) {
 		if (now_ms() >= deadline || pthread_kill(receiver, SIGUSR1))
 			return (void *)(uintptr_t)1;
 		char byte;
 		if (read(args->ack, &byte, 1) != 1 || byte != 'H') return (void *)(uintptr_t)2;
+		if (++acknowledged == 16 && args->release >= 0) {
+			/* Keep the child alive through sixteen handler acknowledgements. Only
+			 * then may a restartable wait obtain a terminal child status. */
+			return (void *)(uintptr_t)(write(args->release, "X", 1) != 1);
+		}
 		/* This only paces retries. Correctness does not assume the receiver
 		 * has entered waitpid after any particular delay. */
 		const struct timespec pace = { .tv_nsec = 1000000 };
@@ -147,17 +153,18 @@ static int exit_child(void *opaque)
 	return read(fd, &byte, 1) == 1 && byte == 'X' ? 37 : 38;
 }
 
-static void test_wait_reaping(void)
+static void test_wait_reaping(int restart)
 {
 	int release[2], ack[2];
 	struct sigaction action = { .sa_handler = handler };
+	action.sa_flags = restart ? SA_RESTART : 0;
 	if (sigemptyset(&action.sa_mask) || sigaction(SIGUSR1, &action, NULL) ||
 	    pipe(release) || pipe(ack)) test_perror("wait fixture setup");
 	set_mask(1);
 	pid_t child = clone(exit_child, child_stack + sizeof(child_stack), SIGCHLD, &release[0]);
 	if (child < 0) test_perror("clone wait child");
 	/* The child cannot exit until the parent explicitly releases it. */
-	struct wait_sender args = { .ack = ack[0], .stop = 0 };
+	struct wait_sender args = { .ack = ack[0], .release = restart ? release[1] : -1, .stop = 0 };
 	handler_ack = ack[1];
 	delivered = handler_error = 0;
 	pthread_t thread;
@@ -171,6 +178,23 @@ static void test_wait_reaping(void)
 	atomic_store(&args.stop, 1);
 	join_sender(thread);
 	handler_ack = -1;
+	sigset_t returned;
+	if (sigprocmask(SIG_SETMASK, NULL, &returned) ||
+	    sigismember(&returned, SIGUSR1) != 0 || sigismember(&returned, SIGUSR2) != 1)
+		test_fail("child wait leaked the handler signal mask");
+	if (restart) {
+		if (result != child || delivered != 16 || handler_error ||
+		    !WIFEXITED(status) || WEXITSTATUS(status) != 37) {
+			/* Also used by the host's no-SA_RESTART negative control:
+			 * release/reap a still-live child before reporting failure. */
+			if (result != child) {
+				if (write(release[1], "X", 1) != 1) test_perror("release failed restart child");
+				while (waitpid(child, &status, 0) < 0 && errno == EINTR) {}
+			}
+			test_fail("SA_RESTART wait exposed EINTR or lost the child exit status");
+		}
+		goto reaped;
+	}
 	if (result != -1 || saved_errno != EINTR || !delivered || handler_error || status != 0x1234)
 		test_fail("interrupted wait consumed a live child or lost EINTR");
 	if (waitpid(child, &status, WNOHANG) != 0 || status != 0x1234)
@@ -184,6 +208,7 @@ static void test_wait_reaping(void)
 	}
 	if (waitpid(child, &status, 0) != child || !WIFEXITED(status) || WEXITSTATUS(status) != 37)
 		test_fail("waitpid did not reap the expected child exactly once");
+reaped:
 	errno = 0;
 	if (waitpid(child, &status, WNOHANG) != -1 || errno != ECHILD)
 		test_fail("reaped child remained waitable");
@@ -204,9 +229,10 @@ int main(void)
 	receiver = pthread_self();
 	test_partial_io(0);
 	test_partial_io(1);
-	test_wait_reaping();
+	test_wait_reaping(0);
+	test_wait_reaping(1);
 	if (sigaction(SIGUSR1, &previous, NULL) || sigaction(SIGCHLD, &child_previous, NULL) ||
 	    sigprocmask(SIG_SETMASK, &original, NULL)) test_perror("restore signal state");
-	puts("signal I/O: partial progress, explicit suffix retry and single child reaping verified");
+	puts("signal I/O: partial progress, explicit suffix retry, EINTR/restart and single child reaping verified");
 	test_pass();
 }

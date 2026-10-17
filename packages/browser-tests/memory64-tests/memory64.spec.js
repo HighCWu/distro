@@ -169,7 +169,7 @@ test("runs SDK partial pipe I/O and interrupted child reaping through Linux", as
     .toBe("function");
   const output = await page.evaluate(() => globalThis.bootSignalIoRuntimeSmoke());
   expect(output).toContain(
-    "signal I/O: partial progress, explicit suffix retry and single child reaping verified",
+    "signal I/O: partial progress, explicit suffix retry, EINTR/restart and single child reaping verified",
   );
   expect(output).toContain("::vm-test::pass");
   expect(output).not.toContain("::vm-test::fail");
