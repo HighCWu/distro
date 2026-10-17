@@ -228,12 +228,14 @@ export interface FS<TNode, THandle> {
   ): MaybePromise<number>;
   flush?(node: TNode, handle: THandle): MaybePromise<void>;
   fsync?(node: TNode, handle: THandle, dataOnly: boolean): MaybePromise<void>;
+  /** Consumes a handle once, even on failure. The device does not retry it. */
   release?(node: TNode, handle: THandle): MaybePromise<void>;
   opendir?(node: TNode, flags: number): MaybePromise<THandle>;
   readdir?(
     node: TNode,
     handle: THandle,
   ): MaybePromise<Iterable<FSDirectoryEntry<TNode>> | AsyncIterable<FSDirectoryEntry<TNode>>>;
+  /** Directory equivalent of release; failure does not make the handle reusable. */
   releasedir?(node: TNode, handle: THandle): MaybePromise<void>;
   access?(node: TNode, mask: number): MaybePromise<void>;
   statfs?(node: TNode): MaybePromise<FSStat>;
@@ -1132,12 +1134,15 @@ export function fileSystemDevice<TNode extends object, THandle, T extends FS<TNo
         const directory = header.opcode === FuseOpcode.RELEASEDIR;
         const request = body.struct(FuseReleaseIn);
         const handle = handle_record(request.fh, directory, node!);
+        // Linux has relinquished this fh. Consume it before entering the
+        // backend, so failure or a concurrent duplicate cannot release it
+        // again (including during device shutdown).
+        remove_handle(request.fh, handle);
         if (directory) {
           await filesystem.releasedir?.(handle.node.node, handle.handle);
         } else {
           await filesystem.release?.(handle.node.node, handle.handle);
         }
-        remove_handle(request.fh, handle);
         break;
       }
       case FuseOpcode.READDIR: {
