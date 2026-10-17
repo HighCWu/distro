@@ -43,8 +43,8 @@ stdenv.mkDerivation (finalAttrs: {
   # host copy. Plain HTTP/HTTPS/FILE transfers need no fork; the threaded
   # resolver is disabled so name lookups stay in-process (numeric addresses
   # in the Linux check resolve without DNS regardless). Direct HTTPS uses
-  # OpenSSL and an explicit --cacert file in this profile. The optional host
-  # Fetch adapter is a separate plaintext HTTP transport, not a TLS tunnel.
+  # OpenSSL and the distribution CA bundle unless --cacert overrides it. The
+  # optional host Fetch adapter is a separate plaintext HTTP transport, not a TLS tunnel.
   configureFlags = [
     "--disable-shared"
     "--enable-static"
@@ -68,7 +68,7 @@ stdenv.mkDerivation (finalAttrs: {
     "--without-ngtcp2"
     "--without-libssh2"
     "--without-libssh"
-    "--without-ca-bundle"
+    "--with-ca-bundle=/etc/ssl/cert.pem"
     "--without-ca-path"
     "--without-ca-embed"
   ];

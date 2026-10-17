@@ -19,9 +19,10 @@ for p in file http https; do
   echo "$protocols" | grep -qw "$p" || fail "protocol $p missing from: $protocols"
 done
 
-# This profile has no compiled-in CA path. Direct TLS needs an explicit CA
-# file; the optional plaintext HTTP-to-Fetch adapter is a separate transport.
-[ -z "$(curl-config --ca)" ] || fail "unexpected default CA bundle: $(curl-config --ca)"
+# The CA package is installed at the compiled runtime path, not a Nix store path.
+# The optional plaintext HTTP-to-Fetch adapter is a separate transport.
+[ "$(curl-config --ca)" = /etc/ssl/cert.pem ] || fail "unexpected default CA bundle: $(curl-config --ca)"
+test -s /etc/ssl/cert.pem || fail "distribution CA bundle missing"
 
 # (b) file:// round trip: fetch a local file through curl and byte-compare.
 : >/tmp/data

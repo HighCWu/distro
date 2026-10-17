@@ -9,6 +9,13 @@ import test from "node:test";
 
 const script = readFileSync(new URL("./https-test.sh", import.meta.url), "utf8");
 const stage = "curl: explicit-CA TLS1.3 transfer and certificate/hostname rejection verified";
+const defaultStages = [
+  "curl HTTPS: distribution CA bundle rejects local self-signed certificate",
+  "curl HTTPS: default CA bundle trusted localhost TLS1.3 over Linux TCP verified",
+  "curl HTTPS: unrelated default CA rejected",
+  "curl HTTPS: missing default CA bundle fails closed",
+  "curl HTTPS: original distribution CA bundle restored",
+];
 
 async function freePort() {
   const server = createServer();
@@ -23,7 +30,7 @@ async function freePort() {
   return port;
 }
 
-test("native curl verifies Linux TCP TLS, rejects wrong trust/hostname and insecure mutation", async () => {
+test("native curl verifies TLS trust selection and rejects insecure/default/explicit trust mutations", async () => {
   const directory = mkdtempSync(join(tmpdir(), "linux-wasm-curl-tls-"));
   try {
     const notices = join(directory, "notices");
@@ -39,13 +46,17 @@ test("native curl verifies Linux TCP TLS, rejects wrong trust/hostname and insec
       writeFileSync(join(notices, name), `Native fixture notice: ${name}\n`);
     for (const [name, transform, valid] of [
       ["verified", (text) => text, true],
-      ["verification-disabled", (text) => text.replace('--cacert "$2"', "--insecure"), false],
+      [
+        "verification-disabled",
+        (text) => text.replace("curl --silent", "curl --insecure --silent"),
+        false,
+      ],
       [
         "trust-negative-accepted",
         (text) =>
           text.replace(
-            'request localhost "$root/unrelated.pem"',
-            'request localhost "$root/server.pem"',
+            'request localhost --cacert "$root/unrelated.pem"',
+            'request localhost --cacert "$root/server.pem"',
           ),
         false,
       ],
@@ -53,16 +64,53 @@ test("native curl verifies Linux TCP TLS, rejects wrong trust/hostname and insec
         "hostname-negative-accepted",
         (text) =>
           text.replace(
-            'request wrong.invalid "$root/server.pem"',
-            'request localhost "$root/server.pem"',
+            'request wrong.invalid --cacert "$root/server.pem"',
+            'request localhost --cacert "$root/server.pem"',
           ),
+        false,
+      ],
+      [
+        "default-trust-ignored",
+        (text) => text.replace('cp "$root/server.pem" "$default_ca"', ":"),
+        false,
+      ],
+      [
+        "default-negative-accepted",
+        (text) =>
+          text.replace(
+            'cp "$root/unrelated.pem" "$default_ca"',
+            'cp "$root/server.pem" "$default_ca"',
+          ),
+        false,
+      ],
+      [
+        "missing-default-accepted",
+        (text) => text.replace('rm "$default_ca"', 'cp "$root/server.pem" "$default_ca"'),
+        false,
+      ],
+      [
+        "explicit-trust-ignored",
+        (text) => text.replace('    "$@" --resolve', "    --resolve"),
         false,
       ],
     ]) {
       const port = await freePort();
+      const caPath = join(directory, `${name}-default-ca.pem`);
+      // Never edit the host trust store. Native curl uses an environment-selected
+      // copy; only target CI can certify the compiled /etc/ssl/cert.pem default.
+      const ca = spawnSync("curl-config", ["--ca"], { encoding: "utf8" });
+      assert.equal(ca.status, 0, ca.stderr);
+      const originalCa = readFileSync(ca.stdout.trim());
+      writeFileSync(caPath, originalCa);
       const adapted = transform(script)
         .replace("root=/tmp/curl-tls", `root=${directory}/${name}`)
         .replace("port=9443", `port=${port}`)
+        .replace("default_ca=/etc/ssl/cert.pem", `default_ca=${caPath}`)
+        .replace(
+          "unset CURL_CA_BUNDLE SSL_CERT_FILE SSL_CERT_DIR",
+          'unset SSL_CERT_FILE SSL_CERT_DIR; export CURL_CA_BUNDLE="$default_ca"',
+        )
+        .replace('[ "$(curl-config --ca)" = "$default_ca" ]', "true")
         .replace("mount -t proc proc /proc", ":")
         .replace("ip link set lo up", ":")
         .replaceAll("/share/licenses/curl/", `${notices}/`)
@@ -77,8 +125,10 @@ test("native curl verifies Linux TCP TLS, rejects wrong trust/hostname and insec
       assert.equal(result.status, valid ? 0 : 1, `${name}: ${result.stdout}\n${result.stderr}`);
       assert.equal(result.stdout.includes(stage), valid, name);
       assert.equal(/^::vm-test::pass$/m.test(result.stdout), valid, name);
+      assert.deepEqual(readFileSync(caPath), originalCa, `${name}: host fixture CA restored`);
       if (valid)
         for (const marker of [
+          ...defaultStages,
           "curl HTTPS: trusted localhost TLS1.3 over Linux TCP verified",
           "curl HTTPS: untrusted certificate rejected",
           "curl HTTPS: wrong hostname rejected",
@@ -106,6 +156,14 @@ test("curl wasm64 selects matching OpenSSL/zlib and enforces the actual module A
   );
   assert.match(recipe, /https = vm-test\.installedTest/);
   assert.match(recipe, /init = \.\/tests\/https-test.sh;/);
+  assert.ok(recipe.includes('"--with-ca-bundle=/etc/ssl/cert.pem"'));
+  assert.doesNotMatch(recipe, /--without-ca-bundle/);
+  assert.ok(script.includes("unset CURL_CA_BUNDLE SSL_CERT_FILE SSL_CERT_DIR"));
+  assert.ok(script.includes('[ "$(curl-config --ca)" = "$default_ca" ]'));
+  const transfers = readFileSync(new URL("./transfers-test.sh", import.meta.url), "utf8");
+  assert.ok(transfers.includes('[ "$(curl-config --ca)" = /etc/ssl/cert.pem ]'));
+  const ca = readFileSync(new URL("../../ca-certificates/package.nix", import.meta.url), "utf8");
+  assert.ok(ca.includes("$out/etc/ssl/cert.pem"));
   assert.ok(script.includes(stage));
   assert.doesNotMatch(script, /--insecure|--proxy |sleep /);
   const syntax = spawnSync("sh", ["-n"], { input: script, encoding: "utf8" });

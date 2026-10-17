@@ -337,9 +337,18 @@ test("runs curl verified TLS1.3 and certificate/hostname rejection over Linux TC
     .poll(() => page.evaluate(() => typeof globalThis.bootCurlHttpsRuntimeSmoke))
     .toBe("function");
   const output = await page.evaluate(() => globalThis.bootCurlHttpsRuntimeSmoke());
+  expect(output).toContain(
+    "curl HTTPS: distribution CA bundle rejects local self-signed certificate",
+  );
+  expect(output).toContain(
+    "curl HTTPS: default CA bundle trusted localhost TLS1.3 over Linux TCP verified",
+  );
+  expect(output).toContain("curl HTTPS: unrelated default CA rejected");
   expect(output).toContain("curl HTTPS: trusted localhost TLS1.3 over Linux TCP verified");
   expect(output).toContain("curl HTTPS: untrusted certificate rejected");
   expect(output).toContain("curl HTTPS: wrong hostname rejected");
+  expect(output).toContain("curl HTTPS: missing default CA bundle fails closed");
+  expect(output).toContain("curl HTTPS: original distribution CA bundle restored");
   expect(output).toContain(
     "curl: explicit-CA TLS1.3 transfer and certificate/hostname rejection verified",
   );
