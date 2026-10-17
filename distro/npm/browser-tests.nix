@@ -2,6 +2,8 @@
   basic-init,
   guest-agent,
   bytes,
+  curl,
+  curl-wasm64,
   image,
   lib,
   kernel,
@@ -51,6 +53,7 @@ let
     "runs Lua integer64, modules, coroutine cleanup, spawn and bytecode through Linux"
     "runs installed Lua C callbacks, errors and coroutine through Linux"
     "runs OpenSSL CLI and verified TLS1.3 certificate and hostname checks through Linux"
+    "runs curl verified TLS1.3 and certificate/hostname rejection over Linux TCP"
     "retries a failed kernel download in the same page with a generic MIME type"
   ];
 
@@ -88,6 +91,7 @@ let
       programs = if bits == 64 then toolchain-smoke-wasm64 else toolchain-smoke;
       luaAssets = (if bits == 64 then lua-wasm64 else lua).runtimeAssets;
       opensslAssets = (if bits == 64 then openssl-wasm64 else openssl).runtimeAssets;
+      curlAssets = (if bits == 64 then curl-wasm64 else curl).runtimeAssets;
       runtimeKernel = if bits == 64 then kernel-wasm64 else kernel;
       initramfs = image.mkInitramfs {
         name = "wasm${toString bits}-browser-runtime";
@@ -172,6 +176,7 @@ let
       cp ${luaAssets.languageInitramfs} $out/runtime-lua.cpio
       cp ${luaDevelopmentInitramfs} $out/runtime-lua-development.cpio
       cp ${opensslAssets.cliInitramfs} $out/runtime-openssl.cpio
+      cp ${curlAssets.httpsInitramfs} $out/runtime-curl-https.cpio
       cp ${source}/memory64-index.html $out/index.html
       cp ${source}/playwright.config.js $out/playwright.config.js
       cp ${source}/server.js $out/server.js

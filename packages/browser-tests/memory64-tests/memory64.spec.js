@@ -327,6 +327,26 @@ test("runs OpenSSL CLI and verified TLS1.3 certificate and hostname checks throu
   expect(output).not.toContain("::vm-test::fail");
 });
 
+test("runs curl verified TLS1.3 and certificate/hostname rejection over Linux TCP", async ({
+  page,
+}) => {
+  page.on("console", (message) => console.log(`[browser] ${message.text()}`));
+  page.on("pageerror", (error) => console.error(`[browser] ${error.stack ?? error}`));
+  await page.goto("/");
+  await expect
+    .poll(() => page.evaluate(() => typeof globalThis.bootCurlHttpsRuntimeSmoke))
+    .toBe("function");
+  const output = await page.evaluate(() => globalThis.bootCurlHttpsRuntimeSmoke());
+  expect(output).toContain("curl HTTPS: trusted localhost TLS1.3 over Linux TCP verified");
+  expect(output).toContain("curl HTTPS: untrusted certificate rejected");
+  expect(output).toContain("curl HTTPS: wrong hostname rejected");
+  expect(output).toContain(
+    "curl: explicit-CA TLS1.3 transfer and certificate/hostname rejection verified",
+  );
+  expect(output).toContain("::vm-test::pass");
+  expect(output).not.toContain("::vm-test::fail");
+});
+
 test("retries a failed kernel download in the same page with a generic MIME type", async ({
   page,
 }) => {

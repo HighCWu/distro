@@ -19,6 +19,17 @@ const titles = [
 ].map((match) => match[1]);
 const fixtures = [
   {
+    title: "runs curl verified TLS1.3 and certificate/hostname rejection over Linux TCP",
+    entry: "bootCurlHttpsRuntimeSmoke",
+    path: "/runtime-curl-https.cpio",
+    stages: [
+      "curl HTTPS: trusted localhost TLS1.3 over Linux TCP verified",
+      "curl HTTPS: untrusted certificate rejected",
+      "curl HTTPS: wrong hostname rejected",
+      "curl: explicit-CA TLS1.3 transfer and certificate/hostname rejection verified",
+    ],
+  },
+  {
     title: "runs OpenSSL CLI and verified TLS1.3 certificate and hostname checks through Linux",
     entry: "bootOpensslRuntimeSmoke",
     path: "/runtime-openssl.cpio",
@@ -106,7 +117,7 @@ function loadCases(globals = {}) {
 
 test("Nix report gate exactly matches all registered runtime cases", () => {
   assert.deepEqual([...loadCases().keys()].sort(), [...titles].sort());
-  assert.equal(titles.length, 19);
+  assert.equal(titles.length, 20);
   const report = {
     suites: [
       {

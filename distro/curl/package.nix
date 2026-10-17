@@ -11,6 +11,7 @@
   vm-test,
   busybox,
   platform,
+  image,
 }:
 
 stdenv.mkDerivation (finalAttrs: {
@@ -116,16 +117,24 @@ stdenv.mkDerivation (finalAttrs: {
     "ca-certificates"
   ];
 
+  passthru.runtimeAssets = rec {
+    init = ./tests/https-test.sh;
+    contents = [
+      busybox
+      ca-certificates
+      openssl
+      finalAttrs.finalPackage
+    ];
+    httpsInitramfs = image.mkInitramfs {
+      name = "curl-verified-https-${platform.wasmArch}";
+      inherit init contents;
+    };
+  };
+
   passthru.checks = {
     https = vm-test.installedTest {
       name = "curl-verified-https-${platform.wasmArch}";
-      init = ./tests/https-test.sh;
-      contents = [
-        busybox
-        ca-certificates
-        openssl
-        finalAttrs.finalPackage
-      ];
+      inherit (finalAttrs.finalPackage.runtimeAssets) init contents;
     };
     transfers = vm-test.installedTest {
       name = "curl-transfers";

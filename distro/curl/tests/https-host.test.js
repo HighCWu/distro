@@ -111,3 +111,17 @@ test("curl wasm64 selects matching OpenSSL/zlib and enforces the actual module A
   const syntax = spawnSync("sh", ["-n"], { input: script, encoding: "utf8" });
   assert.equal(syntax.status, 0, syntax.stderr);
 });
+
+test("browser HTTPS reuses the Node script and matching installed curl/OpenSSL outputs", () => {
+  const recipe = readFileSync(new URL("../package.nix", import.meta.url), "utf8");
+  assert.equal([...recipe.matchAll(/init = \.\/tests\/https-test.sh;/g)].length, 1);
+  assert.match(recipe, /passthru\.runtimeAssets = rec \{/);
+  assert.match(recipe, /httpsInitramfs = image\.mkInitramfs/);
+  assert.match(recipe, /inherit init contents;/);
+  assert.match(recipe, /inherit \(finalAttrs\.finalPackage\.runtimeAssets\) init contents;/);
+  const browser = readFileSync(new URL("../../npm/browser-tests.nix", import.meta.url), "utf8");
+  assert.ok(
+    browser.includes("curlAssets = (if bits == 64 then curl-wasm64 else curl).runtimeAssets;"),
+  );
+  assert.ok(browser.includes("cp ${curlAssets.httpsInitramfs} $out/runtime-curl-https.cpio"));
+});
