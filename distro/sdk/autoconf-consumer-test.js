@@ -162,6 +162,27 @@ AC_OUTPUT
       WASM_CONFIG_SITE: targetSite,
     });
     assert.match(explicit.stdout, /SDK_EXPLICIT_TARGET_SITE/);
+    // A typo must not silently disable the target capability policy. Use a
+    // marker script to prove invalid paths fail before configure is invoked.
+    const markerConfigure = join(root, "marker-configure");
+    writeFileSync(markerConfigure, "echo SDK_SITE_CHECK_SCRIPT_STARTED\n");
+    const spacedSite = join(root, "target policy.site");
+    writeFileSync(spacedSite, sitePolicy);
+    for (const [site, status, message] of [
+      [join(root, "missing.site"), 66, /not a readable file/],
+      [project, 66, /not a readable file/],
+      [spacedSite, 64, /one path without whitespace/],
+    ]) {
+      const invalid = spawnSync(wrapper, [markerConfigure], {
+        cwd: root,
+        env: { ...env, WASM_CONFIG_SITE: site },
+        encoding: "utf8",
+      });
+      assert.equal(invalid.error, undefined);
+      assert.equal(invalid.status, status, invalid.stdout + invalid.stderr);
+      assert.match(invalid.stderr, message);
+      assert.doesNotMatch(invalid.stdout + invalid.stderr, /SDK_SITE_CHECK_SCRIPT_STARTED/);
+    }
     // A third-party configure script without a cross-compilation fallback must
     // stop, rather than executing the target or silently inventing an answer.
     const unsupported = join(root, "runtime-required");

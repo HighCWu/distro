@@ -17,4 +17,14 @@ export CONFIG_SHELL=@shell@
 # unsupported-capability policy; explicit target overrides remain available.
 sdk_config_site=@configSite@
 export CONFIG_SITE="${WASM_CONFIG_SITE:-$sdk_config_site}"
+# Autoconf silently ignores missing site files and splits paths on whitespace.
+# This entry point accepts one explicit file, not a list of optional policies.
+if [[ "$CONFIG_SITE" == *[[:space:]]* ]]; then
+  printf 'wasm-linux-configure: CONFIG_SITE must be one path without whitespace: %s\n' "$CONFIG_SITE" >&2
+  exit 64
+fi
+if [[ ! -r "$CONFIG_SITE" || -d "$CONFIG_SITE" ]]; then
+  printf 'wasm-linux-configure: CONFIG_SITE is not a readable file: %s\n' "$CONFIG_SITE" >&2
+  exit 66
+fi
 exec @shell@ "$configure_script" --build=@build@ --host=@host@ "$@"
