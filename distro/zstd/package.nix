@@ -10,6 +10,8 @@
   llvm-runtimes,
   platform,
   vm-test,
+  vm-test-file,
+  initializedFileMmap ? false,
 }:
 
 stdenv.mkDerivation (finalAttrs: {
@@ -34,6 +36,9 @@ stdenv.mkDerivation (finalAttrs: {
 
   patches = [ ./mmap.patch ];
 
+  # Opt-in test variant only. Ordinary packages must not acquire this export.
+  NIX_CFLAGS_LINK = pkgs.lib.optionalString initializedFileMmap "-Wl,--export=__wasm_mmap_init_v1";
+
   postBuild = ''
     node ${../busybox/check-binary.mjs} ${../../packages/kernel/src/wasm_binary.ts} \
       programs/zstd ${toString platform.addressBits} ${toString platform.maximumMemoryBytes}
@@ -52,7 +57,7 @@ stdenv.mkDerivation (finalAttrs: {
     runHook postInstall
   '';
 
-  passthru.checks = {
+  passthru.checks = pkgs.lib.optionalAttrs (!initializedFileMmap) {
     roundtrip = vm-test.installedTest {
       name = "zstd-roundtrip";
       init = ./roundtrip-test.sh;
@@ -61,5 +66,50 @@ stdenv.mkDerivation (finalAttrs: {
         busybox
       ];
     };
+    file =
+      let
+        candidate = finalAttrs.finalPackage.override { initializedFileMmap = true; };
+        dictionaries =
+          pkgs.runCommand "zstd-mmap-dictionaries.erofs" { nativeBuildInputs = [ pkgs.erofs-utils ]; }
+            ''
+              mkdir root
+              for size in 65535 65536 65537 131071 131072 131073; do
+                head -c "$size" /dev/zero > root/dictionary-$size
+              done
+              mkfs.erofs --all-root -T 0 -x-1 "$out" root
+            '';
+      in
+      pkgs.runCommand "zstd-file-mmap-checks-${platform.wasmArch}"
+        {
+          passthru.ci.heavy = true;
+          mapped = vm-test-file.rawInitramfsTest {
+            name = "zstd-file-mmap-${platform.wasmArch}";
+            init = ./file-mmap-test.sh;
+            contents = [
+              candidate
+              busybox
+            ];
+            disks = [
+              dictionaries
+              dictionaries
+            ];
+            snapshotFirstDisk = true;
+            readOnlyDisks = true;
+          };
+          # Having the export must not open the default kernel's mmap policy.
+          releaseConfig = vm-test.installedTest {
+            name = "zstd-export-default-${platform.wasmArch}";
+            init = ./roundtrip-test.sh;
+            contents = [
+              candidate
+              busybox
+            ];
+          };
+        }
+        ''
+          mkdir $out
+          ln -s "$mapped" $out/mapped
+          ln -s "$releaseConfig" $out/default
+        '';
   };
 })

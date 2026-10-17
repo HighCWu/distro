@@ -207,7 +207,13 @@ lib.makeScope (scope: lib.callPackageWith ({ inherit lib pkgs; } // scope)) (
     vim = callPackage ./vim/package.nix { };
     xz = callPackage ./xz/package.nix { };
     zlib = callPackage ./zlib/package.nix { };
-    zstd = callPackage ./zstd/package.nix { };
+    zstd = callPackage ./zstd/package.nix {
+      vm-test-file = self.vm-test.override {
+        kernel = self.kernel.override {
+          linux = self.linux.override { fileMmapCandidate = true; };
+        };
+      };
+    };
     zstd-wasm64 = self.zstd.override {
       stdenv = self.stdenv-wasm64;
       busybox = self.busybox-wasm64;
@@ -215,6 +221,11 @@ lib.makeScope (scope: lib.callPackageWith ({ inherit lib pkgs; } // scope)) (
       llvm-runtimes = self.llvm-runtimes-wasm64;
       platform = self.platform-wasm64;
       vm-test = vmTestWasm64;
+      vm-test-file = vmTestWasm64.override {
+        kernel = self.kernel-wasm64.override {
+          linux = self.linux-wasm64.override { fileMmapCandidate = true; };
+        };
+      };
     };
 
     # Early platform tests boot without the guest agent so a broken SDK cannot
