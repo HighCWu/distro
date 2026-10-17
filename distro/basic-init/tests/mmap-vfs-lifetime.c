@@ -6,6 +6,7 @@
 #include <sys/ioctl.h>
 #include <sys/mman.h>
 #include <unistd.h>
+#include "mmap-vfs-stats.h"
 
 /* Private fixtures under CONFIG_WASM_MMAP_COPY_TEST, never application UAPI. */
 #define FILE_CREATE_TEST_NR 254
@@ -44,10 +45,76 @@ static void content(const unsigned char *bytes, size_t page)
 			test_fail("lifetime fixture content mismatch");
 }
 
+static void reserved(long expected)
+{
+	long actual = syscall(MMAP_STATS_TEST_NR, (unsigned long)3);
+	if (actual < 0) test_perror("query copy budget");
+	if (actual != expected) test_fail("copy budget mismatch at stable barrier");
+}
+
+static void budget(size_t page)
+{
+	/* Two maximum-size requests exhaust the global eight-page charge.
+	 * Run both a successful read and partial-read rollback as the first
+	 * finisher. Independent barriers make admission/refusal deterministic. */
+	for (unsigned int mode = 4; mode <= 5; mode++) {
+		mmap_stats_wait(0, 0, 0);
+		struct request requests[2] = {
+			{ .fd = create(mode), .page = 2 * page },
+			{ .fd = create(4), .page = 2 * page },
+		};
+		pthread_t threads[2];
+		for (int i = 0; i < 2; i++) {
+			if (pthread_create(&threads[i], NULL, reader, &requests[i]))
+				test_fail("start budget reader");
+			if (ioctl(requests[i].fd, WAIT_ENTERED, 0UL))
+				test_perror("wait budget read barrier");
+		}
+		mmap_stats_expect(2, 2, 2);
+		reserved(8 * page);
+		struct request retry = { .fd = create(0), .page = 1 };
+		reader(&retry);
+		if (retry.result != -1 || retry.error != ENOMEM)
+			test_fail("exhausted budget admitted even a one-byte copy");
+		mmap_stats_expect(2, 2, 3);
+		reserved(8 * page);
+		for (int i = 0; i < 2; i++) {
+			if (ioctl(requests[i].fd, PROCEED, 0UL))
+				test_perror("release budget reader");
+			if (pthread_join(threads[i], NULL)) test_fail("join budget reader");
+			if (i == 0 && mode == 5) {
+				if (requests[i].result != -1 || requests[i].error != EIO)
+					test_fail("budget rollback lost partial read error");
+			} else {
+				if (requests[i].result == -1) test_fail("budget reader failed");
+				unsigned char *bytes = (void *)(uintptr_t)requests[i].result;
+				content(bytes, 2 * page);
+				if (munmap(bytes, 2 * page)) test_perror("budget mapping cleanup");
+			}
+			reserved(i == 0 ? 4 * page : 0);
+			/* Reuse the previously rejected fd while the second request
+			 * still owns its reservation; no global reset is permitted. */
+			retry.page = 2 * page;
+			reader(&retry);
+			if (retry.result == -1) test_fail("released budget was not reusable");
+			unsigned char *bytes = (void *)(uintptr_t)retry.result;
+			content(bytes, 2 * page);
+			if (munmap(bytes, 2 * page)) test_perror("budget retry cleanup");
+			reserved(i == 0 ? 4 * page : 0);
+		}
+		if (close(requests[0].fd) || close(requests[1].fd) || close(retry.fd))
+			test_perror("close budget fixtures");
+		mmap_stats_wait(0, 0, 0);
+	}
+	puts("file mmap: concurrent copy budget and rollback verified");
+}
+
 int main(void)
 {
 	size_t page = (size_t)sysconf(_SC_PAGESIZE);
 	if (page != 65536) test_fail("unexpected lifetime fixture page size");
+	mmap_stats_start();
+	budget(page);
 	unsigned char *sentinel = mmap(0, page, PROT_READ | PROT_WRITE,
 		MAP_PRIVATE | MAP_ANONYMOUS, -1, 0);
 	if (sentinel == MAP_FAILED) test_perror("lifetime sentinel mmap");
@@ -101,5 +168,6 @@ int main(void)
 		}
 	}
 	if (munmap(sentinel, page)) test_perror("lifetime sentinel cleanup");
+	mmap_stats_wait(0, 0, 0);
 	test_pass();
 }

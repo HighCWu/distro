@@ -15,6 +15,11 @@ static int mmap_stats_match(long requests, long staging, long files)
 		if (actual < 0) test_perror("query VFS resource gauge");
 		if (actual != expected[i]) return 0;
 	}
+	if (!requests) {
+		long reserved = syscall(MMAP_STATS_TEST_NR, (unsigned long)3);
+		if (reserved < 0) test_perror("query VFS copy reservation");
+		if (reserved) return 0;
+	}
 	return 1;
 }
 
@@ -27,7 +32,7 @@ static void mmap_stats_expect(long requests, long staging, long files)
 static void mmap_stats_start(void)
 {
 	errno = 0;
-	if (syscall(MMAP_STATS_TEST_NR, (unsigned long)3) != -1 || errno != EINVAL)
+	if (syscall(MMAP_STATS_TEST_NR, (unsigned long)4) != -1 || errno != EINVAL)
 		test_fail("invalid resource gauge selector accepted");
 	mmap_stats_expect(0, 0, 0);
 }
