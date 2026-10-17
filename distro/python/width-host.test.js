@@ -129,3 +129,20 @@ test("both installed Python systems include OpenSSL's certificate package depend
   const openssl = readFileSync(new URL("../openssl/package.nix", import.meta.url), "utf8");
   assert.match(openssl, /passthru\.apk\.depends[\s\S]*?"ca-certificates"/);
 });
+
+test("relocated compressed Python application runs without its original source tree", () => {
+  const result = spawnSync(
+    "python3",
+    ["-B", fileURLToPath(new URL("./application-test.py", import.meta.url))],
+    { encoding: "utf8", timeout: 15_000 },
+  );
+  assert.equal(result.status, 0, `${result.error ?? ""}\n${result.stdout}\n${result.stderr}`);
+  assert.match(
+    result.stdout,
+    /relocated compressed archive, metadata, resources and binary pipes verified/,
+  );
+  const recipe = readFileSync(new URL("./package.nix", import.meta.url), "utf8");
+  assert.ok(recipe.includes('files."/python-application-test.py" = ./application-test.py;'));
+  const script = readFileSync(new URL("./python-test.sh", import.meta.url), "utf8");
+  assert.match(script, /python3 \/python-application-test\.py \|\| fail/);
+});

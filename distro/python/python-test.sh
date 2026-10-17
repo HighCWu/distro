@@ -626,5 +626,7 @@ grep -qx MPOK /tmp/mpout ||
 test ! -s /tmp/mperr ||
   fail "multiprocessing test emitted stderr: $(tr '\n' '|' </tmp/mperr)"
 
+python3 /python-application-test.py || fail "relocated Python application failed"
+
 echo "::vm-test::pass"
 while :; do :; done
