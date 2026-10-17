@@ -23,6 +23,25 @@ The command above assumes paths without spaces. The SDK query wrapper always
 requests static dependencies and excludes native package search directories.
 Use shell arrays when passing flags from paths which require quoting.
 
+Alternatively, the installed example is a normal CMake project:
+
+```sh
+export WASM_PKG_CONFIG_PATH="$development/lib/pkgconfig"
+export WASM_PKG_CONFIG_SYSROOT_DIR=/
+cmake -S "$development/share/doc/libcurl/examples" -B build-fetch -G Ninja \
+  -DCMAKE_BUILD_TYPE=Release \
+  -DCMAKE_TOOLCHAIN_FILE="$sdk/share/cmake/linux-wasm.cmake" \
+  -DCMAKE_STAGING_PREFIX="$development"
+cmake --build build-fetch
+```
+
+Here `sdk` and `development` are absolute matching-width installations. Use a
+fresh build directory when changing either. `CMAKE_STAGING_PREFIX` allows the
+explicit copied dependency paths outside the libc sysroot; it does not enable
+host package discovery. `PkgConfig::LIBCURL` obtains all static dependencies
+through the SDK wrapper. The result is `build-fetch/libcurl-fetch.wasm`; CMake
+configures and links cross probes without executing the Wasm binary on the host.
+
 Run the compiled application on Linux/Wasm, not as a host Node/WASI program:
 
 ```sh

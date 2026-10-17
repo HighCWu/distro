@@ -137,6 +137,7 @@ stdenv.mkDerivation (finalAttrs: {
         node ${./relocate-metadata.mjs} $out ${finalAttrs.finalPackage} ${openssl} ${zlib}
         cp -r ${finalAttrs.finalPackage}/share/licenses/curl $out/share/licenses/
         cp ${./fetch-example.c} $out/share/doc/libcurl/examples/fetch.c
+        cp ${./CMakeLists.txt} $out/share/doc/libcurl/examples/CMakeLists.txt
         cp ${./development-README.md} $out/share/doc/libcurl/examples/README.md
         cp ${../sdk/LICENSE.MIT} $out/share/doc/libcurl/examples/LICENSE.MIT
       '';
@@ -174,6 +175,49 @@ stdenv.mkDerivation (finalAttrs: {
         cp relocated/installation/share/doc/libcurl/examples/LICENSE.MIT $out/share/licenses/curl/example-MIT
       '';
 
+  # An independent consumer of the installed CMake project. Keep the direct
+  # compiler consumer above: neither build path substitutes for the other.
+  passthru.developmentCmakeApplication =
+    pkgs.runCommand "libcurl-installed-cmake-application-${platform.wasmArch}"
+      {
+        nativeBuildInputs = [
+          pkgs.cmake
+          pkgs.ninja
+          pkgs.nodejs
+        ];
+        passthru.apk.license = finalAttrs.passthru.apk.license;
+      }
+      ''
+        mkdir -p $out/bin $out/share/licenses relocated
+        cp -r ${finalAttrs.finalPackage.development}/. original/
+        mv original relocated/installation
+        export WASM_PKG_CONFIG_PATH="$PWD/relocated/installation/lib/pkgconfig"
+        export WASM_PKG_CONFIG_SYSROOT_DIR=/
+        cmake -S relocated/installation/share/doc/libcurl/examples -B build -G Ninja \
+          -DCMAKE_BUILD_TYPE=Release \
+          -DCMAKE_TOOLCHAIN_FILE=${sdk}/share/cmake/linux-wasm.cmake \
+          -DCMAKE_STAGING_PREFIX="$PWD/relocated/installation"
+        cmake --build build --verbose
+        cp build/libcurl-fetch.wasm $out/bin/libcurl-fetch
+        node ${../busybox/check-binary.mjs} ${../../packages/kernel/src/wasm_binary.ts} \
+          $out/bin/libcurl-fetch ${toString platform.addressBits} ${toString platform.maximumMemoryBytes}
+        cp -r relocated/installation/share/licenses/curl $out/share/licenses/
+        cp relocated/installation/share/doc/libcurl/examples/LICENSE.MIT $out/share/licenses/curl/example-MIT
+        # A fresh configure must not recover a missing target dependency from
+        # host packages or the successful build's CMake/pkg-config cache.
+        cp -r relocated/installation missing
+        chmod u+w missing/lib/pkgconfig
+        rm missing/lib/pkgconfig/libcrypto.pc
+        export WASM_PKG_CONFIG_PATH="$PWD/missing/lib/pkgconfig"
+        if cmake -S missing/share/doc/libcurl/examples -B missing-build -G Ninja \
+          -DCMAKE_TOOLCHAIN_FILE=${sdk}/share/cmake/linux-wasm.cmake \
+          -DCMAKE_STAGING_PREFIX="$PWD/missing" > missing.log 2>&1; then
+          echo 'CMake accepted missing target libcrypto metadata' >&2; exit 1
+        fi
+        cat missing.log
+        grep -q libcrypto missing.log
+      '';
+
   passthru.runtimeAssets = rec {
     init = ./tests/https-test.sh;
     contents = [
@@ -205,6 +249,16 @@ stdenv.mkDerivation (finalAttrs: {
     development = vm-test.installedTest {
       name = "libcurl-installed-application-${platform.wasmArch}";
       inherit (finalAttrs.finalPackage.runtimeAssets.development) init contents;
+    };
+    development-cmake = vm-test.installedTest {
+      name = "libcurl-installed-cmake-application-${platform.wasmArch}";
+      inherit (finalAttrs.finalPackage.runtimeAssets.development) init;
+      contents = [
+        busybox
+        ca-certificates
+        openssl
+        finalAttrs.finalPackage.developmentCmakeApplication
+      ];
     };
     https = vm-test.installedTest {
       name = "curl-verified-https-${platform.wasmArch}";

@@ -296,10 +296,128 @@ test("both widths use installed example, SDK flags, ABI guard and complete notic
   assert.ok(recipe.includes("$out/share/licenses/curl/example-MIT"));
   assert.equal(
     [...recipe.matchAll(/passthru\.apk\.license = finalAttrs\.passthru\.apk\.license;/g)].length,
-    2,
+    3,
   );
   assert.doesNotMatch(source, /__wasm__|::vm-test::|while\s*\(1\)|sleep\(/);
   assert.equal(spawnSync("sh", ["-n"], { input: script }).status, 0);
+});
+
+test("installed CMake project builds the ordinary C consumer with GCC and Clang", () =>
+  workspace((root) => {
+    const original = join(root, "original");
+    mkdirSync(original);
+    writeFileSync(join(original, "fetch.c"), source);
+    writeFileSync(
+      join(original, "CMakeLists.txt"),
+      readFileSync(new URL("../CMakeLists.txt", import.meta.url)),
+    );
+    const moved = join(root, "relocated");
+    renameSync(original, moved);
+    const nativeMetadata = join(root, "native-metadata");
+    mkdirSync(nativeMetadata);
+    const nativeFlags = (option) => {
+      const result = spawnSync("pkg-config", [option, "libcurl"], { encoding: "utf8" });
+      assert.equal(result.status, 0, result.stderr);
+      return result.stdout.trim();
+    };
+    // Real host libcurl may be shared. This fixture does not certify the target
+    // static graph or require all host static dependency development packages.
+    writeFileSync(
+      join(nativeMetadata, "libcurl.pc"),
+      `Name: native-libcurl-fixture\nDescription: Host consumer fixture only\nVersion: 1.0\nRequires.private: native-fixture-private\nLibs: ${nativeFlags("--libs")}\nCflags: ${nativeFlags("--cflags")}\n`,
+    );
+    writeFileSync(
+      join(nativeMetadata, "native-fixture-private.pc"),
+      "Name: native-fixture-private\nDescription: Native metadata dependency only\nVersion: 1.0\n",
+    );
+    const wrapper = join(root, "native-fixture-pkg-config");
+    writeFileSync(
+      wrapper,
+      "#!/usr/bin/env bash\n" +
+        readFileSync(new URL("../../sdk/pkg-config.sh", import.meta.url), "utf8")
+          .replaceAll("@sysroot@", "/")
+          // Native fixture only: explicitly select native metadata, not a target SDK.
+          .replaceAll("@libdir@", `'${nativeMetadata}'`)
+          .replaceAll("@pkgConfig@", "pkg-config"),
+      { mode: 0o755 },
+    );
+    const env = { ...process.env, WASM_PKG_CONFIG_PATH: "", WASM_PKG_CONFIG_SYSROOT_DIR: "/" };
+    const input = join(root, "input.bin");
+    const bytes = Buffer.from([0, 1, 127, 128, 255, 10]);
+    writeFileSync(input, bytes);
+    for (const compiler of ["gcc", "clang"]) {
+      const build = join(root, compiler);
+      for (const args of [
+        [
+          "-S",
+          moved,
+          "-B",
+          build,
+          "-G",
+          "Ninja",
+          "-DCMAKE_BUILD_TYPE=Release",
+          `-DCMAKE_C_COMPILER=${compiler}`,
+          `-DPKG_CONFIG_EXECUTABLE=${wrapper}`,
+        ],
+        ["--build", build, "--verbose"],
+      ]) {
+        const result = spawnSync("cmake", args, { env, encoding: "utf8", timeout: 60_000 });
+        assert.equal(result.status, 0, `${result.error || ""}\n${result.stdout}\n${result.stderr}`);
+      }
+      const binary = join(build, "libcurl-fetch.wasm");
+      const result = spawnSync(binary, [`file://${input}`]);
+      assert.equal(result.status, 0, result.stderr?.toString());
+      assert.deepEqual(result.stdout, bytes);
+      assert.equal(spawnSync(binary, []).status, 2);
+    }
+    unlinkSync(join(nativeMetadata, "native-fixture-private.pc"));
+    const missing = spawnSync(
+      "cmake",
+      [
+        "-S",
+        moved,
+        "-B",
+        join(root, "missing-metadata"),
+        "-G",
+        "Ninja",
+        `-DPKG_CONFIG_EXECUTABLE=${wrapper}`,
+      ],
+      { env, encoding: "utf8", timeout: 60_000 },
+    );
+    assert.notEqual(
+      missing.status,
+      0,
+      "missing explicit private metadata must not use host libcurl",
+    );
+    assert.match(missing.stdout + missing.stderr, /native-fixture-private/);
+  }));
+
+test("CMake target consumer uses the copied project, SDK, staged libraries and shared runtime checks", () => {
+  const recipe = readFileSync(new URL("../package.nix", import.meta.url), "utf8");
+  const cmake = recipe
+    .split("passthru.developmentCmakeApplication =")[1]
+    .split("passthru.runtimeAssets")[0];
+  assert.ok(
+    recipe.includes("cp ${./CMakeLists.txt} $out/share/doc/libcurl/examples/CMakeLists.txt"),
+  );
+  assert.ok(cmake.includes("mv original relocated/installation"));
+  assert.ok(cmake.includes("cmake -S relocated/installation/share/doc/libcurl/examples"));
+  assert.ok(cmake.includes("-DCMAKE_TOOLCHAIN_FILE=${sdk}/share/cmake/linux-wasm.cmake"));
+  assert.ok(cmake.includes('-DCMAKE_STAGING_PREFIX="$PWD/relocated/installation"'));
+  assert.ok(cmake.includes("rm missing/lib/pkgconfig/libcrypto.pc"));
+  assert.ok(cmake.includes("-B missing-build"));
+  assert.ok(cmake.includes("grep -q libcrypto missing.log"));
+  assert.ok(
+    cmake.includes(
+      "$out/bin/libcurl-fetch ${toString platform.addressBits} ${toString platform.maximumMemoryBytes}",
+    ),
+  );
+  assert.match(recipe, /development-cmake = vm-test\.installedTest/);
+  assert.ok(recipe.includes("finalAttrs.finalPackage.developmentCmakeApplication"));
+  const project = readFileSync(new URL("../CMakeLists.txt", import.meta.url), "utf8");
+  assert.match(project, /pkg_check_modules\(LIBCURL REQUIRED IMPORTED_TARGET libcurl\)/);
+  assert.match(project, /target_link_libraries\(libcurl-fetch PRIVATE PkgConfig::LIBCURL\)/);
+  assert.doesNotMatch(project, /try_run|target_link_libraries[^\n]*-l/);
 });
 
 test("Node and browser share one installed C application script and matching outputs", () => {
