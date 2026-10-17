@@ -10,7 +10,11 @@ import { join } from "node:path";
 import test from "node:test";
 
 const original = readFileSync(new URL("./roundtrip-test.sh", import.meta.url), "utf8");
-function run(fault = "", mapping = 'echo "zstd: error 34 : Invalid argument" >&2; return 34') {
+function run(
+  fault = "",
+  mapping = 'echo "zstd: error 34 : Invalid argument" >&2; return 34',
+  mountStatus = 0,
+) {
   const directory = mkdtempSync(join(tmpdir(), "linux-wasm-zstd-workload-"));
   try {
     const notices = join(directory, "notices");
@@ -25,7 +29,12 @@ function run(fault = "", mapping = 'echo "zstd: error 34 : Invalid argument" >&2
       .replace("while :; do :; done", "exit 1")
       .replace("while :; do :; done", "exit 0");
     return spawnSync("sh", ["-s"], {
-      input: `zstd() {
+      // Never mount over the developer's /dev. Only the target test mounts it.
+      input: `mount() {
+        test "$*" = "-t devtmpfs devtmpfs /dev" || return 99
+        return ${mountStatus}
+      }
+      zstd() {
         case "$*" in *--mmap-dict*) ${mapping} ;; esac
         ${fault}
         command zstd "$@"
@@ -44,6 +53,13 @@ test("Zstandard workload roundtrips malloc dictionaries, binary files and pipes"
   assert.match(result.stdout, /::vm-test::pass/);
   assert.match(result.stdout, /malloc dictionaries verified; forced file mapping rejected/);
   assert.doesNotMatch(result.stdout, /::vm-test::fail/);
+});
+
+test("missing test devices fails before running the compression workload", () => {
+  const result = run("", undefined, 1);
+  assert.equal(result.status, 1, result.error?.message ?? result.stdout + result.stderr);
+  assert.match(result.stdout, /mounting test devices failed/);
+  assert.doesNotMatch(result.stdout, /::vm-test::pass/);
 });
 
 test("ordinary dictionary failure cannot be mistaken for successful coverage", () => {

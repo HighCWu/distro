@@ -10,6 +10,10 @@ fail() {
 export PATH=/bin:/sbin:/usr/bin:/usr/sbin
 export LC_ALL=C
 
+# The root-pivot fixture unmounts its boot devtmpfs. Provide real device nodes
+# before using /dev/zero; the runtime's /dev/null alone is not sufficient.
+mount -t devtmpfs devtmpfs /dev || fail "mounting test devices failed"
+
 seq 1 4000 >/tmp/data || fail "generating test data failed"
 
 zstd -q -c /tmp/data >/tmp/data.zst || fail "compression failed"
@@ -41,7 +45,7 @@ done
 echo "zstd: malloc dictionaries verified; forced file mapping rejected"
 
 # Binary bytes and multiple syscall-sized chunks must survive file and pipe I/O.
-dd if=/dev/zero of=/tmp/binary bs=65536 count=16 2>/dev/null || fail "binary generation failed"
+dd if=/dev/zero of=/tmp/binary bs=65536 count=16 || fail "binary generation failed"
 printf '\000\377\200binary-tail\000\376\001' >>/tmp/binary || fail "binary tail failed"
 zstd -q -c /tmp/binary >/tmp/binary.zst || fail "binary compression failed"
 zstd -d -q -c /tmp/binary.zst >/tmp/binary.out || fail "binary decompression failed"
