@@ -1,4 +1,5 @@
 #!/bin/busybox sh
+# SPDX-License-Identifier: MIT
 
 fail() {
   printf 'vm test guest failure: %s\n' "$*"
@@ -7,6 +8,10 @@ fail() {
 }
 
 export PATH=/bin:/sbin:/usr/bin:/usr/sbin
+
+for license in quickjs-LICENSE musl-COPYRIGHT compiler-rt-LICENSE.TXT; do
+  test -s "/usr/share/licenses/quickjs/$license" || fail "missing QuickJS license: $license"
+done
 
 # os.exec enumerates the live descriptor table when constructing close actions.
 mount -t proc proc /proc || fail "mounting proc failed"
@@ -207,5 +212,6 @@ test -s /tmp/hello.c ||
 grep -q 'uint' /tmp/hello.c ||
   fail "qjsc output is not a C bytecode array: $(cat /tmp/hello.c)"
 
+echo "QuickJS: language, file I/O, spawn, Worker, timers and bytecode generation verified"
 echo "::vm-test::pass"
 while :; do :; done

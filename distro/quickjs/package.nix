@@ -9,12 +9,18 @@
   },
   vm-test,
   busybox,
+  platform,
+  musl,
+  llvm-runtimes,
 }:
 
 stdenv.mkDerivation (finalAttrs: {
   pname = "quickjs";
   version = "0.15.1";
   inherit src;
+  meta.license = pkgs.lib.licenses.mit;
+  passthru.apk.license = "MIT AND Apache-2.0 WITH LLVM-exception";
+  nativeBuildInputs = [ pkgs.nodejs ];
 
   # quickjs-ng over Bellard's quickjs: it is actively maintained and ships the
   # pre-generated gen/repl.c and gen/standalone.c in the release, so the qjs CLI
@@ -60,11 +66,22 @@ stdenv.mkDerivation (finalAttrs: {
     runHook postBuild
   '';
 
+  postBuild = ''
+    for program in qjs qjsc; do
+      node ${../busybox/check-binary.mjs} ${../../packages/kernel/src/wasm_binary.ts} \
+        "$program" ${toString platform.addressBits} ${toString platform.maximumMemoryBytes}
+    done
+  '';
+
   installPhase = ''
     runHook preInstall
     mkdir -p $out/bin $out/include
     cp qjs qjsc $out/bin/
     cp quickjs.h quickjs-libc.h $out/include/
+    mkdir -p $out/share/licenses/quickjs
+    cp LICENSE $out/share/licenses/quickjs/quickjs-LICENSE
+    cp ${musl.src}/COPYRIGHT $out/share/licenses/quickjs/musl-COPYRIGHT
+    cp ${llvm-runtimes.src}/compiler-rt/LICENSE.TXT $out/share/licenses/quickjs/compiler-rt-LICENSE.TXT
     runHook postInstall
   '';
 

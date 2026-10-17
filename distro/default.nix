@@ -205,6 +205,14 @@ lib.makeScope (scope: lib.callPackageWith ({ inherit lib pkgs; } // scope)) (
     patch = callPackage ./patch/package.nix { };
     python = callPackage ./python/package.nix { };
     quickjs = callPackage ./quickjs/package.nix { };
+    quickjs-wasm64 = self.quickjs.override {
+      stdenv = self.stdenv-wasm64;
+      platform = self.platform-wasm64;
+      musl = self.musl-wasm64;
+      llvm-runtimes = self.llvm-runtimes-wasm64;
+      busybox = self.busybox-wasm64;
+      vm-test = vmTestWasm64;
+    };
     readline = callPackage ./readline/package.nix { };
     rust-smoke = callPackage ./rust-smoke/package.nix { };
     sed = callPackage ./sed/package.nix { };
