@@ -9,6 +9,7 @@
   vm-test,
   vm-test-copy,
   vm-test-file,
+  fileKernel,
 }:
 
 let
@@ -88,6 +89,22 @@ let
 in
 pkgs.runCommand "mmap-benchmark-artifacts-${platform.wasmArch}"
   {
+    # Build artifacts only: each consumer must boot a fresh instance, not reuse
+    # a cached check result as a new performance measurement.
+    passthru.fileBenchmarkAssets =
+      pkgs.runCommand "file-copy-benchmark-assets-${platform.wasmArch}" { }
+        ''
+          mkdir $out
+          ln -s ${
+            image.mkInitramfs {
+              name = "mmap-file-benchmark-${platform.wasmArch}";
+              init = "${executables}/file-benchmark.wasm";
+            }
+          } $out/initramfs.cpio
+          ln -s ${provenanceImage} $out/disk.img
+          ln -s ${fileKernel} $out/kernel
+          ln -s ${vm-test-file.runner} $out/runner
+        '';
     passthru.fileBrowserAssets = {
       initramfs = image.mkInitramfs {
         name = "mmap-file-candidate-${platform.wasmArch}-initramfs";
