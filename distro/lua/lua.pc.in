@@ -1,0 +1,11 @@
+# SPDX-License-Identifier: MIT
+prefix=${pcfiledir}/../..
+libdir=${prefix}/lib
+includedir=${prefix}/include
+
+Name: Lua
+Description: Lua 5.4 static library for Linux on WebAssembly
+Version: @version@
+Libs: -L${libdir} -llua
+Libs.private: -lm
+Cflags: -I${includedir}

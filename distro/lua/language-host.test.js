@@ -63,7 +63,7 @@ test("Lua wasm64 package explicitly matches all cross-platform dependencies", ()
   const scope = readFileSync(new URL("../default.nix", import.meta.url), "utf8");
   const override = scope.match(/lua-wasm64 = self\.lua\.override \{([\s\S]*?)\n    \};/);
   assert.ok(override);
-  for (const name of ["stdenv", "platform", "musl", "llvm-runtimes", "busybox"])
+  for (const name of ["stdenv", "platform", "musl", "llvm-runtimes", "busybox", "sdk"])
     assert.ok(override[1].includes(`${name} = self.${name}-wasm64;`), name);
   assert.match(override[1], /vm-test = vmTestWasm64;/);
   const recipe = readFileSync(new URL("./package.nix", import.meta.url), "utf8");

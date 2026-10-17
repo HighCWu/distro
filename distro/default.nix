@@ -205,6 +205,7 @@ lib.makeScope (scope: lib.callPackageWith ({ inherit lib pkgs; } // scope)) (
       musl = self.musl-wasm64;
       llvm-runtimes = self.llvm-runtimes-wasm64;
       busybox = self.busybox-wasm64;
+      sdk = self.sdk-wasm64;
       vm-test = vmTestWasm64;
     };
     make = callPackage ./make/package.nix { };

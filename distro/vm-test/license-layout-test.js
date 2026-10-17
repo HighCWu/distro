@@ -37,10 +37,17 @@ for (const [program, sourceNotice] of [
       assert.doesNotMatch(shell, /\$\{/, "no unhandled Nix interpolation");
       const installed = spawnSync("sh", ["-eu", "-c", shell], {
         cwd: source,
-        env: { ...process.env, out: output },
+        env: { ...process.env, out: output, dev: join(root, "dev") },
         encoding: "utf8",
       });
       assert.equal(installed.status, 0, installed.stderr);
+      if (program === "lua") {
+        for (const name of ["lua-readme.html", "musl-COPYRIGHT", "compiler-rt-LICENSE.TXT"])
+          assert.deepEqual(
+            readFileSync(join(root, "dev/share/licenses/lua", name)),
+            readFileSync(join(output, "share/licenses/lua", name)),
+          );
+      }
       const script = readFileSync(
         new URL(`../${program}/language-test.sh`, import.meta.url),
         "utf8",
