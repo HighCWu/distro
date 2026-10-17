@@ -1,5 +1,6 @@
 {
   pkgs,
+  lib,
   stdenv,
   platform,
   src ? pkgs.fetchzip {
@@ -31,6 +32,11 @@ let
     pname = "python";
     version = "3.13.14";
     inherit src;
+    outputs = [
+      "out"
+      "buildMaterials"
+    ];
+    meta.outputsToInstall = [ "out" ];
     passthru.applicationExample = applicationExample;
     passthru.apk.depends = [
       "ncurses"
@@ -176,9 +182,63 @@ let
 
       # _curses is statically linked. Its compiled terminal descriptions are
       # supplied by the typed ncurses APK runtime dependency above.
+
+      bash ${./build-materials.sh} "$PWD" "$buildMaterials" ${./package.nix} \
+        ${
+          pkgs.writeText "python-build.json" (
+            builtins.toJSON {
+              schemaVersion = 1;
+              inherit (platform) addressBits maximumMemoryBytes;
+              sourceIdentity = builtins.baseNameOf "${src}";
+              compilerIdentity = builtins.baseNameOf "${llvm-toolchain}";
+              configureFlags = finalAttrs.configureFlags;
+              patches = map (patch: builtins.baseNameOf "${patch}") finalAttrs.patches;
+              dependencies =
+                map
+                  (dependency: {
+                    outputIdentity = builtins.baseNameOf "${dependency}";
+                    sourceIdentity = builtins.baseNameOf "${dependency.src}";
+                  })
+                  [
+                    zlib
+                    bzip2
+                    xz
+                    sqlite3
+                    readline
+                    ncurses
+                    openssl
+                  ];
+              scope = "Configured Python build and selected dependency identities; not a complete corresponding-source bundle or offline rebuild environment";
+            }
+          )
+        } ${lib.escapeShellArgs (map toString finalAttrs.patches)}
     '';
 
     passthru.checks = {
+      build-materials =
+        pkgs.runCommand "python-wasm${toString platform.addressBits}-build-materials-check"
+          {
+            passthru.ci.heavy = true;
+            nativeBuildInputs = [ pkgs.jq ];
+          }
+          ''
+            materials=${finalAttrs.finalPackage.buildMaterials}
+            (cd "$materials" && sha256sum --check SHA256SUMS)
+            jq --exit-status '.schemaVersion == 1 and .addressBits == ${toString platform.addressBits}
+              and (.dependencies | length) == 7
+              and (.patches | length) == ${toString (builtins.length finalAttrs.patches)}' "$materials/build.json"
+            grep -qx '#define SIZEOF_VOID_P ${toString (builtins.div platform.addressBits 8)}' "$materials/pyconfig.h"
+            index=0
+            for patch in ${lib.escapeShellArgs (map toString finalAttrs.patches)}; do
+              printf -v name '%03d.patch' "$index"
+              cmp "$materials/patches/$name" "$patch"
+              index=$((index + 1))
+            done
+            cmp "$materials/LICENSE" ${src}/LICENSE
+            test ! -e ${finalAttrs.finalPackage}/pyconfig.h
+            test ! -e ${finalAttrs.finalPackage}/build.json
+            touch $out
+          '';
       mmap = vm-test.installedTest {
         name = "python-private-anonymous-mmap";
         init = ./mmap-test.sh;

@@ -169,6 +169,20 @@ test("published Python example is reproducible, relocatable and retains package 
   );
 });
 
+test("Python build materials preserve configured files and every patch, rejecting incomplete inputs", () => {
+  const result = spawnSync(
+    "python3",
+    ["-B", fileURLToPath(new URL("./build-materials-test.py", import.meta.url))],
+    { encoding: "utf8", timeout: 20_000 },
+  );
+  assert.equal(result.status, 0, `${result.error ?? ""}\n${result.stdout}\n${result.stderr}`);
+  const recipe = readFileSync(new URL("./package.nix", import.meta.url), "utf8");
+  assert.match(recipe, /outputs = \[\s+"out"\s+"buildMaterials"\s+\]/);
+  assert.match(recipe, /meta\.outputsToInstall = \[ "out" \]/);
+  assert.ok(recipe.includes('bash ${./build-materials.sh} "$PWD" "$buildMaterials"'));
+  assert.ok(recipe.includes("lib.escapeShellArgs (map toString finalAttrs.patches)"));
+});
+
 test("fork-less PATH fallback preserves error precedence and caller executable names", () => {
   const result = spawnSync(
     "python3",

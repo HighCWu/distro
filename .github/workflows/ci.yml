@@ -244,6 +244,28 @@ jobs:
           if-no-files-found: error
           compression-level: 0
           retention-days: 3
+      - name: Collect verified Python build materials
+        if: ${{ success() && startsWith(matrix.check, 'python') && endsWith(matrix.check, '-check-build-materials') }}
+        env:
+          MATERIALS_CHECK: ${{ matrix.check }}
+        run: |
+          case "$MATERIALS_CHECK" in
+            python-check-build-materials) package=python ;;
+            python-wasm64-check-build-materials) package=python-wasm64 ;;
+            *) exit 64 ;;
+          esac
+          materials=$(nix eval --raw ".#$package.buildMaterials.outPath")
+          nix path-info "$materials" >/dev/null
+          mkdir python-build-materials
+          cp -R "$materials/." python-build-materials/
+      - name: Upload verified Python build materials
+        if: ${{ success() && startsWith(matrix.check, 'python') && endsWith(matrix.check, '-check-build-materials') }}
+        uses: actions/upload-artifact@v7
+        with:
+          name: python-build-materials-${{ matrix.check }}-${{ github.sha }}
+          path: python-build-materials/
+          if-no-files-found: error
+          retention-days: 3
       - name: Retain completed toolchain outputs after targeted checks
         id: retained
         if: ${{ !cancelled() && needs.plan.outputs.targeted == 'true' && steps.heavy-cache.outcome == 'success' && steps.heavy-cache.outputs.hit-primary-key != 'true' }}
