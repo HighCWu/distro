@@ -356,6 +356,30 @@ test("runs curl verified TLS1.3 and certificate/hostname rejection over Linux TC
   expect(output).not.toContain("::vm-test::fail");
 });
 
+test("runs installed libcurl C binary callbacks and verified TLS1.3 through Linux", async ({
+  page,
+}) => {
+  page.on("console", (message) => console.log(`[browser] ${message.text()}`));
+  page.on("pageerror", (error) => console.error(`[browser] ${error.stack ?? error}`));
+  await page.goto("/");
+  await expect
+    .poll(() => page.evaluate(() => typeof globalThis.bootLibcurlDevelopmentRuntimeSmoke))
+    .toBe("function");
+  const output = await page.evaluate(() => globalThis.bootLibcurlDevelopmentRuntimeSmoke());
+  expect(output).toContain("libcurl application: binary file callback and normal exit verified");
+  expect(output).toContain("libcurl application: explicit CA TLS1.3 over Linux TCP verified");
+  expect(output).toContain("libcurl application: default CA TLS1.3 verified");
+  expect(output).toContain(
+    "libcurl application: explicit untrusted CA rejected despite trusted default",
+  );
+  expect(output).toContain("libcurl application: wrong hostname rejected");
+  expect(output).toContain(
+    "libcurl application: installed static client, file bytes, TLS trust and normal exits verified",
+  );
+  expect(output).toContain("::vm-test::pass");
+  expect(output).not.toContain("::vm-test::fail");
+});
+
 test("retries a failed kernel download in the same page with a generic MIME type", async ({
   page,
 }) => {

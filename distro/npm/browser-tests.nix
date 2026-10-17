@@ -54,6 +54,7 @@ let
     "runs installed Lua C callbacks, errors and coroutine through Linux"
     "runs OpenSSL CLI and verified TLS1.3 certificate and hostname checks through Linux"
     "runs curl verified TLS1.3 and certificate/hostname rejection over Linux TCP"
+    "runs installed libcurl C binary callbacks and verified TLS1.3 through Linux"
     "retries a failed kernel download in the same page with a generic MIME type"
   ];
 
@@ -177,6 +178,7 @@ let
       cp ${luaDevelopmentInitramfs} $out/runtime-lua-development.cpio
       cp ${opensslAssets.cliInitramfs} $out/runtime-openssl.cpio
       cp ${curlAssets.httpsInitramfs} $out/runtime-curl-https.cpio
+      cp ${curlAssets.developmentInitramfs} $out/runtime-libcurl-development.cpio
       cp ${source}/memory64-index.html $out/index.html
       cp ${source}/playwright.config.js $out/playwright.config.js
       cp ${source}/server.js $out/server.js

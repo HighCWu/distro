@@ -186,11 +186,7 @@ stdenv.mkDerivation (finalAttrs: {
       name = "curl-verified-https-${platform.wasmArch}";
       inherit init contents;
     };
-  };
-
-  passthru.checks = {
-    development = vm-test.installedTest {
-      name = "libcurl-installed-application-${platform.wasmArch}";
+    development = {
       init = ./tests/development-test.sh;
       contents = [
         busybox
@@ -198,6 +194,17 @@ stdenv.mkDerivation (finalAttrs: {
         openssl
         finalAttrs.finalPackage.developmentApplication
       ];
+    };
+    developmentInitramfs = image.mkInitramfs {
+      name = "libcurl-installed-application-${platform.wasmArch}";
+      inherit (development) init contents;
+    };
+  };
+
+  passthru.checks = {
+    development = vm-test.installedTest {
+      name = "libcurl-installed-application-${platform.wasmArch}";
+      inherit (finalAttrs.finalPackage.runtimeAssets.development) init contents;
     };
     https = vm-test.installedTest {
       name = "curl-verified-https-${platform.wasmArch}";

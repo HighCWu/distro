@@ -33,3 +33,5 @@ globalThis.bootLuaRuntimeSmoke = () => bootRuntime("/runtime-lua.cpio");
 globalThis.bootLuaDevelopmentRuntimeSmoke = () => bootRuntime("/runtime-lua-development.cpio");
 globalThis.bootOpensslRuntimeSmoke = () => bootRuntime("/runtime-openssl.cpio");
 globalThis.bootCurlHttpsRuntimeSmoke = () => bootRuntime("/runtime-curl-https.cpio");
+globalThis.bootLibcurlDevelopmentRuntimeSmoke = () =>
+  bootRuntime("/runtime-libcurl-development.cpio");

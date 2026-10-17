@@ -263,3 +263,21 @@ test("both widths use installed example, SDK flags, ABI guard and complete notic
   assert.doesNotMatch(source, /__wasm__|::vm-test::|while\s*\(1\)|sleep\(/);
   assert.equal(spawnSync("sh", ["-n"], { input: script }).status, 0);
 });
+
+test("Node and browser share one installed C application script and matching outputs", () => {
+  const recipe = readFileSync(new URL("../package.nix", import.meta.url), "utf8");
+  assert.equal([...recipe.matchAll(/init = \.\/tests\/development-test.sh;/g)].length, 1);
+  assert.match(recipe, /developmentInitramfs = image\.mkInitramfs/);
+  assert.match(recipe, /inherit \(development\) init contents;/);
+  assert.match(
+    recipe,
+    /inherit \(finalAttrs\.finalPackage\.runtimeAssets\.development\) init contents;/,
+  );
+  const browser = readFileSync(new URL("../../npm/browser-tests.nix", import.meta.url), "utf8");
+  assert.ok(
+    browser.includes("curlAssets = (if bits == 64 then curl-wasm64 else curl).runtimeAssets;"),
+  );
+  assert.ok(
+    browser.includes("cp ${curlAssets.developmentInitramfs} $out/runtime-libcurl-development.cpio"),
+  );
+});

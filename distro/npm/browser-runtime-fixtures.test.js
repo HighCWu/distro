@@ -19,6 +19,19 @@ const titles = [
 ].map((match) => match[1]);
 const fixtures = [
   {
+    title: "runs installed libcurl C binary callbacks and verified TLS1.3 through Linux",
+    entry: "bootLibcurlDevelopmentRuntimeSmoke",
+    path: "/runtime-libcurl-development.cpio",
+    stages: [
+      "libcurl application: binary file callback and normal exit verified",
+      "libcurl application: explicit CA TLS1.3 over Linux TCP verified",
+      "libcurl application: default CA TLS1.3 verified",
+      "libcurl application: explicit untrusted CA rejected despite trusted default",
+      "libcurl application: wrong hostname rejected",
+      "libcurl application: installed static client, file bytes, TLS trust and normal exits verified",
+    ],
+  },
+  {
     title: "runs curl verified TLS1.3 and certificate/hostname rejection over Linux TCP",
     entry: "bootCurlHttpsRuntimeSmoke",
     path: "/runtime-curl-https.cpio",
@@ -122,7 +135,7 @@ function loadCases(globals = {}) {
 
 test("Nix report gate exactly matches all registered runtime cases", () => {
   assert.deepEqual([...loadCases().keys()].sort(), [...titles].sort());
-  assert.equal(titles.length, 20);
+  assert.equal(titles.length, 21);
   const report = {
     suites: [
       {
