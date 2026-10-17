@@ -168,6 +168,7 @@ let
     passthru.signalFutexProgram = "${signalFutexPrograms}/sdk-signal-futex.wasm";
     passthru.futexProgram = "${futexPrograms}/sdk-futex.wasm";
     passthru.robustMutexProgram = "${robustMutexPrograms}/sdk-robust-mutex.wasm";
+    passthru.semaphoreDeadlineProgram = "${semaphoreDeadlinePrograms}/sdk-semaphore-deadline.wasm";
     passthru.checks = {
       licenses = licenseTexts;
       profile = profileCheck;

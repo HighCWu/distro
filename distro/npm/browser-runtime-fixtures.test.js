@@ -19,6 +19,14 @@ const titles = [
 ].map((match) => match[1]);
 const fixtures = [
   {
+    title: "runs SDK named and unnamed semaphore deadline boundaries through Linux",
+    entry: "bootSemaphoreDeadlineRuntimeSmoke",
+    path: "/runtime-semaphore-deadline.cpio",
+    stages: [
+      "semaphore deadlines: named/unnamed past deadlines, invalid nanoseconds and token fast path verified",
+    ],
+  },
+  {
     title: "runs SDK futex time64 waits, wake operations and waitv through Linux",
     entry: "bootFutexRuntimeSmoke",
     path: "/runtime-futex.cpio",
@@ -56,7 +64,7 @@ function loadCases(globals = {}) {
 
 test("Nix report gate exactly matches all registered runtime cases", () => {
   assert.deepEqual([...loadCases().keys()].sort(), [...titles].sort());
-  assert.equal(titles.length, 13);
+  assert.equal(titles.length, 14);
   const report = {
     suites: [
       {

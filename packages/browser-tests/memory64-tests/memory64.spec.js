@@ -223,6 +223,21 @@ test("runs SDK robust mutex owner-death recovery through Linux", async ({ page }
   expect(output).not.toContain("::vm-test::fail");
 });
 
+test("runs SDK named and unnamed semaphore deadline boundaries through Linux", async ({ page }) => {
+  page.on("console", (message) => console.log(`[browser] ${message.text()}`));
+  page.on("pageerror", (error) => console.error(`[browser] ${error.stack ?? error}`));
+  await page.goto("/");
+  await expect
+    .poll(() => page.evaluate(() => typeof globalThis.bootSemaphoreDeadlineRuntimeSmoke))
+    .toBe("function");
+  const output = await page.evaluate(() => globalThis.bootSemaphoreDeadlineRuntimeSmoke());
+  expect(output).toContain(
+    "semaphore deadlines: named/unnamed past deadlines, invalid nanoseconds and token fast path verified",
+  );
+  expect(output).toContain("::vm-test::pass");
+  expect(output).not.toContain("::vm-test::fail");
+});
+
 test("retries a failed kernel download in the same page with a generic MIME type", async ({
   page,
 }) => {

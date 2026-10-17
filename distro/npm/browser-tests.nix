@@ -39,6 +39,7 @@ let
     "runs SDK futex signal restart and timed interruption through Linux"
     "runs SDK futex time64 waits, wake operations and waitv through Linux"
     "runs SDK robust mutex owner-death recovery through Linux"
+    "runs SDK named and unnamed semaphore deadline boundaries through Linux"
     "retries a failed kernel download in the same page with a generic MIME type"
   ];
 
@@ -119,6 +120,10 @@ let
         name = "wasm${toString bits}-browser-runtime-robust-mutex";
         init = (if bits == 64 then sdk-wasm64 else sdk).robustMutexProgram;
       };
+      semaphoreDeadlineInitramfs = image.mkInitramfs {
+        name = "wasm${toString bits}-browser-runtime-semaphore-deadline";
+        init = (if bits == 64 then sdk-wasm64 else sdk).semaphoreDeadlineProgram;
+      };
     in
     pkgs.runCommand "wasm${toString bits}-runtime-browser-tests" { } ''
       mkdir -p \
@@ -140,6 +145,7 @@ let
       cp ${signalFutexInitramfs} $out/runtime-signal-futex.cpio
       cp ${futexInitramfs} $out/runtime-futex.cpio
       cp ${robustMutexInitramfs} $out/runtime-robust-mutex.cpio
+      cp ${semaphoreDeadlineInitramfs} $out/runtime-semaphore-deadline.cpio
       cp ${source}/memory64-index.html $out/index.html
       cp ${source}/playwright.config.js $out/playwright.config.js
       cp ${source}/server.js $out/server.js
