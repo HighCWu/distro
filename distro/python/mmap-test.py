@@ -56,6 +56,14 @@ def exercise_buffers():
 
 
 def exercise_kernel_boundaries():
+    # The standard msync wrapper is available, but the default NOMMU kernel
+    # does not implement writeback. Never accept a fabricated flush success.
+    with private_mapping(mmap.PAGESIZE) as mapping:
+        mapping[0] = 0x81
+        error = expect_error(OSError, mapping.flush)
+        assert error.errno == errno.ENOSYS, error
+        assert mapping[0] == 0x81
+    print("Python mmap: flush explicitly reports unsupported msync")
     # CPython's default anonymous request is MAP_SHARED, not MAP_PRIVATE.
     error = expect_error(OSError, lambda: mmap.mmap(-1, mmap.PAGESIZE))
     assert error.errno == errno.EINVAL, error
