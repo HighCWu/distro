@@ -82,6 +82,74 @@ test("open-file stat preserves the descriptor syscall error", async () => {
 });
 
 for (const abi of ["wasm32", "wasm64"] as const) {
+  for (const size of [0, CHUNK + 19]) {
+    test(`${abi} BYOB file reader completes EOF after ${size} bytes`, async () => {
+      const payload = Uint8Array.from({ length: size }, (_, index) => (index * 37 + 11) & 255);
+      let offset = 0;
+      let closes = 0;
+      const session = {
+        abi,
+        async exchange<T>(operation: (lane: Lane) => Promise<T>): Promise<T> {
+          let nr = 0;
+          let header = true;
+          let count = 0;
+          return operation({
+            async write(bytes) {
+              nr = new DataView(bytes.buffer, bytes.byteOffset).getUint32(1, true);
+              assert.ok(nr === NR.read || nr === NR.close);
+              if (nr === NR.close) closes++;
+              else count = Math.min(CHUNK, payload.length - offset);
+            },
+            async read(length) {
+              if (header) {
+                header = false;
+                assert.equal(length, 12);
+                const reply = new Uint8Array(12);
+                new DataView(reply.buffer).setBigInt64(0, BigInt(count), true);
+                return reply;
+              }
+              assert.equal(nr, NR.read);
+              assert.equal(length, count);
+              const result = payload.slice(offset, offset + count);
+              offset += count;
+              return result;
+            },
+          });
+        },
+      } as GuestSession;
+      const file = new FsFile(new GuestFd(session, 42));
+      const reader = file.readable.getReader({ mode: "byob" });
+      const result = new Uint8Array(size);
+      let received = 0;
+      let timer: ReturnType<typeof setTimeout> | undefined;
+      const reading = (async () => {
+        for (;;) {
+          const { value, done } = await reader.read(new Uint8Array(4096));
+          if (done) return;
+          result.set(value, received);
+          received += value.byteLength;
+        }
+      })();
+      void reading.catch(() => {});
+      try {
+        await Promise.race([
+          reading,
+          new Promise<never>((_, reject) => {
+            timer = setTimeout(() => reject(new Error("BYOB EOF did not settle")), 100);
+          }),
+        ]);
+        assert.equal(received, size);
+        assert.deepEqual(result, payload);
+        assert.equal(closes, 1);
+      } finally {
+        clearTimeout(timer);
+        reader.releaseLock();
+        await reading.catch(() => {});
+        await file.close();
+      }
+    });
+  }
+
   test(`${abi} direct writes reject non-byte buffers without closing the file`, async () => {
     const { session, requests } = sessionFixture(0, abi);
     const fd = new GuestFd(session, 42);

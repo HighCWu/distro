@@ -67,5 +67,29 @@ export async function checkFileStreamErrors(
     await output.close();
   }
   assert.deepEqual(await fs.readFile(path), payload);
+  for (const expected of [payload, new Uint8Array()]) {
+    if (expected.length === 0) await fs.truncate(path);
+    const file = await fs.open(path);
+    const reader = file.readable.getReader({ mode: "byob" });
+    const result = new Uint8Array(expected.length);
+    let offset = 0;
+    // A regressed EOF must fail this scene, not hang the whole runtime suite.
+    const deadline = setTimeout(() => reader.releaseLock(), 10000);
+    try {
+      for (;;) {
+        const { value, done } = await reader.read(new Uint8Array(4096));
+        if (done) break;
+        result.set(value, offset);
+        offset += value.byteLength;
+      }
+      assert.equal(offset, expected.length);
+      assert.deepEqual(result, expected);
+      await assert.rejects(file.stat(), (error) => error instanceof TypeError);
+    } finally {
+      clearTimeout(deadline);
+      reader.releaseLock();
+      await file.close();
+    }
+  }
   await fs.remove(path);
 }

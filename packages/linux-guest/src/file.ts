@@ -178,7 +178,11 @@ export class FsFile implements AsyncDisposable {
         }
         if (length === null) {
           await this.close();
+          const request = controller.byobRequest;
           controller.close();
+          // Closing a byte stream alone does not complete a pending BYOB read.
+          // Its zero-byte response must follow close(), not precede it.
+          request?.respond(0);
         } else {
           controller.enqueue(buffer.subarray(0, length));
         }
