@@ -247,6 +247,10 @@ let
         init = "${robustMutexPrograms}/sdk-robust-mutex.wasm";
         cpus = 2;
       };
+      semaphore-deadline-runtime = vm-test.rawInitramfsTest {
+        name = "sdk-semaphore-deadline-${platform.wasmArch}";
+        init = "${semaphoreDeadlinePrograms}/sdk-semaphore-deadline.wasm";
+      };
       autoconf-runtime = vm-test.rawInitramfsTest {
         name = "sdk-autoconf-runtime-${platform.wasmArch}";
         init = "${autoconfPrograms}/sdk-autoconf.wasm";
@@ -428,6 +432,13 @@ let
     ${cc}/bin/wasm-linux-cc -O2 -pthread -Wall -Wextra -Werror \
       -I${../basic-init/tests} ${../basic-init/tests/robust-mutex.c} -o $out/sdk-robust-mutex.wasm
   '';
+  semaphoreDeadlinePrograms =
+    pkgs.runCommand "sdk-semaphore-deadline-consumer-${platform.wasmArch}" { }
+      ''
+        mkdir $out
+        ${cc}/bin/wasm-linux-cc -O2 -pthread -Wall -Wextra -Werror \
+          -I${../basic-init/tests} ${../basic-init/tests/semaphore-deadline.c} -o $out/sdk-semaphore-deadline.wasm
+      '';
   sqlitePrograms = pkgs.runCommand "sdk-sqlite-consumer-${platform.wasmArch}" { } ''
     mkdir $out
     # Rebuild the upstream amalgamation with this SDK, not the wasm32

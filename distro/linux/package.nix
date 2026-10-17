@@ -14,8 +14,8 @@
     inherit pkgs;
     owner = "HighCWu";
     repo = "linux";
-    rev = "8bd657dcf6ebfc130d85185bf2d9cdedc1ac8399";
-    hash = "sha256-9kzioypm7XVE8mH/skLJ2NRQgYa0axjlipasoV53aHk=";
+    rev = "cbac6cd83ff048eb5b08dcd93eae7b45a1825952";
+    hash = "sha256-fvXNZS1CwZsPZcQfAyjMW2caU6cu91ZJLOG3G91aW3U=";
   },
 }:
 
