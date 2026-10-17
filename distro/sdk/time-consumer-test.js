@@ -56,57 +56,73 @@ for (const [fixture, finalStage] of [
         assert.ok(run.stdout.split(/\r?\n/).includes(finalStage), run.stdout);
         assert.match(run.stdout, /^::vm-test::pass\r?$/m);
         assert.doesNotMatch(run.stdout, /::vm-test::fail/);
+        if (fixture === "robust-mutex")
+          assert.match(
+            run.stdout,
+            /robust mutex: four contending threads serialize one owner-dead repair verified/,
+          );
         if (fixture === "signal-io" || fixture === "robust-mutex") {
           // Negative controls must fail at the semantic assertion, not merely
           // compile or hang without exercising the intended lifecycle.
-          const [before, after, failure] =
+          const controls =
             fixture === "signal-io"
               ? [
-                  "action.sa_flags = restart ? SA_RESTART : 0;",
-                  "action.sa_flags = 0;",
-                  "SA_RESTART wait exposed EINTR or lost the child exit status",
+                  [
+                    "action.sa_flags = restart ? SA_RESTART : 0;",
+                    "action.sa_flags = 0;",
+                    "SA_RESTART wait exposed EINTR or lost the child exit status",
+                  ],
                 ]
               : [
-                  'checked(pthread_mutex_consistent(mutex), "make mutex consistent");',
-                  'checked(0, "make mutex consistent");',
-                  "repaired mutex was not reusable",
+                  [
+                    'checked(pthread_mutex_consistent(mutex), "make mutex consistent");',
+                    'checked(0, "make mutex consistent");',
+                    "repaired mutex was not reusable",
+                  ],
+                  [
+                    'checked(pthread_mutex_consistent(&group->mutex), "repair contended mutex");',
+                    'checked(0, "repair contended mutex");',
+                    "contending waiter did not acquire repaired mutex",
+                  ],
                 ];
-          const original = readFileSync(source, "utf8");
-          const disabled = original.replace(before, after);
-          assert.notEqual(disabled, original);
-          const compileDisabled = spawnSync(
-            compiler,
-            [
-              "-std=c11",
-              "-O2",
-              "-pthread",
-              "-Wall",
-              "-Wextra",
-              "-Werror",
-              "-iquote",
-              dirname(source),
-              "-x",
-              "c",
-              "-",
-              "-o",
-              binary,
-            ],
-            { encoding: "utf8", input: disabled, timeout: 30000 },
-          );
-          assert.ifError(compileDisabled.error);
-          assert.equal(compileDisabled.status, 0, compileDisabled.stderr);
-          const rejected = spawnSync(binary, [], {
-            encoding: "utf8",
-            timeout: 3000,
-            killSignal: "SIGKILL",
-          });
-          assert.equal(rejected.error?.code, "ETIMEDOUT");
-          assert.equal(rejected.signal, "SIGKILL");
-          assert.ok(
-            rejected.stdout.split(/\r?\n/).includes(`::vm-test::fail: ${failure}`),
-            rejected.stdout,
-          );
-          assert.doesNotMatch(rejected.stdout, /::vm-test::pass/);
+          for (const [before, after, failure] of controls) {
+            const original = readFileSync(source, "utf8");
+            const disabled = original.replace(before, after);
+            assert.notEqual(disabled, original);
+            const compileDisabled = spawnSync(
+              compiler,
+              [
+                "-std=c11",
+                "-O2",
+                "-pthread",
+                "-Wall",
+                "-Wextra",
+                "-Werror",
+                "-iquote",
+                dirname(source),
+                "-x",
+                "c",
+                "-",
+                "-o",
+                binary,
+              ],
+              { encoding: "utf8", input: disabled, timeout: 30000 },
+            );
+            assert.ifError(compileDisabled.error);
+            assert.equal(compileDisabled.status, 0, compileDisabled.stderr);
+            const rejected = spawnSync(binary, [], {
+              encoding: "utf8",
+              timeout: 3000,
+              killSignal: "SIGKILL",
+            });
+            assert.equal(rejected.error?.code, "ETIMEDOUT");
+            assert.equal(rejected.signal, "SIGKILL");
+            assert.ok(
+              rejected.stdout.split(/\r?\n/).includes(`::vm-test::fail: ${failure}`),
+              rejected.stdout,
+            );
+            assert.doesNotMatch(rejected.stdout, /::vm-test::pass/);
+          }
         }
       } finally {
         rmSync(directory, { recursive: true, force: true });

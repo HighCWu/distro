@@ -214,6 +214,9 @@ test("runs SDK robust mutex owner-death recovery through Linux", async ({ page }
     .toBe("function");
   const output = await page.evaluate(() => globalThis.bootRobustMutexRuntimeSmoke());
   expect(output).toContain(
+    "robust mutex: four contending threads serialize one owner-dead repair verified",
+  );
+  expect(output).toContain(
     "robust mutex: owner death, consistent recovery, unrecoverable state and cancellation verified",
   );
   expect(output).toContain("::vm-test::pass");
