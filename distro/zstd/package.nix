@@ -6,6 +6,9 @@
     hash = "sha256-qcd92hQqVBjMT3hyntjcgk29o9wGQsg5Hg7HE5C0UNc=";
   },
   busybox,
+  musl,
+  llvm-runtimes,
+  platform,
   vm-test,
 }:
 
@@ -13,6 +16,9 @@ stdenv.mkDerivation (finalAttrs: {
   pname = "zstd";
   version = "1.5.6";
   inherit src;
+  meta.license = pkgs.lib.licenses.bsd3;
+  passthru.apk.license = "BSD-3-Clause AND MIT AND Apache-2.0 WITH LLVM-exception";
+  nativeBuildInputs = [ pkgs.nodejs ];
 
   # Only the CLI is wanted, and building just `programs/zstd` links the library
   # sources straight into a static binary, sidestepping the shared-library
@@ -28,12 +34,21 @@ stdenv.mkDerivation (finalAttrs: {
 
   patches = [ ./mmap.patch ];
 
+  postBuild = ''
+    node ${../busybox/check-binary.mjs} ${../../packages/kernel/src/wasm_binary.ts} \
+      programs/zstd ${toString platform.addressBits} ${toString platform.maximumMemoryBytes}
+  '';
+
   installPhase = ''
     runHook preInstall
     install -Dm755 programs/zstd $out/bin/zstd
     for alias in unzstd zstdcat; do
       ln -s zstd $out/bin/$alias
     done
+    mkdir -p $out/share/licenses/zstd
+    cp LICENSE $out/share/licenses/zstd/LICENSE-BSD
+    cp ${musl.src}/COPYRIGHT $out/share/licenses/zstd/musl-COPYRIGHT
+    cp ${llvm-runtimes.src}/compiler-rt/LICENSE.TXT $out/share/licenses/zstd/compiler-rt-LICENSE.TXT
     runHook postInstall
   '';
 

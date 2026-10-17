@@ -198,6 +198,14 @@ lib.makeScope (scope: lib.callPackageWith ({ inherit lib pkgs; } // scope)) (
     xz = callPackage ./xz/package.nix { };
     zlib = callPackage ./zlib/package.nix { };
     zstd = callPackage ./zstd/package.nix { };
+    zstd-wasm64 = self.zstd.override {
+      stdenv = self.stdenv-wasm64;
+      busybox = self.busybox-wasm64;
+      musl = self.musl-wasm64;
+      llvm-runtimes = self.llvm-runtimes-wasm64;
+      platform = self.platform-wasm64;
+      vm-test = vmTestWasm64;
+    };
 
     # Early platform tests boot without the guest agent so a broken SDK cannot
     # hide whether the kernel and libc reached userspace correctly.
