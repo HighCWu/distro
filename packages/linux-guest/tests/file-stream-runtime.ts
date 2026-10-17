@@ -33,6 +33,24 @@ export async function checkFileStreamErrors(
     await directory.close();
   }
   assert.equal(await fs.readTextFile(path), "retained data");
+  const invalid = await fs.open(path, { write: true });
+  const invalidWriter = invalid.writable.getWriter();
+  try {
+    await assert.rejects(
+      invalid.write("not bytes" as unknown as Uint8Array),
+      (error) => error instanceof TypeError,
+    );
+    assert.equal((await invalid.stat()).size, 13);
+    await assert.rejects(
+      invalidWriter.write("not bytes" as unknown as Uint8Array),
+      (error) => error instanceof TypeError,
+    );
+    await assert.rejects(invalid.stat(), (error) => error instanceof TypeError);
+  } finally {
+    invalidWriter.releaseLock();
+    await invalid.close();
+  }
+  assert.equal(await fs.readTextFile(path), "retained data");
   // One stream chunk spans several syscall payloads. Verify its complete
   // contents through Linux, not just the mocked request ordering checks.
   const payload = Uint8Array.from(

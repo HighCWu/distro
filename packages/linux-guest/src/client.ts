@@ -96,6 +96,8 @@ export interface FileSystem {
    * Writes data to a file, creating or truncating it by default. Accepts
    * bytes, a `Blob`, or a `ReadableStream` — streaming is the way to move
    * large data into the guest without buffering it all on the host.
+   * Byte buffers and stream chunks must be `Uint8Array`; use writeTextFile
+   * for text. A malformed later chunk rejects but does not roll back prior writes.
    *
    * @example Copy a download straight into the guest
    * ```ts
@@ -261,6 +263,8 @@ const MAX_PROCESSES = 8;
 function byte_stream(data: FileData): ReadableStream<Uint8Array> {
   if (data instanceof ReadableStream) return data;
   if (data instanceof Blob) return data.stream();
+  if (!(data instanceof Uint8Array))
+    throw new TypeError("file data must be Uint8Array, Blob or ReadableStream");
   return new ReadableStream<Uint8Array>({
     start(controller) {
       controller.enqueue(data);
@@ -270,6 +274,7 @@ function byte_stream(data: FileData): ReadableStream<Uint8Array> {
 }
 
 async function write_all(fd: GuestFd, data: Uint8Array, signal?: AbortSignal) {
+  if (!(data instanceof Uint8Array)) throw new TypeError("file stream chunks must be Uint8Array");
   let offset = 0;
   while (offset < data.byteLength) {
     signal?.throwIfAborted();

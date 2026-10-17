@@ -3,7 +3,7 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import type { VsockDevice } from "@lowland/kernel";
 import { NR, O, ProtocolError } from "../src/abi.ts";
-import { create_guest_client } from "../src/client.ts";
+import { create_guest_client, type FileData } from "../src/client.ts";
 import { GuestSession, type AgentAbi } from "../src/conn.ts";
 
 function copyFixture(
@@ -77,6 +77,97 @@ function copyFixture(
 }
 
 for (const abi of ["wasm32", "wasm64"] as const) {
+  test(`${abi} writeFile retains Blob, empty-byte and Buffer-view support`, async (t) => {
+    const f = copyFixture(abi, false);
+    t.mock.method(GuestSession, "connect", async () => f.session);
+    const client = create_guest_client({} as VsockDevice, { abi });
+    for (const data of [new Uint8Array(), new Blob()]) {
+      const before = f.requests.length;
+      await client.fs.writeFile("/empty", data);
+      assert.deepEqual(
+        f.requests.slice(before).map(({ nr }) => nr),
+        [NR.openat, NR.close],
+      );
+    }
+    for (const data of [
+      new Blob([Uint8Array.of(1, 2, 3)]),
+      Buffer.from([99, 1, 2, 3, 99]).subarray(1, 4),
+    ]) {
+      const before = f.requests.length;
+      await client.fs.writeFile("/bytes", data);
+      assert.deepEqual(
+        f.requests
+          .slice(before)
+          .filter(({ nr }) => nr === NR.write)
+          .map(({ data }) => data),
+        [Uint8Array.of(1, 2, 3), Uint8Array.of(3)],
+      );
+    }
+  });
+
+  test(`${abi} unsupported writeFile values reject before destination open`, async (t) => {
+    let connections = 0;
+    t.mock.method(GuestSession, "connect", async () => {
+      connections++;
+      return copyFixture(abi, false).session;
+    });
+    const client = create_guest_client({} as VsockDevice, { abi });
+    for (const data of [
+      null,
+      "raw text",
+      new ArrayBuffer(0),
+      new Uint16Array(0),
+      new DataView(new ArrayBuffer(0)),
+    ]) {
+      await assert.rejects(
+        client.fs.writeFile("/existing", data as unknown as FileData),
+        TypeError,
+      );
+      assert.equal(connections, 0);
+    }
+  });
+
+  for (const [kind, value] of [
+    ["text", "not bytes"],
+    ["buffer", new ArrayBuffer(0)],
+    ["wide array", new Uint16Array(0)],
+    ["view", new DataView(new ArrayBuffer(0))],
+  ] as const) {
+    test(`${abi} writeFile rejects a ${kind} stream chunk and cancels its source`, async (t) => {
+      const f = copyFixture(abi, false);
+      t.mock.method(GuestSession, "connect", async () => f.session);
+      const client = create_guest_client({} as VsockDevice, { abi });
+      let sent = false;
+      const cancellations: unknown[] = [];
+      const source = new ReadableStream<unknown>(
+        {
+          pull(controller) {
+            if (sent) controller.close();
+            else {
+              sent = true;
+              controller.enqueue(value);
+            }
+          },
+          cancel(error) {
+            cancellations.push(error);
+          },
+        },
+        { highWaterMark: 0 },
+      );
+      let reason: unknown;
+      await assert.rejects(client.fs.writeFile("/existing", source as FileData), (error) => {
+        reason = error;
+        return error instanceof TypeError;
+      });
+      assert.equal(source.locked, false);
+      assert.deepEqual(cancellations, [reason]);
+      assert.deepEqual(
+        f.requests.map(({ nr }) => nr),
+        [NR.openat, NR.close],
+      );
+    });
+  }
+
   for (const failure of ["abort", "source"] as const) {
     test(`${abi} writeFile disposes its opened fd and input lock after ${failure}`, async (t) => {
       const f = copyFixture(abi, false);

@@ -11,7 +11,7 @@ import {
 import { checkPublicNetwork } from "./agent-wasm64-public-network.ts";
 import { checkQueuedExecAbort } from "./process-queue-runtime.ts";
 import { checkExecFileDescriptors } from "./exec-file-descriptors-runtime.ts";
-import { checkLockedWriteInput } from "./write-file-runtime.ts";
+import { checkInvalidWriteInput, checkLockedWriteInput } from "./write-file-runtime.ts";
 import { checkFileStreamErrors } from "./file-stream-runtime.ts";
 
 // Identical public API corpus in Node and browsers. No initcpio or manual
@@ -92,6 +92,7 @@ export async function runPublicAgentWasm64Suite(
     });
     await check("public file API retains native seek, metadata and truncate behavior", async () => {
       await checkLockedWriteInput(agent.fs, assert, "/tmp/public-locked-input");
+      await checkInvalidWriteInput(agent.fs, assert, "/tmp/public-invalid-input");
       await checkFileStreamErrors(agent.fs, assert, "/tmp/public-stream-errors");
       const path = "/tmp/public-native";
       const data = new TextEncoder().encode("public-native-data");

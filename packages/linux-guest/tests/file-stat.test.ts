@@ -82,6 +82,50 @@ test("open-file stat preserves the descriptor syscall error", async () => {
 });
 
 for (const abi of ["wasm32", "wasm64"] as const) {
+  test(`${abi} direct writes reject non-byte buffers without closing the file`, async () => {
+    const { session, requests } = sessionFixture(0, abi);
+    const fd = new GuestFd(session, 42);
+    const file = new FsFile(fd);
+    try {
+      for (const value of [
+        "text",
+        new ArrayBuffer(0),
+        new Uint16Array(1),
+        new DataView(new ArrayBuffer(0)),
+      ])
+        await assert.rejects(file.write(value as unknown as Uint8Array), TypeError);
+      assert.equal(fd.closed, false);
+      assert.equal(requests.length, 0);
+    } finally {
+      await file.close();
+    }
+  });
+
+  for (const [kind, value] of [
+    ["text", "not bytes"],
+    ["buffer", new ArrayBuffer(0)],
+    ["wide array", new Uint16Array(0)],
+    ["view", new DataView(new ArrayBuffer(0))],
+  ] as const) {
+    test(`${abi} file writable rejects a ${kind} chunk and closes its handle`, async () => {
+      const { session, requests } = sessionFixture(0, abi);
+      const fd = new GuestFd(session, 42);
+      const file = new FsFile(fd);
+      const writer = file.writable.getWriter();
+      try {
+        await assert.rejects(writer.write(value as unknown as Uint8Array), TypeError);
+        assert.equal(fd.closed, true);
+        assert.deepEqual(
+          requests.map((bytes) => new DataView(bytes.buffer).getUint32(1, true)),
+          [NR.close],
+        );
+      } finally {
+        writer.releaseLock();
+        await file.close();
+      }
+    });
+  }
+
   for (const shortFirst of [false, true]) {
     for (const following of ["write", "close"] as const) {
       test(`${abi} a stream chunk finishes before queued ${following} (${shortFirst})`, async () => {

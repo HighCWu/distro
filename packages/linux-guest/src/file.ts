@@ -188,6 +188,8 @@ export class FsFile implements AsyncDisposable {
     this.writable = new WritableStream({
       write: async (chunk) => {
         try {
+          if (!(chunk instanceof Uint8Array))
+            throw new TypeError("file stream chunks must be Uint8Array");
           // Serialize the whole chunk, not individual syscalls: a queued seek,
           // write or close must not split one already-started stream write.
           await this.#run(async () => {
@@ -250,6 +252,8 @@ export class FsFile implements AsyncDisposable {
   }
 
   write(buffer: Uint8Array): Promise<number> {
+    if (!(buffer instanceof Uint8Array))
+      return Promise.reject(new TypeError("file write buffer must be Uint8Array"));
     return this.#run(() => write(this.#fd, buffer.subarray(0, CHUNK)));
   }
 
