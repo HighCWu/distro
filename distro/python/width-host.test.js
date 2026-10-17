@@ -181,6 +181,8 @@ test("Python build materials preserve configured files and every patch, rejectin
   assert.match(recipe, /meta\.outputsToInstall = \[ "out" \]/);
   assert.ok(recipe.includes('bash ${./build-materials.sh} "$PWD" "$buildMaterials"'));
   assert.ok(recipe.includes("lib.escapeShellArgs (map toString finalAttrs.patches)"));
+  assert.ok(recipe.includes('bash ${./verify-build-materials.sh} "$materials"'));
+  assert.ok(recipe.includes("${finalAttrs.finalPackage}/usr/bin/python3.13"));
 });
 
 test("fork-less PATH fallback preserves error precedence and caller executable names", () => {

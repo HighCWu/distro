@@ -63,6 +63,57 @@ class BuildMaterials(unittest.TestCase):
             self.assertNotEqual(result.returncode, 0)
             self.assertFalse((output / "SHA256SUMS").exists())
 
+    def test_verification_binds_installed_bytes_and_materials(self):
+        with tempfile.TemporaryDirectory(prefix="python-materials-verify-") as directory:
+            root = Path(directory)
+            result, materials, _, _ = self.collect(root)
+            self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+            installed, verification = root / "installed root", root / "verification"
+            binary = installed / "usr/bin/python3.13"
+            binary.parent.mkdir(parents=True)
+            binary.write_bytes(b"installed final bytes, not a target executable\x00\xff")
+            result = subprocess.run(
+                ["bash", str(ROOT / "verify-build-materials.sh"), str(materials),
+                 str(installed), str(verification)], capture_output=True, text=True, timeout=10,
+            )
+            self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+            self.assertEqual((verification / "MATERIALS_SHA256SUMS").read_bytes(),
+                             (materials / "SHA256SUMS").read_bytes())
+            manifest = verification / "BINARY_SHA256SUMS"
+            self.assertIn("  usr/bin/python3.13\n", manifest.read_text())
+            check = subprocess.run(["sha256sum", "--check", str(manifest)], cwd=installed,
+                                   capture_output=True, timeout=10)
+            self.assertEqual(check.returncode, 0)
+            binary.write_bytes(b"replaced interpreter\n")
+            check = subprocess.run(["sha256sum", "--check", str(manifest)], cwd=installed,
+                                   capture_output=True, timeout=10)
+            self.assertNotEqual(check.returncode, 0)
+            manifest.write_text("0" * 64 + "  usr/bin/python3.13\n")
+            check = subprocess.run(["sha256sum", "--check", "SHA256SUMS"], cwd=verification,
+                                   capture_output=True, timeout=10)
+            self.assertNotEqual(check.returncode, 0)
+
+    def test_verification_rejects_missing_binary_and_tampered_materials(self):
+        for mode in ("missing-binary", "changed-config"):
+            with self.subTest(mode=mode), tempfile.TemporaryDirectory() as directory:
+                root = Path(directory)
+                result, materials, _, _ = self.collect(root)
+                self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+                installed = root / "installed"
+                installed.mkdir()
+                if mode == "changed-config":
+                    binary = installed / "usr/bin/python3.13"
+                    binary.parent.mkdir(parents=True)
+                    binary.write_bytes(b"fixture\n")
+                    (materials / "pyconfig.h").write_text("changed\n")
+                verification = root / "verification"
+                result = subprocess.run(
+                    ["bash", str(ROOT / "verify-build-materials.sh"), str(materials),
+                     str(installed), str(verification)], capture_output=True, timeout=10,
+                )
+                self.assertNotEqual(result.returncode, 0)
+                self.assertFalse(verification.exists())
+
 
 if __name__ == "__main__":
     unittest.main()

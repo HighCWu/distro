@@ -219,7 +219,10 @@ let
         pkgs.runCommand "python-wasm${toString platform.addressBits}-build-materials-check"
           {
             passthru.ci.heavy = true;
-            nativeBuildInputs = [ pkgs.jq ];
+            nativeBuildInputs = [
+              pkgs.jq
+              pkgs.nodejs
+            ];
           }
           ''
             materials=${finalAttrs.finalPackage.buildMaterials}
@@ -237,7 +240,10 @@ let
             cmp "$materials/LICENSE" ${src}/LICENSE
             test ! -e ${finalAttrs.finalPackage}/pyconfig.h
             test ! -e ${finalAttrs.finalPackage}/build.json
-            touch $out
+            node ${../busybox/check-binary.mjs} ${../../packages/kernel/src/wasm_binary.ts} \
+              ${finalAttrs.finalPackage}/usr/bin/python3.13 \
+              ${toString platform.addressBits} ${toString platform.maximumMemoryBytes}
+            bash ${./verify-build-materials.sh} "$materials" ${finalAttrs.finalPackage} "$out"
           '';
       mmap = vm-test.installedTest {
         name = "python-private-anonymous-mmap";

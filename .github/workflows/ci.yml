@@ -255,9 +255,15 @@ jobs:
             *) exit 64 ;;
           esac
           materials=$(nix eval --raw ".#$package.buildMaterials.outPath")
+          verification=$(nix eval --raw ".#$package.checks.build-materials.outPath")
           nix path-info "$materials" >/dev/null
+          nix path-info "$verification" >/dev/null
           mkdir python-build-materials
           cp -R "$materials/." python-build-materials/
+          cp -R "$verification" python-build-materials/verification
+          cmp python-build-materials/SHA256SUMS python-build-materials/verification/MATERIALS_SHA256SUMS
+          (cd python-build-materials && sha256sum --check verification/MATERIALS_SHA256SUMS)
+          (cd python-build-materials/verification && sha256sum --check SHA256SUMS)
       - name: Upload verified Python build materials
         if: ${{ success() && startsWith(matrix.check, 'python') && endsWith(matrix.check, '-check-build-materials') }}
         uses: actions/upload-artifact@v7
