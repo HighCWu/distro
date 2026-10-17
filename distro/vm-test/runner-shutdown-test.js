@@ -77,3 +77,42 @@ for (const fail of [false, true]) {
     });
   }
 }
+
+for (const scenario of ["boot", "setup"]) {
+  test(`runner rejects ${scenario} failure and releases already-opened disks`, () => {
+    const temp = mkdtempSync(join(tmpdir(), "linux-wasm-runner-setup-"));
+    try {
+      const initramfs = join(temp, "initramfs");
+      const disk = join(temp, "disk");
+      writeFileSync(initramfs, new Uint8Array([1]));
+      writeFileSync(disk, new Uint8Array(512).fill(0x37));
+      const args = [
+        fileURLToPath(new URL("./run-test.js", import.meta.url)),
+        "--readonly-disks",
+        fileURLToPath(new URL("./shutdown-fixture.js", import.meta.url)),
+        initramfs,
+        disk,
+      ];
+      if (scenario === "setup") args.push(join(temp, "missing-disk"));
+      const result = spawnSync(process.execPath, args, {
+        encoding: "utf8",
+        timeout: 10000,
+        env: {
+          ...process.env,
+          RUNNER_FIXTURE_FAIL: "0",
+          RUNNER_FIXTURE_SETUP_CHECK: "1",
+          RUNNER_FIXTURE_BOOT_FAIL: scenario === "boot" ? "1" : "0",
+        },
+      });
+      assert.ifError(result.error);
+      assert.equal(result.status, 1, result.stdout + result.stderr);
+      assert.match(result.stderr, /::vm-test::fail: runner startup failed:/);
+      assert.match(result.stdout, /fixture: fd closed after failed setup/);
+      assert.doesNotMatch(result.stdout, /fixture: fd leaked/);
+      if (scenario === "boot") assert.match(result.stdout, /::vm-test::pass/);
+      else assert.doesNotMatch(result.stdout, /::vm-test::pass/);
+    } finally {
+      rmSync(temp, { recursive: true, force: true });
+    }
+  });
+}

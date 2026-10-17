@@ -29,6 +29,8 @@ if (!linuxPath || !initramfsPath || !Number.isSafeInteger(cpus) || cpus < 1) {
 const { blockDevice, bootMachine, consoleDevice, entropyDevice } = await import(
   pathToFileURL(linuxPath).href
 );
+// Fail before acquiring disk handles or constructing devices for a missing image.
+const initcpio = readFileSync(initramfsPath);
 
 let resolveResult;
 const result = new Promise((resolve) => {
@@ -137,51 +139,55 @@ const devices = [
 ];
 
 const disks = [];
-for (const [diskIndex, diskPath] of diskPaths.entries()) {
-  if (snapshotFirstDisk && diskIndex === 0) {
-    const { snapshot_block_device } = await import(
-      new URL("./immutable-image.js", pathToFileURL(linuxPath)).href
+let startupFailed = false;
+try {
+  for (const [diskIndex, diskPath] of diskPaths.entries()) {
+    if (snapshotFirstDisk && diskIndex === 0) {
+      const { snapshot_block_device } = await import(
+        new URL("./immutable-image.js", pathToFileURL(linuxPath)).href
+      );
+      devices.push(snapshot_block_device(readFileSync(diskPath)));
+      continue;
+    }
+    const disk = openSync(diskPath, readOnlyDisks ? "r" : "r+");
+    disks.push(disk);
+    const { size } = fstatSync(disk);
+    devices.push(
+      blockDevice({
+        capacity: size,
+        read: async (offset, data) => {
+          let read = 0;
+          while (read < data.length) {
+            const length = readSync(disk, data, read, data.length - read, offset + read);
+            if (length === 0) break;
+            read += length;
+          }
+          return read;
+        },
+        write: readOnlyDisks
+          ? undefined
+          : async (offset, data) => {
+              let written = 0;
+              while (written < data.length) {
+                written += writeSync(disk, data, written, data.length - written, offset + written);
+              }
+              return written;
+            },
+        flush: readOnlyDisks ? undefined : async () => fsyncSync(disk),
+      }),
     );
-    devices.push(snapshot_block_device(readFileSync(diskPath)));
-    continue;
   }
-  const disk = openSync(diskPath, readOnlyDisks ? "r" : "r+");
-  disks.push(disk);
-  const { size } = fstatSync(disk);
-  devices.push(
-    blockDevice({
-      capacity: size,
-      read: async (offset, data) => {
-        let read = 0;
-        while (read < data.length) {
-          const length = readSync(disk, data, read, data.length - read, offset + read);
-          if (length === 0) break;
-          read += length;
-        }
-        return read;
-      },
-      write: readOnlyDisks
-        ? undefined
-        : async (offset, data) => {
-            let written = 0;
-            while (written < data.length) {
-              written += writeSync(disk, data, written, data.length - written, offset + written);
-            }
-            return written;
-          },
-      flush: readOnlyDisks ? undefined : async () => fsyncSync(disk),
-    }),
-  );
-}
 
-machine = await bootMachine({
-  cpus,
-  plugins: devices,
-  initcpio: readFileSync(initramfsPath),
-}).catch((error) => {
+  machine = await bootMachine({
+    cpus,
+    plugins: devices,
+    initcpio,
+  });
+} catch (error) {
+  startupFailed = true;
+  console.error(`::vm-test::fail: runner startup failed: ${error}`);
   finish({ passed: false, reason: `machine failed to boot: ${error}` });
-  return null;
-});
+}
 
 if (machine) initialMemoryBytes = machine.memory.buffer.byteLength;
 
@@ -202,4 +208,4 @@ try {
 }
 
 if (!outcome.passed) console.error(`vm test failed: ${outcome.reason}`);
-process.exitCode = outcome.passed && !cleanupFailed ? 0 : 1;
+process.exitCode = outcome.passed && !startupFailed && !cleanupFailed ? 0 : 1;
