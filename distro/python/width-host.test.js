@@ -160,6 +160,8 @@ test("fork-less PATH fallback preserves error precedence and caller executable n
     /repeated failed launches preserve parent fds, CLOEXEC and child cleanup/,
   );
   assert.match(result.stdout, /injected native fd and CLOEXEC leaks rejected/);
+  assert.match(result.stdout, /descriptor exhaustion preserves parent fds and child cleanup/);
+  assert.match(result.stdout, /injected descriptor exhaustion leak rejected/);
   const recipe = readFileSync(new URL("./package.nix", import.meta.url), "utf8");
   assert.ok(recipe.includes('files."/python-spawn-errors-test.py" = ./spawn-errors-test.py;'));
   const script = readFileSync(new URL("./python-test.sh", import.meta.url), "utf8");

@@ -1,5 +1,5 @@
 # SPDX-License-Identifier: MIT
-"""Compare public launch errors; native patch mode only exercises PATH logic."""
+"""Compare launch errors and cleanup; native mode cannot prove the Wasm backend."""
 
 import errno
 import os
@@ -100,6 +100,84 @@ def verify_cleanup_negative_controls():
     print("Python spawn fixture: injected native fd and CLOEXEC leaks rejected")
 
 
+def check_descriptor_pressure():
+    import resource
+
+    baseline = open_descriptors()
+    limits = resource.getrlimit(resource.RLIMIT_NOFILE)
+    # Keep the fixture small even on hosts with million-fd limits. Existing
+    # descriptors remain valid, and the hard limit is never changed.
+    ceiling = max(baseline) + 16
+    assert limits[1] == resource.RLIM_INFINITY or ceiling <= limits[1], limits
+    for available in (1, 3, 5, 7):
+        fillers = []
+        try:
+            resource.setrlimit(resource.RLIMIT_NOFILE, (ceiling, limits[1]))
+            while True:
+                try:
+                    fillers.append(os.open(os.devnull, os.O_RDONLY))
+                except OSError as error:
+                    assert error.errno == errno.EMFILE, error
+                    break
+            for _ in range(available):
+                os.close(fillers.pop())
+            # Six fds are needed for the three stdio pipes, followed by the
+            # launcher's error channel. Exercise partial setup at each point.
+            try:
+                process = subprocess.Popen(
+                    [sys.executable, "-c", "raise SystemExit(99)"],
+                    stdin=subprocess.PIPE,
+                    stdout=subprocess.PIPE,
+                    stderr=subprocess.PIPE,
+                )
+            except OSError as error:
+                assert error.errno == errno.EMFILE, (available, error)
+            else:
+                process.communicate(timeout=10)
+                raise AssertionError("descriptor pressure unexpectedly allowed launch")
+        finally:
+            resource.setrlimit(resource.RLIMIT_NOFILE, limits)
+            for fd in fillers:
+                os.close(fd)
+        current = open_descriptors()
+        assert current == baseline, ("descriptor pressure leaked parent descriptors", available,
+                                     baseline, current)
+        try:
+            child = os.waitpid(-1, os.WNOHANG)
+        except ChildProcessError:
+            pass
+        else:
+            raise AssertionError("descriptor pressure left a child: " + repr(child))
+    print("Python spawn: descriptor exhaustion preserves parent fds and child cleanup")
+
+
+def verify_pressure_negative_control():
+    from unittest.mock import patch
+
+    original = subprocess.Popen
+    leaked = []
+
+    def broken_launch(*args, **kwargs):
+        try:
+            return original(*args, **kwargs)
+        except OSError:
+            leaked.append(os.dup(1))
+            raise
+
+    try:
+        with patch.object(subprocess, "Popen", broken_launch):
+            try:
+                check_descriptor_pressure()
+            except AssertionError as error:
+                assert "descriptor pressure leaked parent descriptors" in str(error), error
+            else:
+                raise AssertionError("injected pressure leak was accepted")
+    finally:
+        for fd in leaked:
+            os.close(fd)
+    print("Python spawn fixture: injected descriptor exhaustion leak rejected")
+
+
 def check_errors(launch):
     with tempfile.TemporaryDirectory(prefix="python-spawn-errors-") as directory:
         root = Path(directory)
@@ -161,6 +239,8 @@ if __name__ == "__main__":
     assert sys.argv[1:] in ([], ["--patch-logic"]), sys.argv
     check_errors(subprocess_launch)
     check_failed_launch_cleanup()
+    check_descriptor_pressure()
     if sys.argv[1:]:
         check_errors(patched_path_launcher())
         verify_cleanup_negative_controls()
+        verify_pressure_negative_control()
