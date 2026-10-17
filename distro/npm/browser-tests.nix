@@ -40,6 +40,7 @@ let
     "runs SDK futex time64 waits, wake operations and waitv through Linux"
     "runs SDK robust mutex owner-death recovery through Linux"
     "runs SDK named and unnamed semaphore deadline boundaries through Linux"
+    "runs SDK C++ filesystem copies, links, time64 metadata and errors through Linux"
     "retries a failed kernel download in the same page with a generic MIME type"
   ];
 
@@ -124,6 +125,10 @@ let
         name = "wasm${toString bits}-browser-runtime-semaphore-deadline";
         init = (if bits == 64 then sdk-wasm64 else sdk).semaphoreDeadlineProgram;
       };
+      filesystemInitramfs = image.mkInitramfs {
+        name = "wasm${toString bits}-browser-runtime-filesystem";
+        init = (if bits == 64 then sdk-wasm64 else sdk).filesystemProgram;
+      };
     in
     pkgs.runCommand "wasm${toString bits}-runtime-browser-tests" { } ''
       mkdir -p \
@@ -146,6 +151,7 @@ let
       cp ${futexInitramfs} $out/runtime-futex.cpio
       cp ${robustMutexInitramfs} $out/runtime-robust-mutex.cpio
       cp ${semaphoreDeadlineInitramfs} $out/runtime-semaphore-deadline.cpio
+      cp ${filesystemInitramfs} $out/runtime-filesystem.cpio
       cp ${source}/memory64-index.html $out/index.html
       cp ${source}/playwright.config.js $out/playwright.config.js
       cp ${source}/server.js $out/server.js

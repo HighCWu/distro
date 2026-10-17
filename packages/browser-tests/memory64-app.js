@@ -27,3 +27,4 @@ globalThis.bootFutexRuntimeSmoke = () => bootRuntime("/runtime-futex.cpio");
 globalThis.bootRobustMutexRuntimeSmoke = () => bootRuntime("/runtime-robust-mutex.cpio");
 globalThis.bootSemaphoreDeadlineRuntimeSmoke = () =>
   bootRuntime("/runtime-semaphore-deadline.cpio");
+globalThis.bootFilesystemRuntimeSmoke = () => bootRuntime("/runtime-filesystem.cpio");

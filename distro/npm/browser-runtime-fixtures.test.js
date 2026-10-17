@@ -19,6 +19,14 @@ const titles = [
 ].map((match) => match[1]);
 const fixtures = [
   {
+    title: "runs SDK C++ filesystem copies, links, time64 metadata and errors through Linux",
+    entry: "bootFilesystemRuntimeSmoke",
+    path: "/runtime-filesystem.cpio",
+    stages: [
+      "C++ filesystem: binary copy, links, time64 metadata, directory iteration and errors verified",
+    ],
+  },
+  {
     title: "runs SDK named and unnamed semaphore deadline boundaries through Linux",
     entry: "bootSemaphoreDeadlineRuntimeSmoke",
     path: "/runtime-semaphore-deadline.cpio",
@@ -64,7 +72,7 @@ function loadCases(globals = {}) {
 
 test("Nix report gate exactly matches all registered runtime cases", () => {
   assert.deepEqual([...loadCases().keys()].sort(), [...titles].sort());
-  assert.equal(titles.length, 14);
+  assert.equal(titles.length, 15);
   const report = {
     suites: [
       {

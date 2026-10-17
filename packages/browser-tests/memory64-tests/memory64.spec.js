@@ -238,6 +238,23 @@ test("runs SDK named and unnamed semaphore deadline boundaries through Linux", a
   expect(output).not.toContain("::vm-test::fail");
 });
 
+test("runs SDK C++ filesystem copies, links, time64 metadata and errors through Linux", async ({
+  page,
+}) => {
+  page.on("console", (message) => console.log(`[browser] ${message.text()}`));
+  page.on("pageerror", (error) => console.error(`[browser] ${error.stack ?? error}`));
+  await page.goto("/");
+  await expect
+    .poll(() => page.evaluate(() => typeof globalThis.bootFilesystemRuntimeSmoke))
+    .toBe("function");
+  const output = await page.evaluate(() => globalThis.bootFilesystemRuntimeSmoke());
+  expect(output).toContain(
+    "C++ filesystem: binary copy, links, time64 metadata, directory iteration and errors verified",
+  );
+  expect(output).toContain("::vm-test::pass");
+  expect(output).not.toContain("::vm-test::fail");
+});
+
 test("retries a failed kernel download in the same page with a generic MIME type", async ({
   page,
 }) => {
