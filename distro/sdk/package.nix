@@ -44,6 +44,9 @@ let
     };
   cc = wrapper "wasm-linux-cc" "clang";
   cxx = wrapper "wasm-linux-c++" "clang++";
+  configSiteFiles = pkgs.writeTextDir "share/linux-wasm-sdk/config.site" (
+    builtins.readFile ../config.site
+  );
   pkgConfig = pkgs.writeShellApplication {
     name = "wasm-linux-pkg-config";
     text =
@@ -70,6 +73,7 @@ let
           "@shell@"
           "@build@"
           "@host@"
+          "@configSite@"
         ]
         (map lib.escapeShellArg [
           "${cc}/bin/wasm-linux-cc"
@@ -81,6 +85,7 @@ let
           "${pkgs.bash}/bin/bash"
           pkgs.stdenv.buildPlatform.config
           platform.targetTriple
+          "${configSiteFiles}/share/linux-wasm-sdk/config.site"
         ])
         (builtins.readFile ./configure.sh);
   };
@@ -129,6 +134,7 @@ let
         toolchain = "${llvm-toolchain}";
         sysroot = "${sysroot}";
         compilerConfiguration = "${profileConfig}";
+        configSite = "${configSiteFiles}/share/linux-wasm-sdk/config.site";
         meson = "${meson}";
       };
     }
@@ -150,6 +156,7 @@ let
       cxx
       pkgConfig
       configure
+      configSiteFiles
       cmakeFiles
       mesonFiles
       profileMetadata
@@ -303,6 +310,8 @@ let
           assert.ok(fs.statSync(p.paths.sysroot).isDirectory());
           assert.ok(fs.statSync(p.paths.meson + "/bin/meson").isFile());
           assert.ok(fs.readFileSync(p.paths.compilerConfiguration, "utf8").includes("--target=" + p.targetTriple));
+          assert.equal(fs.readFileSync(p.paths.configSite, "utf8"), fs.readFileSync("${../config.site}", "utf8"));
+          assert.equal(fs.readFileSync("${sdk}/share/linux-wasm-sdk/config.site", "utf8"), fs.readFileSync(p.paths.configSite, "utf8"));
         '
         info_status=0
         wasm-linux-sdk-info --unknown > invalid-profile.json 2> info-error.log || info_status=$?
@@ -469,6 +478,7 @@ let
         CC_FOR_BUILD = "${pkgs.stdenv.cc}/bin/cc";
         nativeBuildInputs = [
           pkgs.autoconf
+          pkgs.automake
           pkgs.gnumake
           pkgs.nodejs
         ];
@@ -476,6 +486,7 @@ let
       ''
         mkdir $out
         SDK_TEST_CONFIGURE=${sdk}/bin/wasm-linux-configure \
+          SDK_TEST_CONFIG_SITE=${sdk}/share/linux-wasm-sdk/config.site \
           SDK_TEST_OUTPUT_DIRECTORY=$out \
           node --test ${./.}/autoconf-consumer-test.js
         chmod 0755 $out/sdk-autoconf.wasm

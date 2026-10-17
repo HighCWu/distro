@@ -13,7 +13,8 @@ export RANLIB=@ranlib@
 export NM=@nm@
 export PKG_CONFIG=@pkgConfig@
 export CONFIG_SHELL=@shell@
-# Site answers must be explicitly selected for this target, not inherited
-# from the build host or a system-wide configure cache.
-export CONFIG_SITE="${WASM_CONFIG_SITE:-/dev/null}"
+# Never inherit a host site file. The installed default shares the distro's
+# unsupported-capability policy; explicit target overrides remain available.
+sdk_config_site=@configSite@
+export CONFIG_SITE="${WASM_CONFIG_SITE:-$sdk_config_site}"
 exec @shell@ "$configure_script" --build=@build@ --host=@host@ "$@"

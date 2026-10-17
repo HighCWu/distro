@@ -1,0 +1,16 @@
+# SPDX-License-Identifier: MIT
+# Shared Linux/Wasm capability policy for distro and external SDK builds.
+# Negative answers describe unsupported semantics, not missing headers alone.
+ac_cv_func_fork=no
+ac_cv_func_vfork=no
+ac_cv_func_fork_works=no
+ac_cv_func_vfork_works=no
+# AC_FUNC_MMAP assumes success for cross-compiled Linux. Direct anonymous
+# allocation does not implement its fixed-address/file-mapping contract.
+ac_cv_func_mmap_fixed_mapped=no
+# musl's dlopen stub links, but there is no dynamic module loader.
+ac_cv_func_dlopen=no
+ac_cv_search_dlopen=no
+ac_cv_lib_dl_dlopen=no
+# The syscall reports ENOSYS; alternate signal stacks are not implemented.
+ac_cv_func_sigaltstack=no

@@ -28,6 +28,13 @@ test("Autoconf SDK entry point separates build and host without executing target
     // An inherited host site file must not supply false target capabilities.
     const hostSite = join(root, "host.site");
     writeFileSync(hostSite, "echo HOST_SITE_WAS_LOADED >&2\nexit 93\n");
+    const sitePolicy = readFileSync(
+      process.env.SDK_TEST_CONFIG_SITE || join(source, "../config.site"),
+      "utf8",
+    );
+    // Autoconf treats CONFIG_SITE as a whitespace-separated list of files.
+    const defaultSite = join(root, "target-defaults.site");
+    writeFileSync(defaultSite, sitePolicy);
     const env = {
       ...process.env,
       CONFIG_SITE: hostSite,
@@ -63,6 +70,7 @@ test("Autoconf SDK entry point separates build and host without executing target
         shell: "/bin/bash",
         build: "x86_64-pc-linux-gnu",
         host: "wasm32-unknown-linux-musl",
+        configSite: defaultSite,
       })) {
         script = script.replaceAll(`@${key}@`, `'${value}'`);
       }
@@ -73,6 +81,42 @@ test("Autoconf SDK entry point separates build and host without executing target
     const configured = run(wrapper, [join(project, "configure"), "CFLAGS=-O2 -g"]);
     assert.match(configured.stdout, /SDK runtime probe deferred to the target environment/);
     assert.doesNotMatch(configured.stdout + configured.stderr, /HOST_SITE_WAS_LOADED/);
+    // Reproduce AC_FUNC_MMAP's unsafe cross-Linux heuristic and linked stub
+    // detection using real Autoconf, not a replacement configure script.
+    const capabilities = join(root, "capability-probes");
+    mkdirSync(capabilities);
+    writeFileSync(
+      join(capabilities, "configure.ac"),
+      `AC_INIT([sdk-capabilities], [1.0])
+AC_PROG_CC
+AC_CANONICAL_HOST
+AC_FUNC_MMAP
+AC_CHECK_FUNCS([fork vfork dlopen sigaltstack])
+AC_MSG_NOTICE([SDK_CAPABILITIES mmap=$ac_cv_func_mmap_fixed_mapped fork=$ac_cv_func_fork vfork=$ac_cv_func_vfork dlopen=$ac_cv_func_dlopen sigaltstack=$ac_cv_func_sigaltstack])
+AC_OUTPUT
+`,
+    );
+    // AC_CANONICAL_HOST needs GNU config files. The SDK example itself does
+    // not need them; use installed build-host Automake data for this probe.
+    const configDirectory = run("sh", ["-c", "automake --print-libdir"]).stdout.trim();
+    copyFileSync(join(configDirectory, "config.sub"), join(capabilities, "config.sub"));
+    copyFileSync(join(configDirectory, "config.guess"), join(capabilities, "config.guess"));
+    run("autoconf", [], capabilities);
+    const policyResult = run(wrapper, [join(capabilities, "configure")], capabilities);
+    assert.match(
+      policyResult.stdout,
+      /SDK_CAPABILITIES mmap=no fork=no vfork=no dlopen=no sigaltstack=no/,
+    );
+    mkdirSync(join(root, "capability-bypass"));
+    const bypass = run(
+      wrapper,
+      [join(capabilities, "configure")],
+      join(root, "capability-bypass"),
+      {
+        WASM_CONFIG_SITE: "/dev/null",
+      },
+    );
+    assert.match(bypass.stdout, /SDK_CAPABILITIES mmap=yes /);
     run("make", ["-j2", "CFLAGS=-O2 -Wall -Wextra -Werror"]);
     assert.match(readFileSync(join(build, "generated.h"), "utf8"), /SDK_GENERATED_SIZE 64/);
     const generatorPath = join(build, "sdk-generator");
@@ -112,7 +156,7 @@ test("Autoconf SDK entry point separates build and host without executing target
       assert.match(run(join(build, "sdk-autoconf"), []).stdout, /::vm-test::pass/);
     }
     const targetSite = join(root, "target.site");
-    writeFileSync(targetSite, "echo SDK_EXPLICIT_TARGET_SITE\n");
+    writeFileSync(targetSite, sitePolicy + "echo SDK_EXPLICIT_TARGET_SITE\n");
     mkdirSync(join(root, "with-site"));
     const explicit = run(wrapper, [join(project, "configure")], join(root, "with-site"), {
       WASM_CONFIG_SITE: targetSite,
