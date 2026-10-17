@@ -86,9 +86,8 @@ stdenv.mkDerivation (finalAttrs: {
     runHook postInstall
   '';
 
-  # Run the exact installed-system workload in a disposable browser initramfs.
-  # Keep the installed license paths used by that workload without pretending
-  # this is a package-manager installation or a persistent root filesystem.
+  # Run the exact workload against unchanged package output paths. Do not add
+  # aliases which could hide an installed-system path mismatch in the test.
   passthru.browserInitramfs = image.mkInitramfs {
     name = "quickjs-language-${platform.wasmArch}";
     init = ./language-test.sh;
@@ -96,18 +95,6 @@ stdenv.mkDerivation (finalAttrs: {
       busybox
       finalAttrs.finalPackage
     ];
-    files = builtins.listToAttrs (
-      map
-        (license: {
-          name = "/usr/share/licenses/quickjs/${license}";
-          value = "${finalAttrs.finalPackage}/share/licenses/quickjs/${license}";
-        })
-        [
-          "quickjs-LICENSE"
-          "musl-COPYRIGHT"
-          "compiler-rt-LICENSE.TXT"
-        ]
-    );
   };
 
   passthru.checks = {

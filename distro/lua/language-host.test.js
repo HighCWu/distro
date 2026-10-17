@@ -34,7 +34,7 @@ test("Lua full shared workload runs on a native interpreter and bytecode compile
     const nativeScript = script
       .replace("export PATH=/bin:/sbin:/usr/bin:/usr/sbin", 'export PATH="$LUA_TEST_PATH"')
       .replaceAll("/tmp/", `${directory}/`)
-      .replaceAll("/usr/share/licenses/lua/", `${notices}/`)
+      .replaceAll("/share/licenses/lua/", `${notices}/`)
       .replace(/while :; do :; done\s*$/, "exit 0\n")
       .replace("while :; do :; done", "exit 1");
     const result = spawnSync("sh", ["-eu", "-c", nativeScript], {

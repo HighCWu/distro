@@ -10,7 +10,7 @@ fail() {
 export PATH=/bin:/sbin:/usr/bin:/usr/sbin
 
 for license in lua-readme.html musl-COPYRIGHT compiler-rt-LICENSE.TXT; do
-  test -s "/usr/share/licenses/lua/$license" || fail "missing Lua license: $license"
+  test -s "/share/licenses/lua/$license" || fail "missing Lua license: $license"
 done
 
 # os.execute/io.popen spawn /bin/sh, which uses the runtime's /dev/null.

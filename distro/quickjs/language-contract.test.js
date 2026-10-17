@@ -49,10 +49,7 @@ test("browser image reuses the full target workload and matching package outputs
   assert.ok(fixture);
   assert.match(fixture[1], /init = \.\/language-test\.sh;/);
   assert.match(fixture[1], /contents = \[\s*busybox\s+finalAttrs\.finalPackage\s*\];/);
-  assert.ok(fixture[1].includes('name = "/usr/share/licenses/quickjs/${license}";'));
-  assert.ok(
-    fixture[1].includes('value = "${finalAttrs.finalPackage}/share/licenses/quickjs/${license}";'),
-  );
+  assert.doesNotMatch(fixture[1], /files\s*=/, "no test-only license path aliases");
   const browser = readFileSync(new URL("../npm/browser-tests.nix", import.meta.url), "utf8");
   assert.ok(
     browser.includes(

@@ -10,7 +10,7 @@ fail() {
 export PATH=/bin:/sbin:/usr/bin:/usr/sbin
 
 for license in quickjs-LICENSE musl-COPYRIGHT compiler-rt-LICENSE.TXT; do
-  test -s "/usr/share/licenses/quickjs/$license" || fail "missing QuickJS license: $license"
+  test -s "/share/licenses/quickjs/$license" || fail "missing QuickJS license: $license"
 done
 
 # os.exec enumerates the live descriptor table when constructing close actions.
