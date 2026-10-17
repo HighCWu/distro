@@ -61,6 +61,12 @@ let
       {
         nativeBuildInputs = [ pkgs.nodejs ];
         passthru.ci.heavy = heavy;
+        # Browser checks reuse the exact installed system, without building or
+        # treating this Node-run check's result as browser execution evidence.
+        passthru.runtimeAssets = {
+          inherit initramfs cpus;
+          disks = allDisks;
+        };
       }
       ''
         ${lib.concatMapStringsSep "\n" (diskCopy: ''

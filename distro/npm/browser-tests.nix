@@ -19,6 +19,8 @@
   openssl-wasm64,
   pkgs,
   playwright,
+  python,
+  python-wasm64,
   quickjs,
   quickjs-wasm64,
   repository,
@@ -292,6 +294,29 @@ let
         }
       ))
       // (lib.genAttrs erofsProjects erofsCheck)
+      // (lib.genAttrs
+        [
+          "python-wasm32-chromium"
+          "python-wasm32-firefox"
+          "python-wasm64-chromium"
+          "python-wasm64-firefox"
+        ]
+        (
+          name:
+          let
+            bits = if lib.hasInfix "wasm64" name then 64 else 32;
+          in
+          playwright.mkCheck {
+            name = "browser-tests-${name}";
+            suite = pythonSuite bits;
+            expectedTests = [
+              "runs installed full Python and relocated applications through Linux"
+              "runs installed Python private anonymous mmap boundaries through Linux"
+            ];
+            project = lib.removePrefix "python-wasm${toString bits}-" name;
+          }
+        )
+      )
       // (lib.genAttrs fileMmapProjects fileMmapCheck)
       // {
         site-live = siteCheck;
@@ -327,6 +352,36 @@ let
       expectedTests = runtimeTests;
       project = lib.removePrefix "memory64-" name;
     };
+
+  pythonSuite =
+    bits:
+    let
+      runtime = if bits == 64 then python-wasm64 else python;
+      assets = lib.genAttrs [ "interpreter" "mmap" ] (name: runtime.checks.${name}.runtimeAssets);
+      profile = pkgs.writeText "python-browser-profile.json" (builtins.toJSON { addressBits = bits; });
+    in
+    assert lib.assertMsg (lib.all (name: builtins.length assets.${name}.disks == 1) [
+      "interpreter"
+      "mmap"
+    ]) "Python browser checks require exactly one installed root disk";
+    pkgs.runCommand "python-wasm${toString bits}-browser-tests" { } ''
+      mkdir -p $out/node_modules/@lowland/bytes $out/node_modules/@lowland/kernel $out/tests
+      ${playwright.linkRuntime "$out"}
+      cp ${source}/python-app.js $out/app.js
+      cp ${source}/python-tests/python.spec.js $out/tests/
+      cp ${source}/runtime-smoke.js $out/runtime-smoke.js
+      cp ${../vm-test/protocol.js} $out/protocol.js
+      cp ${source}/memory64-index.html $out/index.html
+      cp ${source}/playwright.config.js $out/playwright.config.js
+      cp ${source}/server.js $out/server.js
+      cp ${profile} $out/profile.json
+      cp ${assets.interpreter.initramfs} $out/runtime-interpreter.cpio
+      cp ${builtins.head assets.interpreter.disks} $out/root-interpreter.ext4
+      cp ${assets.mmap.initramfs} $out/runtime-mmap.cpio
+      cp ${builtins.head assets.mmap.disks} $out/root-mmap.ext4
+      cp -r ${bytes}/. $out/node_modules/@lowland/bytes/
+      cp -r ${(if bits == 64 then kernel-wasm64 else kernel)}/. $out/node_modules/@lowland/kernel/
+    '';
 
   agentSuite =
     productionRoot:
