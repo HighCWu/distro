@@ -19,11 +19,11 @@ sdk_config_site=@configSite@
 export CONFIG_SITE="${WASM_CONFIG_SITE:-$sdk_config_site}"
 # Autoconf silently ignores missing site files and splits paths on whitespace.
 # This entry point accepts one explicit file, not a list of optional policies.
-if [[ "$CONFIG_SITE" == *[[:space:]]* ]]; then
+if [[ $CONFIG_SITE == *[[:space:]]* ]]; then
   printf 'wasm-linux-configure: CONFIG_SITE must be one path without whitespace: %s\n' "$CONFIG_SITE" >&2
   exit 64
 fi
-if [[ ! -r "$CONFIG_SITE" || -d "$CONFIG_SITE" ]]; then
+if [[ ! -r $CONFIG_SITE || -d $CONFIG_SITE ]]; then
   printf 'wasm-linux-configure: CONFIG_SITE is not a readable file: %s\n' "$CONFIG_SITE" >&2
   exit 66
 fi
