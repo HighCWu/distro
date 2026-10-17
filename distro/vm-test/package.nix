@@ -13,6 +13,7 @@ let
     mkdir $out
     cp ${./protocol.js} $out/protocol.js
     cp ${./run-test.js} $out/run-test.js
+    cp ${./shutdown.js} $out/shutdown.js
   '';
 
   runner = runnerBase // {
@@ -24,8 +25,13 @@ let
         ''
           cp ${./protocol.js} protocol.js
           cp ${./protocol-test.js} protocol-test.js
+          cp ${./shutdown.js} shutdown.js
+          cp ${./shutdown-test.js} shutdown-test.js
+          cp ${./run-test.js} run-test.js
+          cp ${./shutdown-fixture.js} shutdown-fixture.js
+          cp ${./runner-shutdown-test.js} runner-shutdown-test.js
 
-          node --test protocol-test.js
+          node --test protocol-test.js shutdown-test.js runner-shutdown-test.js
           mkdir $out
         '';
   };

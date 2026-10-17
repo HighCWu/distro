@@ -1,16 +1,9 @@
 #!/usr/bin/env node
 
-import {
-  closeSync,
-  fstatSync,
-  fsyncSync,
-  openSync,
-  readFileSync,
-  readSync,
-  writeSync,
-} from "node:fs";
+import { fstatSync, fsyncSync, openSync, readFileSync, readSync, writeSync } from "node:fs";
 import { pathToFileURL } from "node:url";
 import { LineDecoder, parseResult, writeConsoleLines } from "./protocol.js";
+import { closeTestResources } from "./shutdown.js";
 
 let cpus = 1;
 let snapshotFirstDisk = false;
@@ -200,8 +193,13 @@ void machine?.closed.catch((error) => {
 });
 
 const outcome = await result;
-machine?.close();
-for (const disk of disks) closeSync(disk);
+let cleanupFailed = false;
+try {
+  await closeTestResources(machine, disks);
+} catch (error) {
+  console.error(`::vm-test::fail: runner cleanup failed: ${error}`);
+  cleanupFailed = true;
+}
 
 if (!outcome.passed) console.error(`vm test failed: ${outcome.reason}`);
-process.exitCode = outcome.passed ? 0 : 1;
+process.exitCode = outcome.passed && !cleanupFailed ? 0 : 1;
