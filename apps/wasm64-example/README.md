@@ -125,8 +125,13 @@ failure/cancellation, prefix EPIPE, UI source choice and the C fixture (36 relat
 checks total). The host-compiled fixture verifies every byte of a known 512 KiB
 plus 17-byte pattern, count/EOF, and rejection of corruption. The real page check
 uses that SDK-built fixture through the actual binary input picker, including
-empty input and a prefix consumer. New target results are required: previous
-text/streaming-mode passes do not validate this file-selection extension.
+empty input and a prefix consumer. This extension has now passed its exact
+page case in Firefox at `40c84bd` and Chromium at `4ebeb62`: each run verified
+all 111 bundle files and completed with zero skips/retries. These cases cover
+the actual program/input pickers, binary pattern, prefix and empty-file input,
+plus the existing text, exit-status, cancellation and restart controls. They
+do not validate later SDK file-stream type checks, chunk ordering or BYOB reads;
+those revisions require their own native public-API checks.
 
 **Cancel application** aborts the process capability, and the UI waits for
 process/pipe cleanup before enabling another action. Nonzero exit status and
