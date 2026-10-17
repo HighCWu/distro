@@ -2,11 +2,14 @@
 import assert from "node:assert/strict";
 import { spawnSync } from "node:child_process";
 import {
+  chmodSync,
   mkdtempSync,
   mkdirSync,
   readFileSync,
+  readdirSync,
   renameSync,
   rmSync,
+  statSync,
   unlinkSync,
   writeFileSync,
 } from "node:fs";
@@ -52,6 +55,40 @@ function metadata(root) {
     );
   return directory;
 }
+
+test("development metadata copies are writable without modifying read-only package inputs", () =>
+  workspace((root) => {
+    const packageRoot = join(root, "read-only package");
+    const out = join(root, "development installation");
+    const input = metadata(packageRoot);
+    const output = join(out, "lib/pkgconfig");
+    mkdirSync(output, { recursive: true });
+    const originals = new Map(
+      readdirSync(input).map((name) => [name, readFileSync(join(input, name))]),
+    );
+    for (const name of originals.keys()) chmodSync(join(input, name), 0o444);
+    const recipe = readFileSync(new URL("../package.nix", import.meta.url), "utf8");
+    const copy = recipe
+      .split("\n")
+      .find((line) => line.trim().startsWith('install -m644 "$package"/lib/pkgconfig/*.pc'));
+    assert.ok(copy, "recipe must copy immutable metadata with an explicit writable mode");
+    const installed = spawnSync("sh", ["-eu", "-c", copy], {
+      env: { ...process.env, package: packageRoot, out },
+      encoding: "utf8",
+    });
+    assert.equal(installed.status, 0, installed.stderr);
+    for (const name of originals.keys())
+      assert.equal(statSync(join(output, name)).mode & 0o777, 0o644);
+    const relocated = spawnSync(process.execPath, [relocate, out, ...buildRoots], {
+      encoding: "utf8",
+    });
+    assert.equal(relocated.status, 0, relocated.stderr);
+    for (const [name, contents] of originals) {
+      assert.equal(statSync(join(input, name)).mode & 0o777, 0o444);
+      assert.deepEqual(readFileSync(join(input, name)), contents);
+      assert.ok(readFileSync(join(output, name), "utf8").startsWith("prefix=${pcfiledir}/../.."));
+    }
+  }));
 
 test("copied libcurl metadata retains static dependencies, relocates twice and rejects native fallback", () =>
   workspace((root) => {

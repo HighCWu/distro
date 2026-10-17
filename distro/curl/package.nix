@@ -131,7 +131,7 @@ stdenv.mkDerivation (finalAttrs: {
         for package in ${finalAttrs.finalPackage} ${openssl} ${zlib}; do
           cp -rL "$package/include/." $out/include/
           cp "$package"/lib/*.a $out/lib/
-          cp "$package"/lib/pkgconfig/*.pc $out/lib/pkgconfig/
+          install -m644 "$package"/lib/pkgconfig/*.pc "$out/lib/pkgconfig/"
         done
         # Keep upstream static dependency declarations, but use the copied layout.
         node ${./relocate-metadata.mjs} $out ${finalAttrs.finalPackage} ${openssl} ${zlib}
