@@ -1,4 +1,5 @@
 #!/bin/busybox sh
+# SPDX-License-Identifier: MIT
 
 fail() {
   printf 'vm test guest failure: %s\n' "$*"
@@ -8,14 +9,26 @@ fail() {
 
 export PATH=/bin:/sbin:/usr/bin:/usr/sbin
 
+for license in lua-readme.html musl-COPYRIGHT compiler-rt-LICENSE.TXT; do
+  test -s "/usr/share/licenses/lua/$license" || fail "missing Lua license: $license"
+done
+
 # os.execute/io.popen spawn /bin/sh, which uses the runtime's /dev/null.
 
 # Core language features: arithmetic, strings, tables, and file io.
 cat >/tmp/core.lua <<'LUA'
 assert(package.path:find("/usr/share/lua/5.4/?.lua", 1, true), "default Lua module path")
 assert(package.cpath:find("/usr/lib/lua/5.4/?.so", 1, true), "default C module path")
-local guest_test = require("guest_test")
-assert(guest_test.answer == 42, "require from /usr/share/lua/5.4")
+local platform_test = require("platform_test")
+assert(platform_test.answer == 42, "require from /usr/share/lua/5.4")
+
+-- Lua's standard 64-bit integer type is required on both pointer widths.
+assert(math.maxinteger == 9223372036854775807, "integer max")
+assert(math.mininteger == -9223372036854775807 - 1, "integer min")
+local large = (1 << 60) + 123
+assert(math.type(large) == "integer" and tostring(large) == "1152921504606847099", "integer precision")
+local packed = string.pack("<j", large)
+assert(#packed == 8 and string.unpack("<j", packed) == large, "integer binary roundtrip")
 
 assert(2 ^ 10 == 1024, "pow")
 assert(7 // 2 == 3, "floordiv")
@@ -77,6 +90,31 @@ assert(not ok and err:match("boom"), "pcall catches error")
 local ok2b, err2 = pcall(function() error({ code = 7 }) end)
 assert(not ok2b and err2.code == 7, "pcall table error")
 
+local closes = {}
+local function resource(name)
+  return setmetatable({}, { __close = function(_, cause)
+    closes[#closes + 1] = { name = name, cause = cause }
+  end })
+end
+local cause = { code = 19 }
+local success, failure = pcall(function()
+  local first <close> = resource("first")
+  local second <close> = resource("second")
+  error(cause)
+end)
+assert(not success and failure == cause, "unwind keeps error identity")
+assert(#closes == 2 and closes[1].name == "second" and closes[2].name == "first", "reverse cleanup order")
+assert(closes[1].cause == cause and closes[2].cause == cause, "cleanup receives original error")
+
+local suspended = coroutine.create(function()
+  local pending <close> = resource("suspended")
+  coroutine.yield("waiting")
+end)
+local resumed, value = coroutine.resume(suspended)
+assert(resumed and value == "waiting" and #closes == 2, "yield preserves live resource")
+assert(coroutine.close(suspended), "close suspended coroutine")
+assert(#closes == 3 and closes[3].name == "suspended" and closes[3].cause == nil, "coroutine close cleanup")
+
 print("::lua::unwind-pass")
 LUA
 lua /tmp/coro.lua >/tmp/coro.out 2>&1 ||
@@ -86,7 +124,7 @@ grep -qx '::lua::unwind-pass' /tmp/coro.out ||
 
 # os.execute (system()) and io.popen (popen()) go through the no-fork spawn
 # path; package.loadlib should fail gracefully (no dlopen). Assert the spawn
-# results; loadlib just needs to not crash.
+# results and require an explicit failure for unavailable shared modules.
 cat >/tmp/probe.lua <<'LUA'
 local ok, how, code = os.execute("exit 3")
 assert(ok == nil and how == "exit" and code == 3, "os.execute status")
@@ -94,7 +132,8 @@ local ph = assert(io.popen("echo popen-output"), "popen open")
 local out = ph:read("a")
 assert(out:match("popen%-output"), "popen output")
 assert(ph:close(), "popen close")
-print("loadlib:", package.loadlib("/nonexistent.so", "luaopen_x"))
+local library, reason = package.loadlib("/nonexistent.so", "luaopen_x")
+assert(library == nil and type(reason) == "string" and #reason > 0, "loadlib explicit failure")
 print("::lua::spawn-pass")
 LUA
 lua /tmp/probe.lua >/tmp/probe.out 2>&1 ||
@@ -102,5 +141,31 @@ lua /tmp/probe.lua >/tmp/probe.out 2>&1 ||
 grep -qx '::lua::spawn-pass' /tmp/probe.out ||
   fail "lua spawn probes failed: $(cat /tmp/probe.out)"
 
+# luac is the target executable, not a build-host bytecode generator. Run both
+# ordinary and stripped chunks on the same target that produced them. Binary
+# chunks are not promised to be portable across pointer widths or Lua versions.
+for strip in normal stripped; do
+  for module in core coro; do
+    if [ "$strip" = stripped ]; then
+      luac -s -o /tmp/$module.luac /tmp/$module.lua || fail "stripped luac compile failed"
+    else
+      luac -o /tmp/$module.luac /tmp/$module.lua || fail "luac compile failed"
+    fi
+    lua /tmp/$module.luac >/tmp/bytecode.out 2>&1 || fail "compiled $module failed: $(cat /tmp/bytecode.out)"
+    stage=core
+    [ "$module" != coro ] || stage=unwind
+    grep -qx "::lua::$stage-pass" /tmp/bytecode.out || fail "compiled $module missing stage"
+  done
+done
+printf 'local =\n' >/tmp/invalid.lua
+if luac -p /tmp/invalid.lua >/tmp/invalid.out 2>&1; then
+  fail "luac accepted invalid source"
+fi
+head -c 16 /tmp/core.luac >/tmp/truncated.luac
+if lua /tmp/truncated.luac >/tmp/truncated.out 2>&1; then
+  fail "lua accepted truncated bytecode"
+fi
+
+echo "Lua: integer64, modules, I/O, coroutine cleanup, spawn and bytecode roundtrips verified"
 echo "::vm-test::pass"
 while :; do :; done
