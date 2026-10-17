@@ -4,7 +4,7 @@ import test from "node:test";
 import { NR, stat_size, SystemError } from "../src/abi.ts";
 import type { AgentAbi, GuestSession, Lane } from "../src/conn.ts";
 import { FsFile } from "../src/file.ts";
-import { GuestFd } from "../src/syscalls.ts";
+import { CHUNK, GuestFd } from "../src/syscalls.ts";
 
 function sessionFixture(errno = 0, abi: AgentAbi = "wasm32", closeErrno = 0) {
   const requests: Uint8Array[] = [];
@@ -82,6 +82,78 @@ test("open-file stat preserves the descriptor syscall error", async () => {
 });
 
 for (const abi of ["wasm32", "wasm64"] as const) {
+  for (const shortFirst of [false, true]) {
+    for (const following of ["write", "close"] as const) {
+      test(`${abi} a stream chunk finishes before queued ${following} (${shortFirst})`, async () => {
+        const entered = Promise.withResolvers<void>();
+        const release = Promise.withResolvers<void>();
+        const written: Uint8Array[] = [];
+        const requests: number[] = [];
+        let first = true;
+        const session = {
+          abi,
+          async exchange<T>(operation: (lane: Lane) => Promise<T>): Promise<T> {
+            let blocked = false;
+            let count = 0;
+            return operation({
+              async write(bytes) {
+                const nr = new DataView(bytes.buffer, bytes.byteOffset).getUint32(1, true);
+                requests.push(nr);
+                if (nr === NR.write) {
+                  const data = bytes.subarray(59);
+                  assert.ok(data.byteLength <= CHUNK);
+                  blocked = first;
+                  count = first && shortFirst ? 7 : data.byteLength;
+                  written.push(data.slice(0, count));
+                  first = false;
+                  if (blocked) entered.resolve();
+                }
+              },
+              async read(length) {
+                assert.equal(length, 12);
+                if (blocked) await release.promise;
+                const reply = new Uint8Array(12);
+                new DataView(reply.buffer).setBigInt64(0, BigInt(count), true);
+                return reply;
+              },
+            });
+          },
+        } as GuestSession;
+        const file = new FsFile(new GuestFd(session, 42));
+        const writer = file.writable.getWriter();
+        const payload = new Uint8Array(CHUNK * 2 + 13).fill(42);
+        const writing = writer.write(payload);
+        void writing.catch(() => {});
+        try {
+          await entered.promise;
+          const later = following === "close" ? file.close() : file.write(Uint8Array.of(255));
+          release.resolve();
+          await writing;
+          await later;
+          await file.close();
+          const result = new Uint8Array(
+            written.reduce((length, bytes) => length + bytes.length, 0),
+          );
+          let offset = 0;
+          for (const bytes of written) {
+            result.set(bytes, offset);
+            offset += bytes.byteLength;
+          }
+          const expected = new Uint8Array(payload.length + (following === "write" ? 1 : 0));
+          expected.set(payload);
+          if (following === "write") expected[payload.length] = 255;
+          assert.deepEqual(result, expected);
+          assert.equal(requests.at(-1), NR.close);
+          assert.equal(requests.filter((nr) => nr === NR.close).length, 1);
+        } finally {
+          release.resolve();
+          writer.releaseLock();
+          await file.close().catch(() => {});
+        }
+      });
+    }
+  }
+
   for (const direction of ["read", "write"] as const) {
     for (const closeErrno of [0, 9]) {
       test(`${abi} file ${direction} stream closes on I/O error (${closeErrno})`, async () => {

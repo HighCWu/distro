@@ -33,5 +33,21 @@ export async function checkFileStreamErrors(
     await directory.close();
   }
   assert.equal(await fs.readTextFile(path), "retained data");
+  // One stream chunk spans several syscall payloads. Verify its complete
+  // contents through Linux, not just the mocked request ordering checks.
+  const payload = Uint8Array.from(
+    { length: 256 * 1024 + 17 },
+    (_, index) => (index * 37 + 11) & 255,
+  );
+  const output = await fs.open(path, { write: true, truncate: true });
+  const outputWriter = output.writable.getWriter();
+  try {
+    await outputWriter.write(payload);
+    await outputWriter.close();
+  } finally {
+    outputWriter.releaseLock();
+    await output.close();
+  }
+  assert.deepEqual(await fs.readFile(path), payload);
   await fs.remove(path);
 }

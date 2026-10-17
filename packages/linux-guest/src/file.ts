@@ -159,7 +159,8 @@ export class FsFile implements AsyncDisposable {
 
   /** Reads from the current offset; EOF, cancellation or I/O failure closes the file. */
   readonly readable: ReadableStream<Uint8Array>;
-  /** Writes at the current offset; completion, abort or I/O failure closes the file. */
+  /** Writes at the current offset; each started chunk is one serialized operation.
+   * Completion, abort or I/O failure closes the file. */
   readonly writable: WritableStream<Uint8Array>;
 
   constructor(fd: GuestFd) {
@@ -187,14 +188,18 @@ export class FsFile implements AsyncDisposable {
     this.writable = new WritableStream({
       write: async (chunk) => {
         try {
-          let offset = 0;
-          while (offset < chunk.byteLength) {
-            const written = await this.write(chunk.subarray(offset));
-            if (written === 0) {
-              throw new SystemError(E.IO);
+          // Serialize the whole chunk, not individual syscalls: a queued seek,
+          // write or close must not split one already-started stream write.
+          await this.#run(async () => {
+            let offset = 0;
+            while (offset < chunk.byteLength) {
+              const written = await write(this.#fd, chunk.subarray(offset, offset + CHUNK));
+              if (written === 0) {
+                throw new SystemError(E.IO);
+              }
+              offset += written;
             }
-            offset += written;
-          }
+          });
         } catch (error) {
           return this.#stream_error(error);
         }
