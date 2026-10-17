@@ -35,6 +35,13 @@ export class FileMmapCopy {
     return this.address === "i64" ? BigInt(-errno) : -errno;
   }
 
+  /** Version 1 bit 0: a private initialized-copy allocator is present.
+   * Querying does not call user code, allocate backing or authorize file mmap.
+   * Old modules (including length-only/v2 allocators) report no capability. */
+  capabilities(exports: WebAssembly.Exports): number {
+    return typeof exports.__wasm_mmap_init_v1 === "function" ? 1 : 0;
+  }
+
   /** Called only by the new kernel import, never by a user syscall argument. */
   map(
     exports: WebAssembly.Exports,

@@ -138,6 +138,11 @@ lib.makeScope (scope: lib.callPackageWith ({ inherit lib pkgs; } // scope)) (
     bash = callPackage ./bash/package.nix { };
     basic-init = callPackage ./basic-init/package.nix { };
     mmap-benchmark = callPackage ./mmap-benchmark/package.nix {
+      vm-test-file = self.vm-test.override {
+        kernel = self.kernel.override {
+          linux = self.linux.override { fileMmapCandidate = true; };
+        };
+      };
       vm-test-copy = self.vm-test.override {
         kernel = self.kernel.override {
           linux = self.linux.override { mmapCopyTest = true; };
@@ -145,6 +150,11 @@ lib.makeScope (scope: lib.callPackageWith ({ inherit lib pkgs; } // scope)) (
       };
     };
     mmap-benchmark-wasm64 = callPackage ./mmap-benchmark/package.nix {
+      vm-test-file = vmTestWasm64.override {
+        kernel = self.kernel-wasm64.override {
+          linux = self.linux-wasm64.override { fileMmapCandidate = true; };
+        };
+      };
       platform = self.platform-wasm64;
       llvm-toolchain = self.llvm-toolchain-wasm64;
       sysroot = self.sysroot-wasm64;

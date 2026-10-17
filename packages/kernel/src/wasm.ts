@@ -250,6 +250,7 @@ export interface Imports {
   };
   /** Experimental initialized-copy primitive, not file syscall admission. */
   user_mmap_init_v1: {
+    capabilities(): number;
     map(rounded: WasmAddress, source: WasmAddress, length: WasmAddress): WasmAddress;
   };
   virtio: {

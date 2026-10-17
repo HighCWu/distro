@@ -10,9 +10,10 @@ type ExtentResult =
 
 const max_file_position = (1n << 63n) - 1n;
 
-/** Experimental contract model, not a syscall handler or a new Wasm import.
- * Decode raw syscall units once; the future execution interface receives
- * byte_offset as i64 on both pointer widths. Never convert it to Number. */
+/** Contract model, not a syscall handler or a new Wasm import.
+ * Decode raw syscall units once into a canonical byte offset. The candidate
+ * kernel keeps that offset in VFS; the copy bridge carries no file offset.
+ * This host-side model uses BigInt, never Number, for the canonical value. */
 export function decode_file_mmap_offset(
   address_type: WasmAddressType,
   raw_offset: WasmAddress,

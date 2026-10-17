@@ -415,6 +415,10 @@ function user_imports({
       },
     },
     imports_mmap_init_v1: {
+      capabilities() {
+        assert(instance);
+        return mmap_copy.capabilities(instance.exports);
+      },
       map(rounded, source, length) {
         assert(instance);
         return mmap_copy.map(instance.exports, rounded, source, length);

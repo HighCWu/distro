@@ -8,6 +8,7 @@
   image,
   vm-test,
   vm-test-copy,
+  vm-test-file,
 }:
 
 let
@@ -36,6 +37,9 @@ let
         clang ${compileFlags} -Wl,--export=__wasm_mmap_init_v1 ${../basic-init/tests/mmap-copy.c} -o $out/copy.wasm
         clang ${compileFlags} -Wl,--export=__wasm_mmap_init_v1 ${../basic-init/tests/mmap-staging.c} -o $out/staging.wasm
         clang ${compileFlags} ${../basic-init/tests/mmap-staging-legacy.c} -o $out/staging-legacy.wasm
+        clang ${compileFlags} -Wl,--export=__wasm_mmap_init_v1 ${../basic-init/tests/mmap-file.c} -o $out/file.wasm
+        clang ${compileFlags} -DFILE_MMAP_MODE=2 ${../basic-init/tests/mmap-file.c} -o $out/file-legacy.wasm
+        clang ${compileFlags} -DFILE_MMAP_MODE=0 -Wl,--export=__wasm_mmap_init_v1 ${../basic-init/tests/mmap-file.c} -o $out/file-default.wasm
         clang ${compileFlags} -Wl,--export=__wasm_mmap_init_v1 ${../basic-init/tests/mmap-vfs.c} -o $out/vfs.wasm
         clang ${compileFlags} -Wl,--export=__wasm_mmap_init_v1 ${../basic-init/tests/mmap-vfs-lifetime.c} -o $out/vfs-lifetime.wasm
         clang ${compileFlags} -Wl,--export=__wasm_mmap_init_v1 ${../basic-init/tests/mmap-vfs-signal.c} -o $out/vfs-signal.wasm
@@ -132,6 +136,40 @@ pkgs.runCommand "mmap-benchmark-artifacts-${platform.wasmArch}"
       name = "mmap-vfs-${platform.wasmArch}";
       init = "${executables}/vfs.wasm";
     };
+    passthru.checks.file =
+      let
+        run =
+          harness: mode:
+          harness.rawInitramfsTest {
+            name = "mmap-file-${mode}-${platform.wasmArch}";
+            init = "${executables}/file${if mode == "candidate" then "" else "-${mode}"}.wasm";
+            disks = [
+              provenanceImage
+              provenanceImage
+            ];
+            snapshotFirstDisk = true;
+            readOnlyDisks = true;
+          };
+      in
+      pkgs.runCommand "mmap-file-checks-${platform.wasmArch}"
+        {
+          passthru.ci.heavy = true;
+          candidate = run vm-test-file "candidate";
+          legacy = run vm-test-file "legacy";
+          releaseConfig = run vm-test "default";
+          regression = vm-test-copy.rawInitramfsTest {
+            name = "mmap-vfs-lifetime-${platform.wasmArch}";
+            init = "${executables}/vfs-lifetime.wasm";
+            cpus = 2;
+          };
+        }
+        ''
+          mkdir $out
+          ln -s "$candidate" $out/candidate
+          ln -s "$legacy" $out/legacy
+          ln -s "$releaseConfig" $out/default
+          ln -s "$regression" $out/regression
+        '';
     passthru.checks.vfs-lifetime =
       pkgs.runCommand "mmap-vfs-lifetime-checks-${platform.wasmArch}"
         {

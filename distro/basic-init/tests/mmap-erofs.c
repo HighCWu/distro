@@ -47,7 +47,9 @@ static void check_bytes(const unsigned char *bytes, size_t rounded,
 	}
 }
 
-#define READERS 4
+/* Each maximum copy charges four pages; the global eight-page in-flight
+ * budget admits two at once. Published independent mappings cost no quota. */
+#define READERS 2
 #define ROUNDS 8
 
 struct child_copies {

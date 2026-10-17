@@ -8,13 +8,14 @@
   debug,
   wasmBits ? 32,
   mmapCopyTest ? false,
+  fileMmapCandidate ? false,
   llvm-toolchain-unwrapped,
   src ? import ./fetch-source.nix {
     inherit pkgs;
     owner = "HighCWu";
     repo = "linux";
-    rev = "2c0f7ceafb8800033aeb43845bfa61a6ad655c54";
-    hash = "sha256-cdmeg7AipTDLsnNx3maMt9lcYhcBQ0VsmH5e0iTC8aU=";
+    rev = "8bd657dcf6ebfc130d85185bf2d9cdedc1ac8399";
+    hash = "sha256-9kzioypm7XVE8mH/skLJ2NRQgYa0axjlipasoV53aHk=";
   },
 }:
 
@@ -34,7 +35,12 @@ let
   buildMetadata = pkgs.writeText "linux-wasm-build.json" (
     builtins.toJSON {
       schemaVersion = 1;
-      inherit wasmBits debug mmapCopyTest;
+      inherit
+        wasmBits
+        debug
+        mmapCopyTest
+        fileMmapCandidate
+        ;
       sourceIdentity = identity src;
       llvmToolchainIdentity = identity llvm-toolchain-unwrapped;
       scope = "Exact kernel build materials; not a complete dependency inventory or corresponding-source archive";
@@ -69,10 +75,15 @@ pkgs.stdenvNoCC.mkDerivation (finalAttrs: {
     pkgs.perl
     pkgs.rsync
     pkgs.wabt
-  ];
+  ]
+  ++ lib.optional fileMmapCandidate pkgs.python3;
 
   buildPhase = ''
     runHook preBuild
+
+    ${lib.optionalString fileMmapCandidate ''
+      CC=${pkgs.llvmPackages_22.clang}/bin/clang python3 -B arch/wasm/tests/run-mmap-file-host.py
+    ''}
 
     make() {
       command make -j$NIX_BUILD_CORES HOSTCC=${pkgs.llvmPackages_22.clang}/bin/clang "$@"
@@ -84,6 +95,11 @@ pkgs.stdenvNoCC.mkDerivation (finalAttrs: {
     make wasm${toString wasmBits}_defconfig ${lib.optionalString debug "debug.config"}
     ${lib.optionalString mmapCopyTest ''
       scripts/config --enable WASM_MMAP_COPY_TEST
+    ''}
+    ${lib.optionalString fileMmapCandidate ''
+      scripts/config --enable WASM_FILE_MMAP
+    ''}
+    ${lib.optionalString (mmapCopyTest || fileMmapCandidate) ''
       make olddefconfig
     ''}
 
@@ -120,7 +136,7 @@ pkgs.stdenvNoCC.mkDerivation (finalAttrs: {
       ''
             cd ${finalAttrs.finalPackage}
             sha256sum --check linux-build/SHA256SUMS
-        jq --exit-status '.schemaVersion == 1 and .wasmBits == ${toString wasmBits} and .debug == ${builtins.toJSON debug} and .mmapCopyTest == ${builtins.toJSON mmapCopyTest}' linux-build/build.json
+        jq --exit-status '.schemaVersion == 1 and .wasmBits == ${toString wasmBits} and .debug == ${builtins.toJSON debug} and .mmapCopyTest == ${builtins.toJSON mmapCopyTest} and .fileMmapCandidate == ${builtins.toJSON fileMmapCandidate}' linux-build/build.json
             test -s linux-build/kernel.config
             test -s linux-build/LICENSES/preferred/GPL-2.0
             touch $out

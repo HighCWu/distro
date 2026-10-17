@@ -480,6 +480,7 @@ export async function bootMachine(options: BootMachineOptions): Promise<Machine>
         mmap: unavailable,
       },
       user_mmap_init_v1: {
+        capabilities: unavailable,
         map: unavailable,
       },
       virtio: virtio_imports({

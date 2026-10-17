@@ -52,11 +52,34 @@ for (const width of ["i32", "i64"] as const) {
         copy: (to: WasmAddress, length: WasmAddress) => bridge.copy(user, to, length),
       },
     });
+    assert.equal(bridge.capabilities(instance.exports), 1);
     new Uint8Array(kernel.buffer, 0, 3).set([1, 2, 3]);
     assert.equal(bridge.map(instance.exports, scalar(4096), scalar(0), scalar(3)), scalar(0));
     assert.deepEqual([...new Uint8Array(user.buffer, 4096, 3)], [1, 2, 3]);
     const callback = instance.exports.__wasm_mmap_init_v1 as CallableFunction;
     assert.equal(callback(scalar(4096), scalar(3)), scalar(-1));
+  });
+
+  test(`${width}: capability queries do not invoke or grant a copy lease`, () => {
+    const { bridge, user } = setup();
+    let invoked = false;
+    const exports = {
+      __wasm_mmap_init_v1: () => {
+        invoked = true;
+        return scalar(0);
+      },
+    };
+    assert.equal(bridge.capabilities({}), 0);
+    assert.equal(bridge.capabilities({ __wasm_mmap: exports.__wasm_mmap_init_v1 }), 0);
+    assert.equal(bridge.capabilities({ __wasm_mmap_v2: exports.__wasm_mmap_init_v1 }), 0);
+    assert.equal(
+      bridge.capabilities({ __wasm_mmap_init_v1: new WebAssembly.Global({ value: "i32" }, 1) }),
+      0,
+    );
+    assert.equal(bridge.capabilities(exports), 1);
+    assert.equal(invoked, false);
+    assert.equal(bridge.copy(user, scalar(0), scalar(0)), -1);
+    assert.equal(bridge.capabilities({}), 0); // No cached grant after exec/module change.
   });
 
   test(`${width}: scoped copy preserves data, zero tail and old-module refusal`, () => {
