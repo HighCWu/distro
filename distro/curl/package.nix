@@ -173,6 +173,7 @@ stdenv.mkDerivation (finalAttrs: {
         node ${../busybox/check-binary.mjs} ${../../packages/kernel/src/wasm_binary.ts} \
           $out/bin/libcurl-fetch ${toString platform.addressBits} ${toString platform.maximumMemoryBytes}
         cp -r relocated/installation/share/licenses/curl $out/share/licenses/
+        chmod u+w $out/share/licenses/curl
         cp relocated/installation/share/doc/libcurl/examples/LICENSE.MIT $out/share/licenses/curl/example-MIT
       '';
 

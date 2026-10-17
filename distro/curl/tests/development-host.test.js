@@ -90,6 +90,48 @@ test("development metadata copies are writable without modifying read-only packa
     }
   }));
 
+test("direct consumer can append its notice to an immutable copied license directory", () =>
+  workspace((root) => {
+    const input = join(root, "relocated/installation/share/licenses/curl");
+    const example = join(root, "relocated/installation/share/doc/libcurl/examples");
+    const out = join(root, "output");
+    mkdirSync(input, { recursive: true });
+    mkdirSync(example, { recursive: true });
+    mkdirSync(join(out, "share/licenses"), { recursive: true });
+    writeFileSync(join(input, "curl-COPYING"), "immutable upstream notice\n");
+    writeFileSync(join(example, "LICENSE.MIT"), "example notice\n");
+    chmodSync(join(input, "curl-COPYING"), 0o444);
+    chmodSync(input, 0o555);
+    try {
+      const recipe = readFileSync(new URL("../package.nix", import.meta.url), "utf8");
+      const commands = recipe.match(
+        /cp -r relocated\/installation\/share\/licenses\/curl \$out\/share\/licenses\/\n\s*chmod u\+w \$out\/share\/licenses\/curl\n\s*cp relocated\/installation\/share\/doc\/libcurl\/examples\/LICENSE\.MIT \$out\/share\/licenses\/curl\/example-MIT/,
+      );
+      assert.ok(
+        commands,
+        "copy notices, make only destination directory writable, then append MIT",
+      );
+      const result = spawnSync("sh", ["-eu", "-c", commands[0]], {
+        cwd: root,
+        env: { ...process.env, out },
+        encoding: "utf8",
+      });
+      assert.equal(result.status, 0, result.stderr);
+      assert.equal(statSync(input).mode & 0o777, 0o555);
+      assert.equal(statSync(join(input, "curl-COPYING")).mode & 0o777, 0o444);
+      assert.deepEqual(
+        readFileSync(join(out, "share/licenses/curl/curl-COPYING")),
+        readFileSync(join(input, "curl-COPYING")),
+      );
+      assert.equal(
+        readFileSync(join(out, "share/licenses/curl/example-MIT"), "utf8"),
+        "example notice\n",
+      );
+    } finally {
+      chmodSync(input, 0o755);
+    }
+  }));
+
 test("both consumers can move an immutable development copy without changing its inputs", () =>
   workspace((root) => {
     const packageRoot = join(root, "immutable development");
