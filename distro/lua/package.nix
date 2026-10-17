@@ -22,6 +22,12 @@ stdenv.mkDerivation (finalAttrs: {
     "out"
     "dev"
   ];
+  # Installation below already splits headers, archive and metadata explicitly.
+  # nixpkgs' automatic dev hook would rewrite ${prefix}/include in lua.pc to
+  # an absolute store path, breaking copied installations. Keep example docs
+  # with the development output rather than moving them into the runtime.
+  moveToDev = false;
+  outputDoc = "dev";
   meta = {
     license = pkgs.lib.licenses.mit;
     outputsToInstall = [ "out" ];
@@ -64,6 +70,10 @@ stdenv.mkDerivation (finalAttrs: {
       CC="$CC" AR="llvm-ar rcu" RANLIB="llvm-ranlib"
     mkdir -p $dev/lib/pkgconfig
     cp ${pkgs.replaceVars ./lua.pc.in { inherit (finalAttrs) version; }} $dev/lib/pkgconfig/lua.pc
+    mkdir -p $dev/share/doc/lua/examples
+    cp ${../sdk/lua-example.c} $dev/share/doc/lua/examples/embedding.c
+    cp ${./development-README.md} $dev/share/doc/lua/examples/README.md
+    cp ${../sdk/LICENSE.MIT} $dev/share/doc/lua/examples/LICENSE.MIT
     mkdir -p $out/share/licenses/lua
     # Preserve the complete upstream HTML, which contains the MIT notice.
     cp doc/readme.html $out/share/licenses/lua/lua-readme.html
@@ -97,11 +107,15 @@ stdenv.mkDerivation (finalAttrs: {
               *"$PWD/relocated"*) ;;
               *) echo 'Lua flags did not select the relocated installation' >&2; exit 1 ;;
             esac
-            cp ${../sdk/lua-example.c} lua-example.c
+            cp relocated/share/doc/lua/examples/embedding.c lua-example.c
             ${sdk}/bin/wasm-linux-cc -O2 -Wall -Wextra -Werror \
+              "''${cflags[@]}" lua-example.c "''${libs[@]}" -o $out/lua-example.wasm
+            ${sdk}/bin/wasm-linux-cc -O2 -Wall -Wextra -Werror -DLINUX_WASM_TEST_INIT \
               "''${cflags[@]}" lua-example.c "''${libs[@]}" -o $out/lua-consumer.wasm
-            node ${../busybox/check-binary.mjs} ${../../packages/kernel/src/wasm_binary.ts} \
-              $out/lua-consumer.wasm ${toString platform.addressBits} ${toString platform.maximumMemoryBytes}
+            for program in lua-example lua-consumer; do
+              node ${../busybox/check-binary.mjs} ${../../packages/kernel/src/wasm_binary.ts} \
+                $out/$program.wasm ${toString platform.addressBits} ${toString platform.maximumMemoryBytes}
+            done
           '';
       files = {
         "/usr/share/lua/5.4/platform_test.lua" = builtins.toFile "platform-test.lua" ''
@@ -121,6 +135,7 @@ stdenv.mkDerivation (finalAttrs: {
         inherit files;
       };
       developmentProgram = "${consumer}/lua-consumer.wasm";
+      developmentApplication = "${consumer}/lua-example.wasm";
     };
 
   passthru.checks = {
@@ -136,6 +151,36 @@ stdenv.mkDerivation (finalAttrs: {
     development = vm-test.rawInitramfsTest {
       name = "lua-installed-development-${platform.wasmArch}";
       init = finalAttrs.finalPackage.runtimeAssets.developmentProgram;
+    };
+    application = vm-test.installedTest {
+      name = "lua-normal-application-${platform.wasmArch}";
+      init = ./application-test.sh;
+      contents = [ busybox ];
+      files = {
+        "/bin/lua-embedding-example" = {
+          source = finalAttrs.finalPackage.runtimeAssets.developmentApplication;
+          mode = "0755";
+        };
+        "/share/licenses/lua/example-MIT" = {
+          source = "${finalAttrs.finalPackage.dev}/share/doc/lua/examples/LICENSE.MIT";
+          mode = "0644";
+        };
+      }
+      // builtins.listToAttrs (
+        map
+          (license: {
+            name = "/share/licenses/lua/${license}";
+            value = {
+              source = "${finalAttrs.finalPackage.dev}/share/licenses/lua/${license}";
+              mode = "0644";
+            };
+          })
+          [
+            "lua-readme.html"
+            "musl-COPYRIGHT"
+            "compiler-rt-LICENSE.TXT"
+          ]
+      );
     };
   };
 })

@@ -20,6 +20,22 @@ const metadata = readFileSync(new URL("./lua.pc.in", import.meta.url), "utf8");
 const stage =
   "Lua embedding: installed archive, C callbacks, integer64, errors and coroutine verified";
 
+test("explicit development layout survives Nix multiple-output fixup policy", () => {
+  const recipe = readFileSync(new URL("./package.nix", import.meta.url), "utf8");
+  assert.match(recipe, /moveToDev = false;/);
+  assert.match(recipe, /outputDoc = "dev";/);
+  for (const [source, destination] of [
+    ["../sdk/lua-example.c", "embedding.c"],
+    ["./development-README.md", "README.md"],
+    ["../sdk/LICENSE.MIT", "LICENSE.MIT"],
+  ]) {
+    assert.ok(recipe.includes(`cp \${${source}} $dev/share/doc/lua/examples/${destination}`));
+  }
+  assert.ok(recipe.includes("cp relocated/share/doc/lua/examples/embedding.c lua-example.c"));
+  assert.match(recipe, /-DLINUX_WASM_TEST_INIT/);
+  assert.match(recipe, /application = vm-test\.installedTest/);
+});
+
 function workspace(run) {
   const root = mkdtempSync(join(tmpdir(), "linux-wasm-lua-dev-"));
   const original = join(root, "original");
@@ -89,10 +105,13 @@ test("C embedding consumer uses copied native headers and archive with GCC and C
     for (const header of ["lua.h", "luaconf.h", "lauxlib.h", "lualib.h"])
       cpSync(join(include, header), join(original, "include", header));
     cpSync(archive, join(original, "lib/liblua.a"));
+    const examples = join(original, "share/doc/lua/examples");
+    mkdirSync(examples, { recursive: true });
+    cpSync(new URL("../sdk/lua-example.c", import.meta.url), join(examples, "embedding.c"));
     renameSync(original, relocated);
     const flags = query(relocated, ["--static", "--cflags", "--libs", "lua"]);
     assert.equal(flags.status, 0, flags.stderr);
-    const source = new URL("../sdk/lua-example.c", import.meta.url).pathname;
+    const source = join(relocated, "share/doc/lua/examples/embedding.c");
     for (const compiler of ["gcc", "clang"]) {
       const executable = join(root, `lua-consumer-${compiler}`);
       const built = spawnSync(

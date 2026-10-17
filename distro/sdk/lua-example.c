@@ -5,7 +5,7 @@
 #include <stdint.h>
 #include <stdio.h>
 #include <stdlib.h>
-#ifdef __wasm__
+#if defined(__wasm__) && defined(LINUX_WASM_TEST_INIT)
 #include <sched.h>
 #endif
 
@@ -69,7 +69,8 @@ int main(void)
         "assert(c and d == 1152921504606847105 and coroutine.status(thread) == 'dead')\n"
         "return {answer = native_step(4)}\n";
     if (luaL_loadstring(state, script) != LUA_OK || lua_pcall(state, 0, 1, 0) != LUA_OK) {
-        fprintf(stderr, "Lua embedding: %s\n", lua_tostring(state, -1));
+        const char *message = lua_tostring(state, -1);
+        fprintf(stderr, "Lua embedding: %s\n", message ? message : "non-string Lua error");
         goto done;
     }
     if (!lua_istable(state, -1)) goto done;
@@ -84,7 +85,7 @@ done:
         puts("Lua embedding: installed archive, C callbacks, integer64, errors and coroutine verified");
     puts(result == EXIT_SUCCESS ? "::vm-test::pass" : "::vm-test::fail");
     fflush(NULL);
-#ifdef __wasm__
+#if defined(__wasm__) && defined(LINUX_WASM_TEST_INIT)
     if (result == EXIT_SUCCESS)
         for (;;) sched_yield();
 #endif
