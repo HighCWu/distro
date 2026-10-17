@@ -41,6 +41,7 @@ let
         clang ${compileFlags} -Wl,--export=__wasm_mmap_init_v1 ${../basic-init/tests/mmap-file.c} -o $out/file.wasm
         clang ${compileFlags} -pthread -Wl,--export=__wasm_mmap_init_v1 ${../basic-init/tests/mmap-file-lifetime.c} -o $out/file-lifetime.wasm
         clang ${compileFlags} -Wl,--export=__wasm_mmap_init_v1 ${../basic-init/tests/mmap-file-benchmark.c} -o $out/file-benchmark.wasm
+        clang ${compileFlags} -Wl,--export=__wasm_mmap_init_v1 ${../basic-init/tests/mmap-file-components.c} -o $out/file-components.wasm
         clang ${compileFlags} -DFILE_MMAP_MODE=2 ${../basic-init/tests/mmap-file.c} -o $out/file-legacy.wasm
         clang ${compileFlags} -DFILE_MMAP_MODE=0 -Wl,--export=__wasm_mmap_init_v1 ${../basic-init/tests/mmap-file.c} -o $out/file-default.wasm
         clang ${compileFlags} -Wl,--export=__wasm_mmap_init_v1 ${../basic-init/tests/mmap-vfs.c} -o $out/vfs.wasm
@@ -101,6 +102,12 @@ pkgs.runCommand "mmap-benchmark-artifacts-${platform.wasmArch}"
               init = "${executables}/file-benchmark.wasm";
             }
           } $out/initramfs.cpio
+          ln -s ${
+            image.mkInitramfs {
+              name = "mmap-file-components-${platform.wasmArch}";
+              init = "${executables}/file-components.wasm";
+            }
+          } $out/components.cpio
           ln -s ${provenanceImage} $out/disk.img
           ln -s ${fileKernel} $out/kernel
           ln -s ${vm-test-file.runner} $out/runner
