@@ -18,18 +18,24 @@ const rewritten = names.map((name) => {
     .split("\n")
     .filter((line) => !/^(prefix|exec_prefix|libdir|includedir)=/.test(line))
     .join("\n");
-  for (const dependency of dependencies)
-    for (const [suffix, variable] of [
-      ["lib", "libdir"],
-      ["include", "includedir"],
-    ])
-      contents = contents.replaceAll(`${dependency}/${suffix}`, `\${${variable}}`);
+  for (const dependency of dependencies) {
+    const escaped = dependency.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+    contents = contents.replace(
+      new RegExp(`${escaped}/+(lib|include)(?=/|\\s|$)`, "g"),
+      (_, directory) => (directory === "lib" ? "${libdir}" : "${includedir}"),
+    );
+  }
   // The runtime recipe may already have normalized known build roots to FHS.
+  // A root prefix of / can produce //lib or //include; accept only these
+  // known directories, not arbitrary absolute paths or similarly named roots.
   contents = contents
-    .replace(/-L\/lib(?=\s|$)/g, "-L${libdir}")
-    .replace(/-I\/include(?=\s|$)/g, "-I${includedir}");
-  if (contents.includes("/nix/store/") || /-[IL]\//.test(contents))
-    throw new Error(`unrelocated path in installed metadata: ${name}`);
+    .replace(/-L\/+lib(?=\s|$)/g, "-L${libdir}")
+    .replace(/-I\/+include(?=\s|$)/g, "-I${includedir}");
+  const unrelocated = contents
+    .split("\n")
+    .filter((line) => line.includes("/nix/store/") || /-[IL]\//.test(line));
+  if (unrelocated.length)
+    throw new Error(`unrelocated path in installed metadata: ${name}\n${unrelocated.join("\n")}`);
   return [
     name,
     "prefix=${pcfiledir}/../..\nexec_prefix=${prefix}\nlibdir=${prefix}/lib\nincludedir=${prefix}/include\n" +

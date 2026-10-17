@@ -108,6 +108,44 @@ test("unknown build roots and absent static dependency metadata fail before rewr
     assert.notEqual(spawnSync(process.execPath, [relocate, root, ...buildRoots]).status, 0);
   }));
 
+test("root-prefix redundant slashes relocate without accepting unrelated absolute directories", () =>
+  workspace((root) => {
+    const directory = metadata(root);
+    const path = join(directory, "libcurl.pc");
+    const original = readFileSync(path, "utf8");
+    for (const slashes of ["/", "//", "///"]) {
+      writeFileSync(
+        path,
+        original +
+          `Libs.private: -L${slashes}lib -L${buildRoots[1]}${slashes}lib -lssl\n` +
+          `Cflags.private: -I${slashes}include -I${buildRoots[2]}${slashes}include\n`,
+      );
+      const result = spawnSync(process.execPath, [relocate, root, ...buildRoots], {
+        encoding: "utf8",
+      });
+      assert.equal(result.status, 0, result.stderr);
+      const relocated = readFileSync(path, "utf8");
+      assert.ok(relocated.includes("Libs.private: -L${libdir} -L${libdir} -lssl"));
+      assert.ok(relocated.includes("Cflags.private: -I${includedir} -I${includedir}"));
+      assert.doesNotMatch(relocated, /\/nix\/store\/|-[IL]\//);
+    }
+    for (const flag of [
+      "-L//lib64",
+      "-I//include-other",
+      "-L/opt/lib",
+      `-L${buildRoots[0]}/libevil`,
+    ]) {
+      const invalid = original + `Libs.private: ${flag}\n`;
+      writeFileSync(path, invalid);
+      const result = spawnSync(process.execPath, [relocate, root, ...buildRoots], {
+        encoding: "utf8",
+      });
+      assert.notEqual(result.status, 0, flag);
+      assert.ok(result.stderr.includes(`libcurl.pc\nLibs.private: ${flag}`), result.stderr);
+      assert.equal(readFileSync(path, "utf8"), invalid);
+    }
+  }));
+
 async function freePort() {
   const server = createServer();
   await new Promise((resolve, reject) => {
