@@ -3,6 +3,7 @@ import { SeekMode, SystemError } from "../src/index.ts";
 import { guest_test } from "./fixture.ts";
 import { pattern_bytes } from "./helpers.ts";
 import { checkExecFileDescriptors } from "./exec-file-descriptors-runtime.ts";
+import { checkLockedWriteInput } from "./write-file-runtime.ts";
 
 guest_test("filesystem", async (t, fixture) => {
   const agent = await fixture.spawn();
@@ -18,6 +19,10 @@ guest_test("filesystem", async (t, fixture) => {
 
   await t.test("SDK file descriptors are not inherited by executed programs", async () => {
     await checkExecFileDescriptors(agent, assert, `${directory}/exec-fds`);
+  });
+
+  await t.test("locked write input neither truncates nor creates destination files", async () => {
+    await checkLockedWriteInput(fs, assert, `${directory}/locked-input`);
   });
 
   await t.test("stats files", async () => {

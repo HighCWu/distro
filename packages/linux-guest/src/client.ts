@@ -370,40 +370,47 @@ class GuestClient {
   }
 
   async writeFile(path: string, data: FileData, options: WriteFileOptions = {}) {
-    const session = await this.#connect();
     options.signal?.throwIfAborted();
-    let flags = O.WRONLY | O.CLOEXEC;
-    if (options.create ?? true) flags |= O.CREAT;
-    if (options.createNew) flags |= O.CREAT | O.EXCL;
-    if (options.append) flags |= O.APPEND;
-    else flags |= O.TRUNC;
-    await using fd = await openat(session, path, flags, options.mode ?? 0o666);
-
+    // Acquire the input before a potentially destructive open. In particular,
+    // a locked stream must not truncate an existing destination before failing.
     const reader = byte_stream(data).getReader();
-    let remove_abort = () => {};
     try {
-      if (options.signal) {
-        const abort = () => {
-          void reader.cancel(options.signal?.reason).catch(() => {});
-        };
-        options.signal.addEventListener("abort", abort, { once: true });
-        remove_abort = () => options.signal?.removeEventListener("abort", abort);
-        if (options.signal.aborted) abort();
-      }
-      for (;;) {
+      const session = await this.#connect();
+      options.signal?.throwIfAborted();
+      let flags = O.WRONLY | O.CLOEXEC;
+      if (options.create ?? true) flags |= O.CREAT;
+      if (options.createNew) flags |= O.CREAT | O.EXCL;
+      if (options.append) flags |= O.APPEND;
+      else flags |= O.TRUNC;
+      await using fd = await openat(session, path, flags, options.mode ?? 0o666);
+
+      let remove_abort = () => {};
+      try {
+        if (options.signal) {
+          const abort = () => {
+            void reader.cancel(options.signal?.reason).catch(() => {});
+          };
+          options.signal.addEventListener("abort", abort, { once: true });
+          remove_abort = () => options.signal?.removeEventListener("abort", abort);
+          if (options.signal.aborted) abort();
+        }
+        for (;;) {
+          options.signal?.throwIfAborted();
+          const { value, done } = await reader.read();
+          if (done) break;
+          await write_all(fd, value, options.signal);
+        }
+        // A cancelled reader resolves `done`; ensure abort still rejects.
         options.signal?.throwIfAborted();
-        const { value, done } = await reader.read();
-        if (done) break;
-        await write_all(fd, value, options.signal);
+      } catch (error) {
+        await reader.cancel(error).catch(() => {});
+        options.signal?.throwIfAborted();
+        throw error;
+      } finally {
+        remove_abort();
       }
-      // A cancelled reader resolves `done`; ensure abort still rejects.
-      options.signal?.throwIfAborted();
-    } catch (error) {
-      await reader.cancel(error).catch(() => {});
-      options.signal?.throwIfAborted();
-      throw error;
     } finally {
-      remove_abort();
+      // Before open succeeds, leave the unread source intact for caller reuse.
       reader.releaseLock();
     }
   }
