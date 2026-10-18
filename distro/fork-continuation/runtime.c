@@ -10,6 +10,7 @@
 #include <stdlib.h>
 #include <string.h>
 #include <sys/mman.h>
+#include <sys/stat.h>
 #include <sys/wait.h>
 #include <unistd.h>
 
@@ -107,21 +108,51 @@ int main(int argc, char **argv)
 	errno = 0;
 	require(waitpid(pid, &status, WNOHANG) == -1 && errno == ECHILD, "single reap");
 	puts("fork: continuation, PID, TLS, atfork, mask, memory, fd and nested wait pass");
+	fflush(stdout);
 
 	char parent_text[32];
 	require(snprintf(parent_text, sizeof parent_text, "%ld", (long)original) > 0, "format parent PID");
 	char *exec_args[] = {(char *)exec_path, "hello", parent_text, NULL};
 	char *exec_env[] = {"FORK_PROBE=ready", NULL};
+	// Valid Wasm header, but no memory import or executable entry. On the
+	// target this reaches compile_begin/end and must abort before replacing us.
+	const unsigned char rejected_module[] = {0, 'a', 's', 'm', 1, 0, 0, 0};
+	char rejected_path[] = "/tmp/fork-rejected-exec.XXXXXX";
+	int rejected_fd = mkstemp(rejected_path);
+	require(rejected_fd >= 0 &&
+		write(rejected_fd, rejected_module, sizeof rejected_module) == sizeof rejected_module &&
+		!fchmod(rejected_fd, 0700) && !close(rejected_fd), "rejected exec fixture");
 	pid = fork();
 	require(pid >= 0, "fork before exec");
 	if (!pid) {
+		pid_t child_pid = getpid();
+		volatile int exec_sentinel = 73;
 		tls_value = 99;
+		errno = 0;
+		require(execve("", exec_args, exec_env) == -1 && errno == ENOENT, "missing exec error");
+		for (int attempt = 0; attempt < 2; attempt++) {
+			errno = 0;
+			require(execve(rejected_path, exec_args, exec_env) == -1 && errno == ENOEXEC,
+				"rejected exec error");
+			require(getpid() == child_pid && getppid() == original && tls_value == 99 &&
+				exec_sentinel == 73, "rejected exec changed image");
+			require(!pthread_sigmask(SIG_SETMASK, NULL, &observed) &&
+				sigismember(&observed, SIGUSR1) == 1, "rejected exec changed mask");
+		}
+		pid_t after_failure = fork();
+		require(after_failure >= 0, "fork after rejected exec");
+		if (!after_failure) _exit(31);
+		require(waitpid(after_failure, &status, 0) == after_failure && WIFEXITED(status) &&
+			WEXITSTATUS(status) == 31, "wait after rejected exec");
+		puts("fork: rejected exec preserves image and later fork pass");
+		fflush(stdout);
 		execve(exec_path, exec_args, exec_env);
 		_exit(115);
 	}
 	require(waitpid(pid, &status, 0) == pid && WIFEXITED(status) && WEXITSTATUS(status) == 37,
 		"fork then exec and wait");
 	require(tls_value == 17, "exec child changed parent TLS");
+	require(!unlink(rejected_path), "rejected exec fixture cleanup");
 	puts("fork: exec replacement and wait pass");
 
 #ifdef __wasm__
