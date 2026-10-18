@@ -275,6 +275,8 @@ jobs:
           python3 -B distro/sdk/checkout-bundle-test.py
           python3 -B distro/sdk/checkout-bundle.py export . "$GITHUB_SHA" \
             sdk-selected-sources/distro-checkout.tar.gz
+          # Nix outputs are read-only; modify only the collected manifest copy.
+          chmod u+w sdk-selected-sources/SHA256SUMS
           (cd sdk-selected-sources && sha256sum distro-checkout.tar.gz >> SHA256SUMS)
           (cd sdk-selected-sources && sha256sum --check SHA256SUMS)
       - name: Upload validated SDK source inputs
