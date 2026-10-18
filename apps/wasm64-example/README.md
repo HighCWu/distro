@@ -93,6 +93,14 @@ node integrity.mjs
 node server.mjs
 ```
 
+`server.mjs` also runs the same complete inventory check before listening. A
+missing/invalid manifest, missing/extra/changed payload or symbolic link makes
+startup fail; it never regenerates the manifest or builds missing assets.
+This adds a full streaming read of the payload at each server startup, not a
+whole-image JavaScript copy. Keep the served directory unchanged afterwards:
+startup verification is not an immutable snapshot, ongoing attestation or
+signature check, and does not establish that Linux can boot.
+
 Use a current Node.js release supporting ES modules. `integrity.mjs` reads the
 adjacent `checksums.json` and checks SHA-256, sizes and the complete file
 inventory, including the kernel, both disk images, scripts and notices. It

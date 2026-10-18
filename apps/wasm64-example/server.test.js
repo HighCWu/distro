@@ -6,19 +6,21 @@ import { copyFileSync, mkdtempSync, mkdirSync, rmSync, symlinkSync, writeFileSyn
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
+import { bundleManifest } from "./integrity.mjs";
 
 test(
-  "example server supplies isolation and MIME headers without building missing assets",
+  "example server verifies the bundle before supplying isolation and MIME headers",
   { timeout: 10000 },
   async () => {
     const temporary = mkdtempSync(join(tmpdir(), "wasm64-example-server-"));
     const root = join(temporary, "public");
     mkdirSync(root);
     copyFileSync(new URL("./server.mjs", import.meta.url), join(root, "server.mjs"));
+    copyFileSync(new URL("./integrity.mjs", import.meta.url), join(root, "integrity.mjs"));
     writeFileSync(join(root, "index.html"), "example page");
     writeFileSync(join(root, "module.wasm"), new Uint8Array([0, 97, 115, 109, 1, 0, 0, 0]));
     writeFileSync(join(temporary, "outside"), "must not be served");
-    symlinkSync(join(temporary, "outside"), join(root, "escape"));
+    writeFileSync(join(root, "checksums.json"), JSON.stringify(await bundleManifest(root)));
     const child = spawn(process.execPath, [join(root, "server.mjs")], {
       env: { ...process.env, PORT: "0" },
       stdio: ["ignore", "pipe", "pipe"],
@@ -33,6 +35,10 @@ test(
           const match = output.match(/Listening on (http:\/\/127\.0\.0\.1:\d+)/);
           if (match) {
             clearTimeout(timer);
+            if (!/Verified \d+ bundle files \(SHA-256\)/.test(output)) {
+              reject(new Error("server listened without bundle verification"));
+              return;
+            }
             resolve(match[1]);
           }
         });
@@ -41,6 +47,9 @@ test(
           reject(new Error(`server exited: ${code}`));
         });
       });
+      // Startup validation is not a filesystem snapshot or ongoing attestation.
+      // The HTTP path guard must also reject a link added after verification.
+      symlinkSync(join(temporary, "outside"), join(root, "escape"));
       const index = await fetch(base);
       assert.equal(index.status, 200);
       assert.equal(index.headers.get("cross-origin-opener-policy"), "same-origin");
@@ -75,3 +84,45 @@ test(
     }
   },
 );
+
+for (const fault of ["no-manifest", "modified", "missing", "extra", "invalid-manifest", "symlink"])
+  test(`example server refuses ${fault} bundles before listening`, { timeout: 10000 }, async () => {
+    const root = mkdtempSync(join(tmpdir(), "wasm64-example-invalid-"));
+    let child;
+    try {
+      for (const name of ["server.mjs", "integrity.mjs"])
+        copyFileSync(new URL(`./${name}`, import.meta.url), join(root, name));
+      writeFileSync(join(root, "index.html"), "original page");
+      if (fault !== "no-manifest")
+        writeFileSync(join(root, "checksums.json"), JSON.stringify(await bundleManifest(root)));
+      if (fault === "modified") writeFileSync(join(root, "index.html"), "modified page");
+      if (fault === "missing") rmSync(join(root, "index.html"));
+      if (fault === "extra") writeFileSync(join(root, "extra"), "unexpected file");
+      if (fault === "invalid-manifest") writeFileSync(join(root, "checksums.json"), "{}");
+      if (fault === "symlink") symlinkSync("index.html", join(root, "alias.html"));
+      child = spawn(process.execPath, [join(root, "server.mjs")], {
+        env: { ...process.env, PORT: "0" },
+        stdio: ["ignore", "pipe", "pipe"],
+      });
+      let stdout = "",
+        stderr = "";
+      child.stdout.on("data", (data) => {
+        stdout += data;
+      });
+      child.stderr.on("data", (data) => {
+        stderr += data;
+      });
+      const [code, signal] = await once(child, "close", { signal: AbortSignal.timeout(5000) });
+      assert.equal(code, 1);
+      assert.equal(signal, null);
+      assert.doesNotMatch(stdout, /Listening on/);
+      assert.match(stderr, /Bundle verification failed:/);
+    } finally {
+      if (child && child.exitCode === null && child.signalCode === null) {
+        const exited = once(child, "exit");
+        child.kill("SIGTERM");
+        await exited;
+      }
+      rmSync(root, { recursive: true, force: true });
+    }
+  });

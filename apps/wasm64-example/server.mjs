@@ -4,10 +4,18 @@ import { createServer } from "node:http";
 import { createReadStream, realpathSync, statSync } from "node:fs";
 import { dirname, extname, resolve, sep } from "node:path";
 import { fileURLToPath } from "node:url";
+import { verifyBundle } from "./integrity.mjs";
 
 const root = realpathSync(dirname(fileURLToPath(import.meta.url)));
 const port = Number(process.env.PORT ?? 0);
 if (!Number.isInteger(port) || port < 0 || port > 65535) throw new Error("invalid PORT");
+// Fail before accepting requests; never regenerate a damaged bundle's manifest.
+try {
+  console.log(`Verified ${await verifyBundle(root)} bundle files (SHA-256)`);
+} catch (error) {
+  console.error(`Bundle verification failed: ${error.message}`);
+  process.exit(1);
+}
 const mime = {
   ".html": "text/html; charset=utf-8",
   ".js": "text/javascript; charset=utf-8",
