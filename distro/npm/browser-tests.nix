@@ -283,11 +283,25 @@ let
           name:
           playwright.mkCheck {
             name = "browser-tests-${name}";
-            suite = pythonGitRootSuite;
+            suite = pythonGitRootSuite false;
             expectedTests = [
               "runs Python Git SQLite collaboration across fresh browser wasm64 roots"
             ];
             project = lib.removePrefix "agent-python-git-root-wasm64-" name;
+          }
+        )
+      )
+      // (lib.genAttrs
+        [ "agent-python-git-opfs-root-wasm64-chromium" "agent-python-git-opfs-root-wasm64-firefox" ]
+        (
+          name:
+          playwright.mkCheck {
+            name = "browser-tests-${name}";
+            suite = pythonGitRootSuite true;
+            expectedTests = [
+              "persists Python Git SQLite workspace through OPFS across page reload"
+            ];
+            project = lib.removePrefix "agent-python-git-opfs-root-wasm64-" name;
           }
         )
       )
@@ -529,10 +543,16 @@ let
       '';
 
   pythonGitRootSuite =
+    persistence:
     let
       assets = guest-agent.checks.python-git-root-wasm64;
+      opfsWorker = import ../site/opfs-disk-worker.nix {
+        inherit bytes pkgs;
+        kernel = kernel-wasm64;
+      };
     in
-    pkgs.runCommand "agent-python-git-root-wasm64-browser-tests"
+    pkgs.runCommand
+      "agent-python-git${lib.optionalString persistence "-opfs"}-root-wasm64-browser-tests"
       {
         nativeBuildInputs = [ pkgs.esbuild ];
       }
@@ -545,13 +565,15 @@ let
           --external:@lowland/bytes --outfile=$out/agent-python-git-root-suite.js
         cp ${source}/agent-python-git-root-app.js $out/app.js
         cp ${source}/agent-assertions.js $out/agent-assertions.js
-        cp ${source}/agent-tests/agent-python-git-root.spec.js $out/tests/
+        cp ${source}/agent-tests/agent-python-git${lib.optionalString persistence "-opfs"}-root.spec.js $out/tests/
         cp ${source}/memory64-index.html $out/index.html
         cp ${source}/playwright.config.js $out/playwright.config.js
         cp ${source}/server.js $out/server.js
         cp ${assets.runtimeBootDisk} $out/agent-boot.img
         cp ${assets.runtimeRootfs} $out/agent-root.ext4
         cp ${../python/git-workspace-example.py} $out/git-workspace-example.py
+        cp ${opfsWorker}/opfs-disk-worker.js $out/opfs-disk-worker.js
+        cp ${../../apps/site/opfs-device.js} $out/opfs-device.js
         cp -r ${bytes}/. $out/node_modules/@lowland/bytes/
         cp -r ${kernel-wasm64}/. $out/node_modules/@lowland/kernel/
       '';

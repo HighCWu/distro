@@ -114,7 +114,7 @@ test("combined SDK workload imports exact source and retains only ext4 bytes acr
     "sizeof-size_t: 8",
     "readline-COPYING",
     "linked/openssl-LICENSE.txt",
-    "assert.equal(report.head, head)",
+    "assert.equal(report.head, expectedHead)",
     "sha256: digest",
     "payload.byteLength",
     '"sha256sum", "-c", "SHA256SUMS"',

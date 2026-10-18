@@ -39,7 +39,7 @@ test("combined browser loads exact boot, root and original example before enteri
       return { passed, closed: true };
     },
   });
-  runInNewContext(app.replace(/^import .*;\n/gm, ""), context);
+  runInNewContext(app.replace(/^import[\s\S]*?;\n/gm, ""), context);
   assert.deepEqual(await context.runNativePythonGitRoot(), { passed, closed: true });
   assert.deepEqual(requests.sort(), [...paths].sort());
   assert.deepEqual(calls[0].slice(0, 3), [Uint8Array.of(0), Uint8Array.of(1), Uint8Array.of(2)]);
@@ -66,7 +66,7 @@ test("combined browser propagates shared runtime errors without fabricating succ
       throw new Error("corrupt SQLite payload");
     },
   };
-  runInNewContext(app.replace(/^import .*;\n/gm, ""), context);
+  runInNewContext(app.replace(/^import[\s\S]*?;\n/gm, ""), context);
   await assert.rejects(context.runNativePythonGitRoot(), /corrupt SQLite payload/);
 });
 
