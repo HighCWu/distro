@@ -269,6 +269,32 @@ jobs:
           if-no-files-found: error
           compression-level: 0
           retention-days: 3
+      - name: Collect verified Git build materials
+        if: ${{ success() && startsWith(matrix.check, 'git') && endsWith(matrix.check, '-check-build-materials') }}
+        env:
+          CHECK: ${{ matrix.check }}
+        run: |
+          case "$CHECK" in
+            git-check-build-materials) package=git ;;
+            git-wasm64-check-build-materials) package=git-wasm64 ;;
+            *) echo "Unexpected Git materials check: $CHECK" >&2; exit 1 ;;
+          esac
+          materials=$(nix eval --raw ".#$package.buildMaterials.outPath")
+          verification=$(nix eval --raw ".#$package.checks.build-materials.outPath")
+          nix path-info "$materials" "$verification"
+          mkdir git-build-materials
+          cp -R "$materials/." git-build-materials/
+          cp -R "$verification" git-build-materials/verification
+          cmp git-build-materials/SHA256SUMS git-build-materials/verification/MATERIALS_SHA256SUMS
+          (cd git-build-materials && sha256sum --check verification/MATERIALS_SHA256SUMS)
+          (cd git-build-materials/verification && sha256sum --check SHA256SUMS)
+      - uses: actions/upload-artifact@v4
+        if: ${{ success() && startsWith(matrix.check, 'git') && endsWith(matrix.check, '-check-build-materials') }}
+        with:
+          name: git-build-materials-${{ matrix.check }}-${{ github.sha }}
+          path: git-build-materials/
+          if-no-files-found: error
+          retention-days: 3
       - name: Collect verified Python build materials
         if: ${{ success() && startsWith(matrix.check, 'python') && endsWith(matrix.check, '-check-build-materials') }}
         env:

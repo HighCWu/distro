@@ -18,6 +18,14 @@ stdenv.mkDerivation (finalAttrs: {
   pname = "git";
   version = "2.55.0";
   inherit src;
+  outputs = [
+    "out"
+    "buildMaterials"
+  ];
+  # The installed FHS runtime must stay intact; material collection is explicit.
+  setOutputFlags = false;
+  moveToDev = false;
+  meta.outputsToInstall = [ "out" ];
   meta.license = pkgs.lib.licenses.gpl2Only;
   nativeBuildInputs = [ pkgs.nodejs ];
 
@@ -81,6 +89,7 @@ stdenv.mkDerivation (finalAttrs: {
       "CC=$CC" "AR=$AR"
       "CURL_LDFLAGS=-lcurl -lssl -lcrypto -lz"
     )
+    printf '%s\0' "''${makeFlagsArray[@]}" >linux-wasm-make-arguments.nul
   '';
 
   # uname_S=Linux: the build host is Linux, so config.mak.uname already selects
@@ -166,6 +175,36 @@ stdenv.mkDerivation (finalAttrs: {
       ${./run-command-posix-spawn.patch} ${../sdk/LICENSE.MIT}
   '';
 
+  # Run after fixup so the digest identifies the final installed bytes.
+  # These selected records are not a source closure or license-link approval.
+  postFixup = ''
+    bash ${./build-materials.sh} "$PWD" "$buildMaterials" "$out" ${./package.nix} \
+      ${
+        pkgs.writeText "git-build.json" (
+          builtins.toJSON {
+            schemaVersion = 1;
+            inherit (platform) addressBits maximumMemoryBytes;
+            sourceIdentity = builtins.baseNameOf "${finalAttrs.src}";
+            inherit (finalAttrs) makeFlags;
+            buildInputIdentities = map (dependency: builtins.baseNameOf "${dependency}") finalAttrs.buildInputs;
+            patches = map (patch: builtins.baseNameOf "${patch}") finalAttrs.patches;
+            dependencies =
+              map
+                (dependency: {
+                  outputIdentity = builtins.baseNameOf "${dependency}";
+                  sourceIdentity = builtins.baseNameOf "${dependency.src}";
+                })
+                [
+                  zlib
+                  curl
+                  openssl
+                ];
+            scope = "Selected Git build records and linked library identities; not complete corresponding source, an offline rebuild environment or license-compatibility approval";
+          }
+        )
+      } "$CC" ${./build-materials.README.md} ${pkgs.lib.escapeShellArgs (map toString finalAttrs.patches)}
+  '';
+
   passthru.apk.depends = [
     "busybox"
     "ca-certificates"
@@ -193,6 +232,44 @@ stdenv.mkDerivation (finalAttrs: {
         };
     in
     {
+      build-materials =
+        pkgs.runCommand "git-wasm${toString platform.addressBits}-build-materials-check"
+          {
+            passthru.ci.heavy = true;
+            passthru.buildMaterials = finalAttrs.finalPackage.buildMaterials;
+            nativeBuildInputs = [
+              pkgs.nodejs
+              pkgs.jq
+            ];
+          }
+          ''
+            (cd ${finalAttrs.finalPackage.buildMaterials} && sha256sum --check SHA256SUMS)
+            (cd ${finalAttrs.finalPackage} && sha256sum --check ${finalAttrs.finalPackage.buildMaterials}/BINARY_SHA256SUMS)
+            materials=${finalAttrs.finalPackage.buildMaterials}
+            jq --exit-status '.schemaVersion == 1
+              and .addressBits == ${toString platform.addressBits}
+              and .maximumMemoryBytes == ${toString platform.maximumMemoryBytes}
+              and (.dependencies | length) == 3
+              and (.patches | length) == ${toString (builtins.length finalAttrs.patches)}' "$materials/build.json"
+            index=0
+            for patch in ${pkgs.lib.escapeShellArgs (map toString finalAttrs.patches)}; do
+              printf -v name '%03d.patch' "$index"
+              cmp "$materials/patches/$name" "$patch"
+              index=$((index + 1))
+            done
+            cmp "$materials/package.nix" ${./package.nix}
+            cmp "$materials/COPYING" ${finalAttrs.src}/COPYING
+            test ! -e ${finalAttrs.finalPackage}/build.json
+            test ! -e ${finalAttrs.finalPackage}/GIT-CFLAGS
+            for program in usr/bin/git usr/libexec/git-core/git-remote-http; do
+              node ${../busybox/check-binary.mjs} ${../../packages/kernel/src/wasm_binary.ts} \
+                ${finalAttrs.finalPackage}/"$program" ${toString platform.addressBits} ${toString platform.maximumMemoryBytes}
+            done
+            mkdir $out
+            cp "$materials/SHA256SUMS" "$out/MATERIALS_SHA256SUMS"
+            cp "$materials/BINARY_SHA256SUMS" "$out/BINARY_SHA256SUMS"
+            (cd "$out" && sha256sum MATERIALS_SHA256SUMS BINARY_SHA256SUMS >SHA256SUMS)
+          '';
       workflow = check "workflow" ./workflow-test.sh;
       packing = check "packing" ./packing-test.sh;
       # Serve a real repository over guest loopback and fetch it through
