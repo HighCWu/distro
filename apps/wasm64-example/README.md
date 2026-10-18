@@ -144,6 +144,19 @@ profile and origin; the file is `linux-wasm64-NAME.ext4`. Creation initializes
 from this bundle's root template and refuses an existing file, including an
 incomplete file left by failed initialization. Choose a new name after such a
 failure; this page does not delete or overwrite existing disks automatically.
+While Linux is stopped, **List saved OPFS disks** shows this origin's matching
+names and byte sizes without opening or validating a Linux filesystem. Incomplete
+files are included. The list is only a snapshot; another page can change it.
+To reclaim a disk, including a failed creation, enter its name in **Disk name**,
+choose **Delete named disk permanently**, and type the exact name again in the
+prompt. Cancelling or a mismatched confirmation does not delete anything.
+Deletion cannot be undone here: back up needed files separately first. Deletion
+uses the same Web Lock as Create/Open and refuses a disk still leased by another
+page, including while its device is closing. It removes only that named file,
+never directories or unrelated OPFS data; it does not repair or migrate disks.
+Other same-origin scripts need not obey this protocol, so it is not a security
+boundary against such scripts.
+
 Creation pipes the HTTP response stream into OPFS with backpressure instead of
 buffering the entire template in JavaScript. Linux starts only after the write
 stream closes successfully. This avoids that explicit whole-image copy, not all

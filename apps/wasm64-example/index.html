@@ -43,7 +43,21 @@
       Creating refuses existing names; opening never replaces or resizes a disk. Stop applications
       first, then choose Sync and stop Linux before reloading. Ordinary Stop is immediate and may
       lose unsynced Linux writes. Browser storage deletion, eviction, quota failures and power loss
-      are not covered; keep independent backups. No automatic fallback or disk deletion is offered.
+      are not covered; keep independent backups. There is no automatic fallback or automatic disk
+      deletion.
+    </p>
+    <p>
+      <button id="refresh-disks" disabled>List saved OPFS disks</button>
+      <button id="delete-disk" disabled>Delete named disk permanently…</button>
+    </p>
+    <pre id="saved-disks" aria-label="Saved OPFS disks">
+Use List to inspect this origin's saved disks.</pre>
+    <p>
+      Disk management is available only while this page's Linux is stopped. Listing does not open or
+      validate a disk and may include incomplete files. To delete the disk in the Disk name field,
+      type that exact name in the confirmation prompt. Deletion cannot be undone here and refuses
+      disks leased by another page using this example. Other scripts at this origin are not a
+      security boundary and need not follow its lock protocol.
     </p>
     <p>
       <button id="start" disabled>Start Linux</button>

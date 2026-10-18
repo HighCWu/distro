@@ -1,4 +1,5 @@
 // SPDX-License-Identifier: MIT
+import { persistentRootIdentity } from "./root-storage.js";
 
 // Disk ownership lasts through device.closed, including startup failure and
 // abnormal Linux shutdown. Reopening never downloads or resizes the template.
@@ -35,11 +36,9 @@ export async function openRoot(
     };
   }
   if (mode !== "create" && mode !== "open") throw new Error("Select a root storage mode");
-  if (typeof name !== "string" || !/^[a-z0-9][a-z0-9-]{0,47}$/.test(name))
-    throw new Error("Disk name must be 1–48 lowercase ASCII letters, digits or hyphens");
+  const { filename, lockName } = persistentRootIdentity(name);
   if (!storage?.getDirectory || !locks?.request)
     throw new Error("OPFS and Web Locks are required; no temporary fallback was used");
-  const filename = `linux-wasm64-${name}.ext4`;
   let release;
   let accept;
   let reject;
@@ -50,15 +49,11 @@ export async function openRoot(
   const held = new Promise((resolve) => {
     release = resolve;
   });
-  const lease = locks.request(
-    `linux-wasm64-disk:${filename}`,
-    { ifAvailable: true },
-    async (lock) => {
-      if (!lock) throw new Error("This disk is already open in another page");
-      accept();
-      await held;
-    },
-  );
+  const lease = locks.request(lockName, { ifAvailable: true }, async (lock) => {
+    if (!lock) throw new Error("This disk is already open in another page");
+    accept();
+    await held;
+  });
   void lease.catch(reject);
   await acquired;
   let device;

@@ -12,6 +12,7 @@ for (const persistent of [false, true])
       await expect(page.locator("#runtime-profile")).toContainText("Python + Git root (512 MiB)");
       const state = page.locator("#state");
       const diskName = await page.evaluate(() => `controls-${crypto.randomUUID()}`);
+      let templateRequests = 0;
       if (persistent) {
         await page.locator("#storage-mode").selectOption("create");
         await page.locator("#disk-name").fill(diskName);
@@ -19,6 +20,8 @@ for (const persistent of [false, true])
       try {
         await page.locator("#start").click();
         await expect(state).toHaveText("running", { timeout: 120000 });
+        await expect(page.locator("#refresh-disks")).toBeDisabled();
+        await expect(page.locator("#delete-disk")).toBeDisabled();
         const application = await page.request.get("/git-workspace.pyz");
         expect(application.ok()).toBe(true);
         const applicationBytes = await application.body();
@@ -65,13 +68,17 @@ for (const persistent of [false, true])
               await expect(contender.locator("#save-stop")).toBeDisabled();
               await expect(state).toHaveText("running");
             }
+            // Deletion uses the same lease and cannot remove the running disk.
+            contender.once("dialog", (dialog) => dialog.accept(diskName));
+            await contender.locator("#delete-disk").click();
+            await expect(contender.locator("#state")).toContainText("already open in another page");
+            await expect(state).toHaveText("running");
             expect(contenderTemplates).toBe(0);
           } finally {
             await contender.close();
           }
           await page.locator("#save-stop").click();
           await expect(state).toHaveText("stopped", { timeout: 60000 });
-          let templateRequests = 0;
           await page.route("**/root.ext4", (route) => {
             templateRequests++;
             return route.abort();
@@ -109,6 +116,37 @@ for (const persistent of [false, true])
         expect(bytes).toEqual(Array.from({ length: 65553 }, (_, i) => i & 255));
         await page.locator(persistent ? "#save-stop" : "#stop").click();
         await expect(state).toHaveText("stopped", persistent ? { timeout: 60000 } : {});
+        if (persistent) {
+          await page.locator("#refresh-disks").click();
+          await expect(page.locator("#saved-disks")).toContainText(`${diskName} — 536870912 bytes`);
+          // Neither cancelling the prompt nor typing another name may delete.
+          page.once("dialog", (dialog) => dialog.dismiss());
+          await page.locator("#delete-disk").click();
+          await expect(state).toHaveText("disk deletion cancelled");
+          page.once("dialog", (dialog) => dialog.accept("wrong-confirmation"));
+          await page.locator("#delete-disk").click();
+          await expect(state).toContainText("confirmation does not match");
+          await page.locator("#refresh-disks").click();
+          await expect(page.locator("#saved-disks")).toContainText(`${diskName} — 536870912 bytes`);
+          page.once("dialog", (dialog) => dialog.accept(diskName));
+          await page.locator("#delete-disk").click();
+          await expect(state).toHaveText(`deleted disk: ${diskName}`);
+          await page.locator("#refresh-disks").click();
+          await expect(page.locator("#saved-disks")).not.toContainText(diskName);
+          expect(
+            await page.evaluate(async (name) => {
+              try {
+                await (
+                  await navigator.storage.getDirectory()
+                ).getFileHandle(`linux-wasm64-${name}.ext4`);
+                return "still exists";
+              } catch (error) {
+                return error.name;
+              }
+            }, diskName),
+          ).toBe("NotFoundError");
+          expect(templateRequests).toBe(0);
+        }
       } finally {
         if (persistent) {
           // Navigation releases this page's workers even on failed assertions.

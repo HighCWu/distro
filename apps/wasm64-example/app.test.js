@@ -7,7 +7,7 @@ import { outputTail } from "./program.js";
 
 const source = readFileSync(new URL("./app.js", import.meta.url), "utf8");
 const imports = /^import[\s\S]*?;\n/gm;
-assert.equal([...source.matchAll(imports)].length, 7);
+assert.equal([...source.matchAll(imports)].length, 8);
 const success = {
   status: { success: true, code: 0, signal: null },
   stdout: new TextEncoder().encode("Linux fixture\n"),
@@ -151,7 +151,16 @@ test("late synchronization cannot stop a replacement instance", async () => {
   assert.equal(h.nodes("state").textContent, "running");
   await h.click("stop");
 });
-function harness({ closeError, deferClose = false, rootClose, bootError, agentError } = {}) {
+function harness({
+  closeError,
+  deferClose = false,
+  rootClose,
+  bootError,
+  agentError,
+  confirmation = null,
+  listDisks = async () => [],
+  deleteDisk = async () => {},
+} = {}) {
   const elements = new Map();
   const nodes = (id) => {
     if (!elements.has(id))
@@ -185,6 +194,8 @@ function harness({ closeError, deferClose = false, rootClose, bootError, agentEr
   const downloads = [];
   const revoked = [];
   const roots = [];
+  const diskOperations = [];
+  const prompts = [];
   const context = {
     document: { getElementById: nodes },
     console: { error() {} },
@@ -211,6 +222,18 @@ function harness({ closeError, deferClose = false, rootClose, bootError, agentEr
     closeDevice() {},
     workerDevice() {},
     openDiskWorker() {},
+    prompt(...args) {
+      prompts.push(args);
+      return confirmation;
+    },
+    async listRootDisks() {
+      diskOperations.push(["list"]);
+      return listDisks();
+    },
+    async deleteRootDisk(configuration) {
+      diskOperations.push(["delete", configuration]);
+      await deleteDisk(configuration);
+    },
     async openRoot(configuration) {
       const root = {
         configuration,
@@ -280,6 +303,8 @@ function harness({ closeError, deferClose = false, rootClose, bootError, agentEr
     downloads,
     revoked,
     roots,
+    diskOperations,
+    prompts,
     click: (id) => nodes(id).listeners.click(),
   };
 }
@@ -488,4 +513,78 @@ test("unexpected machine closure invalidates a pending command before restart", 
   assert.equal(h.nodes("result").textContent, "");
   assert.equal(h.nodes("state").textContent, "running");
   await h.click("stop");
+});
+
+test("disk listing shows metadata without booting and clears stale observations on failure", async () => {
+  let fail = false;
+  const h = harness({
+    listDisks: async () => {
+      if (fail) throw new Error("metadata unavailable");
+      return [
+        { name: "saved", size: 512 },
+        { name: "incomplete", size: 0 },
+      ];
+    },
+  });
+  await h.click("refresh-disks");
+  assert.equal(h.nodes("saved-disks").textContent, "saved — 512 bytes\nincomplete — 0 bytes");
+  assert.equal(h.machines.length, 0);
+  fail = true;
+  await h.click("refresh-disks");
+  assert.equal(h.nodes("saved-disks").textContent, "");
+  assert.match(h.nodes("state").textContent, /metadata unavailable/);
+  assert.equal(h.nodes("start").disabled, false);
+});
+
+test("disk deletion requires a prompt and cancellation never calls storage", async () => {
+  const h = harness();
+  await h.click("delete-disk");
+  assert.equal(h.prompts.length, 1);
+  assert.match(h.prompts[0][0], /Permanently delete saved disk "workspace"/);
+  assert.match(h.prompts[0][0], /cannot be undone/);
+  assert.equal(h.prompts[0][1], "");
+  assert.deepEqual(h.diskOperations, []);
+  assert.equal(h.nodes("state").textContent, "disk deletion cancelled");
+});
+
+test("confirmed deletion captures the name and blocks restart until storage settles", async () => {
+  const removed = Promise.withResolvers();
+  const h = harness({ confirmation: "saved", deleteDisk: () => removed.promise });
+  h.nodes("disk-name").value = "saved";
+  const deleting = h.click("delete-disk");
+  assert.equal(h.diskOperations[0][1].name, "saved");
+  assert.equal(h.diskOperations[0][1].confirmation, "saved");
+  for (const id of ["start", "refresh-disks", "delete-disk", "disk-name", "storage-mode"])
+    assert.equal(h.nodes(id).disabled, true, id);
+  await h.click("start");
+  await h.click("delete-disk");
+  assert.equal(h.machines.length, 0);
+  assert.equal(h.diskOperations.length, 1);
+  removed.resolve();
+  await deleting;
+  assert.equal(h.nodes("state").textContent, "deleted disk: saved");
+  assert.match(h.nodes("saved-disks").textContent, /Refresh/);
+  assert.equal(h.nodes("start").disabled, false);
+});
+
+test("disk management refuses running instances and reports storage failures without success", async () => {
+  const h = harness({
+    confirmation: "workspace",
+    deleteDisk: async () => {
+      throw new Error("disk is locked");
+    },
+  });
+  await h.click("start");
+  assert.equal(h.nodes("refresh-disks").disabled, true);
+  assert.equal(h.nodes("delete-disk").disabled, true);
+  await h.click("refresh-disks");
+  await h.click("delete-disk");
+  assert.deepEqual(h.diskOperations, []);
+  assert.deepEqual(h.prompts, []);
+  await h.click("stop");
+  h.nodes("saved-disks").textContent = "previous listing";
+  await h.click("delete-disk");
+  assert.match(h.nodes("state").textContent, /disk is locked/);
+  assert.equal(h.nodes("saved-disks").textContent, "previous listing");
+  assert.equal(h.nodes("delete-disk").disabled, false);
 });

@@ -12,6 +12,7 @@ import { assertBrowserSupport } from "./browser-support.js";
 import { outputTail, runProgram } from "./program.js";
 import { prepareDownload } from "./download.js";
 import { openRoot } from "./root.js";
+import { deleteRootDisk, listRootDisks } from "./root-storage.js";
 import { openDiskWorker } from "linux-wasm-opfs-device";
 
 const element = (id) => document.getElementById(id);
@@ -36,7 +37,7 @@ function state(message) {
   element("cancel-program").disabled =
     !!stopping || !programController || programController.signal.aborted;
   element("save-stop").disabled = busy || !session || !!stopping;
-  for (const id of ["storage-mode", "disk-name"])
+  for (const id of ["storage-mode", "disk-name", "refresh-disks", "delete-disk"])
     element(id).disabled = busy || !!session || !!stopping;
 }
 function consoleOutput() {
@@ -136,6 +137,32 @@ element("start").addEventListener("click", () =>
     return "running";
   }),
 );
+element("refresh-disks").addEventListener("click", () => {
+  if (session || stopping) return;
+  return action(async () => {
+    // Clear old observations first, including when the new listing fails.
+    element("saved-disks").textContent = "";
+    const disks = await listRootDisks();
+    element("saved-disks").textContent = disks.length
+      ? disks.map(({ name, size }) => `${name} — ${size} bytes`).join("\n")
+      : "No saved disks";
+    return "saved disks listed";
+  });
+});
+element("delete-disk").addEventListener("click", () => {
+  if (session || stopping) return;
+  return action(async () => {
+    const name = element("disk-name").value;
+    const confirmation = prompt(
+      `Permanently delete saved disk "${name}" and all its Linux files? Type the exact disk name to confirm. This cannot be undone here.`,
+      "",
+    );
+    if (confirmation === null) return "disk deletion cancelled";
+    await deleteRootDisk({ name, confirmation });
+    element("saved-disks").textContent = "Disk deleted. Refresh the list to see current disks.";
+    return `deleted disk: ${name}`;
+  });
+});
 async function stopSession(
   active,
   message = "stopped",
