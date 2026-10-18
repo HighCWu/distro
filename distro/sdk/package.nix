@@ -11,12 +11,23 @@
 }:
 let
   meson = import ./meson.nix { inherit pkgs; };
+  licenseSources = sysroot.licenseSources // {
+    llvm-toolchain = llvm-toolchain.licenseSource;
+    meson = meson.src;
+  };
   licenseTexts = import ./license-texts.nix {
     inherit pkgs lib;
-    sources = sysroot.licenseSources // {
-      llvm-toolchain = llvm-toolchain.licenseSource;
-      meson = meson.src;
-    };
+    sources = licenseSources;
+  };
+  buildMaterials = import ./build-materials.nix {
+    inherit
+      pkgs
+      platform
+      sdk
+      profileCheck
+      profileConfig
+      licenseSources
+      ;
   };
   profileConfig = pkgs.writeText "linux-${platform.wasmArch}.cfg" (
     lib.concatMapStringsSep "\n" lib.escapeShellArg (
@@ -165,6 +176,7 @@ let
       llvm-toolchain
     ];
     passthru.meson = meson;
+    passthru.buildMaterials = buildMaterials;
     # Reuse the exact SDK-built consumer in real-browser runtime checks.
     passthru.sqliteProgram = "${sqlitePrograms}/sdk-sqlite.wasm";
     passthru.socketProgram = "${socketPrograms}/sdk-socket.wasm";
@@ -180,6 +192,7 @@ let
     passthru.checks = {
       licenses = licenseTexts;
       profile = profileCheck;
+      build-materials = buildMaterials.check;
       wrapper =
         pkgs.runCommand "sdk-wrapper-contract"
           {

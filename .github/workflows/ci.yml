@@ -230,6 +230,31 @@ jobs:
             nix build --no-link --print-build-logs .#checks.x86_64-linux.formatting
           fi
           nix build --show-trace --no-link --print-build-logs "$installable"
+      - name: Collect validated SDK build materials
+        if: ${{ success() && (matrix.check == 'sdk-check-build-materials' || matrix.check == 'sdk-wasm64-check-build-materials') }}
+        env:
+          SDK_CHECK: ${{ matrix.check }}
+        run: |
+          case "$SDK_CHECK" in
+            sdk-check-build-materials) package=sdk ;;
+            sdk-wasm64-check-build-materials) package=sdk-wasm64 ;;
+            *) exit 1 ;;
+          esac
+          bundle=$(nix eval --raw ".#$package.buildMaterials.outPath")
+          nix path-info "$bundle"
+          mkdir sdk-build-materials
+          cp "$bundle/sdk-build-materials.tar.gz" "$bundle/README.md" \
+            "$bundle/SHA256SUMS" sdk-build-materials/
+          (cd sdk-build-materials && sha256sum --check SHA256SUMS)
+      - name: Upload validated SDK build materials
+        if: ${{ success() && (matrix.check == 'sdk-check-build-materials' || matrix.check == 'sdk-wasm64-check-build-materials') }}
+        uses: actions/upload-artifact@v7
+        with:
+          name: sdk-build-materials-${{ matrix.check }}-${{ github.sha }}
+          path: sdk-build-materials/
+          if-no-files-found: error
+          compression-level: 0
+          retention-days: 3
       - name: Collect the validated kernel source bundle
         if: ${{ success() && startsWith(matrix.check, 'kernel') && endsWith(matrix.check, '-check-source-bundle') }}
         env:
