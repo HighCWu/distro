@@ -1,4 +1,5 @@
 #!/bin/busybox sh
+# shellcheck shell=dash
 
 fail() {
   printf 'vm test guest failure: %s\n' "$*"
@@ -10,6 +11,12 @@ export PATH=/bin:/sbin:/usr/bin:/usr/sbin
 export TERM=xterm
 export HOME=/tmp
 
+# The boot loader unmounts its /dev before switch_root. This installed PID 1
+# owns the device filesystems; inherited console fds do not create /dev/null.
+mount -t devtmpfs devtmpfs /dev || fail "mounting devtmpfs failed"
+mkdir -p /dev/pts || fail "creating devpts mountpoint failed"
+mount -t devpts devpts /dev/pts || fail "mounting devpts failed"
+test -c /dev/null || fail "runtime /dev/null is not a character device"
 mount -t proc proc /proc || fail "mounting proc failed"
 /vm-test-setup-dev-fd || fail "creating /dev/fd links failed"
 for notice in python-LICENSE bzip2-LICENSE ncurses-COPYING readline-COPYING zlib.h sqlite3.h xz/COPYING xz/AUTHORS openssl/LICENSE.txt openssl/musl-COPYRIGHT openssl/compiler-rt-LICENSE.TXT; do

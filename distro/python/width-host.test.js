@@ -237,6 +237,26 @@ test("native fork-less replay uses pinned CPython, the full integration patch an
     assert.ok(replay.includes(stage), stage);
 });
 
+test("installed Python PID 1 mounts runtime devices before descriptor and interpreter checks", () => {
+  const script = readFileSync(new URL("./python-test.sh", import.meta.url), "utf8");
+  const stages = [
+    'mount -t devtmpfs devtmpfs /dev || fail "mounting devtmpfs failed"',
+    'mkdir -p /dev/pts || fail "creating devpts mountpoint failed"',
+    'mount -t devpts devpts /dev/pts || fail "mounting devpts failed"',
+    'test -c /dev/null || fail "runtime /dev/null is not a character device"',
+    "mount -t proc proc /proc",
+    "/vm-test-setup-dev-fd || fail",
+    "python3 /python-abi-test.py",
+  ];
+  let previous = -1;
+  for (const stage of stages) {
+    const index = script.indexOf(stage);
+    assert.ok(index > previous, `missing or unordered startup stage: ${stage}`);
+    previous = index;
+  }
+  assert.doesNotMatch(script, /mknod.*\/dev\/null/);
+});
+
 test("Python process timeouts preserve binary pipes and terminated children are reaped", () => {
   const result = spawnSync(
     "python3",
