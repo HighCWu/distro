@@ -118,6 +118,15 @@ agent
     openssl = openssl-wasm64;
     inherit ca-certificates;
   } "256M";
+  # Optional combined runtime; no example, workload or test scripts are installed.
+  # Keep each component's licensing and unresolved Git TLS link review intact.
+  rootfsPythonGitExt4 = rootfsFor "ext4" {
+    python = python-wasm64;
+    git = git-wasm64;
+    ncurses = ncurses-wasm64;
+    openssl = openssl-wasm64;
+    inherit ca-certificates;
+  } "512M";
   # Native PID 1 directly; no wasm32 shell or BusyBox in this boot image.
   bootDisk = image.mkGptDisk {
     name = "native-agent-wasm64.img";

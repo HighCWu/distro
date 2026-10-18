@@ -189,6 +189,17 @@ package
     profile = "python-root";
     testFile = "agent-wasm64-python-root-runtime.ts";
   };
+  checks.python-git-root-wasm64 = import ./public-wasm64.nix {
+    inherit bytes pkgs node-workspace;
+    kernel = kernel-wasm64;
+    assets = {
+      runtimeBootDisk = nativeWasm64.bootDisk;
+      runtimeRootfs = nativeWasm64.rootfsPythonGitExt4;
+    };
+    applicationArchive = ../python/git-workspace-example.py;
+    profile = "python-git-root";
+    testFile = "agent-wasm64-python-git-root-runtime.ts";
+  };
   checks.public-userland-wasm64 = import ./public-wasm64.nix {
     inherit bytes pkgs node-workspace;
     kernel = kernel-wasm64;

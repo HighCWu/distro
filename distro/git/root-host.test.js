@@ -64,3 +64,56 @@ test("public Git root requires fresh instances, persisted bytes, fixture absence
     assert.ok(commands.includes(required), required);
   }
 });
+
+test("combined Python Git root selects matching runtimes without installing the example", () => {
+  const source = readFileSync(new URL("../guest-agent/native-wasm64.nix", import.meta.url), "utf8");
+  const profile = source.match(/rootfsPythonGitExt4 = rootfsFor "ext4" \{([\s\S]*?)\} "512M";/);
+  assert.ok(profile);
+  for (const name of ["python", "git", "ncurses", "openssl"])
+    assert.ok(profile[1].includes(`${name} = ${name}-wasm64;`));
+  assert.match(profile[1], /inherit ca-certificates;/);
+  assert.doesNotMatch(profile[1], /checks|example|test|files|applicationArchive/);
+  const recipe = readFileSync(new URL("../guest-agent/package.nix", import.meta.url), "utf8");
+  const check = recipe.match(
+    /checks\.python-git-root-wasm64 = import \.\/public-wasm64\.nix \{([\s\S]*?)\n  \};/,
+  );
+  assert.ok(check);
+  for (const required of [
+    "kernel = kernel-wasm64;",
+    "runtimeBootDisk = nativeWasm64.bootDisk;",
+    "runtimeRootfs = nativeWasm64.rootfsPythonGitExt4;",
+    "applicationArchive = ../python/git-workspace-example.py;",
+    'testFile = "agent-wasm64-python-git-root-runtime.ts";',
+  ])
+    assert.ok(check[1].includes(required), required);
+});
+
+test("combined SDK workload imports exact source and retains only ext4 bytes across fresh instances", () => {
+  const source = readFileSync(
+    new URL(
+      "../../packages/linux-guest/tests/agent-wasm64-python-git-root-runtime.ts",
+      import.meta.url,
+    ),
+    "utf8",
+  );
+  for (const required of [
+    '["write", "read"] as const',
+    "withPersistentRootMachine(",
+    "root.set(data, offset)",
+    "assert.equal(closed, 2)",
+    "writes > previousWrites && flushes > previousFlushes",
+    "await agent.fs.writeFile(script, source)",
+    "await agent.fs.readFile(script), source",
+    'error.code === "ENOENT"',
+    "sizeof-long: 8",
+    "sizeof-size_t: 8",
+    "readline-COPYING",
+    "linked/openssl-LICENSE.txt",
+    "assert.equal(report.head, head)",
+    "sha256: digest",
+    "payload.byteLength",
+    '"sha256sum", "-c", "SHA256SUMS"',
+    "clone ' $HOME → repo",
+  ])
+    assert.ok(source.includes(required), required);
+});
