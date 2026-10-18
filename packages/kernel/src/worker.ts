@@ -170,16 +170,22 @@ function user_imports({
           arg5: WasmAddress,
         ) => {
           const original_instance = instance;
-          const ret = kernel_instance.exports.syscall(nr, arg0, arg1, arg2, arg3, arg4, arg5);
+          const invoke = () =>
+            kernel_instance.exports.syscall(nr, arg0, arg1, arg2, arg3, arg4, arg5);
+          const ret = fork ? fork.kernelCall(invoke) : invoke();
           if (instance !== original_instance) {
             call_entry = call_start;
             throw HALT_USER;
           }
           return ret;
         },
-        get_thread_area: () => kernel_instance.exports.get_thread_area(),
+        get_thread_area: () => {
+          const invoke = () => kernel_instance.exports.get_thread_area();
+          return fork ? fork.kernelCall(invoke) : invoke();
+        },
         copy_siginfo: (to: WasmAddress) => {
-          const result = kernel_instance.exports.copy_siginfo(to);
+          const invoke = () => kernel_instance.exports.copy_siginfo(to);
+          const result = fork ? fork.kernelCall(invoke) : invoke();
           const current = siginfo_copy_results.length - 1;
           if (current >= 0) siginfo_copy_results[current] = result;
           return result;

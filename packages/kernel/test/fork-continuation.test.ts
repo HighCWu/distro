@@ -123,6 +123,30 @@ for (const address of ["i32", "i64"] as const) {
     assert.throws(() => c.suspend(), /no completed unwind/);
   });
 
+  test(`${address}: nested kernel reentry refuses fork and restores the guard after errors`, () => {
+    const { controller: c, pointer: p } = fixture(address);
+    assert.equal(
+      c.kernelCall(() => c.checkpoint(p(64), true)),
+      -95,
+    );
+    assert.throws(
+      () =>
+        c.kernelCall(() =>
+          c.kernelCall(() => {
+            assert.equal(c.checkpoint(p(64), true), -95);
+            throw new Error("kernel failure");
+          }),
+        ),
+      /kernel failure/,
+    );
+    assert.equal(c.unwinding(), false);
+    assert.equal(
+      c.checkpoint(p(64), true),
+      0,
+      "the main entry can fork after the boundary returns",
+    );
+  });
+
   test(`${address}: malformed descriptors are refused before changing state`, () => {
     const { controller: c, pointer: p, descriptor } = fixture(address);
     for (const location of [65, 65536, -1]) assert.equal(c.checkpoint(p(location), true), -22);

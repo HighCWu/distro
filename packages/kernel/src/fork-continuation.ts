@@ -47,6 +47,7 @@ export function fork_continuation_exports_supported(module: WebAssembly.Module):
 export class ForkContinuation {
   private descriptor: WasmAddress | null = null;
   private result: number | null = null;
+  private kernelDepth = 0;
   private readonly e: WebAssembly.Exports;
   private readonly memory: WebAssembly.Memory;
   private readonly address: WasmAddressType;
@@ -113,6 +114,9 @@ export class ForkContinuation {
   }
 
   checkpoint(descriptor: WasmAddress, allowed: boolean): number {
+    // A kernel syscall may synchronously reenter a user export (not only a
+    // signal handler). Never unwind that nested call across the live kernel.
+    if (!allowed || this.kernelDepth !== 0) return -95; // EOPNOTSUPP
     if (this.state() === 2) {
       this.require(
         this.descriptor === descriptor && this.result !== null,
@@ -125,12 +129,20 @@ export class ForkContinuation {
       return result;
     }
     // Do not unwind through a kernel call, signal trampoline or callback clone.
-    if (!allowed) return -95; // EOPNOTSUPP
     if (this.state() !== 0 || this.descriptor !== null) return -16; // EBUSY
     if (!this.validDescriptor(descriptor)) return -22; // EINVAL
     this.descriptor = descriptor;
     this.call("asyncify_start_unwind", descriptor);
     return 0; // ignored by Asyncify's unwind path
+  }
+
+  kernelCall<T>(callback: () => T): T {
+    this.kernelDepth++;
+    try {
+      return callback();
+    } finally {
+      this.kernelDepth--;
+    }
   }
 
   unwinding(): boolean {
