@@ -35,6 +35,9 @@ test("optional browser profile selects the Python root and enables only explicit
     "utf8",
   );
   assert.match(source, /withPython \? false/);
+  assert.match(source, /withGit \? false/);
+  assert.match(source, /assert !withGit \|\| withPython;/);
+  assert.match(source, /if withGit then\s+guest-agent.nativeWasm64.rootfsPythonGitExt4/);
   assert.match(source, /if withPython then\s+guest-agent.nativeWasm64.rootfsPythonExt4/);
   assert.match(source, /else\s+guest-agent.nativeWasm64.rootfsExt4/);
   assert.match(html, /value="python" disabled/);
@@ -45,14 +48,43 @@ test("optional browser profile selects the Python root and enables only explicit
     python = python.replaceAll(from, to);
     replacements++;
   }
-  assert.equal(replacements, 3);
-  assert.match(python, /value="python">/);
-  assert.match(python, /accept="\.wasm,\.pyz,/);
-  assert.match(python, /Python root \(256 MiB\)/);
+  // The two literal replacements are shared. The third now deliberately
+  // selects an escaped description by profile; this is a recipe contract,
+  // not evaluation of arbitrary Nix or evidence of a browser boot.
+  const description = source.match(
+    /--replace-fail '([^']+)'\s*\\\s*\$\{pkgs.lib.escapeShellArg \(\s*if withGit then\s*"([^"]+)"\s*else\s*"([^"]+)"\s*\)\}/,
+  );
+  assert.ok(
+    description,
+    "conditional description retains shell escaping and both profile branches",
+  );
+  assert.equal(replacements + 1, 3);
+  assert.equal(description[1], "Minimal BusyBox root (64 MiB); Python is not installed.");
+  assert.equal(
+    description[2],
+    "Python + Git root (512 MiB), including standard library, ncurses, OpenSSL and CA certificates.",
+  );
+  assert.equal(
+    description[3],
+    "Python root (256 MiB), including standard library, ncurses, OpenSSL and CA certificates.",
+  );
+  assert.ok(python.includes(description[1]));
+  for (const label of [description[2], description[3]]) {
+    const selected = python.replaceAll(description[1], label);
+    assert.match(selected, /value="python">/);
+    assert.match(selected, /accept="\.wasm,\.pyz,/);
+    assert.ok(selected.includes(label));
+    assert.ok(!selected.includes(description[1]));
+  }
+  assert.match(html, /Minimal BusyBox root \(64 MiB\); Python is not installed\./);
   const scope = readFileSync(new URL("../default.nix", import.meta.url), "utf8");
   assert.match(
     scope,
     /wasm64-python-example = self.wasm64-example.override \{ withPython = true; \};/,
+  );
+  assert.match(
+    scope,
+    /wasm64-python-git-example = self.wasm64-example.override \{\s+withPython = true;\s+withGit = true;\s+\};/,
   );
   const browser = readFileSync(new URL("../npm/browser-tests.nix", import.meta.url), "utf8");
   assert.match(browser, /"wasm64-python-example-chromium" "wasm64-python-example-firefox"/);
