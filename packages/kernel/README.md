@@ -43,6 +43,20 @@ roll back disk initialization, terminate a Worker, or guarantee resource
 cleanup. On cancellation, the endpoint remains the caller's responsibility.
 Calls without options retain their existing unbounded readiness wait.
 
+### Releasing an unattached device
+
+`closeDevice(device)` is the public, idempotent cleanup operation for a device
+opened before machine startup, including when startup fails before attachment.
+Await its result and `device.closed` before releasing storage ownership or
+terminating the worker. Backend flush/close failures remain rejections.
+The device object itself is opaque and does not have a `.close()` method.
+
+For an attached device, stop its owning machine first and await machine
+closure. `closeDevice` neither stops Linux nor syncs its filesystems; it is
+not a hot-unplug API or a substitute for a persistence protocol. The caller
+still owns and must eventually terminate any Worker or close any MessagePort.
+Existing automatic machine cleanup remains unchanged.
+
 ## License
 
 The TypeScript and JavaScript sources are available under the MIT license. The published package also contains `vmlinux.wasm`, which remains `GPL-2.0-only WITH Linux-syscall-note`.

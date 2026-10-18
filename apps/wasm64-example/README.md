@@ -7,7 +7,7 @@ terminal distribution or test fixture. It bundles a matching wasm64 kernel,
 native agent boot disk and a minimal or Python-equipped ext4 root. The page starts/stops
 Linux, runs native `uname`, writes bounded UTF-8 text through the file API and
 reads it using native `cat`. It also imports a developer-selected Linux wasm64
-executable into the temporary root and runs it through the public streaming
+executable into the selected root and runs it through the public streaming
 process API, without shell interpolation.
 
 Build heavy assets in public CI:
@@ -37,10 +37,10 @@ Write refuses an existing workspace; read creates a new clone and is not an
 idempotent synchronization command. It does not install dependencies or use
 public-network services. Only run trusted applications and repositories.
 
-This page still downloads a fresh in-memory root on each start; stopping or
-reloading loses the workspace. The separate OPFS checks do not give these
-controls persistence. A successful component check does not establish this
-combined page's compatibility; its Chromium/Firefox results are tracked separately.
+Temporary memory remains the default. To keep a workspace across reloads, use
+the explicit OPFS controls described below. A successful component check does
+not establish this combined page's compatibility; its Chromium/Firefox
+results are tracked separately, including the new persistence case.
 This optional recipe is not a license-approved binary release. Python/Readline
 obligations, Git's OpenSSL linkage review and complete corresponding-source
 delivery remain separate requirements; bundled notices do not relicense dependencies.
@@ -78,8 +78,8 @@ status remain failures.
 
 The existing text/binary stdin, concurrent output, cancellation, Stop and
 file-download controls are reused. Output on the page is still a bounded UTF-8
-preview, not raw binary. Changes and the uploaded archive disappear when the
-instance stops; this profile does not add OPFS or an interactive terminal.
+preview, not raw binary. Changes and the uploaded archive disappear on stop
+in temporary mode; OPFS is explicit and does not add an interactive terminal.
 The interpreter statically links GNU Readline and retains GPL obligations.
 License notices in the root are not a complete corresponding-source delivery,
 and neither the interpreter nor the bundled system may be relabeled MIT.
@@ -113,10 +113,10 @@ host the built directory on HTTPS with equivalent isolation headers, preserving
 the import-map paths at the origin root. The development server is not a
 general-purpose production server and does not handle HTTP range requests.
 
-Every start downloads a fresh root image into host memory. Writes disappear
-after stop, reload or failure: the no-op block flush only acknowledges the
-in-memory backing, not durable storage. The page explicitly says this; it does
-not silently fall back from OPFS. The 64 MiB minimal image (256 MiB for Python,
+The default temporary mode downloads a fresh root image into host memory on
+every start. Writes disappear after stop, reload or failure: its no-op block
+flush only acknowledges in-memory backing, not durable storage. It never
+silently falls back from OPFS. The 64 MiB minimal image (256 MiB for Python,
 512 MiB for Python + Git), kernel and per-process
 memories consume additional browser resources. Memory64 and shared-memory
 browser support are required; there is no wasm32 fallback or transpiler here.
@@ -127,6 +127,47 @@ memory64 module. The probe allocates just one 64 KiB page and verifies the
 BigInt memory-growth API; it does not promise that enough memory is available
 to boot Linux or reserve the kernel's configured maximum. Unsupported engines
 are not silently routed through wasm32.
+
+## Explicit OPFS storage
+
+Choose **Create new OPFS disk**, enter a name of 1–48 lowercase ASCII letters,
+digits or hyphens, and choose **Start Linux**. Names are local to this browser
+profile and origin; the file is `linux-wasm64-NAME.ext4`. Creation initializes
+from this bundle's root template and refuses an existing file, including an
+incomplete file left by failed initialization. Choose a new name after such a
+failure; this page does not delete or overwrite existing disks automatically.
+
+Finish applications and other writers, then choose **Sync and stop Linux**.
+This runs native `/bin/sync`, closes Linux, drains console output, and waits
+for the disk worker's flush/close acknowledgement before enabling another
+start. A sync failure leaves Linux open for retry or immediate Stop; disk
+close failures remain visible. This is not a transaction or snapshot against
+background writers. **Stop Linux** remains immediately available during an
+application and may discard unsynced Linux writes; do not treat it as Save.
+
+After a reload, select **Open existing OPFS disk** and enter the same name.
+Opening does not download the root template, create a missing file, resize or
+truncate the disk. Use the same runtime profile and a compatible bundle; this
+small example does not migrate disks or validate their installed packages.
+Python/Git labels describe the bundle's template, not an inspected old disk.
+Web Locks prevent these controls in another page of the same origin from
+opening or initializing the same named disk concurrently. The disk worker
+also uses an exclusive synchronous OPFS access handle. Do not bypass these
+controls with other applications accessing the same file.
+
+OPFS and Web Locks must both be available; errors never become a fresh
+temporary root. Browser quota, eviction, clearing site data, abrupt page or
+browser termination and power-loss recovery are not guaranteed. Keep separate
+backups. No automatic background save, unload handler or persistent-storage
+permission guarantee is provided. These storage controls do not change Linux
+NOMMU, user ABI or the trust boundary between programs in one instance.
+
+The combined browser test retains its temporary-memory case and adds a real
+controls-level OPFS case: original write report, sync/stop, refused overwrite,
+page reload, root-template requests blocked, existing-disk read using the same
+HEAD, SQLite/Git/Python validation, and exact downloaded payload bytes. Both
+cases require their own new Chromium and Firefox acceptance; older OPFS SDK
+checks are not evidence that these new controls have passed.
 
 The preset commands use `run()` to collect bounded outputs. Imported programs
 use `exec()` with concurrent stdout/stderr consumption and cancellation instead
@@ -170,7 +211,8 @@ Start Linux, select the resulting file, enter arguments as a JSON string array
 program**. The filename is not interpreted as a path: bytes are written to
 `/root/application.wasm`, marked executable, and executed with `/root` as cwd.
 Nothing is uploaded to the HTTP server. This overwrites that one application
-path in the ephemeral root; a later start uses a fresh root as before.
+path in the selected root. Temporary mode uses a fresh root on a later start;
+OPFS mode retains the imported file subject to the synchronization limits above.
 
 Files are limited to 16 MiB and must have a version-1 Wasm header; arguments
 are at most 64 NUL-free strings in 8192 JSON characters. These are UI/resource

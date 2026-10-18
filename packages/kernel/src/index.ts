@@ -28,6 +28,7 @@ import type { ForwardedInitMessage, InitMessage, WorkerMessage } from "./worker.
 
 export type { DeviceTreeNode } from "./devicetree.ts";
 export {
+  close_virtio_device as closeDevice,
   VirtioController,
   type VirtioDevice,
   type VirtioDeviceOptions,

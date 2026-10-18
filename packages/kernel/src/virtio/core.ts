@@ -612,6 +612,12 @@ export function connect_virtio_device(device: VirtioDevice, context: VirtioConne
   return device[transport_device].connect(context);
 }
 
+/**
+ * Idempotently closes an unattached device, or a device whose machine has
+ * already stopped, and waits for backend cleanup. Exported as closeDevice.
+ * Does not stop an owning machine or sync its Linux filesystems: close that
+ * machine first. The caller still owns any Worker/MessagePort endpoint.
+ */
 export function close_virtio_device(device: VirtioDevice) {
   return device[transport_device].close();
 }

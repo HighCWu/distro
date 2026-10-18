@@ -19,7 +19,7 @@
     <h1>Linux wasm64 embedding example</h1>
     <p>
       This example uses a real Linux kernel and native wasm64 BusyBox. Each start creates a fresh
-      in-memory ext4 disk. Stopping or reloading loses changes; this example does not save to OPFS.
+      in-memory ext4 disk by default. Choose OPFS explicitly to create or reopen a named disk.
     </p>
     <p id="runtime-profile">Minimal BusyBox root (64 MiB); Python is not installed.</p>
     <p>
@@ -28,8 +28,27 @@
       Linux instance.
     </p>
     <p>
+      <label
+        >Root storage
+        <select id="storage-mode">
+          <option value="temporary">Temporary memory (default)</option>
+          <option value="create">Create new OPFS disk</option>
+          <option value="open">Open existing OPFS disk</option>
+        </select></label
+      >
+      <label>Disk name <input id="disk-name" value="workspace" maxlength="48" /></label>
+    </p>
+    <p>
+      OPFS disks belong to this browser and origin. Use the same runtime profile when reopening.
+      Creating refuses existing names; opening never replaces or resizes a disk. Stop applications
+      first, then choose Sync and stop Linux before reloading. Ordinary Stop is immediate and may
+      lose unsynced Linux writes. Browser storage deletion, eviction, quota failures and power loss
+      are not covered; keep independent backups. No automatic fallback or disk deletion is offered.
+    </p>
+    <p>
       <button id="start" disabled>Start Linux</button>
       <button id="stop" disabled>Stop Linux</button>
+      <button id="save-stop" disabled>Sync and stop Linux</button>
     </p>
     <p id="state" role="status">loading</p>
     <button id="uname" disabled>Run uname</button>
@@ -45,8 +64,8 @@ Hello from native Linux wasm64.</textarea>
     <h2>Run your own Linux wasm64 program</h2>
     <p>
       Select a static executable built with the matching Linux wasm64 SDK, not WASI, wasm32, or a
-      native ELF binary (at most 16 MiB). The file is copied only into this temporary Linux disk,
-      not uploaded to the server. Only run programs you trust: they can access or damage this Linux
+      native ELF binary (at most 16 MiB). The file is copied only into the selected Linux disk, not
+      uploaded to the server. Only run programs you trust: they can access or damage this Linux
       instance and its files.
     </p>
     <p>
@@ -94,8 +113,8 @@ Hello from native Linux wasm64.</textarea>
       text field. Text mode ignores the file selection. Large files can take time; use Cancel
       application or Stop Linux if needed. Recent output is limited to 65,536 characters;
       stdout/stderr interleaving is not deterministic. Stop Linux remains available while an
-      application runs; it stops the whole instance and discards the temporary disk, unlike
-      cancelling one application.
+      application runs; it stops the whole instance, unlike cancelling one application. Temporary
+      disks are discarded; OPFS disks remain but unsynced Linux writes may be lost.
     </p>
     <h2>Download a Linux file</h2>
     <p>

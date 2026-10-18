@@ -6,21 +6,104 @@ import { runInNewContext } from "node:vm";
 import { outputTail } from "./program.js";
 
 const source = readFileSync(new URL("./app.js", import.meta.url), "utf8");
-const imports = /^import .* from "[^"]+";$/gm;
-assert.equal([...source.matchAll(imports)].length, 5);
+const imports = /^import[\s\S]*?;\n/gm;
+assert.equal([...source.matchAll(imports)].length, 7);
 const success = {
   status: { success: true, code: 0, signal: null },
   stdout: new TextEncoder().encode("Linux fixture\n"),
   stderr: new Uint8Array(),
 };
-function harness({ closeError, deferClose = false } = {}) {
+
+test("storage selection is captured at start and disabled while running", async () => {
+  const h = harness();
+  h.nodes("storage-mode").value = "open";
+  h.nodes("disk-name").value = "saved";
+  await h.click("start");
+  assert.equal(h.roots[0].configuration.mode, "open");
+  assert.equal(h.roots[0].configuration.name, "saved");
+  assert.equal(h.nodes("storage-mode").disabled, true);
+  assert.equal(h.nodes("disk-name").disabled, true);
+  await h.click("save-stop");
+  assert.deepEqual(Array.from(h.agents[0].commands[0]), ["/bin/sync"]);
+  assert.equal(h.roots[0].closes, 1);
+  assert.equal(h.nodes("state").textContent, "stopped");
+  assert.equal(h.nodes("storage-mode").disabled, false);
+});
+
+test("failed sync leaves Linux and its disk open for retry or immediate Stop", async () => {
+  const h = harness();
+  await h.click("start");
+  h.agents[0].run = async () => ({ ...success, status: { success: false } });
+  await h.click("save-stop");
+  assert.match(h.nodes("state").textContent, /sync failed/);
+  assert.equal(h.machines[0].closes, 0);
+  assert.equal(h.roots[0].closes, 0);
+  assert.equal(h.nodes("stop").disabled, false);
+  await h.click("stop");
+});
+
+test("boot failure and disk close failure retain explicit errors", async () => {
+  const failedBoot = harness({ bootError: new Error("boot failed") });
+  await failedBoot.click("start");
+  assert.equal(failedBoot.roots[0].closes, 1);
+  assert.match(failedBoot.nodes("state").textContent, /boot failed/);
+  const h = harness({
+    rootClose: async () => {
+      throw new Error("OPFS flush failed");
+    },
+  });
+  await h.click("start");
+  await h.click("stop");
+  assert.match(h.nodes("state").textContent, /OPFS flush failed/);
+});
+
+test("restarting waits for disk closure, not only machine termination", async () => {
+  const disk = Promise.withResolvers();
+  const h = harness({ rootClose: () => disk.promise });
+  await h.click("start");
+  const stopping = h.click("stop");
+  await new Promise((resolve) => setImmediate(resolve));
+  assert.equal(h.nodes("start").disabled, true);
+  await h.click("start");
+  assert.equal(h.machines.length, 1);
+  disk.resolve();
+  await stopping;
+  await h.click("start");
+  assert.equal(h.machines.length, 2);
+  await h.click("stop");
+});
+
+test("late synchronization cannot stop a replacement instance", async () => {
+  const h = harness();
+  await h.click("start");
+  const sync = Promise.withResolvers();
+  h.agents[0].run = () => sync.promise;
+  const saving = h.click("save-stop");
+  await h.click("stop");
+  await h.click("start");
+  sync.resolve(success);
+  await saving;
+  assert.equal(h.machines[1].closes, 0);
+  assert.equal(h.nodes("state").textContent, "running");
+  await h.click("stop");
+});
+function harness({ closeError, deferClose = false, rootClose, bootError } = {}) {
   const elements = new Map();
   const nodes = (id) => {
     if (!elements.has(id))
       elements.set(id, {
         textContent: "",
         disabled: false,
-        value: id === "arguments" ? "[]" : id === "program-kind" ? "wasm" : "text",
+        value:
+          id === "arguments"
+            ? "[]"
+            : id === "program-kind"
+              ? "wasm"
+              : id === "storage-mode"
+                ? "temporary"
+                : id === "disk-name"
+                  ? "workspace"
+                  : "text",
         files: [{}],
         listeners: {},
         removeAttribute(name) {
@@ -37,6 +120,7 @@ function harness({ closeError, deferClose = false } = {}) {
   const agents = [];
   const downloads = [];
   const revoked = [];
+  const roots = [];
   const context = {
     document: { getElementById: nodes },
     console: { error() {} },
@@ -60,6 +144,22 @@ function harness({ closeError, deferClose = false } = {}) {
     outputTail,
     fetch: async () => ({ ok: true, arrayBuffer: async () => new ArrayBuffer(8) }),
     blockDevice: (device) => device,
+    closeDevice() {},
+    workerDevice() {},
+    openDiskWorker() {},
+    async openRoot(configuration) {
+      const root = {
+        configuration,
+        device: {},
+        closes: 0,
+        async close() {
+          this.closes++;
+          await rootClose?.();
+        },
+      };
+      roots.push(root);
+      return root;
+    },
     consoleDevice() {},
     entropyDevice() {},
     guestAgent() {
@@ -75,6 +175,7 @@ function harness({ closeError, deferClose = false } = {}) {
       return agent;
     },
     async bootMachine() {
+      if (bootError) throw bootError;
       const closed = Promise.withResolvers();
       const machine = {
         closed: closed.promise,
@@ -113,6 +214,7 @@ function harness({ closeError, deferClose = false } = {}) {
     applications,
     downloads,
     revoked,
+    roots,
     click: (id) => nodes(id).listeners.click(),
   };
 }

@@ -1,9 +1,18 @@
 // SPDX-License-Identifier: MIT
-import { blockDevice, bootMachine, consoleDevice, entropyDevice } from "@lowland/kernel";
+import {
+  blockDevice,
+  closeDevice,
+  bootMachine,
+  consoleDevice,
+  entropyDevice,
+  workerDevice,
+} from "@lowland/kernel";
 import { guestAgent } from "@lowland/guest";
 import { assertBrowserSupport } from "./browser-support.js";
 import { outputTail, runProgram } from "./program.js";
 import { prepareDownload } from "./download.js";
+import { openRoot } from "./root.js";
+import { openDiskWorker } from "linux-wasm-opfs-device";
 
 const element = (id) => document.getElementById(id);
 let session;
@@ -26,6 +35,9 @@ function state(message) {
     element(id).disabled = busy || !session || !!stopping;
   element("cancel-program").disabled =
     !!stopping || !programController || programController.signal.aborted;
+  element("save-stop").disabled = busy || !session || !!stopping;
+  for (const id of ["storage-mode", "disk-name"])
+    element(id).disabled = busy || !!session || !!stopping;
 }
 function consoleOutput() {
   const decoder = new TextDecoder();
@@ -70,50 +82,47 @@ element("start").addEventListener("click", () =>
     clearDownload();
     element("console").textContent = "";
     element("result").textContent = "";
-    const [boot, root] = await Promise.all([image("/agent-boot.img"), image("/root.ext4")]);
+    const boot = await image("/agent-boot.img");
+    const root = await openRoot(
+      { mode: element("storage-mode").value, name: element("disk-name").value },
+      { loadImage: image, blockDevice, closeDevice, workerDevice, openWorker: openDiskWorker },
+    );
     const agent = guestAgent({ abi: "wasm64", image: boot });
-    const machine = await bootMachine({
-      cpus: 1,
-      plugins: [
-        blockDevice({
-          capacity: root.byteLength,
-          read(offset, target) {
-            target.set(root.subarray(offset, offset + target.byteLength));
-            return target.byteLength;
-          },
-          write(offset, data) {
-            root.set(data, offset);
-            return data.byteLength;
-          },
-          flush() {}, // Only memory is retained; this is not durable storage.
-        }),
-        agent,
-        consoleDevice(
-          new ReadableStream({
-            start(controller) {
-              controller.close();
-            },
-          }),
-          consoleOutput(),
-        ),
-        entropyDevice(),
-      ],
-    });
+    let machine;
+    try {
+      machine = await bootMachine({
+        cpus: 1,
+        plugins: [
+          root.device,
+          agent,
+          consoleDevice(
+            new ReadableStream({
+              start(controller) {
+                controller.close();
+              },
+            }),
+            consoleOutput(),
+          ),
+          entropyDevice(),
+        ],
+      });
+    } catch (error) {
+      try {
+        await root.close();
+      } catch (cleanup) {
+        throw new AggregateError([error, cleanup], "Linux boot and disk cleanup failed");
+      }
+      throw error;
+    }
     const output = machine.bootConsole.pipeTo(consoleOutput());
     void output.catch(() => {});
-    const active = { agent, machine, output };
+    const active = { agent, machine, output, root };
     session = active;
     const ended = (message, reason) => {
       // Machine closure is authoritative even if an old operation never
       // settles. Stop owns its separate cleanup path until output is drained.
       if (session !== active || stopping) return;
-      ++generation;
-      session = undefined;
-      clearDownload();
-      busy = false;
-      programController?.abort(reason);
-      programController = undefined;
-      state(message);
+      void stopSession(active, message, reason);
     };
     void machine.closed.then(
       () => ended("stopped", new DOMException("Linux stopped", "AbortError")),
@@ -122,8 +131,11 @@ element("start").addEventListener("click", () =>
     return "running";
   }),
 );
-element("stop").addEventListener("click", async () => {
-  const active = session;
+async function stopSession(
+  active,
+  message = "stopped",
+  reason = new DOMException("Linux stopped", "AbortError"),
+) {
   if (!active || stopping) return;
   // Stop must not queue behind an application, its descendants' pipes, or
   // outstanding filesystem work. Invalidate their UI ownership immediately.
@@ -131,15 +143,24 @@ element("stop").addEventListener("click", async () => {
   clearDownload();
   stopping = active;
   busy = true;
-  programController?.abort(new DOMException("Linux stopped", "AbortError"));
+  programController?.abort(reason);
   programController = undefined;
   state("stopping");
-  let message = "stopped";
   try {
     active.machine.close();
     const results = await Promise.allSettled([active.machine.closed, active.output]);
-    const failed = results.find((result) => result.status === "rejected");
-    if (failed) throw failed.reason;
+    const failures = results
+      .filter((result) => result.status === "rejected")
+      .map((result) => result.reason);
+    try {
+      await active.root.close();
+    } catch (error) {
+      failures.push(error);
+    }
+    if (failures.length)
+      throw failures.length === 1
+        ? failures[0]
+        : new AggregateError(failures, "Linux or disk close failed");
   } catch (error) {
     message = `error: ${error.message}`;
     console.error(error);
@@ -149,7 +170,20 @@ element("stop").addEventListener("click", async () => {
     busy = false;
     state(message);
   }
-});
+}
+element("stop").addEventListener("click", () => stopSession(session));
+element("save-stop").addEventListener("click", () =>
+  action(async () => {
+    const active = session;
+    if (!active) throw new Error("Linux is not running");
+    const result = await active.agent.run(["/bin/sync"]);
+    if (session !== active || stopping) throw new Error("Linux stopped during synchronization");
+    if (!result.status.success)
+      throw new Error("Linux sync failed; disk remains open for retry or Stop");
+    await stopSession(active);
+    return "stopped";
+  }),
+);
 async function command(args, active = session) {
   if (!active || session !== active || stopping) throw new Error("Linux is not running");
   const result = await active.agent.run(args);

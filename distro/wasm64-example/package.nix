@@ -11,6 +11,10 @@
 assert !withGit || withPython;
 let
   source = ../../apps/wasm64-example;
+  opfsWorker = import ../site/opfs-disk-worker.nix {
+    inherit bytes pkgs;
+    kernel = kernel-wasm64;
+  };
 in
 pkgs.runCommand "linux-wasm64-browser-example"
   {
@@ -23,9 +27,11 @@ pkgs.runCommand "linux-wasm64-browser-example"
     mkdir -p $out/node_modules/@lowland/{kernel,bytes}
     esbuild ${source}/app.js --bundle --platform=browser --format=esm --target=es2022 \
       --alias:@lowland/guest=${../../packages/linux-guest/src}/index.ts \
+      --alias:linux-wasm-opfs-device=${../../apps/site/opfs-device.js} \
       --external:@lowland/kernel --external:@lowland/kernel/plugin --external:@lowland/bytes \
       --outfile=$out/app.js
     cp ${source}/index.html $out/index.html
+    cp ${opfsWorker}/opfs-disk-worker.js $out/opfs-disk-worker.js
     ${pkgs.lib.optionalString withPython ''
       chmod u+w $out/index.html
       substituteInPlace $out/index.html \

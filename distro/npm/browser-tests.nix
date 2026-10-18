@@ -329,7 +329,10 @@ let
         playwright.mkCheck {
           name = "browser-tests-${name}";
           suite = wasm64PythonGitExampleSuite;
-          expectedTests = [ "runs a Python Git SQLite workspace through standalone browser controls" ];
+          expectedTests = [
+            "runs a Python Git SQLite workspace through standalone browser controls"
+            "restores a Python Git SQLite workspace through standalone OPFS controls"
+          ];
           project = lib.removePrefix "wasm64-python-git-example-" name;
         }
       ))
