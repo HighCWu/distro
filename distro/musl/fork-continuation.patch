@@ -1,7 +1,7 @@
 diff --git a/include/unistd.h b/include/unistd.h
 --- a/include/unistd.h
 +++ b/include/unistd.h
-@@ -85,10 +85,8 @@ unsigned sleep(unsigned);
+@@ -86,9 +86,7 @@ unsigned sleep(unsigned);
  int pause(void);
  
 -#ifndef __wasm__
