@@ -13,9 +13,12 @@ compiler-wrapper link flags are separately retained in the whitelisted
 `toolchain-environment.nul`, and command-line additions in
 `linux-wasm-make-arguments.nul`, as NUL-separated data.
 
-`SHA256SUMS` covers these records. `BINARY_SHA256SUMS` identifies the final
-installed Git program and HTTP helper, with paths relative to the runtime
-output. CI verification checks those bytes and the declared Wasm memory ABI.
+`SHA256SUMS` covers these records. `BUILD_STAGE_BINARY_SHA256SUMS` records only
+the bytes at collection time: later Wasm strip hooks can still change them.
+It must not be used to identify the final installed binaries. The independent
+CI verification output's `BINARY_SHA256SUMS` hashes the completed Git program
+and HTTP helper, with paths relative to the runtime output; it also checks
+their declared Wasm memory ABI.
 The binary files themselves are not included in this artifact. A `verification/`
 directory, when supplied by CI, records the manifests checked by that job.
 

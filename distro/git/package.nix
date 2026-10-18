@@ -175,7 +175,8 @@ stdenv.mkDerivation (finalAttrs: {
       ${./run-command-posix-spawn.patch} ${../sdk/LICENSE.MIT}
   '';
 
-  # Run after fixup so the digest identifies the final installed bytes.
+  # Collect build-stage records here. postFixupHooks still strips Wasm debug
+  # data afterwards; only a dependent derivation can hash completed outputs.
   # These selected records are not a source closure or license-link approval.
   postFixup = ''
     bash ${./build-materials.sh} "$PWD" "$buildMaterials" "$out" ${./package.nix} \
@@ -244,7 +245,6 @@ stdenv.mkDerivation (finalAttrs: {
           }
           ''
             (cd ${finalAttrs.finalPackage.buildMaterials} && sha256sum --check SHA256SUMS)
-            (cd ${finalAttrs.finalPackage} && sha256sum --check ${finalAttrs.finalPackage.buildMaterials}/BINARY_SHA256SUMS)
             materials=${finalAttrs.finalPackage.buildMaterials}
             jq --exit-status '.schemaVersion == 1
               and .addressBits == ${toString platform.addressBits}
@@ -267,7 +267,8 @@ stdenv.mkDerivation (finalAttrs: {
             done
             mkdir $out
             cp "$materials/SHA256SUMS" "$out/MATERIALS_SHA256SUMS"
-            cp "$materials/BINARY_SHA256SUMS" "$out/BINARY_SHA256SUMS"
+            (cd ${finalAttrs.finalPackage} && sha256sum usr/bin/git usr/libexec/git-core/git-remote-http) >"$out/BINARY_SHA256SUMS"
+            (cd ${finalAttrs.finalPackage} && sha256sum --check "$out/BINARY_SHA256SUMS")
             (cd "$out" && sha256sum MATERIALS_SHA256SUMS BINARY_SHA256SUMS >SHA256SUMS)
           '';
       workflow = check "workflow" ./workflow-test.sh;

@@ -22,7 +22,7 @@ for required in "$recipe" "$metadata" "$readme" "$@" "$installed/usr/bin/git" "$
   test -s "$required"
 done
 mkdir -p "$output/patches"
-collected=("${configured[@]}" package.nix build.json README.md build-materials.sh compiler-version.txt toolchain-environment.nul GIT-LDFLAGS.status BINARY_SHA256SUMS)
+collected=("${configured[@]}" package.nix build.json README.md build-materials.sh compiler-version.txt toolchain-environment.nul GIT-LDFLAGS.status BUILD_STAGE_BINARY_SHA256SUMS)
 for required in "${configured[@]}"; do
   cp "$build_tree/$required" "$output/$required"
 done
@@ -54,7 +54,7 @@ done
 (
   cd "$installed"
   sha256sum usr/bin/git usr/libexec/git-core/git-remote-http
-) >"$output/BINARY_SHA256SUMS"
+) >"$output/BUILD_STAGE_BINARY_SHA256SUMS"
 cd "$output"
 sha256sum "${collected[@]}" >SHA256SUMS
 sha256sum --check SHA256SUMS
