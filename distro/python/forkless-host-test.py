@@ -41,6 +41,10 @@ def main(subprocess_source, fixtures):
     lifecycle.subprocess = subprocess
     lifecycle.exercise_lifecycle()
     lifecycle.exercise_backpressure()
+    terminal = load_module("forkless_pty", fixtures / "pty-test.py")
+    terminal.subprocess = subprocess
+    terminal.exercise_session()
+    terminal.negative_control()
     # These inject failures into the same patched Popen, not the host's Popen.
     errors.verify_cleanup_negative_controls()
     lifecycle.verify_native_negative_control()

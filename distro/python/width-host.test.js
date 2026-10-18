@@ -231,6 +231,8 @@ test("native fork-less replay uses pinned CPython, the full integration patch an
     "errors.check_failed_launch_cleanup()",
     "lifecycle.exercise_lifecycle()",
     "lifecycle.exercise_backpressure()",
+    "terminal.exercise_session()",
+    "terminal.negative_control()",
     "errors.verify_cleanup_negative_controls()",
     "lifecycle.verify_native_negative_control()",
   ])
@@ -290,6 +292,11 @@ test("Python PTY fixture preserves canonical/raw bytes and rejects injected corr
     /Python PTY: character devices, CLOEXEC, canonical\/raw binary I\/O and window size verified/,
   );
   assert.match(result.stdout, /injected byte corruption rejected/);
+  assert.match(result.stdout, /injected session byte corruption rejected/);
+  assert.match(
+    result.stdout,
+    /Python PTY session: controlling terminal, foreground group, binary I\/O and reaping verified/,
+  );
   const recipe = readFileSync(new URL("./package.nix", import.meta.url), "utf8");
   assert.ok(recipe.includes('files."/python-pty-test.py" = ./pty-test.py;'));
   const script = readFileSync(new URL("./python-test.sh", import.meta.url), "utf8");
