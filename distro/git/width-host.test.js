@@ -5,6 +5,14 @@ import test from "node:test";
 
 const read = (path) => readFileSync(new URL(path, import.meta.url), "utf8");
 
+test("Git notice checks do not require hush's unsupported nounset option", () => {
+  const checker = read("./notice-check.sh");
+  assert.doesNotMatch(checker, /^\s*set\s+[^\n]*-[^\n]*u/m);
+  assert.match(checker, /cd \/usr\/share\/licenses\/git \|\| exit 1/);
+  assert.match(checker, /test -s SHA256SUMS \|\| exit 1/);
+  assert.match(checker, /sha256sum -c SHA256SUMS/);
+});
+
 test("Git wasm64 explicitly selects matching libraries, shell and runtime checker", () => {
   const scope = read("../default.nix");
   assert.match(scope, /git = callPackage \.\/git\/package\.nix \{ \};/);
