@@ -1,13 +1,13 @@
 // SPDX-License-Identifier: MIT
 import assert from "node:assert/strict";
-import { copyFileSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { copyFileSync, mkdtempSync, readFileSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { spawnSync } from "node:child_process";
 import { test } from "node:test";
 
-test("CMake consumes target static libraries and runs a separately built native generator", () => {
+test("CMake installs a stripped consumer with target libraries and a native generator", () => {
   const root = mkdtempSync(join(tmpdir(), "sdk-installed-"));
   const source = dirname(fileURLToPath(import.meta.url));
   const toolchain = process.env.SDK_TEST_CMAKE_TOOLCHAIN;
@@ -42,7 +42,7 @@ test("CMake consumes target static libraries and runs a separately built native 
   const configure = [
     "-G",
     "Ninja",
-    "-DCMAKE_BUILD_TYPE=Release",
+    "-DCMAKE_BUILD_TYPE=RelWithDebInfo",
     "-DCMAKE_NINJA_FORCE_RESPONSE_FILE=ON",
     // CMake must not re-root the explicitly staged dependency into SDK sysroot.
     `-DCMAKE_STAGING_PREFIX=${join(root, "prefix")}`,
@@ -93,7 +93,16 @@ test("CMake consumes target static libraries and runs a separately built native 
       readFileSync(join(root, "consumer/sdk-generated-answer.h"), "utf8"),
       /SDK_GENERATED_ANSWER 42/,
     );
-    const binary = join(root, "consumer", toolchain ? "sdk-example.wasm" : "sdk-example");
+    const installed = join(root, "installed");
+    run("cmake", ["--install", join(root, "consumer"), "--strip", "--prefix", installed], {
+      STRIP: "/invalid-ambient-strip",
+    });
+    const binary = join(installed, "bin", toolchain ? "sdk-example.wasm" : "sdk-example");
+    const original = join(root, "consumer", toolchain ? "sdk-example.wasm" : "sdk-example");
+    assert.ok(
+      statSync(binary).size < statSync(original).size,
+      "install --strip did not remove debug/symbol data",
+    );
     if (toolchain) {
       assert.ok(process.env.SDK_TEST_OUTPUT_DIRECTORY, "target builds require an output directory");
       copyFileSync(binary, join(process.env.SDK_TEST_OUTPUT_DIRECTORY, "sdk-example.wasm"));

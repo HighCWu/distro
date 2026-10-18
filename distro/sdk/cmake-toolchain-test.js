@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: MIT
 import assert from "node:assert/strict";
-import { mkdtempSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { mkdtempSync, mkdirSync, readFileSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -78,6 +78,7 @@ test("CMake cross mode links feature probes and separately builds a native gener
       cxx: "c++",
       ar: "ar",
       ranlib: "ranlib",
+      strip: "strip",
       sysroot: "/",
       pkgConfig: "pkg-config",
     }))
@@ -161,6 +162,7 @@ install(TARGETS example RUNTIME DESTINATION bin)
       cxx: "c++",
       ar: "ar",
       ranlib: "ranlib",
+      strip: "strip",
       sysroot: "/",
       pkgConfig: "pkg-config",
     }))
@@ -184,6 +186,93 @@ install(TARGETS example RUNTIME DESTINATION bin)
           "fixture must reproduce the missing RPATH policy failure",
         );
         assert.match(result.stdout + result.stderr, /requires changing an RPATH/);
+      }
+    }
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test("CMake install --strip uses the selected target tool, not a cached host strip", () => {
+  const root = mkdtempSync(join(tmpdir(), "sdk-cmake-strip-"));
+  const run = (command, args) => spawnSync(command, args, { encoding: "utf8", timeout: 30_000 });
+  const succeeds = (result) => assert.equal(result.status, 0, result.stdout + result.stderr);
+  const quote = (value) => "'" + value.replaceAll("'", "'\\''") + "'";
+  try {
+    const found = run("sh", ["-c", "command -v strip"]);
+    succeeds(found);
+    const selected = join(root, "selected-strip");
+    const poison = join(root, "host-strip");
+    const log = join(root, "selected-strip.log");
+    writeFileSync(
+      selected,
+      `#!/bin/sh\nprintf 'target\\n' >> ${quote(log)}\nexec ${quote(found.stdout.trim())} "$@"\n`,
+      { mode: 0o755 },
+    );
+    writeFileSync(poison, "#!/bin/sh\necho 'host strip must not touch target' >&2\nexit 39\n", {
+      mode: 0o755,
+    });
+    writeFileSync(join(root, "main.c"), "int main(void) { return 0; }\n");
+    writeFileSync(
+      join(root, "CMakeLists.txt"),
+      `cmake_minimum_required(VERSION 3.20)
+project(strip_install C)
+add_executable(example main.c)
+install(TARGETS example RUNTIME DESTINATION bin)
+`,
+    );
+    let template = readFileSync(new URL("./linux-wasm.cmake.in", import.meta.url), "utf8");
+    for (const [key, value] of Object.entries({
+      wasmArch: "sdk-probe-host",
+      cc: "cc",
+      cxx: "c++",
+      ar: "ar",
+      ranlib: "ranlib",
+      strip: selected,
+      sysroot: "/",
+      pkgConfig: "pkg-config",
+    }))
+      template = template.replaceAll(`@${key}@`, value);
+    for (const [name, policy, valid] of [
+      ["sdk", template, true],
+      ["without-target-strip", template.replace(/^set\(CMAKE_STRIP .*\)\n/m, ""), false],
+    ]) {
+      const toolchain = join(root, `${name}.cmake`);
+      const build = join(root, name);
+      const prefix = join(root, `${name}-installed`);
+      writeFileSync(toolchain, policy);
+      succeeds(
+        run("cmake", [
+          "-S",
+          root,
+          "-B",
+          build,
+          "-G",
+          "Ninja",
+          `-DCMAKE_TOOLCHAIN_FILE=${toolchain}`,
+          `-DCMAKE_STRIP=${poison}`,
+          "-DCMAKE_BUILD_TYPE=Debug",
+        ]),
+      );
+      succeeds(run("cmake", ["--build", build]));
+      const installed = run("cmake", ["--install", build, "--strip", "--prefix", prefix]);
+      if (valid) {
+        succeeds(installed);
+        assert.match(readFileSync(join(build, "cmake_install.cmake"), "utf8"), /selected-strip/);
+        assert.match(installed.stdout, /Installing/);
+        assert.equal(readFileSync(log, "utf8"), "target\n");
+        const binary = join(prefix, "bin/example");
+        assert.ok(statSync(binary).size < statSync(join(build, "example")).size);
+        succeeds(run(binary, []));
+      } else {
+        assert.match(installed.stdout + installed.stderr, /host strip must not touch target/);
+        // Some CMake versions do not propagate strip's nonzero exit status.
+        // Prove that this failed tool left the executable unstripped instead.
+        assert.equal(
+          statSync(join(prefix, "bin/example")).size,
+          statSync(join(build, "example")).size,
+        );
+        assert.equal(readFileSync(log, "utf8"), "target\n");
       }
     }
   } finally {

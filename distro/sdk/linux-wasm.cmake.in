@@ -5,6 +5,7 @@ set(CMAKE_C_COMPILER "@cc@")
 set(CMAKE_CXX_COMPILER "@cxx@")
 set(CMAKE_AR "@ar@")
 set(CMAKE_RANLIB "@ranlib@")
+set(CMAKE_STRIP "@strip@" CACHE FILEPATH "Target Wasm strip tool" FORCE)
 set(CMAKE_SYSROOT "@sysroot@")
 set(PKG_CONFIG_EXECUTABLE "@pkgConfig@" CACHE FILEPATH "Target metadata query tool")
 # Do not append CMAKE_PREFIX_PATH (which may describe host tools) to .pc paths.

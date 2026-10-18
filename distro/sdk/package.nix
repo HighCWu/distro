@@ -106,6 +106,7 @@ let
     cxx = "${cxx}/bin/wasm-linux-c++";
     ar = "${llvm-toolchain}/bin/llvm-ar";
     ranlib = "${llvm-toolchain}/bin/llvm-ranlib";
+    strip = "${llvm-toolchain}/bin/llvm-strip";
     sysroot = "${sysroot}";
     pkgConfig = "${pkgConfig}/bin/wasm-linux-pkg-config";
   };
@@ -412,6 +413,8 @@ let
           SDK_TEST_PKG_CONFIG=${sdk}/bin/wasm-linux-pkg-config \
           SDK_TEST_OUTPUT_DIRECTORY=$out \
           node --test ${./.}/installed-consumer-test.js
+        node ${../busybox/check-binary.mjs} ${../../packages/kernel/src/wasm_binary.ts} \
+          $out/sdk-example.wasm ${toString platform.addressBits} ${toString platform.maximumMemoryBytes}
         chmod 0755 $out/sdk-example.wasm
       '';
   zlibPrograms =
