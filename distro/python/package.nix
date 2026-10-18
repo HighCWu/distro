@@ -226,6 +226,21 @@ let
     '';
 
     passthru.checks = {
+      forkless-host = pkgs.runCommand "python-forkless-native-replay" { } ''
+        # Apply the actual integration patch to the exact pinned CPython
+        # source, without building LLVM, the interpreter or the target kernel.
+        mkdir -p Modules Lib/multiprocessing
+        cp ${src}/Modules/posixmodule.c Modules/
+        cp ${src}/Lib/subprocess.py Lib/
+        for name in util context resource_tracker; do
+          cp ${src}/Lib/multiprocessing/$name.py Lib/multiprocessing/
+        done
+        chmod -R u+w Modules Lib
+        ${pkgs.patch}/bin/patch -p1 < ${./process-posix-spawn.patch}
+        ${pkgs.coreutils}/bin/timeout 90s ${pkgs.python313}/bin/python3 -B ${./forkless-host-test.py} \
+          "$PWD/Lib/subprocess.py" ${./.}
+        touch "$out"
+      '';
       build-materials =
         pkgs.runCommand "python-wasm${toString platform.addressBits}-build-materials-check"
           {

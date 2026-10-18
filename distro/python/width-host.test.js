@@ -212,6 +212,31 @@ test("fork-less PATH fallback preserves error precedence and caller executable n
   assert.match(script, /python3 \/python-spawn-errors-test\.py \|\| fail/);
 });
 
+test("native fork-less replay uses pinned CPython, the full integration patch and a bounded runner", () => {
+  const recipe = readFileSync(new URL("./package.nix", import.meta.url), "utf8");
+  const check = recipe.slice(
+    recipe.indexOf("forkless-host ="),
+    recipe.indexOf("build-materials ="),
+  );
+  assert.ok(check.includes("${src}/Lib/subprocess.py"));
+  assert.ok(check.includes("${./process-posix-spawn.patch}"));
+  assert.ok(check.includes("${pkgs.python313}/bin/python3"));
+  assert.ok(check.includes("${pkgs.coreutils}/bin/timeout 90s"));
+  assert.ok(check.includes("${./forkless-host-test.py}"));
+  const replay = readFileSync(new URL("./forkless-host-test.py", import.meta.url), "utf8");
+  for (const stage of [
+    "_HAVE_FORK_EXEC is False",
+    "_fork_exec is None",
+    "_USE_POSIX_SPAWN is True",
+    "errors.check_failed_launch_cleanup()",
+    "lifecycle.exercise_lifecycle()",
+    "lifecycle.exercise_backpressure()",
+    "errors.verify_cleanup_negative_controls()",
+    "lifecycle.verify_native_negative_control()",
+  ])
+    assert.ok(replay.includes(stage), stage);
+});
+
 test("Python process timeouts preserve binary pipes and terminated children are reaped", () => {
   const result = spawnSync(
     "python3",
