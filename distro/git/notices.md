@@ -9,12 +9,14 @@ source files, including their original LGPL copyright/license headers,
 because this build selects Git's bundled regex rather than musl's regex.
 These selected files are not the complete Git source or all license texts.
 
-`run-command-posix-spawn.patch` is the actual configured Git modification.
+`run-command-posix-spawn.patch` is the packaged default Git modification.
 It replaces the fork/exec child-launch path with posix_spawn, file actions
 and synchronous spawn error reporting; unsupported daemonization still
 fails rather than pretending to create a background process. The patch
 remains subject to Git's upstream licensing; `notice-tools-MIT` applies
 only to the project's own notice installation/checking infrastructure.
+Custom derivation overrides must separately collect their actual patches
+and modification records; this selected installer does not discover them.
 
 `linked/` preserves selected notices from the exact curl output used to
 link this Git HTTP helper: libcurl, zlib, OpenSSL, musl, compiler-rt and the
