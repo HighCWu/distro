@@ -1,3 +1,16 @@
+diff --git a/include/unistd.h b/include/unistd.h
+--- a/include/unistd.h
++++ b/include/unistd.h
+@@ -85,10 +85,8 @@ unsigned sleep(unsigned);
+ int pause(void);
+ 
+-#ifndef __wasm__
+ pid_t fork(void);
+ pid_t _Fork(void);
+-#endif
+ int execve(const char *, char *const [], char *const []);
+ int execv(const char *, char *const []);
+ int execle(const char *, const char *, ...);
 diff --git a/src/process/fork.c b/src/process/fork.c
 --- a/src/process/fork.c
 +++ b/src/process/fork.c
