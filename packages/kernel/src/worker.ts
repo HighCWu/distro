@@ -10,6 +10,7 @@ import {
   type CloneSyscallLayout,
   fork_continuation_exports_supported,
   uses_fork_continuation,
+  resume_fork_parent,
 } from "./fork-continuation.ts";
 import {
   settle_user_copy,
@@ -310,16 +311,7 @@ function user_imports({
             call_entry();
             if (fork?.unwinding()) {
               assert(context);
-              const owner = context;
-              const continuation = fork;
-              owner.fork_continuation = continuation.suspend();
-              let result: WasmAddress;
-              try {
-                result = continuation.clone();
-              } finally {
-                delete owner.fork_continuation;
-              }
-              continuation.resumeParent(result);
+              resume_fork_parent(context, fork);
             }
           } catch (error) {
             if (error === HALT_USER) continue;

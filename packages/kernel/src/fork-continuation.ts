@@ -18,6 +18,21 @@ export interface ForkSnapshot {
   entry: WasmAddress;
 }
 
+/** Scope child metadata to this clone, including negative results and traps. */
+export function resume_fork_parent(
+  owner: { fork_continuation?: ForkSnapshot },
+  continuation: ForkContinuation,
+): void {
+  owner.fork_continuation = continuation.suspend();
+  let result: WasmAddress;
+  try {
+    result = continuation.clone();
+  } finally {
+    delete owner.fork_continuation;
+  }
+  continuation.resumeParent(result);
+}
+
 const functions = [
   "_start",
   "__wasm_fork_abi",

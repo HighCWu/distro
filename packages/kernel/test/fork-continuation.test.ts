@@ -6,9 +6,18 @@ import {
   dispatch_fork_syscall,
   fork_continuation_exports_supported,
   uses_fork_continuation,
+  resume_fork_parent,
+  type ForkSnapshot,
 } from "../src/fork-continuation.ts";
 import { user_module_imports_supported } from "../src/wasm.ts";
 import type { WasmAddress, WasmAddressType } from "../src/wasm.ts";
+import {
+  settle_user_copy,
+  wait_user_copy,
+  USER_COPY_COMPLETE,
+  USER_COPY_NO_MEMORY,
+  USER_COPY_TRY_AGAIN,
+} from "../src/user-copy.ts";
 
 test("legacy modules do not opt in; incomplete continuation modules fail admission", () => {
   const header = [0, 97, 115, 109, 1, 0, 0, 0];
@@ -164,6 +173,63 @@ test("syscall import versions are explicit; an unknown version is not admitted",
 });
 
 for (const address of ["i32", "i64"] as const) {
+  test(`${address}: copy failures rewind errno, clear clone metadata and permit a later fork`, () => {
+    const f = fixture(address, true),
+      p = f.pointer;
+    const owner: { fork_continuation?: ForkSnapshot } = {};
+    const failed: Int32Array<SharedArrayBuffer>[] = [];
+    for (const errno of [USER_COPY_TRY_AGAIN, USER_COPY_NO_MEMORY, USER_COPY_TRY_AGAIN]) {
+      const status = new Int32Array(new SharedArrayBuffer(4));
+      failed.push(status);
+      assert.equal(f.controller.syscallCheckpoint(true), 0);
+      f.exports.__wasm_fork_clone = () => {
+        assert.equal(owner.fork_continuation?.descriptor, p(64));
+        if (errno === USER_COPY_NO_MEMORY) settle_user_copy(status, errno);
+        return p(wait_user_copy(status, 0));
+      };
+      resume_fork_parent(owner, f.controller);
+      assert.equal("fork_continuation" in owner, false);
+      assert.equal(f.controller.syscallCheckpoint(true), errno);
+      assert.equal(f.controller.unwinding(), false);
+      assert.equal(
+        settle_user_copy(status, USER_COPY_COMPLETE),
+        false,
+        "late child cannot publish",
+      );
+    }
+    const child = fixture(address, true);
+    let snapshot: ForkSnapshot | undefined;
+    f.exports.__wasm_fork_clone = () => {
+      snapshot = owner.fork_continuation;
+      return p(1234);
+    };
+    assert.equal(f.controller.syscallCheckpoint(true), 0);
+    resume_fork_parent(owner, f.controller);
+    assert.equal("fork_continuation" in owner, false);
+    assert.ok(snapshot);
+    child.controller.resumeChild(snapshot);
+    assert.equal(f.controller.syscallCheckpoint(true), 1234);
+    assert.equal(child.controller.syscallCheckpoint(true), 0);
+    assert.equal(f.calls.descriptors, 4);
+    assert.equal(child.calls.descriptors, 0);
+    for (const status of failed) assert.ok(Atomics.load(status, 0) < 0);
+  });
+
+  test(`${address}: clone traps remove request metadata without inventing a recoverable errno`, () => {
+    const f = fixture(address, true);
+    const owner: { fork_continuation?: ForkSnapshot } = {};
+    const failure = new Error("injected clone trap");
+    f.exports.__wasm_fork_clone = () => {
+      throw failure;
+    };
+    f.controller.syscallCheckpoint(true);
+    assert.throws(
+      () => resume_fork_parent(owner, f.controller),
+      (error) => error === failure,
+    );
+    assert.equal("fork_continuation" in owner, false);
+  });
+
   test(`${address}: flags-first clone restores parent and child using the same continuation`, () => {
     const parent = fixture(address, true),
       child = fixture(address, true),
