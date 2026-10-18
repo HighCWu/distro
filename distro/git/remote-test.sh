@@ -8,7 +8,6 @@ fail() {
 
 export PATH=/bin:/sbin:/usr/bin:/usr/sbin
 export HOME=/root
-/bin/sh /git-runtime-check.sh || fail "Git runtime width or selected notices invalid"
 export GIT_AUTHOR_NAME=Test GIT_AUTHOR_EMAIL=test@example.com
 export GIT_COMMITTER_NAME=Test GIT_COMMITTER_EMAIL=test@example.com
 
@@ -16,6 +15,7 @@ export GIT_COMMITTER_NAME=Test GIT_COMMITTER_EMAIL=test@example.com
 mount -t devtmpfs devtmpfs /dev || fail "mounting devtmpfs failed"
 mount -t proc proc /proc || fail "mounting proc failed"
 /vm-test-setup-dev-fd || fail "creating /dev/fd links failed"
+/bin/sh /git-runtime-check.sh || fail "Git runtime width or selected notices invalid"
 mkdir -p /root /tmp
 cd /tmp || fail "cd /tmp failed"
 

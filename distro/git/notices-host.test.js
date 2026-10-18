@@ -162,6 +162,12 @@ test("Git packages install and check the same selected notices in all three runt
   assert.ok(recipe.includes('toString platform.addressBits + "\\n"'));
   for (const name of ["workflow", "packing", "remote"]) {
     const script = readFileSync(new URL(`./${name}-test.sh`, import.meta.url), "utf8");
+    const mount = script.indexOf("mount -t devtmpfs devtmpfs /dev || fail");
+    const preflight = script.indexOf("/bin/sh /git-runtime-check.sh || fail");
+    assert.ok(mount >= 0 && preflight > mount, "Git preflight requires initialized /dev/null");
+    if (name === "remote") {
+      assert.ok(preflight > script.indexOf("/vm-test-setup-dev-fd || fail"));
+    }
     assert.ok(
       script.includes(
         '/bin/sh /git-runtime-check.sh || fail "Git runtime width or selected notices invalid"',
