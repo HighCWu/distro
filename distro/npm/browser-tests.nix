@@ -33,6 +33,7 @@
   toolchain-smoke,
   wasm64-example,
   wasm64-python-example,
+  wasm64-python-git-example,
   zstd,
   zstd-wasm64,
 }:
@@ -323,6 +324,15 @@ let
           project = lib.removePrefix "wasm64-python-example-" name;
         }
       ))
+      // (lib.genAttrs [ "wasm64-python-git-example-chromium" "wasm64-python-git-example-firefox" ] (
+        name:
+        playwright.mkCheck {
+          name = "browser-tests-${name}";
+          suite = wasm64PythonGitExampleSuite;
+          expectedTests = [ "runs a Python Git SQLite workspace through standalone browser controls" ];
+          project = lib.removePrefix "wasm64-python-git-example-" name;
+        }
+      ))
       // (lib.genAttrs [ "runtime-wasm32-chromium" "runtime-wasm32-firefox" ] (
         name:
         playwright.mkCheck {
@@ -604,6 +614,16 @@ let
     ${pkgs.python313}/bin/python3 -c \
       'import pathlib, sys, zipfile; entry = zipfile.ZipInfo("__main__.py", (1980, 1, 1, 0, 0, 0)); entry.create_system = 3; entry.external_attr = 0o100644 << 16; entry.compress_type = zipfile.ZIP_DEFLATED; z = zipfile.ZipFile(sys.argv[2], "w"); z.writestr(entry, pathlib.Path(sys.argv[1]).read_bytes()); z.close()' \
       ${../../apps/wasm64-example}/python-check.py $out/python-controls.pyz
+  '';
+
+  wasm64PythonGitExampleSuite = pkgs.runCommand "wasm64-python-git-example-browser-tests" { } ''
+    mkdir -p $out/tests
+    cp -r ${wasm64-python-git-example}/. $out/
+    chmod u+w $out/node_modules
+    ${playwright.linkRuntime "$out"}
+    cp ${../../apps/wasm64-example}/server.mjs $out/server.js
+    cp ${source}/playwright.config.js $out/playwright.config.js
+    cp ${source}/agent-tests/wasm64-python-git-example.spec.js $out/tests/
   '';
 
   agentSystemRootSuite =

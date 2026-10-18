@@ -17,6 +17,34 @@ nix build .#wasm64-example --out-link result-wasm64-example -L
 node result-wasm64-example/server.mjs
 ```
 
+## Optional Python + Git workspace profile
+
+`wasm64-python-git-example` uses the same controls with a 512 MiB ext4 root
+containing Python, Git, BusyBox, ncurses, OpenSSL and CA certificates. This is
+disk capacity, not a memory ceiling. Build it in public CI with
+`nix build .#wasm64-python-git-example`, then serve the complete output using
+its `server.mjs`. The minimal and Python-only profiles are unchanged.
+
+The output includes `git-workspace.pyz` and `workspace-source/`. Download the
+archive from the served `/git-workspace.pyz` URL, start Linux, select Python
+explicitly, and select the downloaded file. Leave standard input empty and
+set arguments to `["write", "/root/workspace"]`. The result reports a Git HEAD.
+Run the same archive with `["read", "/root/workspace", "THE_REPORTED_HEAD"]` to
+check the repository, clone, Python hook, binary application and SQLite data.
+The full 40-character HEAD is required, not the placeholder text. Both phases
+also work with ordinary Linux Python/Git; the application and its source are MIT.
+Write refuses an existing workspace; read creates a new clone and is not an
+idempotent synchronization command. It does not install dependencies or use
+public-network services. Only run trusted applications and repositories.
+
+This page still downloads a fresh in-memory root on each start; stopping or
+reloading loses the workspace. The separate OPFS checks do not give these
+controls persistence. A successful component check does not establish this
+combined page's compatibility; its Chromium/Firefox results are tracked separately.
+This optional recipe is not a license-approved binary release. Python/Readline
+obligations, Git's OpenSSL linkage review and complete corresponding-source
+delivery remain separate requirements; bundled notices do not relicense dependencies.
+
 ## Optional Python profile
 
 `wasm64-python-example` uses the same page, kernel, native agent and public
@@ -88,7 +116,8 @@ general-purpose production server and does not handle HTTP range requests.
 Every start downloads a fresh root image into host memory. Writes disappear
 after stop, reload or failure: the no-op block flush only acknowledges the
 in-memory backing, not durable storage. The page explicitly says this; it does
-not silently fall back from OPFS. The 64 MiB minimal image (256 MiB for Python), kernel and per-process
+not silently fall back from OPFS. The 64 MiB minimal image (256 MiB for Python,
+512 MiB for Python + Git), kernel and per-process
 memories consume additional browser resources. Memory64 and shared-memory
 browser support are required; there is no wasm32 fallback or transpiler here.
 Runtime errors remain visible and are not converted to compatibility success.

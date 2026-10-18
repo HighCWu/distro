@@ -358,5 +358,9 @@ lib.makeScope (scope: lib.callPackageWith ({ inherit lib pkgs; } // scope)) (
     browser-tests = callPackage ./npm/browser-tests.nix { };
     wasm64-example = callPackage ./wasm64-example/package.nix { };
     wasm64-python-example = self.wasm64-example.override { withPython = true; };
+    wasm64-python-git-example = self.wasm64-example.override {
+      withPython = true;
+      withGit = true;
+    };
   }
 )

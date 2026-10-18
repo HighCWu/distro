@@ -28,6 +28,16 @@ let
     cp ${./example/LICENSE} $out/LICENSE
     ${pkgs.python313}/bin/python3 $out/source/build-example.py $out/application.pyz
   '';
+  workspaceApplication = pkgs.runCommand "linux-wasm-python-git-workspace-application" { } ''
+    mkdir -p $out/source/example
+    cp ${./git-workspace-example.py} $out/source/example/__main__.py
+    cp ${./example/LICENSE} $out/source/example/LICENSE
+    cp ${./build-example.py} $out/source/build-example.py
+    cp ${./example/LICENSE} $out/LICENSE
+    ${pkgs.python313}/bin/python3 -c \
+      'import pathlib,runpy,sys; runpy.run_path(sys.argv[1])["build"](pathlib.Path(sys.argv[2]), pathlib.Path(sys.argv[3]), ("LICENSE", "__main__.py"))' \
+      $out/source/build-example.py $out/git-workspace.pyz $out/source/example
+  '';
   package = stdenv.mkDerivation (finalAttrs: {
     pname = "python";
     version = "3.13.14";
@@ -43,6 +53,7 @@ let
     moveToDev = false;
     meta.outputsToInstall = [ "out" ];
     passthru.applicationExample = applicationExample;
+    passthru.workspaceApplication = workspaceApplication;
     passthru.sourceBundle = import ./source-bundle.nix {
       inherit pkgs platform;
       python = finalAttrs.finalPackage;

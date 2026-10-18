@@ -4,12 +4,15 @@ import hashlib
 import importlib.util
 import json
 import os
+import runpy
+import shutil
 from pathlib import Path
 import sqlite3
 import subprocess
 import sys
 import tempfile
 import unittest
+import zipfile
 
 
 EXAMPLE = Path(__file__).with_name("git-workspace-example.py")
@@ -19,6 +22,39 @@ spec.loader.exec_module(example)
 
 
 class GitWorkspace(unittest.TestCase):
+    def test_relocatable_zipapp_is_exact_reproducible_source_and_runs_both_phases(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            source = root / "source"
+            source.mkdir()
+            shutil.copyfile(EXAMPLE, source / "__main__.py")
+            shutil.copyfile(EXAMPLE.parent / "example/LICENSE", source / "LICENSE")
+            build = runpy.run_path(str(EXAMPLE.parent / "build-example.py"))["build"]
+            archive = root / "git-workspace.pyz"
+            build(archive, source, ("LICENSE", "__main__.py"))
+            first = archive.read_bytes()
+            os.utime(source / "__main__.py", (1, 1))
+            build(archive, source, ("LICENSE", "__main__.py"))
+            self.assertEqual(first, archive.read_bytes())
+            with zipfile.ZipFile(archive) as bundle:
+                self.assertEqual(bundle.namelist(), ["LICENSE", "__main__.py"])
+                self.assertEqual(bundle.read("__main__.py"), EXAMPLE.read_bytes())
+                self.assertEqual(bundle.read("LICENSE"), (source / "LICENSE").read_bytes())
+                for entry in bundle.infolist():
+                    self.assertEqual(entry.date_time, (1980, 1, 1, 0, 0, 0))
+            shutil.rmtree(source)
+            directory = root / "workspace ' $HOME → data"
+            written = subprocess.run([sys.executable, "-I", str(archive), "write", str(directory)],
+                                     capture_output=True, timeout=30)
+            self.assertEqual(written.returncode, 0, written.stderr)
+            self.assertEqual(written.stderr, b"")
+            report = json.loads(written.stdout)
+            read = subprocess.run([sys.executable, "-I", str(archive), "read", str(directory), report["head"]],
+                                  capture_output=True, timeout=30)
+            self.assertEqual(read.returncode, 0, read.stderr)
+            self.assertEqual(read.stderr, b"")
+            self.assertEqual(json.loads(read.stdout), {**report, "phase": "read"})
+
     def run_example(self, phase, directory, head=None):
         return subprocess.run([sys.executable, "-I", str(EXAMPLE), phase, str(directory), *([head] if head else [])],
                               capture_output=True, timeout=30)

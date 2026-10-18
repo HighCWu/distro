@@ -1,11 +1,79 @@
 // SPDX-License-Identifier: MIT
 import assert from "node:assert/strict";
 import { spawnSync } from "node:child_process";
-import { mkdtempSync, readFileSync, rmSync, writeFileSync, utimesSync } from "node:fs";
+import { mkdtempSync, mkdirSync, readFileSync, rmSync, writeFileSync, utimesSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 import test from "node:test";
+
+test("combined profile packages the original MIT workspace zipapp without changing default profiles", () => {
+  const recipe = readFileSync(new URL("../../distro/python/package.nix", import.meta.url), "utf8");
+  const command = recipe.match(/workspaceApplication =[\s\S]*?python3 -c \\\n\s*'([^']+)'/);
+  assert.ok(command);
+  const temporary = mkdtempSync(join(tmpdir(), "linux-wasm-workspace-archive-"));
+  try {
+    const source = join(temporary, "source");
+    mkdirSync(source);
+    const original = readFileSync(
+      new URL("../../distro/python/git-workspace-example.py", import.meta.url),
+    );
+    const license = readFileSync(new URL("../../distro/python/example/LICENSE", import.meta.url));
+    writeFileSync(join(source, "__main__.py"), original);
+    writeFileSync(join(source, "LICENSE"), license);
+    utimesSync(join(source, "__main__.py"), 1, 1);
+    const output = join(temporary, "git-workspace.pyz");
+    const built = spawnSync(
+      "python3",
+      [
+        "-c",
+        command[1],
+        fileURLToPath(new URL("../../distro/python/build-example.py", import.meta.url)),
+        output,
+        source,
+      ],
+      { encoding: "utf8", timeout: 5000 },
+    );
+    assert.equal(built.status, 0, built.error?.message ?? built.stderr);
+    const checked = spawnSync(
+      "python3",
+      [
+        "-c",
+        'import pathlib,sys,zipfile; z=zipfile.ZipFile(sys.argv[1]); assert z.namelist()==["LICENSE","__main__.py"]; assert z.read("__main__.py")==pathlib.Path(sys.argv[2],"__main__.py").read_bytes(); assert z.read("LICENSE")==pathlib.Path(sys.argv[2],"LICENSE").read_bytes(); assert z.testzip() is None',
+        output,
+        source,
+      ],
+      { encoding: "utf8", timeout: 5000 },
+    );
+    assert.equal(checked.status, 0, checked.error?.message ?? checked.stderr);
+  } finally {
+    rmSync(temporary, { recursive: true, force: true });
+  }
+  const profile = readFileSync(
+    new URL("../../distro/wasm64-example/package.nix", import.meta.url),
+    "utf8",
+  );
+  for (const required of [
+    "withGit ? false",
+    "assert !withGit || withPython;",
+    "guest-agent.nativeWasm64.rootfsPythonGitExt4",
+    "guest-agent.nativeWasm64.rootfsPythonExt4",
+    "guest-agent.nativeWasm64.rootfsExt4",
+    "Python + Git root (512 MiB)",
+    "cp ${python-wasm64.workspaceApplication}/git-workspace.pyz $out/git-workspace.pyz",
+    "cp -r ${python-wasm64.workspaceApplication}/source $out/workspace-source",
+  ])
+    assert.ok(profile.includes(required), required);
+  const browser = readFileSync(
+    new URL("../../distro/npm/browser-tests.nix", import.meta.url),
+    "utf8",
+  );
+  for (const name of ["wasm64-python-git-example-chromium", "wasm64-python-git-example-firefox"])
+    assert.ok(browser.includes(`"${name}"`));
+  assert.ok(
+    browser.includes('"runs a Python Git SQLite workspace through standalone browser controls"'),
+  );
+});
 
 test("actual Nix Python control archive handles epoch inputs with fixed ZIP metadata", () => {
   const directory = mkdtempSync(join(tmpdir(), "linux-wasm-python-controls-"));

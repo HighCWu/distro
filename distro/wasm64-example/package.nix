@@ -4,8 +4,11 @@
   bytes,
   kernel-wasm64,
   guest-agent,
+  python-wasm64,
   withPython ? false,
+  withGit ? false,
 }:
+assert !withGit || withPython;
 let
   source = ../../apps/wasm64-example;
 in
@@ -29,13 +32,24 @@ pkgs.runCommand "linux-wasm64-browser-example"
         --replace-fail 'value="python" disabled' 'value="python"' \
         --replace-fail 'accept=".wasm,application/wasm"' 'accept=".wasm,.pyz,application/wasm,application/zip"' \
         --replace-fail 'Minimal BusyBox root (64 MiB); Python is not installed.' \
-          'Python root (256 MiB), including standard library, ncurses, OpenSSL and CA certificates.'
+          ${pkgs.lib.escapeShellArg (
+            if withGit then
+              "Python + Git root (512 MiB), including standard library, ncurses, OpenSSL and CA certificates."
+            else
+              "Python root (256 MiB), including standard library, ncurses, OpenSSL and CA certificates."
+          )}
     ''}
     cp ${source}/server.mjs $out/server.mjs
     cp ${source}/README.md ${source}/integrity.mjs $out/
+    ${pkgs.lib.optionalString withGit ''
+      cp ${python-wasm64.workspaceApplication}/git-workspace.pyz $out/git-workspace.pyz
+      cp -r ${python-wasm64.workspaceApplication}/source $out/workspace-source
+    ''}
     cp ${guest-agent.nativeWasm64.bootDisk} $out/agent-boot.img
     cp ${
-      if withPython then
+      if withGit then
+        guest-agent.nativeWasm64.rootfsPythonGitExt4
+      else if withPython then
         guest-agent.nativeWasm64.rootfsPythonExt4
       else
         guest-agent.nativeWasm64.rootfsExt4

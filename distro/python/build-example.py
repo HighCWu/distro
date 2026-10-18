@@ -18,7 +18,7 @@ FILES = (
 )
 
 
-def build(destination, source):
+def build(destination, source, files=FILES):
     destination = Path(destination)
     # Explicit membership excludes caches and local files. Fixed metadata also
     # works with Nix's epoch source mtimes, which predate ZIP's 1980 minimum.
@@ -30,7 +30,7 @@ def build(destination, source):
         temporary = Path(staging.name)
     try:
         with zipfile.ZipFile(temporary, "w") as archive:
-            for name in FILES:
+            for name in files:
                 entry = zipfile.ZipInfo(name, date_time=(1980, 1, 1, 0, 0, 0))
                 entry.create_system = 3
                 entry.external_attr = 0o100644 << 16
