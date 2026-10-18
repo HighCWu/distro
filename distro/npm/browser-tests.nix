@@ -484,7 +484,7 @@ let
     cp ${source}/agent-tests/wasm64-python-example.spec.js $out/tests/
     cp ${python-wasm64.applicationExample}/application.pyz $out/upload-application.pyz
     ${pkgs.python313}/bin/python3 -c \
-      'import sys, zipfile; z = zipfile.ZipFile(sys.argv[2], "w", zipfile.ZIP_DEFLATED); z.write(sys.argv[1], "__main__.py"); z.close()' \
+      'import pathlib, sys, zipfile; entry = zipfile.ZipInfo("__main__.py", (1980, 1, 1, 0, 0, 0)); entry.create_system = 3; entry.external_attr = 0o100644 << 16; entry.compress_type = zipfile.ZIP_DEFLATED; z = zipfile.ZipFile(sys.argv[2], "w"); z.writestr(entry, pathlib.Path(sys.argv[1]).read_bytes()); z.close()' \
       ${../../apps/wasm64-example}/python-check.py $out/python-controls.pyz
   '';
 
