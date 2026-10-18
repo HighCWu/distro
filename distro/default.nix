@@ -100,14 +100,22 @@ lib.makeScope (scope: lib.callPackageWith ({ inherit lib pkgs; } // scope)) (
       vm-test = vmTestWasm64;
     };
     toolchain-smoke-runtime-wasm64 = self.toolchain-smoke-wasm64.checks.c-runtime;
-    fork-continuation = callPackage ./fork-continuation/package.nix { };
-    fork-continuation-wasm64 = callPackage ./fork-continuation/package.nix {
+    sdk-fork-continuation = callPackage ./fork-continuation/sdk.nix { };
+    sdk-fork-continuation-wasm64 = callPackage ./fork-continuation/sdk.nix {
       platform = self.platform-wasm64;
       musl = self.musl-wasm64;
       sysroot-base = self.sysroot-base-wasm64;
       sysroot = self.sysroot-wasm64;
       llvm-toolchain = self.llvm-toolchain-wasm64;
+      sdk = self.sdk-wasm64;
+    };
+    fork-continuation = callPackage ./fork-continuation/package.nix { };
+    fork-continuation-wasm64 = callPackage ./fork-continuation/package.nix {
+      platform = self.platform-wasm64;
+      sysroot = self.sysroot-wasm64;
+      llvm-toolchain = self.llvm-toolchain-wasm64;
       vm-test = vmTestWasm64;
+      sdk-fork-continuation = self.sdk-fork-continuation-wasm64;
     };
 
     # The wasm stdenv: nixpkgs' generic stdenv with a cc-wrapped fork toolchain

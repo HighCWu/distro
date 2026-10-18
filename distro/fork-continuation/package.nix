@@ -3,28 +3,12 @@
   pkgs,
   lib,
   platform,
-  musl,
-  sysroot-base,
   sysroot,
   llvm-toolchain,
   vm-test,
+  sdk-fork-continuation,
 }:
 let
-  forkMusl = musl.override { enableForkContinuation = true; };
-  forkBase = sysroot-base.override { musl = forkMusl; };
-  forkRoot = sysroot.override { sysroot-base = forkBase; };
-  flags = lib.escapeShellArgs (
-    [
-      "--target=${platform.targetTriple}"
-      "--sysroot=${forkRoot}"
-    ]
-    ++ platform.compilerFlags
-    ++ map (flag: "-Wl,${flag}") platform.linkerFlags
-    ++ [
-      "-Wl,--export=__stack_pointer"
-      "-Wl,--export=__tls_base"
-    ]
-  );
   helperFlags = lib.escapeShellArgs (
     [
       "--target=${platform.targetTriple}"
@@ -38,7 +22,7 @@ let
       {
         nativeBuildInputs = [
           llvm-toolchain
-          pkgs.binaryen
+          sdk-fork-continuation
         ];
         passthru.checks.runtime = vm-test.rawInitramfsTest {
           name = "fork-continuation-${platform.wasmArch}";
@@ -50,16 +34,14 @@ let
       ''
         mkdir -p $out
         clang --version
-        wasm-opt --version
-        clang ${flags} -O2 -pthread -Wall -Wextra -Werror ${./runtime.c} -o raw.wasm
+        # Build as an external SDK consumer: separate compilation and final
+        # link, followed by a single whole-executable continuation transform.
+        wasm-linux-fork-cc -O2 -pthread -Wall -Wextra -Werror -c ${./runtime.c} -o runtime.o
+        wasm-linux-fork-cc -pthread runtime.o -o raw.wasm
         # A normal, untransformed executable with the DEFAULT libc. This tests
         # that exec discards the inherited continuation and initializes new TLS.
         clang ${helperFlags} -O2 -Wall -Wextra -Werror ${./exec-child.c} -o $out/exec-child.wasm
-        wasm-opt raw.wasm --enable-threads --enable-bulk-memory --enable-mutable-globals \
-          --enable-sign-ext --enable-nontrapping-float-to-int --enable-memory64 \
-          --enable-exception-handling --asyncify \
-          --pass-arg=asyncify-imports@linux_fork_v1.checkpoint \
-          --pass-arg=asyncify-asserts -o $out/fork.wasm
+        wasm-linux-fork-finalize raw.wasm $out/fork.wasm
         chmod 0755 $out/fork.wasm
         chmod 0755 $out/exec-child.wasm
       '';
