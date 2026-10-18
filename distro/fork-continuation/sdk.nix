@@ -126,7 +126,10 @@ pkgs.symlinkJoin {
     checks.wrapper =
       pkgs.runCommand "fork-sdk-wrapper-contract"
         {
-          nativeBuildInputs = [ pkgs.nodejs ];
+          nativeBuildInputs = [
+            pkgs.nodejs
+            llvm-toolchain
+          ];
         }
         ''
           mkdir fork-continuation
@@ -134,8 +137,12 @@ pkgs.symlinkJoin {
           cp ${./finalize.sh} fork-continuation/finalize.sh
           cp ${./package.nix} fork-continuation/package.nix
           cp ${./sdk.nix} fork-continuation/sdk.nix
+          cp ${./execution.c} fork-continuation/execution.c
+          cp ${./raw-clone.c} fork-continuation/raw-clone.c
+          cp ${./execution-link.test.js} fork-continuation/execution-link.test.js
           cp ${../default.nix} default.nix
           node --test fork-continuation/sdk.test.js
+          node --test fork-continuation/execution-link.test.js
           grep -F -- ${lib.escapeShellArg ("$" + "${execution}/fork-execution.o")} ${config}
           mkdir $out
         '';

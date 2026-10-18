@@ -5,7 +5,7 @@
 #include <sys/syscall.h>
 
 __attribute__((import_module("linux"), import_name("syscall")))
-extern long raw_linux_syscall(long, long, long, long, long, long, long);
+extern long fork_callback_syscall(long, long, long, long, long, long, long);
 
 static unsigned char saved_frames[256 * 1024] __attribute__((aligned(16)));
 static struct {
@@ -52,5 +52,5 @@ uintptr_t __wasm_fork_child_entry(void)
 __attribute__((export_name("__wasm_fork_clone")))
 long __wasm_fork_clone(void)
 {
-	return raw_linux_syscall(SYS_clone, (long)fork_child, 0, SIGCHLD, 0, 0, 0);
+	return fork_callback_syscall(SYS_clone, (long)fork_child, 0, SIGCHLD, 0, 0, 0);
 }
