@@ -13,6 +13,25 @@ let
   forkMusl = musl.override { enableForkContinuation = true; };
   forkBase = sysroot-base.override { musl = forkMusl; };
   forkRoot = sysroot.override { sysroot-base = forkBase; };
+  # Execution-state support is not a musl implementation detail. Other libc
+  # ports and raw syscall callers can link the same object and use this ABI.
+  execution =
+    pkgs.runCommand "fork-execution-${platform.wasmArch}"
+      {
+        nativeBuildInputs = [ llvm-toolchain ];
+      }
+      ''
+        mkdir $out
+        clang ${
+          lib.escapeShellArgs (
+            [
+              "--target=${platform.targetTriple}"
+              "--sysroot=${sysroot}"
+            ]
+            ++ platform.compilerFlags
+          )
+        } -O2 -Wall -Wextra -Werror -c ${./execution.c} -o $out/fork-execution.o
+      '';
   config = pkgs.writeText "fork-${platform.wasmArch}.cfg" (
     lib.concatMapStringsSep "\n" lib.escapeShellArg (
       [
@@ -20,11 +39,13 @@ let
         "--sysroot=${forkRoot}"
       ]
       ++ platform.compilerFlags
+      ++ [ "$${execution}/fork-execution.o" ]
       ++ map (flag: "$-Wl,${flag}") (
         platform.linkerFlags
         ++ [
           "--export=__stack_pointer"
           "--export=__tls_base"
+          "--undefined=__wasm_fork_abi"
         ]
       )
     )
@@ -55,6 +76,7 @@ let
       inherit (platform) addressBits targetTriple;
       defaultSdkUnchanged = true;
       requiresFinalization = true;
+      syscallContinuationAbi = 1;
       binaryenVersion = pkgs.binaryen.version;
       continuationBufferBytes = 262144;
       overflowBehavior = "trap";
@@ -67,6 +89,7 @@ let
       paths = {
         sysroot = "${forkRoot}";
         compilerConfiguration = "${config}";
+        executionObject = "${execution}/fork-execution.o";
       };
     }
   );

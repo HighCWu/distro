@@ -9,6 +9,11 @@ static _Thread_local volatile int tls_value = 23;
 
 int main(int argc, char **argv)
 {
+#ifdef __wasm__
+	extern int raw_clone_refusal_probe(void);
+	if (!raw_clone_refusal_probe()) return 118;
+	puts("fork-exec: untransformed raw clone refusal pass");
+#endif
 	char *end;
 	long parent;
 	if (argc != 3 || strcmp(argv[1], "hello")) return 111;

@@ -3,6 +3,7 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import {
   ForkContinuation,
+  dispatch_fork_syscall,
   fork_continuation_exports_supported,
   uses_fork_continuation,
 } from "../src/fork-continuation.ts";
@@ -26,7 +27,53 @@ test("legacy modules do not opt in; incomplete continuation modules fail admissi
   }
 });
 
-function fixture(address: WasmAddressType) {
+test("syscall-only modules opt in using the exported ABI, with no private checkpoint import", () => {
+  const name = new TextEncoder().encode("__wasm_fork_abi");
+  const exported = [1, name.length, ...name, 0, 0];
+  const module = new WebAssembly.Module(
+    new Uint8Array([
+      0,
+      97,
+      115,
+      109,
+      1,
+      0,
+      0,
+      0,
+      1,
+      5,
+      1,
+      0x60,
+      0,
+      1,
+      0x7f,
+      3,
+      2,
+      1,
+      0,
+      7,
+      exported.length,
+      ...exported,
+      10,
+      6,
+      1,
+      4,
+      0,
+      0x41,
+      1,
+      0x0b,
+    ]),
+  );
+  assert.deepEqual(WebAssembly.Module.imports(module), []);
+  assert.equal(uses_fork_continuation(module), true);
+  assert.equal(
+    fork_continuation_exports_supported(module),
+    false,
+    "ABI export alone is insufficient",
+  );
+});
+
+function fixture(address: WasmAddressType, syscall = false) {
   const pointer = (n: number): WasmAddress => (address === "i64" ? BigInt(n) : n);
   const memory = new WebAssembly.Memory({ initial: 1 });
   const view = new DataView(memory.buffer);
@@ -68,15 +115,102 @@ function fixture(address: WasmAddressType) {
       state = 0;
     },
   };
+  const calls = { descriptors: 0 };
+  if (syscall)
+    Object.assign(exports, {
+      __wasm_fork_syscall_abi: () => 1,
+      __wasm_fork_descriptor: () => {
+        calls.descriptors++;
+        descriptor();
+        return pointer(64);
+      },
+    });
   const controller = new ForkContinuation(
     { exports } as unknown as WebAssembly.Instance,
     memory,
     address,
   );
-  return { controller, exports, memory, pointer, descriptor };
+  return { controller, exports, memory, pointer, descriptor, calls };
 }
 
 for (const address of ["i32", "i64"] as const) {
+  test(`${address}: raw clone syscall resumes parent and child without libc checkpoint`, () => {
+    const parent = fixture(address, true),
+      child = fixture(address, true);
+    const p = parent.pointer;
+    const args = [0, 0, 17, 0, 0, 0].map(p);
+    const invoke = () => {
+      throw new Error("null callback must not enter callback clone");
+    };
+    const dispatch = (c: ForkContinuation) => dispatch_fork_syscall(c, p(220), args, true, invoke);
+    assert.equal(dispatch(parent.controller), p(0));
+    assert.equal(parent.calls.descriptors, 1);
+    assert.equal(dispatch(parent.controller), p(-16));
+    const snapshot = parent.controller.suspend();
+    parent.controller.resumeParent(p(1234));
+    child.controller.resumeChild(snapshot);
+    assert.equal(dispatch(parent.controller), p(1234));
+    assert.equal(dispatch(child.controller), p(0));
+    assert.equal(parent.calls.descriptors, 1);
+    assert.equal(child.calls.descriptors, 0, "child rewind must not reset inherited frames");
+    assert.equal(dispatch(parent.controller), p(0), "later raw clone can unwind again");
+  });
+
+  test(`${address}: raw clone rejects missing support, unsupported arguments and unsafe entries`, () => {
+    const f = fixture(address, true),
+      p = f.pointer;
+    const invoke = () => {
+      throw new Error("must not dispatch unsupported clone to kernel");
+    };
+    const args = [0, 0, 17, 0, 0, 0].map(p);
+    for (const c of [null, fixture(address).controller])
+      assert.equal(dispatch_fork_syscall(c, p(220), args, true, invoke), p(-95));
+    assert.equal(dispatch_fork_syscall(f.controller, p(220), args, false, invoke), p(-95));
+    assert.equal(
+      f.controller.kernelCall(() =>
+        dispatch_fork_syscall(f.controller, p(220), args, true, invoke),
+      ),
+      p(-95),
+    );
+    for (const [index, value, errno] of [
+      [1, 9, -22],
+      [2, 0, -95],
+      [2, 0x100 | 17, -95],
+      [3, 8, -95],
+      [4, 8, -95],
+      [5, 8, -95],
+    ]) {
+      const changed = [...args];
+      changed[index] = p(value);
+      assert.equal(dispatch_fork_syscall(f.controller, p(220), changed, true, invoke), p(errno));
+    }
+    assert.equal(f.calls.descriptors, 0);
+    assert.equal(f.controller.unwinding(), false);
+    assert.equal(dispatch_fork_syscall(f.controller, p(220), args, true, invoke), p(0));
+    f.controller.suspend();
+    f.controller.resumeParent(p(-12));
+    assert.equal(dispatch_fork_syscall(f.controller, p(220), args, true, invoke), p(-12));
+  });
+
+  test(`${address}: ordinary syscalls and callback clone retain guarded kernel dispatch`, () => {
+    const { controller: c, pointer: p } = fixture(address, true);
+    const args = [7, 0, 17, 0, 0, 0].map(p);
+    let calls = 0;
+    const invoke = () => {
+      calls++;
+      assert.equal(c.syscallCheckpoint(true), -95, "kernel reentry cannot unwind");
+      return p(83);
+    };
+    assert.equal(dispatch_fork_syscall(c, p(220), args, true, invoke), p(83));
+    assert.equal(dispatch_fork_syscall(c, p(172), [0, 0, 0, 0, 0, 0].map(p), true, invoke), p(83));
+    assert.equal(calls, 2);
+    assert.equal(
+      dispatch_fork_syscall(null, p(172), args, true, () => p(84)),
+      p(84),
+    );
+    assert.equal(c.syscallCheckpoint(true), 0);
+  });
+
   test(`${address}: parent resumes at checkpoint with the actual clone result`, () => {
     const { controller: c, pointer: p } = fixture(address);
     assert.equal(c.checkpoint(p(64), true), 0);

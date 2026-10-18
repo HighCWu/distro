@@ -6,6 +6,7 @@ import { user_mmap } from "./user-mmap.ts";
 import { FileMmapCopy } from "./file-mmap-copy.ts";
 import {
   ForkContinuation,
+  dispatch_fork_syscall,
   fork_continuation_exports_supported,
   uses_fork_continuation,
 } from "./fork-continuation.ts";
@@ -172,7 +173,13 @@ function user_imports({
           const original_instance = instance;
           const invoke = () =>
             kernel_instance.exports.syscall(nr, arg0, arg1, arg2, arg3, arg4, arg5);
-          const ret = fork ? fork.kernelCall(invoke) : invoke();
+          const ret = dispatch_fork_syscall(
+            fork,
+            nr,
+            [arg0, arg1, arg2, arg3, arg4, arg5],
+            signal_depth === 0 && call_entry === call_start,
+            invoke,
+          );
           if (instance !== original_instance) {
             call_entry = call_start;
             throw HALT_USER;

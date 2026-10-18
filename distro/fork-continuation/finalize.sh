@@ -16,7 +16,7 @@ trap 'rm -f -- "$temporary"' EXIT
 @wasmOpt@ "$1" --enable-threads --enable-bulk-memory --enable-mutable-globals \
   --enable-sign-ext --enable-nontrapping-float-to-int --enable-memory64 \
   --enable-exception-handling --asyncify \
-  --pass-arg=asyncify-imports@linux_fork_v1.checkpoint \
+  --pass-arg=asyncify-imports@linux_fork_v1.checkpoint,linux.syscall \
   --pass-arg=asyncify-asserts -o "$temporary"
 chmod 0755 -- "$temporary"
 mv -f -- "$temporary" "$destination"

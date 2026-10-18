@@ -32,7 +32,10 @@ const functions = [
 const globals = ["__stack_pointer", "__tls_base"];
 
 export function uses_fork_continuation(module: WebAssembly.Module): boolean {
-  return WebAssembly.Module.imports(module).some((e) => e.module === "linux_fork_v1");
+  return (
+    WebAssembly.Module.imports(module).some((e) => e.module === "linux_fork_v1") ||
+    WebAssembly.Module.exports(module).some((e) => e.name === "__wasm_fork_abi")
+  );
 }
 
 export function fork_continuation_exports_supported(module: WebAssembly.Module): boolean {
@@ -40,8 +43,38 @@ export function fork_continuation_exports_supported(module: WebAssembly.Module):
   const exports = WebAssembly.Module.exports(module);
   return (
     functions.every((name) => exports.some((e) => e.name === name && e.kind === "function")) &&
-    globals.every((name) => exports.some((e) => e.name === name && e.kind === "global"))
+    globals.every((name) => exports.some((e) => e.name === name && e.kind === "global")) &&
+    (!exports.some((e) => e.name === "__wasm_fork_syscall_abi") ||
+      ["__wasm_fork_syscall_abi", "__wasm_fork_descriptor"].every((name) =>
+        exports.some((e) => e.name === name && e.kind === "function"),
+      ))
   );
+}
+
+// Linux/Wasm's existing clone ABI is (callback, argument, flags, ptid, ctid,
+// tls), NOT another architecture's (flags, stack, ...) register layout. A null
+// callback requests continuation at the calling syscall, not a callback task.
+export function dispatch_fork_syscall(
+  fork: ForkContinuation | null,
+  nr: WasmAddress,
+  args: WasmAddress[],
+  allowed: boolean,
+  invoke: () => WasmAddress,
+): WasmAddress {
+  const zero = (value: WasmAddress | undefined) => value === 0 || value === 0n;
+  if ((nr === 220 || nr === 220n) && zero(args[0])) {
+    let result: number;
+    if (!zero(args[1])) result = -22; // EINVAL: no callback argument
+    else if (
+      args.length !== 6 ||
+      (args[2] !== 17 && args[2] !== 17n) ||
+      args.slice(3).some((value) => !zero(value))
+    )
+      result = -95;
+    else result = fork?.syscallCheckpoint(allowed) ?? -95;
+    return typeof nr === "bigint" ? BigInt(result) : result;
+  }
+  return fork ? fork.kernelCall(invoke) : invoke();
 }
 
 export class ForkContinuation {
@@ -65,6 +98,13 @@ export class ForkContinuation {
     for (const name of globals)
       this.require(this.e[name] instanceof WebAssembly.Global, `missing ${name}`);
     this.require(this.call("__wasm_fork_abi") === 1, "unsupported ABI version");
+    if ("__wasm_fork_syscall_abi" in this.e) {
+      this.require(
+        typeof this.e.__wasm_fork_descriptor === "function",
+        "missing syscall descriptor",
+      );
+      this.require(this.call("__wasm_fork_syscall_abi") === 1, "unsupported syscall ABI version");
+    }
     this.require(this.state() === 0, "instance is not idle");
     this.pointer(this.global("__stack_pointer").value);
     this.pointer(this.global("__tls_base").value);
@@ -134,6 +174,17 @@ export class ForkContinuation {
     this.descriptor = descriptor;
     this.call("asyncify_start_unwind", descriptor);
     return 0; // ignored by Asyncify's unwind path
+  }
+
+  syscallCheckpoint(allowed: boolean): number {
+    if (!allowed || this.kernelDepth !== 0 || !("__wasm_fork_syscall_abi" in this.e)) return -95;
+    // Never reset the saved-frame cursor while rewinding or while busy.
+    if (this.state() === 2) {
+      this.require(this.descriptor !== null, "missing syscall rewind descriptor");
+      return this.checkpoint(this.descriptor, allowed);
+    }
+    if (this.state() !== 0 || this.descriptor !== null) return -16;
+    return this.checkpoint(this.call("__wasm_fork_descriptor"), allowed);
   }
 
   kernelCall<T>(callback: () => T): T {

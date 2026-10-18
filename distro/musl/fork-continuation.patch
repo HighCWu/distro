@@ -35,14 +35,13 @@ diff --git a/src/process/_Fork.c b/src/process/_Fork.c
  pid_t _Fork(void)
  {
  	pid_t ret;
-@@ -33,7 +33,10 @@ pid_t _Fork(void)
+@@ -33,7 +33,9 @@ pid_t _Fork(void)
  	sigset_t set;
  	__block_all_sigs(&set);
  	LOCK(__abort_lock);
 -#ifdef SYS_fork
 +#ifdef WASM_FORK_CONTINUATION
-+	extern int __wasm_fork_checkpoint_call(void);
-+	ret = __wasm_fork_checkpoint_call();
++	ret = __syscall(SYS_clone, 0, 0, SIGCHLD, 0, 0, 0);
 +#elif defined(SYS_fork)
  	ret = __syscall(SYS_fork);
  #else

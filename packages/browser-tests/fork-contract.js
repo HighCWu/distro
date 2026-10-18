@@ -2,6 +2,8 @@
 import assert from "node:assert/strict";
 
 export const forkStages = [
+  "fork: raw syscall continuation, identity, isolation and wait pass",
+  "fork-exec: untransformed raw clone refusal pass",
   "fork: pending signal isolation and inherited handler pass",
   "fork: continuation, PID, TLS, atfork, mask, memory, fd and nested wait pass",
   "fork: rejected exec preserves image and later fork pass",

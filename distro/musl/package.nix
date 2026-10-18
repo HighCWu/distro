@@ -60,9 +60,5 @@ pkgs.stdenvNoCC.mkDerivation (
   }
   // lib.optionalAttrs enableForkContinuation {
     patches = [ ./fork-continuation.patch ];
-    postPatch = ''
-      mkdir -p src/process/wasm32
-      cp ${./fork-continuation.c} src/process/wasm32/fork_continuation.c
-    '';
   }
 )

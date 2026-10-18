@@ -75,6 +75,11 @@ static void *blocked_thread(void *opaque)
 
 int main(int argc, char **argv)
 {
+#ifdef __wasm__
+	extern int raw_clone_continuation_probe(void);
+	require(raw_clone_continuation_probe(), "raw syscall continuation and recovery");
+	puts("fork: raw syscall continuation, identity, isolation and wait pass");
+#endif
 	int pipefd[2], status, fd;
 	char buffer[3] = {0};
 	pid_t original = getpid(), pid;

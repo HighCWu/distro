@@ -37,10 +37,11 @@ let
         # Build as an external SDK consumer: separate compilation and final
         # link, followed by a single whole-executable continuation transform.
         wasm-linux-fork-cc -O2 -pthread -Wall -Wextra -Werror -c ${./runtime.c} -o runtime.o
-        wasm-linux-fork-cc -pthread runtime.o -o raw.wasm
+        wasm-linux-fork-cc -O2 -Wall -Wextra -Werror -c ${./raw-clone.c} -o raw-clone.o
+        wasm-linux-fork-cc -pthread runtime.o raw-clone.o -o raw.wasm
         # A normal, untransformed executable with the DEFAULT libc. This tests
         # that exec discards the inherited continuation and initializes new TLS.
-        clang ${helperFlags} -O2 -Wall -Wextra -Werror ${./exec-child.c} -o $out/exec-child.wasm
+        clang ${helperFlags} -O2 -Wall -Wextra -Werror ${./exec-child.c} ${./raw-clone.c} -o $out/exec-child.wasm
         wasm-linux-fork-finalize raw.wasm $out/fork.wasm
         chmod 0755 $out/fork.wasm
         chmod 0755 $out/exec-child.wasm

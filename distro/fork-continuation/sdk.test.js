@@ -47,7 +47,7 @@ test("finalizer applies whole-link Asyncify with the explicit checkpoint import"
   const args = JSON.parse(readFileSync(f.log, "utf8"));
   assert.equal(args[0], f.input);
   assert.ok(args.includes("--asyncify"));
-  assert.ok(args.includes("--pass-arg=asyncify-imports@linux_fork_v1.checkpoint"));
+  assert.ok(args.includes("--pass-arg=asyncify-imports@linux_fork_v1.checkpoint,linux.syscall"));
   assert.ok(args.includes("--pass-arg=asyncify-asserts"));
   assert.ok(!args.includes("--all-features"));
   assert.ok(!readdirSync(f.dir).some((name) => name.includes(".tmp.")));
@@ -81,7 +81,7 @@ test("usage, missing input, identical paths and hard-link aliases fail closed", 
 test("the dual-width runtime corpus consumes the installed SDK tools", () => {
   const recipe = readFileSync(new URL("./package.nix", import.meta.url), "utf8");
   assert.match(recipe, /wasm-linux-fork-cc .* -c .*runtime\.c/);
-  assert.match(recipe, /wasm-linux-fork-cc -pthread runtime\.o -o raw\.wasm/);
+  assert.match(recipe, /wasm-linux-fork-cc -pthread runtime\.o raw-clone\.o -o raw\.wasm/);
   assert.match(recipe, /wasm-linux-fork-finalize raw\.wasm/);
   assert.ok(!recipe.includes("--asyncify"));
   const scope = readFileSync(new URL("../default.nix", import.meta.url), "utf8");
