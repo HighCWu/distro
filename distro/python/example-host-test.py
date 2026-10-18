@@ -9,6 +9,7 @@ import subprocess
 import sys
 import tempfile
 import unittest
+from unittest.mock import patch
 import zipfile
 
 
@@ -17,6 +18,47 @@ BUILDER = runpy.run_path(str(ROOT / "build-example.py"))
 
 
 class PublishedExample(unittest.TestCase):
+    def test_incomplete_source_preserves_previous_bundle_and_cleans_staging(self):
+        with tempfile.TemporaryDirectory(prefix="python-example-atomic-") as directory:
+            root = Path(directory)
+            source = root / "example"
+            shutil.copytree(ROOT / "example", source)
+            destination = root / "application.pyz"
+            BUILDER["build"](destination, source)
+            previous = destination.read_bytes()
+            (source / BUILDER["FILES"][-1]).unlink()
+            with self.assertRaises(FileNotFoundError):
+                BUILDER["build"](destination, source)
+            self.assertEqual(destination.read_bytes(), previous)
+            self.assertEqual(set(root.iterdir()), {source, destination})
+            destination.unlink()
+            with self.assertRaises(FileNotFoundError):
+                BUILDER["build"](destination, source)
+            self.assertEqual(set(root.iterdir()), {source})
+
+    def test_replace_failure_preserves_previous_bundle_and_cleans_staging(self):
+        with tempfile.TemporaryDirectory(prefix="python-example-replace-") as directory:
+            root = Path(directory)
+            destination = root / "application.pyz"
+            destination.write_bytes(b"previous bundle")
+            with patch.object(os, "replace", side_effect=PermissionError("injected replace failure")):
+                with self.assertRaisesRegex(PermissionError, "injected replace failure"):
+                    BUILDER["build"](destination, ROOT / "example")
+            self.assertEqual(destination.read_bytes(), b"previous bundle")
+            self.assertEqual(list(root.iterdir()), [destination])
+
+    def test_success_replaces_previous_bundle_with_readable_complete_archive(self):
+        with tempfile.TemporaryDirectory(prefix="python-example-success-") as directory:
+            root = Path(directory)
+            destination = root / "application.pyz"
+            destination.write_bytes(b"previous bundle")
+            BUILDER["build"](destination, ROOT / "example")
+            with zipfile.ZipFile(destination) as archive:
+                self.assertIsNone(archive.testzip())
+                self.assertEqual(archive.namelist(), list(BUILDER["FILES"]))
+            self.assertEqual(destination.stat().st_mode & 0o777, 0o644)
+            self.assertEqual(list(root.iterdir()), [destination])
+
     def test_fixed_metadata_and_explicit_membership(self):
         with tempfile.TemporaryDirectory(prefix="python-example-build-") as directory:
             root = Path(directory)
