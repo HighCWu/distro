@@ -17,6 +17,21 @@
 static volatile int before, prepared, parents, children;
 static _Thread_local volatile int tls_value = 17;
 static int global_value = 11;
+static volatile sig_atomic_t signal_hits, signal_fork_refused;
+static void signal_handler(int sig)
+{
+	int saved_errno = errno;
+	if (sig == SIGUSR1) signal_hits++;
+#ifdef __wasm__
+	// _Fork, unlike fork, does not run application atfork handlers. The
+	// current ABI must refuse unwinding across this live signal callback.
+	errno = 0;
+	pid_t result = _Fork();
+	if (!result) _exit(116);
+	signal_fork_refused = result == -1 && errno == EOPNOTSUPP;
+#endif
+	errno = saved_errno;
+}
 static void prepare(void) { prepared++; }
 static void parent(void) { parents++; }
 static void child(void) { children++; }
@@ -27,6 +42,18 @@ static _Noreturn void fail(const char *message)
 	for (;;) sched_yield();
 }
 static void require(int condition, const char *message) { if (!condition) fail(message); }
+
+static void deliver_blocked_signal(const sigset_t *mask)
+{
+	require(!pthread_sigmask(SIG_UNBLOCK, mask, NULL), "unblock inherited handler");
+	require(signal_hits == 1, "inherited handler delivery");
+#ifdef __wasm__
+	require(signal_fork_refused == 1, "signal callback must refuse _Fork");
+#else
+	(void)signal_fork_refused;
+#endif
+	require(!pthread_sigmask(SIG_BLOCK, mask, NULL), "restore blocked mask");
+}
 
 __attribute__((noinline)) static pid_t nested(int depth)
 {
@@ -75,18 +102,27 @@ int main(int argc, char **argv)
 #endif
 	require(fd >= 0 && write(fd, "abcdef", 6) == 6 && lseek(fd, 0, SEEK_SET) == 0, "file setup");
 	sigemptyset(&mask); sigaddset(&mask, SIGUSR1);
+	struct sigaction action = {.sa_handler = signal_handler};
+	sigemptyset(&action.sa_mask);
+	require(!sigaction(SIGUSR1, &action, NULL), "install inherited handler");
 	require(!pthread_sigmask(SIG_SETMASK, &mask, NULL), "block signal");
 	require(!pthread_atfork(prepare, parent, child), "atfork registration");
+	require(!kill(original, SIGUSR1) && !sigpending(&observed) &&
+		sigismember(&observed, SIGUSR1) == 1 && !signal_hits, "queue parent signal");
 	pid = indirect(5);
 	require(pid >= 0, "fork");
 	require(before == 1 && prepared == 1, "pre-fork effects replayed");
 	require(!pthread_sigmask(SIG_SETMASK, NULL, &observed) &&
 		sigismember(&observed, SIGUSR1) == 1 && sigismember(&observed, SIGUSR2) == 0, "signal mask");
 	if (!pid) {
+		require(!sigpending(&observed) && sigismember(&observed, SIGUSR1) == 0,
+			"child inherited parent pending signal");
 		require(getpid() != original && getppid() == original, "child identity");
 		require(parents == 0 && children == 1 && tls_value == 17, "child atfork/TLS");
 		require(global_value == 11 && *heap == 21 && local == 31 && mapping[0] == 51, "child snapshot");
 		global_value = 101; *heap = 102; local = 103; mapping[0] = 104; tls_value = 105;
+		require(!kill(getpid(), SIGUSR1), "queue child signal");
+		deliver_blocked_signal(&mask);
 		require(read(fd, buffer, 2) == 2 && !memcmp(buffer, "ab", 2), "inherited file");
 		pid_t grandchild = fork();
 		require(grandchild >= 0, "nested child fork");
@@ -107,6 +143,10 @@ int main(int argc, char **argv)
 	require(waitpid(pid, &status, 0) == pid && WIFEXITED(status) && WEXITSTATUS(status) == 19, "child wait");
 	errno = 0;
 	require(waitpid(pid, &status, WNOHANG) == -1 && errno == ECHILD, "single reap");
+	require(!sigpending(&observed) && sigismember(&observed, SIGUSR1) == 1 &&
+		!signal_hits, "parent pending signal was consumed by child");
+	deliver_blocked_signal(&mask);
+	puts("fork: pending signal isolation and inherited handler pass");
 	puts("fork: continuation, PID, TLS, atfork, mask, memory, fd and nested wait pass");
 	fflush(stdout);
 
@@ -177,6 +217,7 @@ int main(int argc, char **argv)
 	require(waitpid(pid, &status, 0) == pid && WIFEXITED(status) && WEXITSTATUS(status) == 29,
 		"wait after failure");
 	puts("fork: multithread refusal and recovery pass");
+	puts("fork: signal callback refusal and later fork recovery pass");
 #else
 	(void)blocked_thread;
 #endif
