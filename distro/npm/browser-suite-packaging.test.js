@@ -21,7 +21,7 @@ test("example browser suite can add dependencies to a copied read-only store bun
     await chmod(join(fixture, "node_modules"), 0o555);
     const recipe = await readFile(new URL("./browser-tests.nix", import.meta.url), "utf8");
     const prefix = recipe.match(
-      /wasm64ExampleSuite =[^\n]*''\n([\s\S]*?)    cp \$\{\.\.\/\.\.\/apps\/wasm64-example\}/,
+      /wasm64ExampleSuite =[^\n]*''\n([\s\S]*?)    cp \$\{exampleServer wasm64-example\}/,
     );
     assert.ok(prefix, "find actual example-suite setup before test file installation");
     const shell = prefix[1]
