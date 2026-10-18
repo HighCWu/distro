@@ -15,6 +15,14 @@ symlink targets are preserved without following source links during archival.
 Regular files are archived independently; Nix store hardlink deduplication does
 not introduce cross-component archive links. Hardlink topology is not retained.
 
+The source-bundle check independently enumerates every selected source,
+recipe and material tree and compares the complete member inventory, file
+bytes, modes, symlink targets, ordered patches and public index. File content
+is compared in bounded chunks without extraction or following source-tree
+symlinks. Unexpected, missing or repeated members, changed gzip integrity and
+appended archives fail the check. This verifies the collected inputs, not
+whether the selected inputs satisfy all build or licensing requirements.
+
 Check companion files with `sha256sum -c SHA256SUMS`. Verify the separate
 `BINARY_SHA256SUMS` from the matching runtime output root: it identifies the
 final installed `usr/bin/python3.13`, not a temporary build-tree executable.

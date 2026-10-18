@@ -279,6 +279,7 @@ let
           ''
             cp ${./source-bundle.py} source-bundle.py
             cp ${./source-bundle-test.py} source-bundle-test.py
+            cp ${./verify-source-bundle.py} verify-source-bundle.py
             ${pkgs.python313}/bin/python3 -B source-bundle-test.py
             touch $out
           '';

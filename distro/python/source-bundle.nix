@@ -36,8 +36,6 @@ let
               passthru.ci.heavy = true;
               nativeBuildInputs = [
                 pkgs.coreutils
-                pkgs.diffutils
-                pkgs.gnutar
                 pkgs.nodejs
               ];
             }
@@ -46,18 +44,8 @@ let
               (cd ${python} && sha256sum --check ${bundle}/BINARY_SHA256SUMS)
               node ${../busybox/check-binary.mjs} ${../../packages/kernel/src/wasm_binary.ts} \
                 ${python}/usr/bin/python3.13 ${toString platform.addressBits} ${toString platform.maximumMemoryBytes}
-              tar -xOzf ${bundle}/python-selected-sources.tar.gz sources/python/LICENSE | cmp - ${python.src}/LICENSE
-              tar -xOzf ${bundle}/python-selected-sources.tar.gz build-materials/SHA256SUMS | cmp - ${python.buildMaterials}/SHA256SUMS
-              ${pkgs.lib.concatMapStringsSep "\n" (component: ''
-                tar -xOzf ${bundle}/python-selected-sources.tar.gz recipes/${component.name}/package.nix \
-                  | cmp - ${component.recipeDirectory}/package.nix
-                ${pkgs.lib.concatImapStringsSep "\n" (number: patch: ''
-                  tar -xOzf ${bundle}/python-selected-sources.tar.gz patches/${component.name}/${
-                    pkgs.lib.fixedWidthNumber 3 (number - 1)
-                  }.patch \
-                    | cmp - ${patch}
-                '') (component.package.patches or [ ])}
-              '') components}
+              ${pkgs.python313}/bin/python3 -B ${./verify-source-bundle.py} ${spec} \
+                ${python.buildMaterials} ${bundle}/python-selected-sources.tar.gz
               touch $out
             '';
       }
