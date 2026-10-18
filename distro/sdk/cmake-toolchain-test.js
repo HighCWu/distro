@@ -65,7 +65,7 @@ endif()
   }
 });
 
-test("CMake toolchain links feature probes without running target programs", () => {
+test("CMake cross mode links feature probes and separately builds a native generator", () => {
   const source = dirname(fileURLToPath(import.meta.url));
   const root = mkdtempSync(join(tmpdir(), "sdk-cmake-probes-"));
   try {
@@ -94,13 +94,40 @@ test("CMake toolchain links feature probes without running target programs", () 
         "-G",
         "Ninja",
         `-DCMAKE_TOOLCHAIN_FILE=${toolchain}`,
+        "-DSDK_USE_BUILD_GENERATOR=ON",
       ],
-      { encoding: "utf8" },
+      {
+        encoding: "utf8",
+        env: {
+          ...process.env,
+          CC_FOR_BUILD: process.env.CC_FOR_BUILD || "cc",
+          AR_FOR_BUILD: process.env.AR_FOR_BUILD || "ar",
+          RANLIB_FOR_BUILD: process.env.RANLIB_FOR_BUILD || "ranlib",
+        },
+      },
     );
     assert.equal(result.status, 0, `${result.error || ""}\n${result.stdout}\n${result.stderr}`);
     const cache = readFileSync(join(root, "build/CMakeCache.txt"), "utf8");
     assert.match(cache, /^SDK_HAS_MALLOC:INTERNAL=1$/m);
     assert.match(cache, /^SDK_HAS_MISSING_FUNCTION:INTERNAL=$/m);
+    const built = spawnSync("cmake", ["--build", join(root, "build")], {
+      encoding: "utf8",
+      env: {
+        ...process.env,
+        CC: "/invalid-target-cc",
+        AR: "/invalid-target-ar",
+        CMAKE_TOOLCHAIN_FILE: "/invalid-target-toolchain.cmake",
+        CFLAGS: "-invalid-target-flags",
+        LDFLAGS: "-invalid-target-link-flags",
+      },
+    });
+    assert.equal(built.status, 0, built.stdout + built.stderr);
+    // This cross-mode fixture deliberately uses native compilers. Executing
+    // its output tests the fixture only, not the Wasm SDK or Linux runtime.
+    const executed = spawnSync(join(root, "build/sdk-example.wasm"), [], { encoding: "utf8" });
+    assert.equal(executed.status, 0, executed.stdout + executed.stderr);
+    assert.match(executed.stdout, /build-machine generator and target consumer verified/);
+    assert.match(executed.stdout, /::vm-test::pass/);
   } finally {
     rmSync(root, { recursive: true, force: true });
   }

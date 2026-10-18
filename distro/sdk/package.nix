@@ -382,10 +382,14 @@ let
     pkgs.runCommand "sdk-cmake-consumer-${platform.wasmArch}"
       {
         nativeBuildInputs = [
+          pkgs.binutils
           pkgs.cmake
           pkgs.ninja
           pkgs.nodejs
         ];
+        CC_FOR_BUILD = "${pkgs.stdenv.cc}/bin/cc";
+        AR_FOR_BUILD = "${pkgs.binutils}/bin/ar";
+        RANLIB_FOR_BUILD = "${pkgs.binutils}/bin/ranlib";
       }
       ''
         mkdir $out
