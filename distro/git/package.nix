@@ -1,6 +1,7 @@
 {
   pkgs,
   stdenv,
+  platform,
   src ? pkgs.fetchzip {
     url = "mirror://kernel/software/scm/git/git-2.55.0.tar.xz";
     hash = "sha256-aTL1jVJ8xz4CMocAzzHaEepLgUO/7OXTb/Ao0GR5AVQ=";
@@ -17,6 +18,7 @@ stdenv.mkDerivation (finalAttrs: {
   pname = "git";
   version = "2.55.0";
   inherit src;
+  nativeBuildInputs = [ pkgs.nodejs ];
 
   # git creates every child through run-command.c:start_command(): a fork()
   # with the fd plumbing (dup2/close of the pipe ends, chdir for cmd->dir) done
@@ -84,10 +86,10 @@ stdenv.mkDerivation (finalAttrs: {
   #   the Linux block (getrandom CSPRNG, clock_gettime, sysinfo, /proc). musl
   #   provides all of those symbols, so we keep the block and only override the
   #   platform-specific knobs below.
-  # NO_MMAP: musl-wasm exposes no <sys/mman.h> functions (they sit behind
-  #   #ifndef __wasm__), so git uses compat/mmap.c, which reads whole objects
-  #   into memory instead of mapping them. Loud-failure-by-absence is avoided
-  #   because git ships this fallback for exactly this case.
+  # NO_MMAP: the production kernel rejects file-backed mmap. Private anonymous
+  #   direct mappings do not satisfy Git's object/index mapping requirements.
+  #   Keep Git's upstream compat/mmap.c read/copy fallback for both widths;
+  #   this is not a softmmu or a promise of file-backed mapping support.
   # Unix sockets are enabled. In Git 2.55 credential-cache launches
   #   credential-cache--daemon directly through start_command(), so the
   #   posix_spawn conversion creates the long-lived daemon without any
@@ -96,7 +98,7 @@ stdenv.mkDerivation (finalAttrs: {
   # NO_POSIX_GOODIES: removes the only remaining fork() reference (setup.c
   #   daemonize()); `gc --daemonize` and git-daemon then return ENOSYS.
   # NO_RUST: git 2.55 can build an experimental libgitcore.a with cargo. We have
-  #   no Rust toolchain targeting wasm32-unknown-linux-musl in the stdenv, and
+  #   no Rust toolchain targeting Linux/Wasm in this stdenv, and
   #   the C implementation is complete on its own, so the Rust component is off.
   # NO_REGEX: musl's regex has no REG_STARTEND, which git requires (it matches
   #   over buffers that are not NUL-terminated). Build git's bundled regex
@@ -151,6 +153,15 @@ stdenv.mkDerivation (finalAttrs: {
   # $out without changing any of the paths Git uses in the guest.
   installTargets = [ "install" ];
   installFlags = [ "DESTDIR=${placeholder "out"}" ];
+
+  # Inspect the installed programs, including the distinct HTTP transport,
+  # rather than accepting the build host or output names as ABI evidence.
+  postInstall = ''
+    for program in "$out/usr/bin/git" "$out/usr/libexec/git-core/git-remote-http"; do
+      node ${../busybox/check-binary.mjs} ${../../packages/kernel/src/wasm_binary.ts} \
+        "$program" ${toString platform.addressBits} ${toString platform.maximumMemoryBytes}
+    done
+  '';
 
   passthru.apk.depends = [
     "busybox"

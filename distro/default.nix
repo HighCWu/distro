@@ -209,6 +209,15 @@ lib.makeScope (scope: lib.callPackageWith ({ inherit lib pkgs; } // scope)) (
     findutils = callPackage ./findutils/package.nix { };
     gawk = callPackage ./gawk/package.nix { };
     git = callPackage ./git/package.nix { };
+    git-wasm64 = self.git.override {
+      stdenv = self.stdenv-wasm64;
+      platform = self.platform-wasm64;
+      busybox = self.busybox-wasm64;
+      zlib = self.zlib-wasm64;
+      curl = self.curl-wasm64;
+      openssl = self.openssl-wasm64;
+      vm-test = vmTestWasm64;
+    };
     grep = callPackage ./grep/package.nix { };
     jq = callPackage ./jq/package.nix { };
     less = callPackage ./less/package.nix { };
