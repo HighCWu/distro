@@ -3,7 +3,7 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import { Worker } from "node:worker_threads";
 import type { WorkerHandle } from "../src/platform.ts";
-import { post_worker_init, terminate_workers } from "../src/worker-start.ts";
+import { discard_worker, post_worker_init, terminate_workers } from "../src/worker-start.ts";
 
 test("shutdown waits for remaining workers after a termination rejection", async () => {
   const failure = new Error("termination failed");
@@ -60,6 +60,85 @@ test("synchronous termination errors do not skip subsequent workers", async () =
 });
 
 const flush = () => new Promise((resolve) => setImmediate(resolve));
+
+test("discard retains ownership until a delayed termination completes", async () => {
+  let release!: () => void;
+  const worker: WorkerHandle = {
+    post() {},
+    terminate: () =>
+      new Promise<void>((resolve) => {
+        release = resolve;
+      }),
+  };
+  const workers = new Set([worker]);
+  const discarded = discard_worker(workers, worker);
+  await flush();
+  assert.equal(workers.has(worker), true);
+  release();
+  await discarded;
+  assert.equal(workers.size, 0);
+});
+
+test("failed discard remains owned for shutdown retry without affecting a later worker", async () => {
+  for (const synchronous of [false, true]) {
+    const failure = new Error("injected termination failure");
+    let attempts = 0;
+    const broken: WorkerHandle = {
+      post() {},
+      terminate() {
+        if (++attempts === 1) {
+          if (synchronous) throw failure;
+          return Promise.reject(failure);
+        }
+        return Promise.resolve();
+      },
+    };
+    let freshStops = 0;
+    const fresh: WorkerHandle = {
+      post() {},
+      async terminate() {
+        freshStops++;
+      },
+    };
+    const workers = new Set([broken]);
+    await assert.rejects(discard_worker(workers, broken), (error) => error === failure);
+    assert.equal(workers.has(broken), true);
+    post_worker_init(workers, fresh, {});
+    assert.equal(workers.size, 2);
+    assert.equal(freshStops, 0);
+    await terminate_workers(workers);
+    assert.equal(attempts, 2);
+    assert.equal(freshStops, 1);
+  }
+});
+
+test("failed init retains a worker during cleanup and permits independent later init", async () => {
+  const failure = new Error("injected init failure");
+  let release!: () => void;
+  const broken: WorkerHandle = {
+    post() {
+      throw failure;
+    },
+    terminate: () =>
+      new Promise<void>((resolve) => {
+        release = resolve;
+      }),
+  };
+  const fresh: WorkerHandle = { post() {}, async terminate() {} };
+  const workers = new Set<WorkerHandle>();
+  assert.throws(
+    () => post_worker_init(workers, broken, {}),
+    (error) => error === failure,
+  );
+  post_worker_init(workers, fresh, {});
+  await flush();
+  assert.equal(workers.size, 2);
+  release();
+  await flush();
+  assert.deepEqual([...workers], [fresh]);
+  await discard_worker(workers, fresh);
+  assert.equal(workers.size, 0);
+});
 
 test("successful init retains worker ownership and forwards transfer list", () => {
   const message = {};
@@ -120,6 +199,35 @@ test("termination failures retain ownership without replacing the init error", a
     assert.equal(workers.has(worker), true);
   }
 });
+
+test(
+  "a real Worker initialization exception is joined before releasing ownership",
+  { timeout: 5000 },
+  async (context) => {
+    const native = new Worker("throw new Error('injected child initialization error');", {
+      eval: true,
+    });
+    context.after(() => native.terminate());
+    const failed = new Promise<Error>((resolve) => native.once("error", resolve));
+    let exited = false;
+    native.once("exit", () => {
+      exited = true;
+    });
+    const worker: WorkerHandle = {
+      post(message) {
+        native.postMessage(message);
+      },
+      async terminate() {
+        await native.terminate();
+      },
+    };
+    const workers = new Set([worker]);
+    assert.match((await failed).message, /injected child initialization error/);
+    await discard_worker(workers, worker);
+    assert.equal(exited, true);
+    assert.equal(workers.size, 0);
+  },
+);
 
 test(
   "a real Worker is terminated after a structured-clone failure",

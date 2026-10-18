@@ -4,7 +4,7 @@ import { type DeviceTreeNode, generate_devicetree, section_properties } from "./
 import { platform, type WorkerHandle } from "./platform.ts";
 import { cache_successful_load } from "./resource-cache.ts";
 import { checked_cpu_count } from "./boot-options.ts";
-import { post_worker_init, terminate_workers } from "./worker-start.ts";
+import { discard_worker, post_worker_init, terminate_workers } from "./worker-start.ts";
 import { configure_machine, run_machine_booted } from "./plugin-internal.ts";
 import type { MachinePluginInput } from "./plugin.ts";
 import { settle_user_copy, USER_COPY_TRY_AGAIN } from "./user-copy.ts";
@@ -379,8 +379,7 @@ export async function bootMachine(options: BootMachineOptions): Promise<Machine>
         },
         on_error(error) {
           if (settle_user_copy(init.user_copy_status, USER_COPY_TRY_AGAIN)) {
-            workers.delete(worker);
-            void worker.terminate().catch(() => {});
+            void discard_worker(workers, worker).catch(() => {});
             return;
           }
           void fail(error);

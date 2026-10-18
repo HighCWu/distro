@@ -1,6 +1,15 @@
 // SPDX-License-Identifier: MIT
 import type { WorkerHandle } from "./platform.ts";
 
+/** Keep ownership until termination finishes, so shutdown can retry a failure. */
+export async function discard_worker(
+  workers: Set<WorkerHandle>,
+  worker: WorkerHandle,
+): Promise<void> {
+  await worker.terminate();
+  workers.delete(worker);
+}
+
 export async function terminate_workers(workers: Iterable<WorkerHandle>): Promise<void> {
   const outcomes = await Promise.allSettled(
     Array.from(workers, (worker) => Promise.resolve().then(() => worker.terminate())),
@@ -25,14 +34,7 @@ export function post_worker_init(
     // retryable error path does not close the entire machine for us.
     // Keep ownership until termination succeeds; machine shutdown can retry
     // cleanup if the platform rejects termination.
-    void Promise.resolve()
-      .then(() => worker.terminate())
-      .then(
-        () => {
-          workers.delete(worker);
-        },
-        () => {},
-      );
+    void discard_worker(workers, worker).catch(() => {});
     throw error;
   }
 }
