@@ -7,6 +7,27 @@ import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 import test from "node:test";
 
+test("all standalone browser suites launch the original verified bundle outside test dependencies", () => {
+  const recipe = readFileSync(
+    new URL("../../distro/npm/browser-tests.nix", import.meta.url),
+    "utf8",
+  );
+  assert.match(
+    recipe,
+    /exampleServer =\s*bundle:\s*pkgs\.writeText[\s\S]*?import "\$\{bundle\}\/server\.mjs";/,
+  );
+  for (const [suite, bundle] of [
+    ["wasm64ExampleSuite", "wasm64-example"],
+    ["wasm64PythonExampleSuite", "wasm64-python-example"],
+    ["wasm64PythonGitExampleSuite", "wasm64-python-git-example"],
+  ]) {
+    const section = recipe.slice(recipe.indexOf(`${suite} =`)).split("\n  '';", 1)[0];
+    assert.ok(section.includes(`cp \${exampleServer ${bundle}} $out/server.js`), suite);
+    assert.ok(section.includes('${playwright.linkRuntime "$out"}'), suite);
+    assert.ok(!section.includes("}/server.mjs $out/server.js"), suite);
+  }
+});
+
 test("combined profile packages the original MIT workspace zipapp without changing default profiles", () => {
   const recipe = readFileSync(new URL("../../distro/python/package.nix", import.meta.url), "utf8");
   const command = recipe.match(/workspaceApplication =[\s\S]*?python3 -c \\\n\s*'([^']+)'/);

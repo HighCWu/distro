@@ -40,6 +40,12 @@
 
 let
   source = ../../packages/browser-tests;
+  # Keep test dependencies and fixtures outside the verified application bundle.
+  exampleServer =
+    bundle:
+    pkgs.writeText "example-test-server.js" ''
+      import "${bundle}/server.mjs";
+    '';
   runtimeTests = [
     "rejects invalid CPU counts before configuring devices or fetching the kernel"
     "runs musl allocation, mmap, threads, TLS and signals"
@@ -598,7 +604,7 @@ let
     # without changing permissions on the installed application's payloads.
     chmod u+w $out/node_modules
     ${playwright.linkRuntime "$out"}
-    cp ${../../apps/wasm64-example}/server.mjs $out/server.js
+    cp ${exampleServer wasm64-example} $out/server.js
     cp ${source}/playwright.config.js $out/playwright.config.js
     cp ${source}/agent-tests/wasm64-example.spec.js $out/tests/
     ${sdk-wasm64}/bin/wasm-linux-cc -Wall -Wextra -Werror \
@@ -610,7 +616,7 @@ let
     cp -r ${wasm64-python-example}/. $out/
     chmod u+w $out/node_modules
     ${playwright.linkRuntime "$out"}
-    cp ${../../apps/wasm64-example}/server.mjs $out/server.js
+    cp ${exampleServer wasm64-python-example} $out/server.js
     cp ${source}/playwright.config.js $out/playwright.config.js
     cp ${source}/agent-tests/wasm64-python-example.spec.js $out/tests/
     cp ${python-wasm64.applicationExample}/application.pyz $out/upload-application.pyz
@@ -624,7 +630,7 @@ let
     cp -r ${wasm64-python-git-example}/. $out/
     chmod u+w $out/node_modules
     ${playwright.linkRuntime "$out"}
-    cp ${../../apps/wasm64-example}/server.mjs $out/server.js
+    cp ${exampleServer wasm64-python-git-example} $out/server.js
     cp ${source}/playwright.config.js $out/playwright.config.js
     cp ${source}/agent-tests/wasm64-python-git-example.spec.js $out/tests/
   '';
