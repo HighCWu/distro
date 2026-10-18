@@ -636,6 +636,7 @@ test ! -s /tmp/mperr ||
 python3 /python-application-test.py --example /python-example.pyz || fail "relocated Python application failed"
 python3 /python-spawn-errors-test.py || fail "Python spawn error compatibility failed"
 python3 /python-process-lifecycle-test.py || fail "Python process lifecycle failed"
+python3 /python-pty-test.py || fail "Python PTY compatibility failed"
 
 echo "::vm-test::pass"
 while :; do :; done

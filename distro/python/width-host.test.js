@@ -278,6 +278,24 @@ test("native Python workflow mode does not schedule the target build matrix or u
   );
 });
 
+test("Python PTY fixture preserves canonical/raw bytes and rejects injected corruption", () => {
+  const result = spawnSync(
+    "python3",
+    ["-B", fileURLToPath(new URL("./pty-test.py", import.meta.url)), "--native-controls"],
+    { encoding: "utf8", timeout: 30_000 },
+  );
+  assert.equal(result.status, 0, `${result.error ?? ""}\n${result.stdout}\n${result.stderr}`);
+  assert.match(
+    result.stdout,
+    /Python PTY: character devices, CLOEXEC, canonical\/raw binary I\/O and window size verified/,
+  );
+  assert.match(result.stdout, /injected byte corruption rejected/);
+  const recipe = readFileSync(new URL("./package.nix", import.meta.url), "utf8");
+  assert.ok(recipe.includes('files."/python-pty-test.py" = ./pty-test.py;'));
+  const script = readFileSync(new URL("./python-test.sh", import.meta.url), "utf8");
+  assert.match(script, /python3 \/python-pty-test\.py \|\| fail/);
+});
+
 test("Python process timeouts preserve binary pipes and terminated children are reaped", () => {
   const result = spawnSync(
     "python3",

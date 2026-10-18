@@ -296,6 +296,7 @@ let
         files."/python-example.pyz" = "${applicationExample}/application.pyz";
         files."/python-spawn-errors-test.py" = ./spawn-errors-test.py;
         files."/python-process-lifecycle-test.py" = ./process-lifecycle-test.py;
+        files."/python-pty-test.py" = ./pty-test.py;
         files."/python-abi-test.py" = ./abi-test.py;
         files."/python-address-bits" = builtins.toFile "python-address-bits" (
           toString platform.addressBits + "\n"
