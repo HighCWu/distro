@@ -14,7 +14,7 @@
 #include <unistd.h>
 
 static volatile int before, prepared, parents, children;
-static _Thread_local int tls_value = 17;
+static _Thread_local volatile int tls_value = 17;
 static int global_value = 11;
 static void prepare(void) { prepared++; }
 static void parent(void) { parents++; }
@@ -45,7 +45,7 @@ static void *blocked_thread(void *opaque)
 	return read(fd, &byte, 1) == 1 ? NULL : (void *)(uintptr_t)1;
 }
 
-int main(void)
+int main(int argc, char **argv)
 {
 	int pipefd[2], status, fd;
 	char buffer[3] = {0};
@@ -55,6 +55,13 @@ int main(void)
 	unsigned char *mapping = mmap(NULL, 65536, PROT_READ | PROT_WRITE,
 		MAP_PRIVATE | MAP_ANONYMOUS, -1, 0);
 	sigset_t mask, observed;
+#ifdef __wasm__
+	const char *exec_path = "/fork-exec";
+	(void)argc; (void)argv;
+#else
+	require(argc == 2, "native helper argument");
+	const char *exec_path = argv[1];
+#endif
 	require(heap && mapping != MAP_FAILED, "allocate");
 	*heap = 21; mapping[0] = 51;
 	require(!pipe(pipefd), "pipe");
@@ -100,6 +107,22 @@ int main(void)
 	errno = 0;
 	require(waitpid(pid, &status, WNOHANG) == -1 && errno == ECHILD, "single reap");
 	puts("fork: continuation, PID, TLS, atfork, mask, memory, fd and nested wait pass");
+
+	char parent_text[32];
+	require(snprintf(parent_text, sizeof parent_text, "%ld", (long)original) > 0, "format parent PID");
+	char *exec_args[] = {(char *)exec_path, "hello", parent_text, NULL};
+	char *exec_env[] = {"FORK_PROBE=ready", NULL};
+	pid = fork();
+	require(pid >= 0, "fork before exec");
+	if (!pid) {
+		tls_value = 99;
+		execve(exec_path, exec_args, exec_env);
+		_exit(115);
+	}
+	require(waitpid(pid, &status, 0) == pid && WIFEXITED(status) && WEXITSTATUS(status) == 37,
+		"fork then exec and wait");
+	require(tls_value == 17, "exec child changed parent TLS");
+	puts("fork: exec replacement and wait pass");
 
 #ifdef __wasm__
 	// The kernel deliberately refuses a private snapshot while another thread
