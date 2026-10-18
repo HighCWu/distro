@@ -56,12 +56,11 @@ test("embeds native wasm64 Linux using the standalone example controls", async (
   await savePreparedFile("example.txt", Buffer.from(text));
   // Import a separately SDK-built executable through the actual file picker,
   // not a program installed into the default root or a JavaScript callback.
-  const binary = await page.request.get("/upload-program.wasm");
-  expect(binary.ok()).toBe(true);
+  const binary = await readFile(new URL("../upload-program.wasm", import.meta.url));
   await page.locator("#program").setInputFiles({
     name: "developer-program.wasm",
     mimeType: "application/wasm",
-    buffer: await binary.body(),
+    buffer: binary,
   });
   await page.locator("#arguments").fill('["literal $HOME → wasm64"]');
   await page.locator("#run-program").click();

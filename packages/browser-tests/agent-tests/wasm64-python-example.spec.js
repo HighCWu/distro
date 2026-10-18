@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: MIT
 import { expect, test } from "@playwright/test";
+import { readFile } from "node:fs/promises";
 
 test("runs a Python zip application through standalone browser controls", async ({ page }) => {
   page.on("pageerror", (error) => console.error(error.stack ?? error));
@@ -8,12 +9,11 @@ test("runs a Python zip application through standalone browser controls", async 
   const state = page.locator("#state");
   await page.locator("#start").click();
   await expect(state).toHaveText("running", { timeout: 120000 });
-  const application = await page.request.get("/upload-application.pyz");
-  expect(application.ok()).toBe(true);
+  const application = await readFile(new URL("../upload-application.pyz", import.meta.url));
   await page.locator("#program").setInputFiles({
     name: "developer-application.pyz",
     mimeType: "application/zip",
-    buffer: await application.body(),
+    buffer: application,
   });
   // Selection is explicit: a ZIP must never be passed to the Wasm loader.
   await page.locator("#run-program").click();
@@ -51,12 +51,11 @@ test("runs a Python zip application through standalone browser controls", async 
   await page.locator("#run-program").click();
   await expect(state).toContainText("application failed:");
   await expect(page.locator("#result")).toContainText("SyntaxError");
-  const controls = await page.request.get("/python-controls.pyz");
-  expect(controls.ok()).toBe(true);
+  const controls = await readFile(new URL("../python-controls.pyz", import.meta.url));
   await page.locator("#program").setInputFiles({
     name: "python-controls.pyz",
     mimeType: "application/zip",
-    buffer: await controls.body(),
+    buffer: controls,
   });
   await page.locator("#arguments").fill('["status", "literal $HOME → Python"]');
   await page.locator("#run-program").click();
