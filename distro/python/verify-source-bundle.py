@@ -10,19 +10,22 @@ import tarfile
 
 
 NAMES = ("python", "zlib", "bzip2", "xz", "sqlite3", "readline", "ncurses", "openssl")
+PROFILES = {"python": NAMES, "git": ("git", "zlib", "curl", "openssl")}
 SCOPE = "Exact selected sources, recipes and ordered patches; not complete corresponding source, an SBOM or an offline rebuild environment"
 
 
-def verify(spec_path, materials, archive_path):
+def verify(spec_path, materials, archive_path, *, profile="python"):
+    if profile not in PROFILES:
+        raise ValueError("unsupported selected-source profile")
     spec = json.loads(spec_path.read_text())
     build = json.loads((materials / "build.json").read_text())
     if spec["schemaVersion"] != 1 or build["schemaVersion"] != 1:
         raise ValueError("unsupported source or build schema")
     components = spec["components"]
-    if tuple(item["name"] for item in components) != NAMES:
-        raise ValueError("all eight selected components must be present in order")
+    if tuple(item["name"] for item in components) != PROFILES[profile]:
+        raise ValueError("all selected profile components must be present in order")
     if [item["sourceIdentity"] for item in components] != [build["sourceIdentity"]] + [item["sourceIdentity"] for item in build["dependencies"]]:
-        raise ValueError("source identities differ from configured interpreter")
+        raise ValueError("source identities differ from configured program")
     expected_index = {key: spec[key] for key in ("schemaVersion", "addressBits", "maximumMemoryBytes")}
     for key in ("addressBits", "maximumMemoryBytes"):
         if build[key] != spec[key]:
@@ -30,6 +33,17 @@ def verify(spec_path, materials, archive_path):
     expected_index["scope"] = SCOPE
     expected_index["components"] = []
     expected = {}
+    tools = spec.get("archiveTools", {})
+    expected_tools = {"exporter.py", "verifier.py", "LICENSE-MIT.txt"} if profile == "git" else set()
+    if set(tools) != expected_tools:
+        raise ValueError("selected archive tools differ from profile")
+    if tools:
+        expected_index["archiveTools"] = sorted(tools)
+        for name, path in tools.items():
+            original = Path(path).resolve(strict=True)
+            if not original.is_file() or original.stat().st_size == 0:
+                raise ValueError("missing or empty archive tool")
+            expected["archive-tools/" + name] = (original, 0o644)
 
     def unreadable(error):
         raise error
@@ -109,9 +123,10 @@ def verify(spec_path, materials, archive_path):
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("--profile", choices=tuple(PROFILES), default="python")
     parser.add_argument("spec", type=Path)
     parser.add_argument("materials", type=Path)
     parser.add_argument("archive", type=Path)
     args = parser.parse_args()
-    count = verify(args.spec, args.materials, args.archive)
+    count = verify(args.spec, args.materials, args.archive, profile=args.profile)
     print(f"Verified {count} selected source/archive members against exact inputs without extraction")

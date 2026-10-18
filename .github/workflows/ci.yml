@@ -323,6 +323,32 @@ jobs:
           path: python-build-materials/
           if-no-files-found: error
           retention-days: 3
+      - name: Collect validated selected Git sources
+        if: ${{ success() && (matrix.check == 'git-check-source-bundle' || matrix.check == 'git-wasm64-check-source-bundle') }}
+        env:
+          SOURCE_CHECK: ${{ matrix.check }}
+        run: |
+          case "$SOURCE_CHECK" in
+            git-check-source-bundle) package=git ;;
+            git-wasm64-check-source-bundle) package=git-wasm64 ;;
+            *) exit 64 ;;
+          esac
+          bundle=$(nix eval --raw ".#$package.sourceBundle.outPath")
+          nix path-info "$bundle" >/dev/null
+          (cd "$bundle" && sha256sum --check SHA256SUMS)
+          mkdir git-selected-sources
+          cp "$bundle/git-selected-sources.tar.gz" "$bundle/README.md" \
+            "$bundle/BINARY_SHA256SUMS" "$bundle/SHA256SUMS" git-selected-sources/
+          (cd git-selected-sources && sha256sum --check SHA256SUMS)
+      - name: Upload selected Git sources
+        if: ${{ success() && (matrix.check == 'git-check-source-bundle' || matrix.check == 'git-wasm64-check-source-bundle') }}
+        uses: actions/upload-artifact@v7
+        with:
+          name: git-selected-sources-${{ matrix.check }}-${{ github.sha }}
+          path: git-selected-sources/
+          if-no-files-found: error
+          compression-level: 0
+          retention-days: 3
       - name: Collect validated selected Python sources
         if: ${{ success() && (matrix.check == 'python-check-source-bundle' || matrix.check == 'python-wasm64-check-source-bundle') }}
         env:

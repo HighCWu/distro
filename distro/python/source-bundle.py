@@ -12,9 +12,12 @@ import tempfile
 
 
 NAMES = ("python", "zlib", "bzip2", "xz", "sqlite3", "readline", "ncurses", "openssl")
+PROFILES = {"python": NAMES, "git": ("git", "zlib", "curl", "openssl")}
 
 
-def export(spec_path, materials, destination):
+def export(spec_path, materials, destination, *, profile="python"):
+    if profile not in PROFILES:
+        raise ValueError("unsupported selected-source profile")
     spec = json.loads(spec_path.read_text())
     build = json.loads((materials / "build.json").read_text())
     if spec["schemaVersion"] != 1 or build["schemaVersion"] != 1:
@@ -23,16 +26,25 @@ def export(spec_path, materials, destination):
         if spec[field] != build[field]:
             raise ValueError("source/build platform mismatch: " + field)
     components = spec["components"]
-    if tuple(item["name"] for item in components) != NAMES:
-        raise ValueError("all eight selected components must be present in order")
+    if tuple(item["name"] for item in components) != PROFILES[profile]:
+        raise ValueError("all selected profile components must be present in order")
     identities = [build["sourceIdentity"]] + [item["sourceIdentity"] for item in build["dependencies"]]
     if identities != [item["sourceIdentity"] for item in components]:
-        raise ValueError("selected source identities differ from configured interpreter")
+        raise ValueError("selected source identities differ from configured program")
     subprocess.run(["sha256sum", "--check", "SHA256SUMS"], cwd=materials, check=True)
     index = {key: spec[key] for key in ("schemaVersion", "addressBits", "maximumMemoryBytes")}
     index["scope"] = "Exact selected sources, recipes and ordered patches; not complete corresponding source, an SBOM or an offline rebuild environment"
     index["components"] = []
     inputs = [materials]
+    tools = spec.get("archiveTools", {})
+    expected_tools = {"exporter.py", "verifier.py", "LICENSE-MIT.txt"} if profile == "git" else set()
+    if set(tools) != expected_tools:
+        raise ValueError("selected archive tools differ from profile")
+    if tools:
+        index["archiveTools"] = sorted(tools)
+        if any(not Path(path).is_file() or Path(path).stat().st_size == 0 for path in tools.values()):
+            raise ValueError("missing or empty archive tool")
+        inputs.extend(Path(path) for path in tools.values())
     for item in components:
         source = Path(item["sourcePath"])
         recipe = Path(item["recipeDirectory"])
@@ -42,20 +54,21 @@ def export(spec_path, materials, destination):
         if not (recipe / "package.nix").is_file():
             raise ValueError("missing integration recipe: " + item["name"])
         inputs.extend((source, recipe))
+        inputs.extend(patches)
         if any(not path.is_file() or path.stat().st_size == 0 for path in patches):
             raise ValueError("missing or empty configured patch: " + item["name"])
         index["components"].append({
             "name": item["name"], "sourceIdentity": item["sourceIdentity"],
             "patches": [f"patches/{item['name']}/{number:03d}.patch" for number in range(len(patches))],
         })
-    python = components[0]
-    if (Path(python["recipeDirectory"]) / "package.nix").read_bytes() != (materials / "package.nix").read_bytes():
-        raise ValueError("Python recipe differs from configured interpreter")
-    if len(python["patchPaths"]) != len(build["patches"]):
-        raise ValueError("Python patch count differs from configured interpreter")
-    for number, path in enumerate(python["patchPaths"]):
+    primary = components[0]
+    if (Path(primary["recipeDirectory"]) / "package.nix").read_bytes() != (materials / "package.nix").read_bytes():
+        raise ValueError("primary recipe differs from configured program")
+    if len(primary["patchPaths"]) != len(build["patches"]):
+        raise ValueError("primary patch count differs from configured program")
+    for number, path in enumerate(primary["patchPaths"]):
         if Path(path).read_bytes() != (materials / "patches" / f"{number:03d}.patch").read_bytes():
-            raise ValueError("Python ordered patch differs from configured interpreter")
+            raise ValueError("primary ordered patch differs from configured program")
     if any(destination.resolve().is_relative_to(path.resolve()) for path in inputs):
         raise ValueError("archive must be outside all collected input directories")
 
@@ -72,7 +85,7 @@ def export(spec_path, materials, destination):
     destination.parent.mkdir(parents=True, exist_ok=True)
     temporary = None
     try:
-        with tempfile.NamedTemporaryFile(dir=destination.parent, prefix=".python-sources-", delete=False) as output:
+        with tempfile.NamedTemporaryFile(dir=destination.parent, prefix=f".{profile}-sources-", delete=False) as output:
             temporary = Path(output.name)
             with gzip.GzipFile(filename="", mode="wb", fileobj=output, mtime=0) as compressed:
                 with tarfile.open(mode="w", fileobj=compressed, format=tarfile.GNU_FORMAT, dereference=False) as archive:
@@ -90,6 +103,12 @@ def export(spec_path, materials, destination):
                             member.size = len(data)
                             member.mode = 0o644
                             archive.addfile(normalized(member), io.BytesIO(data))
+                    for name, path in sorted(tools.items()):
+                        data = Path(path).read_bytes()
+                        member = tarfile.TarInfo("archive-tools/" + name)
+                        member.size = len(data)
+                        member.mode = 0o644
+                        archive.addfile(normalized(member), io.BytesIO(data))
                     # The public index records identities, not machine-local input paths.
                     data = (json.dumps(index, indent=2, sort_keys=True) + "\n").encode()
                     member = tarfile.TarInfo("selected-sources.json")
@@ -107,8 +126,9 @@ def export(spec_path, materials, destination):
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("--profile", choices=tuple(PROFILES), default="python")
     parser.add_argument("spec", type=Path)
     parser.add_argument("materials", type=Path)
     parser.add_argument("archive", type=Path)
     args = parser.parse_args()
-    export(args.spec, args.materials, args.archive)
+    export(args.spec, args.materials, args.archive, profile=args.profile)

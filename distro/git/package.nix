@@ -27,6 +27,27 @@ stdenv.mkDerivation (finalAttrs: {
   moveToDev = false;
   meta.outputsToInstall = [ "out" ];
   meta.license = pkgs.lib.licenses.gpl2Only;
+  passthru.sourceBundle = import ./source-bundle.nix {
+    inherit pkgs platform;
+    git = finalAttrs.finalPackage;
+    dependencies = [
+      {
+        name = "zlib";
+        package = zlib;
+        recipeDirectory = ../zlib;
+      }
+      {
+        name = "curl";
+        package = curl;
+        recipeDirectory = ../curl;
+      }
+      {
+        name = "openssl";
+        package = openssl;
+        recipeDirectory = ../openssl;
+      }
+    ];
+  };
   nativeBuildInputs = [ pkgs.nodejs ];
 
   # git creates every child through run-command.c:start_command(): a fork()
@@ -233,6 +254,7 @@ stdenv.mkDerivation (finalAttrs: {
         };
     in
     {
+      source-bundle = finalAttrs.finalPackage.sourceBundle.check;
       build-materials =
         pkgs.runCommand "git-wasm${toString platform.addressBits}-build-materials-check"
           {
