@@ -133,7 +133,125 @@ function fixture(address: WasmAddressType, syscall = false) {
   return { controller, exports, memory, pointer, descriptor, calls };
 }
 
+test("syscall import versions are explicit; an unknown version is not admitted", () => {
+  const string = (value: string) => [value.length, ...new TextEncoder().encode(value)];
+  for (const name of ["syscall", "syscall_v2", "syscall_v3"]) {
+    const imports = [1, ...string("linux"), ...string(name), 0, 0];
+    const module = new WebAssembly.Module(
+      new Uint8Array([
+        0,
+        97,
+        115,
+        109,
+        1,
+        0,
+        0,
+        0,
+        1,
+        4,
+        1,
+        0x60,
+        0,
+        0,
+        2,
+        imports.length,
+        ...imports,
+      ]),
+    );
+    assert.equal(user_module_imports_supported(module), name !== "syscall_v3");
+    assert.equal(uses_fork_continuation(module), false, "v2 alone does not promise fork support");
+  }
+});
+
 for (const address of ["i32", "i64"] as const) {
+  test(`${address}: flags-first clone restores parent and child using the same continuation`, () => {
+    const parent = fixture(address, true),
+      child = fixture(address, true),
+      p = parent.pointer;
+    // The sixth register is unused, just as for Linux's five-argument clone.
+    const args = [17, 0, 0, 0, 0, 123].map(p);
+    const invoke = () => {
+      throw new Error("v2 must never enter the callback syscall with raw flags");
+    };
+    const dispatch = (c: ForkContinuation) =>
+      dispatch_fork_syscall(c, p(220), args, true, invoke, "flags-v2");
+    assert.equal(dispatch(parent.controller), p(0));
+    assert.equal(dispatch(parent.controller), p(-16));
+    const snapshot = parent.controller.suspend();
+    parent.controller.resumeParent(p(1234));
+    child.controller.resumeChild(snapshot);
+    assert.equal(dispatch(parent.controller), p(1234));
+    assert.equal(dispatch(child.controller), p(0));
+    assert.equal(parent.calls.descriptors, 1);
+    assert.equal(child.calls.descriptors, 0);
+    assert.equal(dispatch(parent.controller), p(0));
+    parent.controller.suspend();
+    parent.controller.resumeParent(p(-12));
+    assert.equal(dispatch(parent.controller), p(-12));
+  });
+
+  test(`${address}: flags-first clone rejects unsupported requests without callback fallback`, () => {
+    const f = fixture(address, true),
+      p = f.pointer;
+    const invoke = () => {
+      throw new Error("unsupported v2 request reached legacy kernel clone");
+    };
+    const dispatch = (args: number[], allowed = true, c: ForkContinuation | null = f.controller) =>
+      dispatch_fork_syscall(c, p(220), args.map(p), allowed, invoke, "flags-v2");
+    const args = [17, 0, 0, 0, 0, 0];
+    assert.equal(dispatch(args, true, null), p(-95));
+    assert.equal(dispatch(args, true, fixture(address).controller), p(-95));
+    assert.equal(dispatch(args, false), p(-95));
+    assert.equal(
+      f.controller.kernelCall(() => dispatch(args)),
+      p(-95),
+    );
+    for (const [index, value] of [
+      [0, 0],
+      [0, 7],
+      [0, 0x100 | 17],
+      [1, 8],
+      [2, 8],
+      [3, 8],
+      [4, 8],
+    ] as const) {
+      const changed = [...args];
+      changed[index] = value;
+      assert.equal(dispatch(changed), p(-95));
+    }
+    assert.equal(
+      dispatch([0, 0, 17, 0, 0, 0]),
+      p(-95),
+      "legacy null callback is not reinterpreted",
+    );
+    assert.equal(f.calls.descriptors, 0);
+    assert.equal(dispatch(args), p(0), "a rejected request does not poison the next clone");
+  });
+
+  test(`${address}: import version, not coincident flag/table values, selects clone layout`, () => {
+    const f = fixture(address, true),
+      p = f.pointer;
+    let calls = 0;
+    const invoke = () => {
+      calls++;
+      assert.equal(f.controller.syscallCheckpoint(true), -95);
+      return p(83);
+    };
+    const args = [17, 0, 0, 0, 0, 0].map(p);
+    assert.equal(
+      dispatch_fork_syscall(f.controller, p(220), args, true, invoke, "callback-v1"),
+      p(83),
+    );
+    assert.equal(calls, 1);
+    assert.equal(
+      dispatch_fork_syscall(f.controller, p(172), args, true, invoke, "flags-v2"),
+      p(83),
+    );
+    assert.equal(calls, 2, "v2 non-clone syscalls still enter the guarded kernel");
+    assert.equal(dispatch_fork_syscall(f.controller, p(220), args, true, invoke, "flags-v2"), p(0));
+    assert.equal(calls, 2, "v2 flags are not used as a function-table index");
+  });
+
   test(`${address}: raw clone syscall resumes parent and child without libc checkpoint`, () => {
     const parent = fixture(address, true),
       child = fixture(address, true);
@@ -179,7 +297,7 @@ for (const address of ["i32", "i64"] as const) {
       [3, 8, -95],
       [4, 8, -95],
       [5, 8, -95],
-    ]) {
+    ] as const) {
       const changed = [...args];
       changed[index] = p(value);
       assert.equal(dispatch_fork_syscall(f.controller, p(220), changed, true, invoke), p(errno));

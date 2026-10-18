@@ -54,14 +54,26 @@ export function fork_continuation_exports_supported(module: WebAssembly.Module):
 // Linux/Wasm's existing clone ABI is (callback, argument, flags, ptid, ctid,
 // tls), NOT another architecture's (flags, stack, ...) register layout. A null
 // callback requests continuation at the calling syscall, not a callback task.
+export type CloneSyscallLayout = "callback-v1" | "flags-v2";
+
 export function dispatch_fork_syscall(
   fork: ForkContinuation | null,
   nr: WasmAddress,
   args: WasmAddress[],
   allowed: boolean,
   invoke: () => WasmAddress,
+  layout: CloneSyscallLayout = "callback-v1",
 ): WasmAddress {
   const zero = (value: WasmAddress | undefined) => value === 0 || value === 0n;
+  if ((nr === 220 || nr === 220n) && layout === "flags-v2") {
+    // The import name selects the ABI. Never infer a layout from flag values
+    // or from a possible function-table index. The sixth register is unused
+    // by the Linux default five-argument clone ABI.
+    const supported =
+      args.length === 6 && (args[0] === 17 || args[0] === 17n) && args.slice(1, 5).every(zero);
+    const result = supported ? (fork?.syscallCheckpoint(allowed) ?? -95) : -95;
+    return typeof nr === "bigint" ? BigInt(result) : result;
+  }
   if ((nr === 220 || nr === 220n) && zero(args[0])) {
     let result: number;
     if (!zero(args[1])) {

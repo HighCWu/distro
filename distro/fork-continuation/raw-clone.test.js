@@ -22,8 +22,7 @@ static int mode;
 long raw_linux_syscall(long nr, long a, long b, long c, long d, long e, long f)
 {
   if (nr == SYS_clone) {
-    if (a || b) return -EINVAL;
-    if (mode == 1 || c != SIGCHLD || d || e || f) return -EOPNOTSUPP;
+    if (mode == 1 || a != SIGCHLD || b || c || d || e) return -EOPNOTSUPP;
     long result = fork();
     return result < 0 ? -errno : result;
   }

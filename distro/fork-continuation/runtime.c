@@ -222,6 +222,7 @@ int main(int argc, char **argv)
 	require(waitpid(pid, &status, 0) == pid && WIFEXITED(status) && WEXITSTATUS(status) == 29,
 		"wait after failure");
 	puts("fork: multithread refusal and recovery pass");
+	puts("fork: flags-first clone ABI and legacy callback coexistence pass");
 	puts("fork: signal callback refusal and later fork recovery pass");
 #else
 	(void)blocked_thread;

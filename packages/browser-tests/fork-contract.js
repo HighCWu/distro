@@ -11,6 +11,7 @@ export const forkStages = [
   "fork-exec: arguments, environment, TLS and identity pass",
   "fork: exec replacement and wait pass",
   "fork: multithread refusal and recovery pass",
+  "fork: flags-first clone ABI and legacy callback coexistence pass",
   "fork: signal callback refusal and later fork recovery pass",
   "::vm-test::pass",
 ];

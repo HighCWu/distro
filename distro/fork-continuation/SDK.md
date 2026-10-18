@@ -4,6 +4,13 @@ This opt-in profile does not replace the default SDK. Build `sdk-fork-continuati
 or `sdk-fork-continuation-wasm64` from the distro flake. Use matching-width
 runtime/kernel packages that implement the optional `linux_fork_v1` protocol.
 
+This profile imports `linux.syscall_v2`, whose clone arguments use the Linux
+default order: flags, stack, parent TID, child TID, TLS. Only the single-thread
+fork shape (`SIGCHLD` with the other five-argument fields zero) is supported.
+The unused sixth syscall register is ignored. The existing pthread callback
+clone explicitly retains `linux.syscall`; import versions, not argument values,
+select the ABI. The default SDK continues to use the original import.
+
 Compile separate objects, link the complete executable, then transform it once:
 
 ```sh

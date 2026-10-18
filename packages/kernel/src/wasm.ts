@@ -84,6 +84,7 @@ export function refresh_memory(memory: WebAssembly.Memory, address: WasmAddressT
 const supported_user_module_imports = new Set([
   "env\0memory\0memory",
   "linux\0syscall\0function",
+  "linux\0syscall_v2\0function",
   "linux\0get_thread_area\0function",
   "linux\0copy_siginfo\0function",
   "linux_mmap_init_v1\0copy\0function",

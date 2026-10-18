@@ -7,6 +7,7 @@ import { FileMmapCopy } from "./file-mmap-copy.ts";
 import {
   ForkContinuation,
   dispatch_fork_syscall,
+  type CloneSyscallLayout,
   fork_continuation_exports_supported,
   uses_fork_continuation,
 } from "./fork-continuation.ts";
@@ -151,6 +152,34 @@ function user_imports({
 
   function create_instance(context: UserContext): WebAssembly.Instance {
     const kernel_instance = get_kernel_instance();
+    const syscall =
+      (layout: CloneSyscallLayout) =>
+      (
+        nr: WasmAddress,
+        arg0: WasmAddress,
+        arg1: WasmAddress,
+        arg2: WasmAddress,
+        arg3: WasmAddress,
+        arg4: WasmAddress,
+        arg5: WasmAddress,
+      ) => {
+        const original_instance = instance;
+        const invoke = () =>
+          kernel_instance.exports.syscall(nr, arg0, arg1, arg2, arg3, arg4, arg5);
+        const ret = dispatch_fork_syscall(
+          fork,
+          nr,
+          [arg0, arg1, arg2, arg3, arg4, arg5],
+          signal_depth === 0 && call_entry === call_start,
+          invoke,
+          layout,
+        );
+        if (instance !== original_instance) {
+          call_entry = call_start;
+          throw HALT_USER;
+        }
+        return ret;
+      };
     return new WebAssembly.Instance(context.module, {
       env: { memory: context.memory },
       linux_fork_v1: {
@@ -161,31 +190,8 @@ function user_imports({
         copy: (to: WasmAddress, length: WasmAddress) => mmap_copy.copy(context.memory, to, length),
       },
       linux: {
-        syscall: (
-          nr: WasmAddress,
-          arg0: WasmAddress,
-          arg1: WasmAddress,
-          arg2: WasmAddress,
-          arg3: WasmAddress,
-          arg4: WasmAddress,
-          arg5: WasmAddress,
-        ) => {
-          const original_instance = instance;
-          const invoke = () =>
-            kernel_instance.exports.syscall(nr, arg0, arg1, arg2, arg3, arg4, arg5);
-          const ret = dispatch_fork_syscall(
-            fork,
-            nr,
-            [arg0, arg1, arg2, arg3, arg4, arg5],
-            signal_depth === 0 && call_entry === call_start,
-            invoke,
-          );
-          if (instance !== original_instance) {
-            call_entry = call_start;
-            throw HALT_USER;
-          }
-          return ret;
-        },
+        syscall: syscall("callback-v1"),
+        syscall_v2: syscall("flags-v2"),
         get_thread_area: () => {
           const invoke = () => kernel_instance.exports.get_thread_area();
           return fork ? fork.kernelCall(invoke) : invoke();

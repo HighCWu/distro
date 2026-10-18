@@ -47,7 +47,11 @@ test("finalizer applies whole-link Asyncify with the explicit checkpoint import"
   const args = JSON.parse(readFileSync(f.log, "utf8"));
   assert.equal(args[0], f.input);
   assert.ok(args.includes("--asyncify"));
-  assert.ok(args.includes("--pass-arg=asyncify-imports@linux_fork_v1.checkpoint,linux.syscall"));
+  assert.ok(
+    args.includes(
+      "--pass-arg=asyncify-imports@linux_fork_v1.checkpoint,linux.syscall,linux.syscall_v2",
+    ),
+  );
   assert.ok(args.includes("--pass-arg=asyncify-asserts"));
   assert.ok(!args.includes("--all-features"));
   assert.ok(!readdirSync(f.dir).some((name) => name.includes(".tmp.")));
