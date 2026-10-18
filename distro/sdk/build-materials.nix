@@ -12,7 +12,7 @@ let
     builtins.toJSON {
       schemaVersion = 1;
       inherit (platform) addressBits targetTriple maximumMemoryBytes;
-      sources = builtins.mapAttrs (_: source: toString source) licenseSources;
+      sources = builtins.mapAttrs (_: toString) licenseSources;
       files = {
         "installed/bin/wasm-linux-cc" = "${sdk}/bin/wasm-linux-cc";
         "installed/bin/wasm-linux-c++" = "${sdk}/bin/wasm-linux-c++";
