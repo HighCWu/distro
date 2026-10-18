@@ -21,6 +21,7 @@
       This example uses a real Linux kernel and native wasm64 BusyBox. Each start creates a fresh
       in-memory ext4 disk. Stopping or reloading loses changes; this example does not save to OPFS.
     </p>
+    <p id="runtime-profile">Minimal BusyBox root (64 MiB); Python is not installed.</p>
     <p>
       Serve on localhost or HTTPS with COOP/COEP headers. Browser support for shared memory and
       memory64 is required. This is not a security boundary between programs running inside the same
@@ -49,7 +50,19 @@ Hello from native Linux wasm64.</textarea>
       instance and its files.
     </p>
     <p>
+      <label
+        >Program type
+        <select id="program-kind">
+          <option value="wasm">Linux wasm64 executable</option>
+          <option value="python" disabled>Python .pyz application (Python profile required)</option>
+        </select>
+      </label>
       <label>Program <input id="program" type="file" accept=".wasm,application/wasm" /></label>
+    </p>
+    <p>
+      The optional Python profile also accepts ZIP-format .pyz applications without a prepended
+      shebang. Select Python explicitly; no format guessing or automatic dependency installation is
+      performed. Python runs inside Linux with its installed standard library, not as WASI.
     </p>
     <p>
       <label

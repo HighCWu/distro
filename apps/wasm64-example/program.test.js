@@ -6,6 +6,8 @@ import { maximumProgramBytes, outputTail, programArguments, runProgram } from ".
 const wasm = Uint8Array.of(0, 97, 115, 109, 1, 0, 0, 0);
 const file = { size: wasm.length, arrayBuffer: async () => wasm.buffer };
 const success = { success: true, code: 0, signal: null };
+const zip = Uint8Array.of(80, 75, 3, 4, 1, 2, 3, 4);
+const pythonFile = { size: zip.length, arrayBuffer: async () => zip.buffer };
 const stream = (chunks = []) =>
   new ReadableStream({
     start(controller) {
@@ -56,6 +58,70 @@ function harness({
   };
   return { agent, calls };
 }
+
+test("Python selection imports ZIP bytes and invokes the installed interpreter with literal argv", async () => {
+  const { agent, calls } = harness();
+  const status = await runProgram(agent, pythonFile, '["literal $HOME", "--x"]', {
+    format: "python",
+    inputText: "abc",
+    onOutput() {},
+  });
+  assert.equal(status, success);
+  const write = calls.find((entry) => entry[0] === "write");
+  assert.equal(write[1], "/root/application.pyz");
+  assert.deepEqual(write[2], zip);
+  const exec = calls.find((entry) => entry[0] === "exec");
+  assert.deepEqual(exec[1], [
+    "/usr/bin/python3",
+    "-I",
+    "/root/application.pyz",
+    "literal $HOME",
+    "--x",
+  ]);
+  assert.equal(exec[2].stdinMode, "streaming");
+  assert.equal(exec[2].cwd, "/root");
+  assert.equal(calls.at(-1), "child-close");
+});
+
+test("format selection never guesses from filenames, and invalid formats perform no Linux I/O", async () => {
+  const { agent, calls } = harness();
+  await assert.rejects(runProgram(agent, pythonFile, "[]", { onOutput() {} }), /WebAssembly/);
+  await assert.rejects(
+    runProgram(agent, file, "[]", { format: "python", onOutput() {} }),
+    /ZIP-format/,
+  );
+  await assert.rejects(
+    runProgram(agent, file, "[]", { format: "auto", onOutput() {} }),
+    /unsupported/,
+  );
+  const shebang = new TextEncoder().encode("#!/usr/bin/python3\nPK\x03\x04");
+  await assert.rejects(
+    runProgram(agent, { size: shebang.length, arrayBuffer: async () => shebang.buffer }, "[]", {
+      format: "python",
+      onOutput() {},
+    }),
+    /ZIP-format/,
+  );
+  assert.deepEqual(calls, []);
+});
+
+test("Python interpreter errors retain output and nonzero status, with process cleanup", async () => {
+  const status = { success: false, code: 1, signal: null };
+  const diagnostic = "invalid Python archive\n";
+  const { agent, calls } = harness({ status, stderr: [new TextEncoder().encode(diagnostic)] });
+  let output = "";
+  assert.equal(
+    await runProgram(agent, pythonFile, "[]", {
+      format: "python",
+      onOutput(_name, text) {
+        output += text;
+      },
+    }),
+    status,
+  );
+  assert.equal(output, diagnostic);
+  assert.equal(calls.at(-1), "child-close");
+});
 
 test("binary stdin streams exact chunks without arrayBuffer or text conversion", async () => {
   const { agent, calls } = harness();

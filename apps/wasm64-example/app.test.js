@@ -20,7 +20,7 @@ function harness({ closeError, deferClose = false } = {}) {
       elements.set(id, {
         textContent: "",
         disabled: false,
-        value: id === "arguments" ? "[]" : "text",
+        value: id === "arguments" ? "[]" : id === "program-kind" ? "wasm" : "text",
         files: [{}],
         listeners: {},
         removeAttribute(name) {
@@ -172,6 +172,24 @@ test("Stop Linux remains usable during an application and old output cannot affe
   assert.equal(h.nodes("result").textContent, output);
   assert.equal(h.nodes("state").textContent, "running");
   assert.equal(h.nodes("start").disabled, true);
+  await h.click("stop");
+});
+
+test("explicit program type is forwarded on each launch and errors remain visible", async () => {
+  const h = harness();
+  await h.click("start");
+  h.nodes("program-kind").value = "python";
+  const python = h.click("run-program");
+  assert.equal(h.applications[0].options.format, "python");
+  h.applications[0].result.resolve({ success: false, code: 1, signal: null });
+  await python;
+  assert.match(h.nodes("state").textContent, /application failed/);
+  h.nodes("program-kind").value = "wasm";
+  const wasm = h.click("run-program");
+  assert.equal(h.applications[1].options.format, "wasm");
+  h.applications[1].result.resolve(success.status);
+  await wasm;
+  assert.equal(h.nodes("state").textContent, "running");
   await h.click("stop");
 });
 

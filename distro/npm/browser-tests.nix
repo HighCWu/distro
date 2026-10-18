@@ -30,6 +30,7 @@
   toolchain-smoke-wasm64,
   toolchain-smoke,
   wasm64-example,
+  wasm64-python-example,
   zstd,
   zstd-wasm64,
 }:
@@ -284,6 +285,15 @@ let
           project = lib.removePrefix "wasm64-example-" name;
         }
       ))
+      // (lib.genAttrs [ "wasm64-python-example-chromium" "wasm64-python-example-firefox" ] (
+        name:
+        playwright.mkCheck {
+          name = "browser-tests-${name}";
+          suite = wasm64PythonExampleSuite;
+          expectedTests = [ "runs a Python zip application through standalone browser controls" ];
+          project = lib.removePrefix "wasm64-python-example-" name;
+        }
+      ))
       // (lib.genAttrs [ "runtime-wasm32-chromium" "runtime-wasm32-firefox" ] (
         name:
         playwright.mkCheck {
@@ -462,6 +472,20 @@ let
     cp ${source}/agent-tests/wasm64-example.spec.js $out/tests/
     ${sdk-wasm64}/bin/wasm-linux-cc -Wall -Wextra -Werror \
       ${../../apps/wasm64-example}/program-check.c -o $out/upload-program.wasm
+  '';
+
+  wasm64PythonExampleSuite = pkgs.runCommand "wasm64-python-example-browser-tests" { } ''
+    mkdir -p $out/tests
+    cp -r ${wasm64-python-example}/. $out/
+    chmod u+w $out/node_modules
+    ${playwright.linkRuntime "$out"}
+    cp ${../../apps/wasm64-example}/server.mjs $out/server.js
+    cp ${source}/playwright.config.js $out/playwright.config.js
+    cp ${source}/agent-tests/wasm64-python-example.spec.js $out/tests/
+    cp ${python-wasm64.applicationExample}/application.pyz $out/upload-application.pyz
+    ${pkgs.python313}/bin/python3 -c \
+      'import sys, zipfile; z = zipfile.ZipFile(sys.argv[2], "w", zipfile.ZIP_DEFLATED); z.write(sys.argv[1], "__main__.py"); z.close()' \
+      ${../../apps/wasm64-example}/python-check.py $out/python-controls.pyz
   '';
 
   agentSystemRootSuite =

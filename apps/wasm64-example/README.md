@@ -4,7 +4,7 @@
 
 This is a small application using the public kernel and agent APIs, not a
 terminal distribution or test fixture. It bundles a matching wasm64 kernel,
-native agent boot disk and minimal BusyBox ext4 root. The page starts/stops
+native agent boot disk and a minimal or Python-equipped ext4 root. The page starts/stops
 Linux, runs native `uname`, writes bounded UTF-8 text through the file API and
 reads it using native `cat`. It also imports a developer-selected Linux wasm64
 executable into the temporary root and runs it through the public streaming
@@ -16,6 +16,45 @@ Build heavy assets in public CI:
 nix build .#wasm64-example --out-link result-wasm64-example -L
 node result-wasm64-example/server.mjs
 ```
+
+## Optional Python profile
+
+`wasm64-python-example` uses the same page, kernel, native agent and public
+process API with a 256 MiB root containing CPython, its standard library,
+ncurses, OpenSSL and CA certificates. The default `wasm64-example` retains the
+64 MiB minimal root and disables Python selection. Build the Python profile
+in public CI with `nix build .#wasm64-python-example`; serve or relocate its
+complete output directory just as described below. New profile build and
+browser checks require their own CI results; older native-only successes
+do not establish Python launcher support.
+
+Start Linux, select **Python .pyz application** under **Program type**, select
+a trusted ZIP-format `.pyz`, and choose **Import and run program**. The import
+does not guess the file type: a ZIP selected in Wasm mode is rejected. This
+small launcher accepts archives beginning with a ZIP local-file header, not
+zipapps with a prepended shebang. For example, use this project's
+`distro/python/build-example.py` to generate a compatible application archive.
+Archives remain limited to 16 MiB; the ZIP header is only a format hint, not
+validation of contents, expanded size, runtime dependencies or resource usage.
+
+The launcher copies bytes to `/root/application.pyz` and invokes
+`/usr/bin/python3 -I /root/application.pyz` followed by literal JSON arguments.
+It does not extract files in JavaScript, interpolate a shell, install pip
+packages or execute Wasm directly from the archive. Isolated mode ignores
+Python environment variables and the current directory for imports; package
+code/resources must be present in the archive, installed stdlib or supported
+runtime paths. It is not a security sandbox. Native extension imports,
+arbitrary fork and other unavailable platform features do not become supported
+merely because an archive can be imported. Interpreter errors and nonzero exit
+status remain failures.
+
+The existing text/binary stdin, concurrent output, cancellation, Stop and
+file-download controls are reused. Output on the page is still a bounded UTF-8
+preview, not raw binary. Changes and the uploaded archive disappear when the
+instance stops; this profile does not add OPFS or an interactive terminal.
+The interpreter statically links GNU Readline and retains GPL obligations.
+License notices in the root are not a complete corresponding-source delivery,
+and neither the interpreter nor the bundled system may be relabeled MIT.
 
 The built directory includes this README, the development server, and an
 offline integrity checker. Copy the entire directory, including `node_modules`,
@@ -49,7 +88,7 @@ general-purpose production server and does not handle HTTP range requests.
 Every start downloads a fresh root image into host memory. Writes disappear
 after stop, reload or failure: the no-op block flush only acknowledges the
 in-memory backing, not durable storage. The page explicitly says this; it does
-not silently fall back from OPFS. The 64 MiB image, kernel and per-process
+not silently fall back from OPFS. The 64 MiB minimal image (256 MiB for Python), kernel and per-process
 memories consume additional browser resources. Memory64 and shared-memory
 browser support are required; there is no wasm32 fallback or transpiler here.
 Runtime errors remain visible and are not converted to compatibility success.

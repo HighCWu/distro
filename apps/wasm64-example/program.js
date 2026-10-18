@@ -2,7 +2,6 @@
 export const maximumProgramBytes = 16 * 1024 * 1024;
 export const maximumOutputCharacters = 65536;
 export const maximumInputCharacters = 65536;
-const programPath = "/root/application.wasm";
 
 export function outputTail(previous, text) {
   return (previous + text).slice(-maximumOutputCharacters);
@@ -26,9 +25,11 @@ export async function runProgram(
   agent,
   file,
   argumentText,
-  { signal, onOutput, inputText = "", inputFile },
+  { signal, onOutput, inputText = "", inputFile, format = "wasm" },
 ) {
   signal?.throwIfAborted();
+  if (!["wasm", "python"].includes(format)) throw new Error("unsupported program format");
+  const programPath = format === "python" ? "/root/application.pyz" : "/root/application.wasm";
   const args = programArguments(argumentText);
   if (inputFile !== undefined) {
     if (
@@ -46,23 +47,29 @@ export async function runProgram(
     file.size < 8 ||
     file.size > maximumProgramBytes
   ) {
-    throw new Error("select a Linux wasm64 program between 8 bytes and 16 MiB");
+    throw new Error("select a program between 8 bytes and 16 MiB");
   }
   const bytes = new Uint8Array(await file.arrayBuffer());
   signal?.throwIfAborted();
-  if (
-    bytes.byteLength !== file.size ||
-    ![0, 97, 115, 109, 1, 0, 0, 0].every((byte, index) => bytes[index] === byte)
-  ) {
-    throw new Error("selected file is not a WebAssembly version 1 binary");
+  if (bytes.byteLength !== file.size) {
+    throw new Error("selected program size changed during import");
   }
-  // This header check is not ABI validation or a trust boundary. Linux's
-  // loader must accept the matching SDK ABI before executing the application.
+  const header = format === "python" ? [80, 75, 3, 4] : [0, 97, 115, 109, 1, 0, 0, 0];
+  if (!header.every((byte, index) => bytes[index] === byte))
+    throw new Error(
+      format === "python"
+        ? "selected file is not a ZIP-format Python application (.pyz)"
+        : "selected file is not a WebAssembly version 1 binary",
+    );
+  // These are bounded format hints, not archive/ABI validation or a trust
+  // boundary. The installed Python or Linux loader must execute the input.
   await agent.fs.writeFile(programPath, bytes, { mode: 0o700, signal });
   signal?.throwIfAborted();
   await agent.fs.chmod(programPath, 0o700);
   signal?.throwIfAborted();
-  const child = await agent.exec([programPath, ...args], {
+  const argv =
+    format === "python" ? ["/usr/bin/python3", "-I", programPath, ...args] : [programPath, ...args];
+  const child = await agent.exec(argv, {
     cwd: "/root",
     signal,
     stdinMode: "streaming",

@@ -28,6 +28,42 @@ test("Python production root selects matching runtime packages, not interpreter 
   assert.match(check[1], /agent-wasm64-python-root-runtime.ts/);
 });
 
+test("optional browser profile selects the Python root and enables only explicit Python import", () => {
+  const source = readFileSync(new URL("../wasm64-example/package.nix", import.meta.url), "utf8");
+  const html = readFileSync(
+    new URL("../../apps/wasm64-example/index.html", import.meta.url),
+    "utf8",
+  );
+  assert.match(source, /withPython \? false/);
+  assert.match(source, /if withPython then\s+guest-agent.nativeWasm64.rootfsPythonExt4/);
+  assert.match(source, /else\s+guest-agent.nativeWasm64.rootfsExt4/);
+  assert.match(html, /value="python" disabled/);
+  let python = html;
+  let replacements = 0;
+  for (const [, from, to] of source.matchAll(/--replace-fail '([^']+)'\s*(?:\\\s*)?'([^']+)'/g)) {
+    assert.ok(python.includes(from), `profile substitution still matches HTML: ${from}`);
+    python = python.replaceAll(from, to);
+    replacements++;
+  }
+  assert.equal(replacements, 3);
+  assert.match(python, /value="python">/);
+  assert.match(python, /accept="\.wasm,\.pyz,/);
+  assert.match(python, /Python root \(256 MiB\)/);
+  const scope = readFileSync(new URL("../default.nix", import.meta.url), "utf8");
+  assert.match(
+    scope,
+    /wasm64-python-example = self.wasm64-example.override \{ withPython = true; \};/,
+  );
+  const browser = readFileSync(new URL("../npm/browser-tests.nix", import.meta.url), "utf8");
+  assert.match(browser, /"wasm64-python-example-chromium" "wasm64-python-example-firefox"/);
+  assert.match(browser, /suite = wasm64PythonExampleSuite;/);
+  assert.match(
+    browser,
+    /expectedTests = \[ "runs a Python zip application through standalone browser controls" \];/,
+  );
+  assert.match(browser, /cp \$\{python-wasm64.applicationExample\}\/application.pyz/);
+});
+
 test("Python public root check requires two fresh boots, exact application bytes and runtime licenses", () => {
   const source = readFileSync(
     new URL(

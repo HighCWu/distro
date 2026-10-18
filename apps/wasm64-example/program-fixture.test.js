@@ -1,11 +1,58 @@
 // SPDX-License-Identifier: MIT
 import assert from "node:assert/strict";
 import { spawnSync } from "node:child_process";
-import { mkdtempSync, readFileSync, rmSync } from "node:fs";
+import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 import test from "node:test";
+
+test("actual example zipapp runs in isolated Python mode and malformed ZIP input fails", () => {
+  const directory = mkdtempSync(join(tmpdir(), "linux-wasm-python-launcher-"));
+  try {
+    const application = join(directory, "application.pyz");
+    const build = spawnSync(
+      "python3",
+      [
+        "-B",
+        fileURLToPath(new URL("../../distro/python/build-example.py", import.meta.url)),
+        application,
+      ],
+      { encoding: "utf8", timeout: 5000 },
+    );
+    assert.equal(build.status, 0, build.error?.message ?? build.stderr);
+    const input = Buffer.from(Uint8Array.from({ length: 65553 }, (_, i) => i & 255));
+    const result = spawnSync("python3", ["-I", application, "literal $HOME", "--uninterpreted"], {
+      input,
+      timeout: 5000,
+    });
+    assert.equal(result.status, 0, result.error?.message ?? result.stderr?.toString());
+    const prefix = readFileSync(
+      new URL("../../distro/python/example/sampleapp/payload.txt", import.meta.url),
+    );
+    assert.deepEqual(result.stdout, Buffer.concat([prefix, Buffer.from(input).reverse()]));
+    assert.equal(result.stderr.byteLength, 0);
+    writeFileSync(application, Buffer.from("PK\x03\x04not-a-zip"));
+    const invalid = spawnSync("python3", ["-I", application], { encoding: "utf8", timeout: 5000 });
+    assert.notEqual(invalid.status, 0);
+    assert.match(invalid.stderr, /SyntaxError/);
+    const fixture = spawnSync(
+      "python3",
+      [
+        "-I",
+        fileURLToPath(new URL("./python-check.py", import.meta.url)),
+        "status",
+        "literal $HOME → Python",
+      ],
+      { encoding: "utf8", timeout: 5000 },
+    );
+    assert.equal(fixture.status, 37, fixture.error?.message ?? fixture.stderr);
+    assert.equal(fixture.stdout, "literal $HOME → Python\n");
+    assert.equal(fixture.stderr, "Python application stderr\n");
+  } finally {
+    rmSync(directory, { recursive: true, force: true });
+  }
+});
 
 test("native input fixture verifies every binary byte and rejects corruption", () => {
   const directory = mkdtempSync(join(tmpdir(), "linux-wasm-input-fixture-"));

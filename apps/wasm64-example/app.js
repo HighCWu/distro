@@ -207,6 +207,7 @@ element("run-program").addEventListener("click", () =>
         element("arguments").value,
         {
           signal: controller.signal,
+          format: element("program-kind").value,
           inputText: element("stdin").value,
           inputFile:
             element("stdin-source").value === "file"
