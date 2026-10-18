@@ -79,6 +79,64 @@ class MaterialsTest(unittest.TestCase):
             materials.export(self.spec, self.archive)
         self.assertFalse(self.archive.exists())
 
+    def test_wasm32_installed_profile_round_trip(self):
+        self.spec.update(addressBits=32, targetTriple="wasm32-unknown-linux-musl",
+                         maximumMemoryBytes=4294967296)
+        path = Path(self.spec["files"]["installed/profile.json"])
+        profile = json.loads(path.read_text())
+        profile.update(addressBits=32, targetTriple=self.spec["targetTriple"])
+        profile["linearMemory"]["maximumBytes"] = self.spec["maximumMemoryBytes"]
+        path.write_text(json.dumps(profile))
+        materials.export(self.spec, self.archive)
+        materials.verify(self.spec, self.archive)
+        with tarfile.open(self.archive) as archive:
+            identity = json.load(archive.extractfile("sdk-build-materials.json"))
+        self.assertEqual(identity["addressBits"], 32)
+        self.assertEqual(identity["maximumMemoryBytes"], 4294967296)
+        self.assertEqual(identity["targetTriple"], self.spec["targetTriple"])
+
+    def test_rejects_missing_reordered_and_retyped_members(self):
+        sdk = Path(self.spec["trees"]["recipes/sdk"])
+        (sdk / "link").symlink_to("package.nix")
+        materials.export(self.spec, self.archive)
+        with tarfile.open(self.archive) as archive:
+            entries = [(member, archive.extractfile(member).read() if member.isfile() else None)
+                       for member in archive.getmembers()]
+        for mutation in ("missing", "reordered", "directory", "hardlink", "symlink", "metadata-size"):
+            with self.subTest(mutation=mutation):
+                changed = [(copy.copy(member), data) for member, data in entries]
+                if mutation == "missing":
+                    changed.pop(0)
+                elif mutation == "reordered":
+                    changed[0], changed[1] = changed[1], changed[0]
+                elif mutation == "directory":
+                    member = next(member for member, _ in changed if member.isdir())
+                    member.type = tarfile.REGTYPE
+                elif mutation == "hardlink":
+                    member = next(member for member, _ in changed if member.isfile())
+                    member.type = tarfile.LNKTYPE
+                    member.linkname = "installed/profile.json"
+                    member.size = 0
+                elif mutation == "symlink":
+                    member = next(member for member, _ in changed if member.issym())
+                    member.linkname = "../unselected"
+                else:
+                    member, data = changed[-1]
+                    changed[-1] = (member, data + b" ")
+                    member.size += 1
+                with tarfile.open(self.archive, "w:gz") as archive:
+                    for member, data in changed:
+                        archive.addfile(member, io.BytesIO(data) if data is not None else None)
+                with self.assertRaises(ValueError):
+                    materials.verify(self.spec, self.archive)
+
+    def test_truncated_archive_is_not_verified(self):
+        materials.export(self.spec, self.archive)
+        data = self.archive.read_bytes()
+        self.archive.write_bytes(data[:len(data) // 2])
+        with self.assertRaises((tarfile.TarError, EOFError, OSError)):
+            materials.verify(self.spec, self.archive)
+
     def test_rejects_wrong_platform_and_source_provenance(self):
         for key, value in (("addressBits", 32), ("targetTriple", "wrong"), ("maximumMemoryBytes", 42)):
             changed = copy.deepcopy(self.spec)
