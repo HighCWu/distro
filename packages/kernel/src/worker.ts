@@ -5,6 +5,11 @@ import { platform } from "./platform.ts";
 import { user_mmap } from "./user-mmap.ts";
 import { FileMmapCopy } from "./file-mmap-copy.ts";
 import {
+  ForkContinuation,
+  fork_continuation_exports_supported,
+  uses_fork_continuation,
+} from "./fork-continuation.ts";
+import {
   settle_user_copy,
   USER_COPY_COMPLETE,
   USER_COPY_NO_MEMORY,
@@ -90,6 +95,8 @@ function user_imports({
   let instance: WebAssembly.Instance | null = null;
   let pending_module_bytes: Uint8Array<ArrayBuffer> | null = null;
   let pending: UserContext | null = null;
+  let fork: ForkContinuation | null = null;
+  let signal_depth = 0;
   // One slot per nested SA_SIGINFO callback; null means its trampoline has
   // not requested the active signal payload yet.
   const siginfo_copy_results: (number | null)[] = [];
@@ -136,6 +143,7 @@ function user_imports({
     const { _start } = instance.exports;
     assert(typeof _start === "function", "_start not found");
     _start();
+    if (fork?.unwinding()) return;
     throw new Error("_start reached the end without exiting");
   }
   let call_entry = call_start;
@@ -144,6 +152,10 @@ function user_imports({
     const kernel_instance = get_kernel_instance();
     return new WebAssembly.Instance(context.module, {
       env: { memory: context.memory },
+      linux_fork_v1: {
+        checkpoint: (descriptor: WasmAddress) =>
+          fork?.checkpoint(descriptor, signal_depth === 0 && call_entry === call_start) ?? -38,
+      },
       linux_mmap_init_v1: {
         copy: (to: WasmAddress, length: WasmAddress) => mmap_copy.copy(context.memory, to, length),
       },
@@ -185,6 +197,9 @@ function user_imports({
 
     assert(context);
     instance = create_instance(context);
+    fork = uses_fork_continuation(context.module)
+      ? new ForkContinuation(instance, context.memory, context.address)
+      : null;
   }
 
   return {
@@ -236,7 +251,10 @@ function user_imports({
           if (!memory_import) return -8; // exec format error
 
           module = new WebAssembly.Module(bytes);
-          if (!user_module_imports_supported(module)) {
+          if (
+            !user_module_imports_supported(module) ||
+            !fork_continuation_exports_supported(module)
+          ) {
             return -8; // exec format error
           }
 
@@ -270,6 +288,19 @@ function user_imports({
         for (;;) {
           try {
             call_entry();
+            if (fork?.unwinding()) {
+              assert(context);
+              const owner = context;
+              const continuation = fork;
+              owner.fork_continuation = continuation.suspend();
+              let result: WasmAddress;
+              try {
+                result = continuation.clone();
+              } finally {
+                delete owner.fork_continuation;
+              }
+              continuation.resumeParent(result);
+            }
           } catch (error) {
             if (error === HALT_USER) continue;
             if (error === HALT_KERNEL) throw error;
@@ -285,6 +316,18 @@ function user_imports({
         // before the kernel enters this callback.
 
         assert(parent);
+
+        if (context?.fork_continuation) {
+          const snapshot = context.fork_continuation;
+          assert(
+            fork && snapshot.entry === fn && (arg === 0 || arg === 0n),
+            "invalid fork child entry",
+          );
+          fork.resumeChild(snapshot);
+          delete context.fork_continuation;
+          call_entry = call_start;
+          return;
+        }
 
         call_entry = () => {
           assert(instance);
@@ -312,7 +355,12 @@ function user_imports({
         const f = wasm_table_get(__indirect_function_table, fn);
         assert(typeof f === "function" && f.length === 1, "Invalid function signature");
 
-        f(sig);
+        signal_depth++;
+        try {
+          f(sig);
+        } finally {
+          signal_depth--;
+        }
       },
       call_siginfo_handler(trampoline, fn, sig) {
         assert(instance);
@@ -324,10 +372,12 @@ function user_imports({
         assert(typeof f === "function" && f.length === 2, "Invalid siginfo trampoline");
 
         siginfo_copy_results.push(null);
+        signal_depth++;
         try {
           f(fn, sig);
           return siginfo_copy_results.at(-1) ?? -22;
         } finally {
+          signal_depth--;
           // Non-local exits can unwind the kernel callback before its C cleanup.
           try {
             get_kernel_instance().exports.clear_siginfo();
@@ -464,7 +514,7 @@ function start({
       const destination = memory_bytes(copied.memory, 0, source.byteLength);
       if (!destination) throw new RangeError("invalid destination memory");
       destination.set(source);
-      user_context = { module: user_context.module, ...copied };
+      user_context = { ...user_context, ...copied };
     } catch {
       settle_user_copy(user_copy_status, USER_COPY_NO_MEMORY);
       postMessage({ type: "worker_exit" });

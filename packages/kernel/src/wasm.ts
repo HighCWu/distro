@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: MIT
 
 import { platform } from "./platform.ts";
+import type { ForkSnapshot } from "./fork-continuation.ts";
 
 export interface Instance extends WebAssembly.Instance {
   exports: {
@@ -28,6 +29,8 @@ export interface UserContext {
   address: WasmAddressType;
   // The JS API cannot recover a memory's maximum after construction.
   maximum_pages: number;
+  /** Present only while a suspended fork is creating its private-memory child. */
+  fork_continuation?: ForkSnapshot;
 }
 
 export type WasmAddressType = "i32" | "i64";
@@ -84,6 +87,7 @@ const supported_user_module_imports = new Set([
   "linux\0get_thread_area\0function",
   "linux\0copy_siginfo\0function",
   "linux_mmap_init_v1\0copy\0function",
+  "linux_fork_v1\0checkpoint\0function",
 ]);
 
 /** Whether every import can be supplied when a userspace module is instantiated. */
