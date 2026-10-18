@@ -15,6 +15,7 @@ import {
   settle_user_copy,
   USER_COPY_COMPLETE,
   USER_COPY_NO_MEMORY,
+  user_copy_failed,
   type UserCopyStatus,
   wait_user_copy,
 } from "./user-copy.ts";
@@ -505,6 +506,13 @@ function start({
   user: initial_user_context,
   user_copy_status,
 }: InitMessage) {
+  const cancelled = () => {
+    if (!user_copy_failed(user_copy_status)) return false;
+    postMessage({ type: "worker_exit" });
+    platform.quit();
+    return true;
+  };
+  if (cancelled()) return;
   // Refresh every WebAssembly.Memory received across a worker boundary
   // immediately, including any future additions to InitMessage. Chromium can
   // retain the fixed-length buffer wrapper captured before another isolate
@@ -517,8 +525,8 @@ function start({
   let user_context = initial_user_context;
   if (user_copy_status) {
     assert(user_context);
-    // fork.c permits COPY only for a single-user mm, and the caller blocks
-    // until publication below, so the source is stable. Allocate here so the
+    // fork.c permits COPY only for a single-user mm. The caller blocks until
+    // publication or timeout; a timed-out copy must never be published. Allocate here so the
     // private backing store is owned by the destination isolate, not the
     // long-lived parent.
     try {
@@ -542,6 +550,7 @@ function start({
     }
   }
 
+  if (cancelled()) return;
   const user = user_imports({
     kernel_memory: memory,
     kernel_address,

@@ -14,6 +14,16 @@ export function settle_user_copy(status: UserCopyStatus | null, result: number):
   return true;
 }
 
+/** A failed request must never initialize or publish a late child. */
+export function user_copy_failed(status: UserCopyStatus | null): boolean {
+  return status !== null && Atomics.load(status, 0) < 0;
+}
+
+/** Handle initialization failure, including a timeout that already won. */
+export function reject_user_copy(status: UserCopyStatus | null): boolean {
+  return settle_user_copy(status, USER_COPY_TRY_AGAIN) || user_copy_failed(status);
+}
+
 /** Wait for a child worker to finish its private-memory snapshot. */
 export function wait_user_copy(status: UserCopyStatus, timeout_ms = 30_000): number {
   // A system clock adjustment must not extend or shorten a pending snapshot.

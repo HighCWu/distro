@@ -7,7 +7,7 @@ import { checked_cpu_count } from "./boot-options.ts";
 import { discard_worker, post_worker_init, terminate_workers } from "./worker-start.ts";
 import { configure_machine, run_machine_booted } from "./plugin-internal.ts";
 import type { MachinePluginInput } from "./plugin.ts";
-import { settle_user_copy, USER_COPY_TRY_AGAIN } from "./user-copy.ts";
+import { reject_user_copy, user_copy_failed } from "./user-copy.ts";
 import { assert, unreachable } from "./util.ts";
 import { read_wasm_memories, type WasmMemoryType } from "./wasm_binary.ts";
 import { close_virtio_device, virtio_device_description, virtio_imports } from "./virtio/core.ts";
@@ -323,8 +323,9 @@ export async function bootMachine(options: BootMachineOptions): Promise<Machine>
     let instance: Instance | undefined;
 
     const start_worker = (name: string, init: InitMessage | ForwardedInitMessage) => {
-      if (closed) {
-        settle_user_copy(init.user_copy_status, USER_COPY_TRY_AGAIN);
+      if (closed || user_copy_failed(init.user_copy_status)) {
+        reject_user_copy(init.user_copy_status);
+        if (init.type === "forwarded_init") init.port.close();
         return;
       }
       const worker = platform.spawn_worker(name, {
@@ -339,7 +340,8 @@ export async function bootMachine(options: BootMachineOptions): Promise<Machine>
                   user_copy_status: message.user_copy_status,
                 });
               } catch (error) {
-                if (!settle_user_copy(message.user_copy_status, USER_COPY_TRY_AGAIN)) {
+                message.port.close();
+                if (!reject_user_copy(message.user_copy_status)) {
                   void fail(error);
                 }
               }
@@ -378,7 +380,7 @@ export async function bootMachine(options: BootMachineOptions): Promise<Machine>
           }
         },
         on_error(error) {
-          if (settle_user_copy(init.user_copy_status, USER_COPY_TRY_AGAIN)) {
+          if (reject_user_copy(init.user_copy_status)) {
             void discard_worker(workers, worker).catch(() => {});
             return;
           }
