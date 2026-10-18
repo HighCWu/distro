@@ -56,7 +56,9 @@ test("embeds native wasm64 Linux using the standalone example controls", async (
   await savePreparedFile("example.txt", Buffer.from(text));
   // Import a separately SDK-built executable through the actual file picker,
   // not a program installed into the default root or a JavaScript callback.
-  const binary = await readFile(new URL("../upload-program.wasm", import.meta.url));
+  // mkCheck runs from the suite root; keep fixture loading compatible with
+  // Playwright's CommonJS test transform as well as native ESM.
+  const binary = await readFile("upload-program.wasm");
   await page.locator("#program").setInputFiles({
     name: "developer-program.wasm",
     mimeType: "application/wasm",

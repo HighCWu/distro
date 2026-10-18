@@ -9,7 +9,8 @@ test("runs a Python zip application through standalone browser controls", async 
   const state = page.locator("#state");
   await page.locator("#start").click();
   await expect(state).toHaveText("running", { timeout: 120000 });
-  const application = await readFile(new URL("../upload-application.pyz", import.meta.url));
+  // mkCheck fixes cwd to the suite root, including under the CommonJS transform.
+  const application = await readFile("upload-application.pyz");
   await page.locator("#program").setInputFiles({
     name: "developer-application.pyz",
     mimeType: "application/zip",
@@ -51,7 +52,7 @@ test("runs a Python zip application through standalone browser controls", async 
   await page.locator("#run-program").click();
   await expect(state).toContainText("application failed:");
   await expect(page.locator("#result")).toContainText("SyntaxError");
-  const controls = await readFile(new URL("../python-controls.pyz", import.meta.url));
+  const controls = await readFile("python-controls.pyz");
   await page.locator("#program").setInputFiles({
     name: "python-controls.pyz",
     mimeType: "application/zip",
