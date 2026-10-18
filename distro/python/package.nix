@@ -43,6 +43,47 @@ let
     moveToDev = false;
     meta.outputsToInstall = [ "out" ];
     passthru.applicationExample = applicationExample;
+    passthru.sourceBundle = import ./source-bundle.nix {
+      inherit pkgs platform;
+      python = finalAttrs.finalPackage;
+      dependencies = [
+        {
+          name = "zlib";
+          package = zlib;
+          recipeDirectory = ../zlib;
+        }
+        {
+          name = "bzip2";
+          package = bzip2;
+          recipeDirectory = ../bzip2;
+        }
+        {
+          name = "xz";
+          package = xz;
+          recipeDirectory = ../xz;
+        }
+        {
+          name = "sqlite3";
+          package = sqlite3;
+          recipeDirectory = ../sqlite3;
+        }
+        {
+          name = "readline";
+          package = readline;
+          recipeDirectory = ../readline;
+        }
+        {
+          name = "ncurses";
+          package = ncurses;
+          recipeDirectory = ../ncurses;
+        }
+        {
+          name = "openssl";
+          package = openssl;
+          recipeDirectory = ../openssl;
+        }
+      ];
+    };
     passthru.apk.depends = [
       "ncurses"
       "openssl"
@@ -226,6 +267,21 @@ let
     '';
 
     passthru.checks = {
+      source-bundle = finalAttrs.finalPackage.sourceBundle.check;
+      source-bundle-host =
+        pkgs.runCommand "python-selected-sources-host-check"
+          {
+            nativeBuildInputs = [
+              pkgs.python313
+              pkgs.coreutils
+            ];
+          }
+          ''
+            cp ${./source-bundle.py} source-bundle.py
+            cp ${./source-bundle-test.py} source-bundle-test.py
+            ${pkgs.python313}/bin/python3 -B source-bundle-test.py
+            touch $out
+          '';
       forkless-host = pkgs.runCommand "python-forkless-native-replay" { } ''
         # Apply the actual integration patch to the exact pinned CPython
         # source, without building LLVM, the interpreter or the target kernel.
