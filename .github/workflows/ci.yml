@@ -13,10 +13,35 @@ on:
         description: Run only this heavy check (leave empty for the full matrix)
         required: false
         type: string
+      python-forkless-host:
+        description: Run only the native Python forkless replay (leave heavy-check empty)
+        required: false
+        type: boolean
+        default: false
 
 jobs:
+  python-forkless-host:
+    name: Native Python forkless replay
+    if: ${{ github.event_name == 'workflow_dispatch' && inputs['python-forkless-host'] }}
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    permissions:
+      contents: read
+    steps:
+      - name: Reject conflicting check modes
+        env:
+          REQUESTED_HEAVY_CHECK: ${{ inputs['heavy-check'] }}
+        run: test -z "$REQUESTED_HEAVY_CHECK"
+      - uses: actions/checkout@v6
+      - uses: nixbuild/nix-quick-install-action@v35
+      - name: Replay the pinned CPython integration patch without target builds
+        run: |
+          nix build '.#checks.x86_64-linux.python-check-forkless-host' \
+            --no-link --print-build-logs
+
   plan:
     name: Plan checks
+    if: ${{ !inputs['python-forkless-host'] }}
     runs-on: ubuntu-24.04
     permissions:
       contents: read

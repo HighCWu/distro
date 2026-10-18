@@ -257,6 +257,27 @@ test("installed Python PID 1 mounts runtime devices before descriptor and interp
   assert.doesNotMatch(script, /mknod.*\/dev\/null/);
 });
 
+test("native Python workflow mode does not schedule the target build matrix or use publishing credentials", () => {
+  const workflow = readFileSync(new URL("../../.github/workflows/ci.yml", import.meta.url), "utf8");
+  assert.match(
+    workflow,
+    /python-forkless-host:\n\s+description:[^\n]+\n\s+required: false\n\s+type: boolean\n\s+default: false/,
+  );
+  const job = workflow.split("jobs:\n  python-forkless-host:\n")[1].split("\n  plan:\n")[0];
+  assert.ok(
+    job.includes("github.event_name == 'workflow_dispatch' && inputs['python-forkless-host']"),
+  );
+  assert.ok(job.includes("timeout-minutes: 15"));
+  assert.ok(job.includes("contents: read"));
+  assert.ok(job.includes('run: test -z "$REQUESTED_HEAVY_CHECK"'));
+  assert.ok(job.includes("nix build '.#checks.x86_64-linux.python-check-forkless-host'"));
+  assert.doesNotMatch(job, /secrets\.|cachix|cache-nix|statuses: write|contents: write/);
+  assert.match(
+    workflow,
+    /plan:\n\s+name: Plan checks\n\s+if: \$\{\{ !inputs\['python-forkless-host'\] \}\}/,
+  );
+});
+
 test("Python process timeouts preserve binary pipes and terminated children are reaped", () => {
   const result = spawnSync(
     "python3",
