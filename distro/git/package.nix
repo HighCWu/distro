@@ -179,6 +179,10 @@ stdenv.mkDerivation (finalAttrs: {
           name = "git-${name}";
           inherit init;
           files."/git-notice-check.sh" = ./notice-check.sh;
+          files."/git-runtime-check.sh" = ./runtime-check.sh;
+          files."/git-address-bits" = pkgs.writeText "git-address-bits" (
+            toString platform.addressBits + "\n"
+          );
           # BusyBox supplies /bin/sh for Git's installed scripts and hooks,
           # cat (the pager), and the coreutils the test drives.
           contents = [

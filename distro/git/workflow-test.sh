@@ -8,7 +8,7 @@ fail() {
 
 export PATH=/bin:/sbin:/usr/bin:/usr/sbin
 export HOME=/root
-/bin/sh /git-notice-check.sh || fail "selected Git notices missing or changed"
+/bin/sh /git-runtime-check.sh || fail "Git runtime width or selected notices invalid"
 # A committer identity without depending on any global config.
 export GIT_AUTHOR_NAME=Test GIT_AUTHOR_EMAIL=test@example.com
 export GIT_COMMITTER_NAME=Test GIT_COMMITTER_EMAIL=test@example.com
@@ -115,5 +115,6 @@ git -c core.pager=cat --paginate log --oneline >/tmp/paged 2>/tmp/e ||
 grep -q 'commit that runs the hook' /tmp/paged ||
   fail "pager (cat) produced no output"
 
+echo "Git workflow: commit, conflict merge, object, hook and pager verified"
 echo "::vm-test::pass"
 while :; do :; done

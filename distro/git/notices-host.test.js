@@ -157,12 +157,77 @@ test("Git packages install and check the same selected notices in all three runt
     ),
   );
   assert.ok(recipe.includes('files."/git-notice-check.sh" = ./notice-check.sh;'));
+  assert.ok(recipe.includes('files."/git-runtime-check.sh" = ./runtime-check.sh;'));
+  assert.ok(recipe.includes('files."/git-address-bits" = pkgs.writeText "git-address-bits"'));
+  assert.ok(recipe.includes('toString platform.addressBits + "\\n"'));
   for (const name of ["workflow", "packing", "remote"]) {
     const script = readFileSync(new URL(`./${name}-test.sh`, import.meta.url), "utf8");
     assert.ok(
       script.includes(
-        '/bin/sh /git-notice-check.sh || fail "selected Git notices missing or changed"',
+        '/bin/sh /git-runtime-check.sh || fail "Git runtime width or selected notices invalid"',
       ),
     );
   }
+});
+
+test("actual Git runtime preflight requires matching long/size_t, notices and successful Git execution", () => {
+  fixture(({ root, installed, install }) => {
+    const result = install();
+    assert.equal(result.status, 0, result.stderr);
+    const bin = join(root, "bin");
+    mkdirSync(bin);
+    for (const name of ["grep", "sha256sum"]) symlinkSync("/usr/bin/busybox", join(bin, name));
+    const git = join(bin, "git");
+    writeFileSync(git, '#!/bin/sh\nprintf "%s\\n" "$GIT_BUILD_OPTIONS"\nexit "${GIT_STATUS:-0}"\n');
+    chmodSync(git, 0o755);
+    const bitsPath = join(root, "bits");
+    const noticePath = join(root, "notice-check.sh");
+    writeFileSync(noticePath, checker.replace("cd /usr/share/licenses/git", `cd '${installed}'`));
+    const runtime = readFileSync(new URL("./runtime-check.sh", import.meta.url), "utf8");
+    assert.doesNotMatch(runtime, /^\s*set\s+[^\n]*-[^\n]*u/m);
+    const script = runtime
+      .replaceAll("/git-address-bits", bitsPath)
+      .replace("/bin/sh /git-notice-check.sh", `/bin/sh '${noticePath}'`);
+    const run = (options, status = "0") =>
+      spawnSync("/bin/sh", ["-c", script], {
+        env: { ...process.env, PATH: bin, GIT_BUILD_OPTIONS: options, GIT_STATUS: status },
+        encoding: "utf8",
+        timeout: 5000,
+      });
+    for (const bits of [32, 64]) {
+      writeFileSync(bitsPath, `${bits}\n`);
+      const size = bits / 8;
+      const valid = `git version 2.55.0\nsizeof-long: ${size}\nsizeof-size_t: ${size}`;
+      const good = run(valid);
+      assert.equal(good.status, 0, good.error?.message ?? good.stderr);
+      assert.ok(good.stdout.includes(`Git ABI: long and size_t match ${bits} bits`));
+      assert.ok(
+        good.stdout.includes(
+          "Git notices: selected installed originals and default patch checksums verified",
+        ),
+      );
+      for (const bad of [
+        valid.replace(`sizeof-long: ${size}`, ""),
+        valid.replace(`sizeof-size_t: ${size}`, ""),
+        valid.replace(`sizeof-long: ${size}`, `sizeof-long: ${size === 4 ? 8 : 4}`),
+        valid.replace(`sizeof-size_t: ${size}`, `sizeof-size_t: ${size === 4 ? 8 : 4}`),
+      ]) {
+        assert.notEqual(run(bad).status, 0);
+      }
+      assert.notEqual(run(valid, "7").status, 0);
+    }
+    for (const invalid of ["", "16\n", "64 trailing\n"]) {
+      writeFileSync(bitsPath, invalid);
+      assert.notEqual(run("sizeof-long: 8\nsizeof-size_t: 8").status, 0);
+    }
+    writeFileSync(bitsPath, "64\n");
+    writeFileSync(join(installed, "git-COPYING"), "changed\n");
+    const changed = run("sizeof-long: 8\nsizeof-size_t: 8");
+    assert.notEqual(changed.status, 0);
+    assert.ok(
+      !changed.stdout.includes(
+        "Git notices: selected installed originals and default patch checksums verified",
+      ),
+    );
+  });
 });

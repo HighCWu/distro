@@ -4,6 +4,8 @@
   bytes,
   curl,
   curl-wasm64,
+  git,
+  git-wasm64,
   image,
   lib,
   kernel,
@@ -328,6 +330,25 @@ let
         )
       )
       // (lib.genAttrs fileMmapProjects fileMmapCheck)
+      // (lib.genAttrs
+        [ "git-wasm32-chromium" "git-wasm32-firefox" "git-wasm64-chromium" "git-wasm64-firefox" ]
+        (
+          name:
+          let
+            bits = if lib.hasInfix "wasm64" name then 64 else 32;
+          in
+          playwright.mkCheck {
+            name = "browser-tests-${name}";
+            suite = gitSuite bits;
+            expectedTests = [
+              "runs installed Git commits, conflict merges, hooks and pager through Linux"
+              "runs installed Git threaded repack, fsck and gc through Linux"
+              "runs installed Git credential cache and loopback HTTP clone through Linux"
+            ];
+            project = lib.removePrefix "git-wasm${toString bits}-" name;
+          }
+        )
+      )
       // {
         site-live = siteCheck;
         service-worker = serviceWorkerCheck;
@@ -362,6 +383,40 @@ let
       expectedTests = runtimeTests;
       project = lib.removePrefix "memory64-" name;
     };
+
+  gitSuite =
+    bits:
+    let
+      runtime = if bits == 64 then git-wasm64 else git;
+      variants = [
+        "workflow"
+        "packing"
+        "remote"
+      ];
+      assets = lib.genAttrs variants (name: runtime.checks.${name}.runtimeAssets);
+      profile = pkgs.writeText "git-browser-profile.json" (builtins.toJSON { addressBits = bits; });
+    in
+    assert lib.assertMsg (lib.all (
+      name: builtins.length assets.${name}.disks == 1
+    ) variants) "Git browser checks require exactly one installed root disk";
+    pkgs.runCommand "git-wasm${toString bits}-browser-tests" { } ''
+      mkdir -p $out/node_modules/@lowland/bytes $out/node_modules/@lowland/kernel $out/tests
+      ${playwright.linkRuntime "$out"}
+      cp ${source}/git-app.js $out/app.js
+      cp ${source}/git-tests/git.spec.js $out/tests/
+      cp ${source}/runtime-smoke.js $out/runtime-smoke.js
+      cp ${../vm-test/protocol.js} $out/protocol.js
+      cp ${source}/memory64-index.html $out/index.html
+      cp ${source}/playwright.config.js $out/playwright.config.js
+      cp ${source}/server.js $out/server.js
+      cp ${profile} $out/profile.json
+      ${lib.concatMapStringsSep "\n" (variant: ''
+        cp ${assets.${variant}.initramfs} $out/runtime-${variant}.cpio
+        cp ${builtins.head assets.${variant}.disks} $out/root-${variant}.ext4
+      '') variants}
+      cp -r ${bytes}/. $out/node_modules/@lowland/bytes/
+      cp -r ${(if bits == 64 then kernel-wasm64 else kernel)}/. $out/node_modules/@lowland/kernel/
+    '';
 
   pythonSuite =
     bits:

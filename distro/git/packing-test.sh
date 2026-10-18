@@ -8,7 +8,7 @@ fail() {
 
 export PATH=/bin:/sbin:/usr/bin:/usr/sbin
 export HOME=/root
-/bin/sh /git-notice-check.sh || fail "selected Git notices missing or changed"
+/bin/sh /git-runtime-check.sh || fail "Git runtime width or selected notices invalid"
 export GIT_AUTHOR_NAME=Test GIT_AUTHOR_EMAIL=test@example.com
 export GIT_COMMITTER_NAME=Test GIT_COMMITTER_EMAIL=test@example.com
 
@@ -68,5 +68,6 @@ c=$(git rev-list --count HEAD) || fail "rev-list --count"
 git rev-parse HEAD | grep -qE '^[0-9a-f]{40}$' || fail "rev-parse HEAD not a sha1"
 git cat-file -p HEAD:file0.txt | grep -q 'file 0 header' || fail "read blob from pack"
 
+echo "Git packing: object roundtrip, threaded repack, strict fsck, gc and packed history verified"
 echo "::vm-test::pass"
 while :; do :; done

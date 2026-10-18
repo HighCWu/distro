@@ -8,7 +8,7 @@ fail() {
 
 export PATH=/bin:/sbin:/usr/bin:/usr/sbin
 export HOME=/root
-/bin/sh /git-notice-check.sh || fail "selected Git notices missing or changed"
+/bin/sh /git-runtime-check.sh || fail "Git runtime width or selected notices invalid"
 export GIT_AUTHOR_NAME=Test GIT_AUTHOR_EMAIL=test@example.com
 export GIT_COMMITTER_NAME=Test GIT_COMMITTER_EMAIL=test@example.com
 
@@ -93,5 +93,6 @@ git clone --quiet "$remote" fetched 2>/tmp/err || fail "HTTP clone failed: $(cat
 kill "$httpd_pid" 2>/dev/null || :
 wait "$httpd_pid" 2>/dev/null || :
 
+echo "Git remote: credential cache and loopback HTTP discovery/clone verified"
 echo "::vm-test::pass"
 while :; do :; done
