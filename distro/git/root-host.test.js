@@ -96,7 +96,7 @@ test("combined Python Git root selects matching runtimes without installing the 
 test("combined SDK workload imports exact source and retains only ext4 bytes across fresh instances", () => {
   const source = readFileSync(
     new URL(
-      "../../packages/linux-guest/tests/agent-wasm64-python-git-root-runtime.ts",
+      "../../packages/linux-guest/tests/agent-wasm64-python-git-root-suite.ts",
       import.meta.url,
     ),
     "utf8",

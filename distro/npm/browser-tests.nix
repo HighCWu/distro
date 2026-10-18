@@ -278,6 +278,19 @@ let
           project = lib.removePrefix "agent-sqlite-root-wasm64-" name;
         }
       ))
+      // (lib.genAttrs [ "agent-python-git-root-wasm64-chromium" "agent-python-git-root-wasm64-firefox" ]
+        (
+          name:
+          playwright.mkCheck {
+            name = "browser-tests-${name}";
+            suite = pythonGitRootSuite;
+            expectedTests = [
+              "runs Python Git SQLite collaboration across fresh browser wasm64 roots"
+            ];
+            project = lib.removePrefix "agent-python-git-root-wasm64-" name;
+          }
+        )
+      )
       // (lib.genAttrs [ "wasm64-example-chromium" "wasm64-example-firefox" ] (
         name:
         playwright.mkCheck {
@@ -511,6 +524,34 @@ let
         cp ${source}/server.js $out/server.js
         cp ${assets.runtimeBootDisk} $out/agent-boot.img
         cp ${assets.runtimeRootfs} $out/agent-root.erofs
+        cp -r ${bytes}/. $out/node_modules/@lowland/bytes/
+        cp -r ${kernel-wasm64}/. $out/node_modules/@lowland/kernel/
+      '';
+
+  pythonGitRootSuite =
+    let
+      assets = guest-agent.checks.python-git-root-wasm64;
+    in
+    pkgs.runCommand "agent-python-git-root-wasm64-browser-tests"
+      {
+        nativeBuildInputs = [ pkgs.esbuild ];
+      }
+      ''
+        mkdir -p $out/node_modules/@lowland/bytes $out/node_modules/@lowland/kernel $out/tests
+        ${playwright.linkRuntime "$out"}
+        esbuild ${../..}/packages/linux-guest/tests/agent-wasm64-python-git-root-suite.ts \
+          --bundle --platform=browser --format=esm --target=es2022 \
+          --external:@lowland/kernel --external:@lowland/kernel/plugin \
+          --external:@lowland/bytes --outfile=$out/agent-python-git-root-suite.js
+        cp ${source}/agent-python-git-root-app.js $out/app.js
+        cp ${source}/agent-assertions.js $out/agent-assertions.js
+        cp ${source}/agent-tests/agent-python-git-root.spec.js $out/tests/
+        cp ${source}/memory64-index.html $out/index.html
+        cp ${source}/playwright.config.js $out/playwright.config.js
+        cp ${source}/server.js $out/server.js
+        cp ${assets.runtimeBootDisk} $out/agent-boot.img
+        cp ${assets.runtimeRootfs} $out/agent-root.ext4
+        cp ${../python/git-workspace-example.py} $out/git-workspace-example.py
         cp -r ${bytes}/. $out/node_modules/@lowland/bytes/
         cp -r ${kernel-wasm64}/. $out/node_modules/@lowland/kernel/
       '';
