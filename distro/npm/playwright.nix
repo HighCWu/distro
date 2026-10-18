@@ -46,7 +46,11 @@ in
       project,
       suite,
       expectedTests ? [ ],
+      script ? null,
     }:
+    assert lib.assertMsg (
+      script == null || expectedTests == [ ]
+    ) "standalone browser checks must assert their own results";
     pkgs.runCommand name
       {
         nativeBuildInputs = [ pkgs.nodejs ];
@@ -71,7 +75,12 @@ in
 
         cd ${suite}
         export PLAYWRIGHT_JSON_OUTPUT_NAME="$TMPDIR/browser-report.json"
-        node node_modules/@playwright/test/cli.js test --project=${project} --forbid-only --reporter=line,json
+        ${
+          if script == null then
+            "node node_modules/@playwright/test/cli.js test --project=${project} --forbid-only --reporter=line,json"
+          else
+            "node ${lib.escapeShellArg script} ${lib.escapeShellArg project}"
+        }
         ${lib.optionalString (expectedTests != [ ]) ''
           node ${./browser-report-check.mjs} "$TMPDIR/browser-report.json" \
             ${pkgs.writeText "expected-browser-tests.json" (builtins.toJSON expectedTests)}

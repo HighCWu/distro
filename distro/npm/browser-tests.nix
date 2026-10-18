@@ -4,6 +4,8 @@
   bytes,
   curl,
   curl-wasm64,
+  fork-continuation,
+  fork-continuation-wasm64,
   git,
   git-wasm64,
   image,
@@ -354,6 +356,26 @@ let
       // (lib.genAttrs erofsProjects erofsCheck)
       // (lib.genAttrs
         [
+          "fork-wasm32-chromium"
+          "fork-wasm32-firefox"
+          "fork-wasm64-chromium"
+          "fork-wasm64-firefox"
+        ]
+        (
+          name:
+          let
+            bits = if lib.hasInfix "wasm64" name then 64 else 32;
+          in
+          playwright.mkCheck {
+            name = "browser-tests-${name}";
+            suite = forkSuite bits;
+            project = lib.removePrefix "fork-wasm${toString bits}-" name;
+            script = "fork-browser-check.mjs";
+          }
+        )
+      )
+      // (lib.genAttrs
+        [
           "python-wasm32-chromium"
           "python-wasm32-firefox"
           "python-wasm64-chromium"
@@ -429,6 +451,32 @@ let
       expectedTests = runtimeTests;
       project = lib.removePrefix "memory64-" name;
     };
+
+  forkSuite =
+    bits:
+    let
+      runtime = if bits == 64 then fork-continuation-wasm64 else fork-continuation;
+      assets = runtime.checks.runtime.runtimeAssets;
+      profile = pkgs.writeText "fork-browser-profile.json" (builtins.toJSON { addressBits = bits; });
+    in
+    assert lib.assertMsg (
+      assets.disks == [ ] && assets.cpus == 2
+    ) "fork browser fixture requires two CPUs and no disks";
+    pkgs.runCommand "fork-wasm${toString bits}-browser-tests" { } ''
+      mkdir -p $out/node_modules/@lowland/bytes $out/node_modules/@lowland/kernel
+      ${playwright.linkRuntime "$out"}
+      cp ${source}/fork-app.js $out/app.js
+      cp ${source}/fork-browser-check.mjs $out/fork-browser-check.mjs
+      cp ${source}/fork-contract.js $out/fork-contract.js
+      cp ${source}/runtime-smoke.js $out/runtime-smoke.js
+      cp ${../vm-test/protocol.js} $out/protocol.js
+      cp ${source}/memory64-index.html $out/index.html
+      cp ${source}/server.js $out/server.js
+      cp ${profile} $out/profile.json
+      cp ${assets.initramfs} $out/runtime.cpio
+      cp -r ${bytes}/. $out/node_modules/@lowland/bytes/
+      cp -r ${(if bits == 64 then kernel-wasm64 else kernel)}/. $out/node_modules/@lowland/kernel/
+    '';
 
   gitSuite =
     bits:
