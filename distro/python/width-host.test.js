@@ -179,6 +179,12 @@ test("Python build materials preserve configured files and every patch, rejectin
   const recipe = readFileSync(new URL("./package.nix", import.meta.url), "utf8");
   assert.match(recipe, /outputs = \[\s+"out"\s+"buildMaterials"\s+\]/);
   assert.match(recipe, /meta\.outputsToInstall = \[ "out" \]/);
+  assert.match(recipe, /setOutputFlags = false;/);
+  assert.match(recipe, /moveToDev = false;/);
+  assert.match(recipe, /"--prefix=\/usr"/);
+  assert.match(recipe, /installFlags = \[ "DESTDIR=\$\(out\)" \]/);
+  assert.match(recipe, /Python FHS installation missing executable/);
+  assert.match(recipe, /Python FHS installation missing stdlib/);
   assert.ok(recipe.includes('bash ${./build-materials.sh} "$PWD" "$buildMaterials"'));
   assert.ok(recipe.includes("lib.escapeShellArgs (map toString finalAttrs.patches)"));
   assert.ok(recipe.includes('bash ${./verify-build-materials.sh} "$materials"'));

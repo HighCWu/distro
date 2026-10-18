@@ -36,6 +36,11 @@ let
       "out"
       "buildMaterials"
     ];
+    # Stage the FHS runtime under DESTDIR without the generic multi-output
+    # hook adding store-prefixed configure paths. Build materials are copied
+    # explicitly below; they must not redirect or split the runtime files.
+    setOutputFlags = false;
+    moveToDev = false;
     meta.outputsToInstall = [ "out" ];
     passthru.applicationExample = applicationExample;
     passthru.apk.depends = [
@@ -149,8 +154,14 @@ let
     # A minimal smoke test at build time: the interpreter binary is wasm, so it
     # cannot run here; just confirm it and the stdlib landed.
     postInstall = ''
-      test -x $out/usr/bin/python3.13
-      test -f $out/usr/lib/python3.13/os.py
+      test -x $out/usr/bin/python3.13 || {
+        echo "Python FHS installation missing executable usr/bin/python3.13" >&2
+        exit 1
+      }
+      test -f $out/usr/lib/python3.13/os.py || {
+        echo "Python FHS installation missing stdlib usr/lib/python3.13/os.py" >&2
+        exit 1
+      }
 
       # CPython installs a snapshot of its cross-build configuration for
       # sysconfig and extension builds. Configure necessarily discovered the
