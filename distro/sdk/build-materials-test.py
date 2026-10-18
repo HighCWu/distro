@@ -94,6 +94,8 @@ class MaterialsTest(unittest.TestCase):
         self.assertEqual(identity["addressBits"], 32)
         self.assertEqual(identity["maximumMemoryBytes"], 4294967296)
         self.assertEqual(identity["targetTriple"], self.spec["targetTriple"])
+        materials.export(self.spec, self.archive, sources=True)
+        materials.verify(self.spec, self.archive, sources=True)
 
     def test_rejects_missing_reordered_and_retyped_members(self):
         sdk = Path(self.spec["trees"]["recipes/sdk"])
@@ -136,6 +138,49 @@ class MaterialsTest(unittest.TestCase):
         self.archive.write_bytes(data[:len(data) // 2])
         with self.assertRaises((tarfile.TarError, EOFError, OSError)):
             materials.verify(self.spec, self.archive)
+
+    def test_full_selected_sources_deduplicate_equal_roots_and_preserve_bytes(self):
+        # The toolchain and runtimes normally select the same LLVM checkout.
+        self.spec["sources"]["llvm-runtimes"] = self.spec["sources"]["llvm-toolchain"]
+        notices = Path(self.spec["trees"]["licenses"]) / "sources.json"
+        index = json.loads(notices.read_text())
+        identities = index["sourceStoreIdentities"]
+        identities["llvm-runtimes"] = identities["llvm-toolchain"]
+        notices.write_text(json.dumps(index))
+        for name in materials.SOURCES:
+            path = Path(self.spec["sources"][name])
+            (path / ".hidden-source").write_bytes(b"unmodified source\x00\xff")
+            if not (path / "link").is_symlink():
+                (path / "link").symlink_to(".hidden-source")
+        linux = Path(self.spec["sources"]["linux"])
+        os.link(linux / ".hidden-source", linux / "hardlinked-source")
+        materials.export(self.spec, self.archive, sources=True)
+        original = self.archive.read_bytes()
+        materials.verify(self.spec, self.archive, sources=True)
+        materials.export(self.spec, self.archive, sources=True)
+        self.assertEqual(original, self.archive.read_bytes())
+        with tarfile.open(self.archive) as archive:
+            index = json.load(archive.extractfile("sdk-selected-sources.json"))
+            self.assertEqual(index["sourceArchiveRoots"]["llvm-runtimes"], "sources/llvm-toolchain")
+            self.assertNotIn("sources/llvm-runtimes", archive.getnames())
+            self.assertTrue(archive.getmember("sources/musl/link").issym())
+            self.assertEqual(archive.getmember("sources/linux/hardlinked-source").type, tarfile.REGTYPE)
+            self.assertEqual(archive.extractfile("sources/linux/.hidden-source").read(),
+                             b"unmodified source\x00\xff")
+        # Even unchanged installed notices cannot conceal changed source bytes.
+        Path(self.spec["sources"]["musl"], ".hidden-source").write_bytes(b"changed source")
+        with self.assertRaises(ValueError):
+            materials.verify(self.spec, self.archive, sources=True)
+
+    def test_selected_sources_remain_distinct_and_reject_special_files(self):
+        materials.export(self.spec, self.archive, sources=True)
+        materials.verify(self.spec, self.archive, sources=True)
+        with tarfile.open(self.archive) as archive:
+            index = json.load(archive.extractfile("sdk-selected-sources.json"))
+            self.assertEqual(len(set(index["sourceArchiveRoots"].values())), len(materials.SOURCES))
+        os.mkfifo(Path(self.spec["sources"]["musl"]) / "unsupported-fifo")
+        with self.assertRaisesRegex(ValueError, "unsupported material entry"):
+            materials.export(self.spec, self.archive, sources=True)
 
     def test_rejects_wrong_platform_and_source_provenance(self):
         for key, value in (("addressBits", 32), ("targetTriple", "wrong"), ("maximumMemoryBytes", 42)):

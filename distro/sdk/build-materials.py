@@ -1,5 +1,5 @@
 # SPDX-License-Identifier: MIT
-"""Archive selected SDK build materials; not binaries or corresponding source."""
+"""Archive selected SDK materials/sources; not a complete release or SDK."""
 import argparse
 import gzip
 import io
@@ -23,6 +23,19 @@ TREES = ("licenses", "recipes/sdk", "recipes/llvm-toolchain", "recipes/llvm-runt
          "recipes/musl", "recipes/linux", "recipes/sysroot", "recipes/sysroot-base")
 SOURCES = ("linux", "musl", "llvm-toolchain", "llvm-runtimes", "meson")
 SCOPE = "Selected SDK configuration, installed entry points, notices and recipes; not complete corresponding source, an SBOM, a relocatable SDK or an offline rebuild environment"
+
+
+def tree_entries(path, name):
+    if path.is_symlink():
+        yield name, path, "symlink"
+    elif path.is_dir():
+        yield name, path, "directory"
+        for child in sorted(path.iterdir(), key=lambda item: item.name):
+            yield from tree_entries(child, name + "/" + child.name)
+    elif path.is_file():
+        yield name, path, "file"
+    else:
+        raise ValueError("unsupported material entry: " + name)
 
 
 def collect(spec):
@@ -60,32 +73,38 @@ def collect(spec):
             raise ValueError("missing or empty required file: " + name)
         entries.append((name, path, "file"))
 
-    def tree(path, name):
-        if path.is_symlink():
-            entries.append((name, path, "symlink"))
-        elif path.is_dir():
-            entries.append((name, path, "directory"))
-            for child in sorted(path.iterdir(), key=lambda item: item.name):
-                tree(child, name + "/" + child.name)
-        elif path.is_file():
-            entries.append((name, path, "file"))
-        else:
-            raise ValueError("unsupported material entry: " + name)
-
     for name, value in spec["trees"].items():
         path = Path(value).resolve(strict=True)
         if not path.is_dir():
             raise ValueError("required tree is not a directory: " + name)
         if name.startswith("recipes/") and not (path / "package.nix").is_file():
             raise ValueError("missing component recipe: " + name)
-        tree(path, name)
+        entries.extend(tree_entries(path, name))
     metadata = {key: spec[key] for key in ("schemaVersion", "addressBits", "targetTriple", "maximumMemoryBytes")}
     metadata.update(scope=SCOPE, sourceStoreIdentities=origins)
     return sorted(entries), (json.dumps(metadata, sort_keys=True, indent=2) + "\n").encode()
 
 
-def export(spec, destination):
+def collect_sources(spec):
+    # Start with the same independently selected installed materials and source
+    # identities. Equal source roots (not merely equal basenames) are stored once.
     entries, metadata = collect(spec)
+    index = json.loads(metadata)
+    index["scope"] = "Selected full Linux, musl, LLVM and Meson source inputs plus SDK materials; not complete corresponding source, an SBOM or an offline rebuild environment"
+    index["sourceArchiveRoots"] = {}
+    roots = {}
+    for name in SOURCES:
+        path = Path(spec["sources"][name]).resolve(strict=True)
+        if path not in roots:
+            roots[path] = "sources/" + name
+            entries.extend(tree_entries(path, roots[path]))
+        index["sourceArchiveRoots"][name] = roots[path]
+    return sorted(entries), (json.dumps(index, sort_keys=True, indent=2) + "\n").encode()
+
+
+def export(spec, destination, *, sources=False):
+    entries, metadata = collect_sources(spec) if sources else collect(spec)
+    index_name = "sdk-selected-sources.json" if sources else "sdk-build-materials.json"
     roots = [Path(value).resolve() for group in ("files", "trees", "sources") for value in spec[group].values()]
     # os.replace replaces a destination symlink itself, not its target. Check
     # the resolved parent as well so that a link inside a collected tree cannot
@@ -115,7 +134,7 @@ def export(spec, destination):
                                 archive.addfile(member, source)
                             continue
                         archive.addfile(member)
-                    member = tarfile.TarInfo("sdk-build-materials.json")
+                    member = tarfile.TarInfo(index_name)
                     member.size, member.mtime, member.mode = len(metadata), 1, 0o644
                     archive.addfile(member, io.BytesIO(metadata))
             os.fchmod(output.fileno(), 0o644)
@@ -126,12 +145,13 @@ def export(spec, destination):
             temporary.unlink(missing_ok=True)
 
 
-def verify(spec, archive_path):
-    entries, metadata = collect(spec)
+def verify(spec, archive_path, *, sources=False):
+    entries, metadata = collect_sources(spec) if sources else collect(spec)
+    index_name = "sdk-selected-sources.json" if sources else "sdk-build-materials.json"
     # Compare against independently selected inputs, not just archive checksums.
     with tarfile.open(archive_path, "r:gz") as archive:
         members = archive.getmembers()
-        if [member.name for member in members] != [name for name, _, _ in entries] + ["sdk-build-materials.json"]:
+        if [member.name for member in members] != [name for name, _, _ in entries] + [index_name]:
             raise ValueError("archive members differ from selected materials")
         for member, (name, path, kind) in zip(members, entries):
             mode = 0o755 if kind == "directory" or path.lstat().st_mode & 0o111 else 0o644
@@ -161,12 +181,12 @@ def verify(spec, archive_path):
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("mode", choices=("export", "verify"))
+    parser.add_argument("mode", choices=("export", "verify", "source-export", "source-verify"))
     parser.add_argument("spec", type=Path)
     parser.add_argument("archive", type=Path)
     args = parser.parse_args()
     selected = json.loads(args.spec.read_text())
-    if args.mode == "export":
-        export(selected, args.archive)
+    if args.mode in ("export", "source-export"):
+        export(selected, args.archive, sources=args.mode == "source-export")
     else:
-        print(f"Verified {verify(selected, args.archive)} exact SDK material members")
+        print(f"Verified {verify(selected, args.archive, sources=args.mode == 'source-verify')} exact SDK archive members")

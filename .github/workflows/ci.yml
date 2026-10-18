@@ -255,6 +255,31 @@ jobs:
           if-no-files-found: error
           compression-level: 0
           retention-days: 3
+      - name: Collect validated SDK source inputs
+        if: ${{ success() && (matrix.check == 'sdk-check-source-bundle' || matrix.check == 'sdk-wasm64-check-source-bundle') }}
+        env:
+          SDK_CHECK: ${{ matrix.check }}
+        run: |
+          case "$SDK_CHECK" in
+            sdk-check-source-bundle) package=sdk ;;
+            sdk-wasm64-check-source-bundle) package=sdk-wasm64 ;;
+            *) exit 1 ;;
+          esac
+          bundle=$(nix eval --raw ".#$package.sourceBundle.outPath")
+          nix path-info "$bundle"
+          mkdir sdk-selected-sources
+          cp "$bundle/sdk-selected-sources.tar.gz" "$bundle/README.md" \
+            "$bundle/SHA256SUMS" sdk-selected-sources/
+          (cd sdk-selected-sources && sha256sum --check SHA256SUMS)
+      - name: Upload validated SDK source inputs
+        if: ${{ success() && (matrix.check == 'sdk-check-source-bundle' || matrix.check == 'sdk-wasm64-check-source-bundle') }}
+        uses: actions/upload-artifact@v7
+        with:
+          name: sdk-selected-sources-${{ matrix.check }}-${{ github.sha }}
+          path: sdk-selected-sources/
+          if-no-files-found: error
+          compression-level: 0
+          retention-days: 3
       - name: Collect the validated kernel source bundle
         if: ${{ success() && startsWith(matrix.check, 'kernel') && endsWith(matrix.check, '-check-source-bundle') }}
         env:

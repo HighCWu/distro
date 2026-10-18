@@ -43,10 +43,37 @@ let
       };
     }
   );
+  sourceBundle =
+    pkgs.runCommand "sdk-selected-sources-${platform.wasmArch}"
+      {
+        allowedReferences = [ ];
+        passthru.check =
+          pkgs.runCommand "sdk-selected-sources-check-${platform.wasmArch}"
+            {
+              passthru.ci.heavy = true;
+            }
+            ''
+              test -e ${bundle.check}
+              (cd ${sourceBundle} && ${pkgs.coreutils}/bin/sha256sum --check SHA256SUMS)
+              ${pkgs.python313}/bin/python3 -B ${./build-materials.py} source-verify ${spec} \
+                ${sourceBundle}/sdk-selected-sources.tar.gz
+              touch $out
+            '';
+      }
+      ''
+        test -e ${bundle.check}
+        mkdir $out
+        ${pkgs.python313}/bin/python3 -B ${./build-materials.py} source-export ${spec} \
+          "$out/sdk-selected-sources.tar.gz"
+        cp ${./source-bundle.README.md} "$out/README.md"
+        cd $out
+        ${pkgs.coreutils}/bin/sha256sum sdk-selected-sources.tar.gz README.md > SHA256SUMS
+      '';
   bundle =
     pkgs.runCommand "sdk-build-materials-${platform.wasmArch}"
       {
         allowedReferences = [ ];
+        passthru.sourceBundle = sourceBundle;
         passthru.check =
           pkgs.runCommand "sdk-build-materials-check-${platform.wasmArch}"
             {

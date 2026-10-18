@@ -177,6 +177,7 @@ let
     ];
     passthru.meson = meson;
     passthru.buildMaterials = buildMaterials;
+    passthru.sourceBundle = buildMaterials.sourceBundle;
     # Reuse the exact SDK-built consumer in real-browser runtime checks.
     passthru.sqliteProgram = "${sqlitePrograms}/sdk-sqlite.wasm";
     passthru.socketProgram = "${socketPrograms}/sdk-socket.wasm";
@@ -193,6 +194,7 @@ let
       licenses = licenseTexts;
       profile = profileCheck;
       build-materials = buildMaterials.check;
+      source-bundle = buildMaterials.sourceBundle.check;
       wrapper =
         pkgs.runCommand "sdk-wrapper-contract"
           {
