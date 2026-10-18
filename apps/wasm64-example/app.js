@@ -91,9 +91,10 @@ element("start").addEventListener("click", () =>
       { mode: element("storage-mode").value, name: element("disk-name").value },
       { loadImage: image, blockDevice, closeDevice, workerDevice, openWorker: openDiskWorker },
     );
-    const agent = guestAgent({ abi: "wasm64", image: boot });
+    let agent;
     let machine;
     try {
+      agent = guestAgent({ abi: "wasm64", image: boot });
       machine = await bootMachine({
         cpus: 1,
         plugins: [

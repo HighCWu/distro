@@ -86,6 +86,41 @@ test("boot failure and disk close failure retain explicit errors", async () => {
   assert.match(h.nodes("state").textContent, /OPFS flush failed/);
 });
 
+test("agent construction failure drains the opened disk before allowing restart", async () => {
+  const disk = Promise.withResolvers();
+  const h = harness({
+    agentError: new Error("agent allocation failed"),
+    rootClose: () => disk.promise,
+  });
+  const starting = h.click("start");
+  await new Promise((resolve) => setImmediate(resolve));
+  assert.equal(h.roots.length, 1);
+  assert.equal(h.roots[0].closes, 1);
+  assert.equal(h.machines.length, 0);
+  assert.equal(h.nodes("start").disabled, true);
+  assert.equal(h.nodes("storage-mode").disabled, true);
+  disk.resolve();
+  await starting;
+  assert.match(h.nodes("state").textContent, /agent allocation failed/);
+  assert.equal(h.nodes("start").disabled, false);
+  assert.equal(h.nodes("storage-mode").disabled, false);
+  assert.equal(h.roots[0].closes, 1);
+});
+
+test("agent construction and disk cleanup errors are both reported as a startup failure", async () => {
+  const h = harness({
+    agentError: new Error("agent allocation failed"),
+    rootClose: async () => {
+      throw new Error("flush failed");
+    },
+  });
+  await h.click("start");
+  assert.match(h.nodes("state").textContent, /Linux boot and disk cleanup failed/);
+  assert.equal(h.roots[0].closes, 1);
+  assert.equal(h.machines.length, 0);
+  assert.equal(h.nodes("start").disabled, false);
+});
+
 test("restarting waits for disk closure, not only machine termination", async () => {
   const disk = Promise.withResolvers();
   const h = harness({ rootClose: () => disk.promise });
@@ -116,7 +151,7 @@ test("late synchronization cannot stop a replacement instance", async () => {
   assert.equal(h.nodes("state").textContent, "running");
   await h.click("stop");
 });
-function harness({ closeError, deferClose = false, rootClose, bootError } = {}) {
+function harness({ closeError, deferClose = false, rootClose, bootError, agentError } = {}) {
   const elements = new Map();
   const nodes = (id) => {
     if (!elements.has(id))
@@ -192,6 +227,7 @@ function harness({ closeError, deferClose = false, rootClose, bootError } = {}) 
     consoleDevice() {},
     entropyDevice() {},
     guestAgent() {
+      if (agentError) throw agentError;
       const agent = {
         commands: [],
         fs: { async writeFile() {} },
