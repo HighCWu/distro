@@ -7,6 +7,7 @@ import json
 import os
 from pathlib import Path
 import subprocess
+import sys
 import tarfile
 import tempfile
 import unittest
@@ -50,8 +51,12 @@ class SelectedSources(unittest.TestCase):
                 patches.append(str(path))
             components.append({"name": name, "sourcePath": str(source), "sourceIdentity": source.name,
                                "recipeDirectory": str(recipe), "patchPaths": patches})
+        base = Path(__file__).resolve().parent
         spec = {"schemaVersion": 1, "addressBits": 64, "maximumMemoryBytes": 17179869184,
-                "components": components}
+                "components": components, "archiveTools": {
+                    "exporter.py": str(base / "source-bundle.py"),
+                    "verifier.py": str(base / "verify-source-bundle.py"),
+                    "LICENSE-MIT.txt": str(base / "../sdk/LICENSE.MIT")}}
         spec_path = root / "spec.json"
         spec_path.write_text(json.dumps(spec))
         build = {key: spec[key] for key in ("schemaVersion", "addressBits", "maximumMemoryBytes")}
@@ -110,6 +115,9 @@ class SelectedSources(unittest.TestCase):
                 self.assertEqual([item["name"] for item in index["components"]], list(EXPORTER.NAMES))
                 self.assertEqual(index["components"][3]["patches"], ["patches/xz/000.patch", "patches/xz/001.patch"])
                 self.assertIn("not complete corresponding source", index["scope"])
+                self.assertEqual(index["archiveTools"], sorted(inputs["archiveTools"]))
+                for name, path in inputs["archiveTools"].items():
+                    self.assertEqual(archive.extractfile("archive-tools/" + name).read(), Path(path).read_bytes())
                 for member in archive.getmembers():
                     self.assertEqual((member.uid, member.gid, member.mtime), (0, 0, 1))
                     self.assertFalse(member.islnk(), "regular files must be independently readable")
@@ -118,7 +126,7 @@ class SelectedSources(unittest.TestCase):
                     VERIFIER.verify(spec, materials, outputs[0])
 
     def test_incomplete_or_mismatched_inputs_preserve_existing_output(self):
-        for failure in ("missing-source", "missing-patch", "changed-patch", "changed-material", "wrong-order", "wrong-platform", "changed-recipe"):
+        for failure in ("missing-source", "missing-patch", "changed-patch", "changed-material", "wrong-order", "wrong-platform", "changed-recipe", "missing-tool", "partial-tools", "renamed-tool"):
             with self.subTest(failure=failure), tempfile.TemporaryDirectory() as directory:
                 root = Path(directory)
                 spec_path, materials, spec = self.fixture(root)
@@ -136,6 +144,12 @@ class SelectedSources(unittest.TestCase):
                     spec["components"][1:3] = reversed(spec["components"][1:3])
                 elif failure == "wrong-platform":
                     spec["addressBits"] = 32
+                elif failure == "missing-tool":
+                    spec["archiveTools"]["verifier.py"] = str(root / "missing-tool")
+                elif failure == "partial-tools":
+                    del spec["archiveTools"]["LICENSE-MIT.txt"]
+                elif failure == "renamed-tool":
+                    spec["archiveTools"]["../escape"] = spec["archiveTools"].pop("exporter.py")
                 else:
                     (Path(spec["components"][0]["recipeDirectory"]) / "package.nix").write_text("different recipe")
                 spec_path.write_text(json.dumps(spec))
@@ -143,6 +157,43 @@ class SelectedSources(unittest.TestCase):
                     EXPORTER.export(spec_path, materials, output)
                 self.assertEqual(output.read_bytes(), b"existing published archive")
                 self.assertEqual(list(root.glob(".python-sources-*")), [])
+
+    def test_archived_tools_execute_independently_and_legacy_inputs_remain_readable(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            spec, materials, inputs = self.fixture(root)
+            archive = root / "sources.tar.gz"
+            EXPORTER.export(spec, materials, archive)
+            tools = root / "portable-tools"
+            tools.mkdir()
+            with tarfile.open(archive) as bundle:
+                # Copy only these known regular members, never extract a source tree.
+                for name in inputs["archiveTools"]:
+                    (tools / name).write_bytes(bundle.extractfile("archive-tools/" + name).read())
+            subprocess.run([sys.executable, "-I", "-B", str(tools / "verifier.py"),
+                            "--profile", "python", str(spec), str(materials), str(archive)],
+                           check=True, cwd=tools, capture_output=True)
+            rebuilt = root / "rebuilt.tar.gz"
+            subprocess.run([sys.executable, "-I", "-B", str(tools / "exporter.py"),
+                            str(spec), str(materials), str(rebuilt)],
+                           check=True, cwd=tools, capture_output=True)
+            self.assertEqual(archive.read_bytes(), rebuilt.read_bytes())
+            del inputs["archiveTools"]
+            spec.write_text(json.dumps(inputs))
+            legacy = root / "legacy.tar.gz"
+            EXPORTER.export(spec, materials, legacy)
+            VERIFIER.verify(spec, materials, legacy)
+            with tarfile.open(legacy) as bundle:
+                self.assertNotIn("archiveTools", json.load(bundle.extractfile("selected-sources.json")))
+            with self.assertRaises(ValueError):
+                VERIFIER.verify(spec, materials, archive)
+
+    def test_current_recipe_declares_complete_archive_tools(self):
+        recipe = Path(__file__).with_name("source-bundle.nix").read_text()
+        for binding in ('"exporter.py" = "${./source-bundle.py}";',
+                        '"verifier.py" = "${./verify-source-bundle.py}";',
+                        '"LICENSE-MIT.txt" = "${../sdk/LICENSE.MIT}";'):
+            self.assertIn(binding, recipe)
 
     def test_both_pointer_widths_keep_their_own_declared_memory_bounds(self):
         for bits, limit in ((32, 4294967296), (64, 17179869184)):
@@ -164,20 +215,20 @@ class SelectedSources(unittest.TestCase):
                     self.assertEqual((index["addressBits"], index["maximumMemoryBytes"]), (bits, limit))
 
     def test_independent_verifier_rejects_archive_corruption_without_extraction(self):
-        for fault in ("missing", "extra", "duplicate", "bytes", "symlink", "hardlink", "index", "mode", "metadata"):
+        for fault in ("missing", "extra", "duplicate", "bytes", "symlink", "hardlink", "index", "mode", "metadata", "tool-bytes", "tool-missing"):
             with self.subTest(fault=fault), tempfile.TemporaryDirectory() as directory:
                 root = Path(directory)
                 spec, materials, _ = self.fixture(root)
                 original, modified = root / "original.tar.gz", root / "modified.tar.gz"
                 EXPORTER.export(spec, materials, original)
-                target = "sources/readline/code.c"
+                target = "archive-tools/LICENSE-MIT.txt" if fault.startswith("tool-") else "sources/readline/code.c"
                 with tarfile.open(original) as source, tarfile.open(modified, "w:gz", format=tarfile.GNU_FORMAT) as destination:
                     for member in source:
                         data = source.extractfile(member).read() if member.isfile() else None
-                        if fault == "missing" and member.name == target:
+                        if fault in ("missing", "tool-missing") and member.name == target:
                             continue
                         if member.name == target:
-                            if fault == "bytes":
+                            if fault in ("bytes", "tool-bytes"):
                                 data = bytes([data[0] ^ 1]) + data[1:]
                             elif fault == "hardlink":
                                 member.type, member.linkname, member.size = tarfile.LNKTYPE, "sources/python/code.c", 0

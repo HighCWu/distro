@@ -18,6 +18,11 @@ let
     builtins.toJSON {
       schemaVersion = 1;
       inherit (platform) addressBits maximumMemoryBytes;
+      archiveTools = {
+        "exporter.py" = "${./source-bundle.py}";
+        "verifier.py" = "${./verify-source-bundle.py}";
+        "LICENSE-MIT.txt" = "${../sdk/LICENSE.MIT}";
+      };
       components = map (component: {
         inherit (component) name recipeDirectory;
         sourcePath = toString component.package.src;

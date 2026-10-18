@@ -10,6 +10,11 @@ local integration directories, and `patches/` records actual configured
 patches in order, including patches supplied by derivation overrides.
 `build-materials/` is the actual interpreter configuration/patch output.
 `selected-sources.json` records platform bounds, source identities and patch order.
+`archive-tools/` explicitly preserves the actual exporter, verifier and complete
+MIT text for this project's integration tooling. Those scripts accept the
+default Python profile or explicit `--profile python`; they do not relicense
+the upstream sources. Older schema-v1 Python selections without archive tools
+remain readable; current recipes include all three files, never a partial set.
 The trees are pre-patch inputs, not arbitrary post-patch workspaces. Original
 symlink targets are preserved without following source links during archival.
 Regular files are archived independently; Nix store hardlink deduplication does

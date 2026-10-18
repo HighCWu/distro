@@ -34,7 +34,7 @@ def verify(spec_path, materials, archive_path, *, profile="python"):
     expected_index["components"] = []
     expected = {}
     tools = spec.get("archiveTools", {})
-    expected_tools = {"exporter.py", "verifier.py", "LICENSE-MIT.txt"} if profile == "git" else set()
+    expected_tools = {"exporter.py", "verifier.py", "LICENSE-MIT.txt"} if tools or profile == "git" else set()
     if set(tools) != expected_tools:
         raise ValueError("selected archive tools differ from profile")
     if tools:

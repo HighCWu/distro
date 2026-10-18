@@ -37,7 +37,9 @@ def export(spec_path, materials, destination, *, profile="python"):
     index["components"] = []
     inputs = [materials]
     tools = spec.get("archiveTools", {})
-    expected_tools = {"exporter.py", "verifier.py", "LICENSE-MIT.txt"} if profile == "git" else set()
+    # Legacy Python schema-v1 inputs omitted tools; new Python recipes include
+    # the same complete set as Git. Never accept a partial or renamed set.
+    expected_tools = {"exporter.py", "verifier.py", "LICENSE-MIT.txt"} if tools or profile == "git" else set()
     if set(tools) != expected_tools:
         raise ValueError("selected archive tools differ from profile")
     if tools:

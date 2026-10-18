@@ -288,10 +288,13 @@ let
             ];
           }
           ''
-            cp ${./source-bundle.py} source-bundle.py
-            cp ${./source-bundle-test.py} source-bundle-test.py
-            cp ${./verify-source-bundle.py} verify-source-bundle.py
-            ${pkgs.python313}/bin/python3 -B source-bundle-test.py
+            mkdir -p python sdk
+            cp ${./source-bundle.py} python/source-bundle.py
+            cp ${./source-bundle-test.py} python/source-bundle-test.py
+            cp ${./verify-source-bundle.py} python/verify-source-bundle.py
+            cp ${./source-bundle.nix} python/source-bundle.nix
+            cp ${../sdk/LICENSE.MIT} sdk/LICENSE.MIT
+            ${pkgs.python313}/bin/python3 -B python/source-bundle-test.py
             touch $out
           '';
       forkless-host = pkgs.runCommand "python-forkless-native-replay" { } ''
