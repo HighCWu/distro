@@ -84,14 +84,17 @@ export async function openRoot(
       } catch (error) {
         if (error.name !== "NotFoundError") throw error;
       }
-      const image = await loadImage("/root.ext4");
-      const handle = await directory.getFileHandle(filename, { create: true });
-      const writable = await handle.createWritable();
+      const image = await loadImage("/root.ext4", { stream: true });
+      let writable;
       try {
-        await writable.write(image);
-        await writable.close();
+        const handle = await directory.getFileHandle(filename, { create: true });
+        writable = await handle.createWritable();
+        // pipeTo provides backpressure and closes only after the entire download.
+        // Own abort explicitly so failures before pipeTo also release the stream.
+        await image.pipeTo(writable, { preventAbort: true });
       } catch (error) {
-        await writable.abort().catch(() => {});
+        if (writable) await writable.abort(error).catch(() => {});
+        if (!image.locked) await image.cancel(error).catch(() => {});
         throw error;
       }
     }

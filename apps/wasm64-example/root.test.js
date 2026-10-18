@@ -31,7 +31,7 @@ function harness({
     },
     async createWritable() {
       calls.push(["writable"]);
-      return {
+      return new WritableStream({
         async write(data) {
           calls.push(["write", data.byteLength]);
           if (writeError) throw writeError;
@@ -43,12 +43,19 @@ function harness({
           calls.push(["abort"]);
           throw new Error("secondary abort");
         },
-      };
+      });
     },
   };
   const dependencies = {
-    async loadImage(path) {
+    async loadImage(path, { stream = false } = {}) {
       calls.push(["image", path]);
+      if (stream)
+        return new ReadableStream({
+          start(controller) {
+            controller.enqueue(new Uint8Array(512));
+            controller.close();
+          },
+        });
       return new Uint8Array(512);
     },
     blockDevice(storage) {
@@ -185,7 +192,116 @@ test("template and worker startup failures preserve their error and release the 
     const h = harness({ [kind]: reason });
     await assert.rejects(h.open("create"), (error) => error === reason);
     assert.equal(h.held(), false);
-    if (kind === "writeError") assert.ok(h.calls.some(([name]) => name === "abort"));
+    if (kind === "writeError") {
+      assert.ok(!h.calls.some(([name]) => name === "commit"));
+      assert.ok(!h.calls.some(([name]) => name === "worker"));
+    }
+  }
+});
+
+test("creation streams exact chunks with backpressure before attaching the worker", async () => {
+  const h = harness();
+  const entered = Promise.withResolvers();
+  const resume = Promise.withResolvers();
+  let pulled = 0;
+  const written = [];
+  h.dependencies.loadImage = async (path, options) => {
+    assert.equal(path, "/root.ext4");
+    assert.deepEqual(options, { stream: true });
+    return new ReadableStream({
+      pull(controller) {
+        controller.enqueue(new Uint8Array(64).fill(pulled++));
+        if (pulled === 8) controller.close();
+      },
+    });
+  };
+  h.handle.createWritable = async () =>
+    new WritableStream({
+      async write(chunk) {
+        written.push(chunk.slice());
+        entered.resolve();
+        await resume.promise;
+      },
+      close() {
+        h.calls.push(["commit"]);
+      },
+    });
+  const opening = h.open("create");
+  try {
+    await entered.promise;
+    await new Promise((resolve) => setImmediate(resolve));
+    assert.ok(pulled <= 2, `download pulled ${pulled} chunks while storage blocked`);
+    assert.equal(h.held(), true);
+    assert.ok(!h.calls.some(([name]) => name === "worker" || name === "commit"));
+  } finally {
+    resume.resolve();
+  }
+  const root = await opening;
+  assert.equal(written.length, 8);
+  for (let i = 0; i < 8; i++) assert.deepEqual(written[i], new Uint8Array(64).fill(i));
+  assert.ok(
+    h.calls.findIndex(([name]) => name === "commit") <
+      h.calls.findIndex(([name]) => name === "worker"),
+  );
+  await root.close();
+});
+
+test("stream failures preserve the primary error and release download, writer and lease", async () => {
+  for (const stage of ["download", "create", "writable", "write", "commit"]) {
+    const h = harness();
+    const reason = new Error(`failed ${stage}`);
+    let cancelled = 0;
+    let aborted = 0;
+    if (stage === "create") {
+      h.dependencies.storage.getDirectory = async () => ({
+        async getFileHandle(_name, options) {
+          if (options?.create) throw reason;
+          throw new DOMException("missing", "NotFoundError");
+        },
+      });
+    }
+    h.dependencies.loadImage = async () =>
+      new ReadableStream(
+        {
+          pull(controller) {
+            if (stage === "download") controller.error(reason);
+            else controller.enqueue(new Uint8Array(512));
+          },
+          cancel() {
+            cancelled++;
+          },
+        },
+        { highWaterMark: 0 },
+      );
+    if (stage === "commit") {
+      h.dependencies.loadImage = async () =>
+        new ReadableStream({
+          start(controller) {
+            controller.enqueue(new Uint8Array(512));
+            controller.close();
+          },
+        });
+    }
+    h.handle.createWritable = async () => {
+      if (stage === "writable") throw reason;
+      return new WritableStream({
+        write() {
+          if (stage === "write") throw reason;
+        },
+        close() {
+          throw reason;
+        },
+        abort() {
+          aborted++;
+          throw new Error("secondary abort failure");
+        },
+      });
+    };
+    await assert.rejects(h.open("create"), (error) => error === reason);
+    assert.equal(h.held(), false);
+    assert.ok(!h.calls.some(([name]) => name === "worker"));
+    if (stage === "download") assert.equal(aborted, 1);
+    if (["create", "writable", "write"].includes(stage)) assert.equal(cancelled, 1);
   }
 });
 

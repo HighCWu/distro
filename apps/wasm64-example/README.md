@@ -136,6 +136,10 @@ profile and origin; the file is `linux-wasm64-NAME.ext4`. Creation initializes
 from this bundle's root template and refuses an existing file, including an
 incomplete file left by failed initialization. Choose a new name after such a
 failure; this page does not delete or overwrite existing disks automatically.
+Creation pipes the HTTP response stream into OPFS with backpressure instead of
+buffering the entire template in JavaScript. Linux starts only after the write
+stream closes successfully. This avoids that explicit whole-image copy, not all
+browser buffering, storage quota requirements or Linux runtime memory costs.
 
 Finish applications and other writers, then choose **Sync and stop Linux**.
 This runs native `/bin/sync`, closes Linux, drains console output, and waits

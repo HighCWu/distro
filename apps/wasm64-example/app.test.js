@@ -14,6 +14,35 @@ const success = {
   stderr: new Uint8Array(),
 };
 
+test("persistent image download returns the response stream without buffering", async () => {
+  const body = new ReadableStream();
+  let response = {
+    ok: true,
+    body,
+    arrayBuffer() {
+      assert.fail("stream must not buffer the image");
+    },
+  };
+  const imageSource = source.slice(
+    source.indexOf("async function image("),
+    source.indexOf("async function action("),
+  );
+  const image = runInNewContext(`${imageSource}\nimage`, {
+    fetch: async (path) => {
+      assert.equal(path, "/root.ext4");
+      return response;
+    },
+    Uint8Array,
+  });
+  assert.equal(await image("/root.ext4", { stream: true }), body);
+  response = { ok: true, body: null };
+  await assert.rejects(image("/root.ext4", { stream: true }), /no response body/);
+  response = { ok: false, status: 503 };
+  await assert.rejects(image("/root.ext4", { stream: true }), /503/);
+  response = { ok: true, arrayBuffer: async () => Uint8Array.of(1, 2).buffer };
+  assert.deepEqual(await image("/root.ext4"), Uint8Array.of(1, 2));
+});
+
 test("storage selection is captured at start and disabled while running", async () => {
   const h = harness();
   h.nodes("storage-mode").value = "open";

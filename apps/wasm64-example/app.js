@@ -53,9 +53,13 @@ function consoleOutput() {
     },
   });
 }
-async function image(path) {
+async function image(path, { stream = false } = {}) {
   const response = await fetch(path);
   if (!response.ok) throw new Error(`image download failed: ${path}: ${response.status}`);
+  if (stream) {
+    if (!response.body) throw new Error(`image download has no response body: ${path}`);
+    return response.body;
+  }
   return new Uint8Array(await response.arrayBuffer());
 }
 async function action(operation) {
