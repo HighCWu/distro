@@ -38,6 +38,23 @@ def tree_entries(path, name):
         raise ValueError("unsupported material entry: " + name)
 
 
+def directory_origins(path, ancestors=()):
+    resolved = path.resolve(strict=True)
+    if resolved in ancestors or not resolved.is_dir():
+        raise ValueError("invalid installed license directory")
+    result = {}
+    for child in sorted(path.iterdir(), key=lambda item: item.name):
+        if child.is_dir():
+            result[child.name + "/"] = None
+            for name, origin in directory_origins(child, ancestors + (resolved,)).items():
+                result[child.name + "/" + name] = origin
+        elif child.is_file():
+            result[child.name] = child.resolve(strict=True)
+        else:
+            raise ValueError("unsupported installed license entry")
+    return result
+
+
 def collect(spec):
     if spec.get("schemaVersion") != 1 or spec.get("addressBits") not in (32, 64):
         raise ValueError("unsupported material schema or address width")
@@ -55,8 +72,9 @@ def collect(spec):
             raise ValueError("installed profile path differs: " + field)
     if (Path(profile["paths"]["toolchain"]) / "bin/clang++.cfg").resolve() != Path(spec["files"]["configuration/clang++.cfg"]).resolve():
         raise ValueError("installed C++ configuration path differs")
-    if Path(profile["paths"]["licenseTexts"]).resolve() != Path(spec["trees"]["licenses"]).resolve():
-        raise ValueError("installed license path differs")
+    license_root = Path(profile["paths"]["licenseTexts"]).resolve(strict=True)
+    if directory_origins(license_root) != directory_origins(Path(spec["trees"]["licenses"])):
+        raise ValueError("installed license origins differ")
     origins = {}
     for name, value in spec["sources"].items():
         source = Path(value)
@@ -74,7 +92,10 @@ def collect(spec):
         entries.append((name, path, "file"))
 
     for name, value in spec["trees"].items():
-        path = Path(value).resolve(strict=True)
+        # A symlinkJoin creates real directories containing store-absolute file
+        # links. Validate those origins above, then archive the original license
+        # bytes rather than unusable links into the builder's store.
+        path = license_root if name == "licenses" else Path(value).resolve(strict=True)
         if not path.is_dir():
             raise ValueError("required tree is not a directory: " + name)
         if name.startswith("recipes/") and not (path / "package.nix").is_file():
@@ -106,6 +127,7 @@ def export(spec, destination, *, sources=False):
     entries, metadata = collect_sources(spec) if sources else collect(spec)
     index_name = "sdk-selected-sources.json" if sources else "sdk-build-materials.json"
     roots = [Path(value).resolve() for group in ("files", "trees", "sources") for value in spec[group].values()]
+    roots.extend(path for name, path, _ in entries if name == "licenses")
     # os.replace replaces a destination symlink itself, not its target. Check
     # the resolved parent as well so that a link inside a collected tree cannot
     # conceal an in-tree output location by pointing somewhere else.

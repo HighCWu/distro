@@ -182,6 +182,41 @@ class MaterialsTest(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "unsupported material entry"):
             materials.export(self.spec, self.archive, sources=True)
 
+    def test_merged_sdk_license_directories_require_same_file_origins(self):
+        original = Path(self.spec["trees"]["licenses"])
+        (original / "musl").mkdir()
+        (original / "musl/COPYRIGHT").write_text("original selected notice\n")
+        merged = self.root / "merged-sdk/licenses"
+        merged.mkdir(parents=True)
+        for source in sorted(original.rglob("*")):
+            target = merged / source.relative_to(original)
+            if source.is_dir():
+                target.mkdir()
+            else:
+                target.symlink_to(source)
+        self.spec["trees"]["licenses"] = str(merged)
+        # symlinkJoin materializes directories while linking their files.
+        self.assertNotEqual(merged.resolve(), original.resolve())
+        materials.export(self.spec, self.archive)
+        materials.verify(self.spec, self.archive)
+        with tarfile.open(self.archive) as archive:
+            self.assertEqual(archive.getmember("licenses/package.nix").type, tarfile.REGTYPE)
+            self.assertEqual(archive.extractfile("licenses/package.nix").read(),
+                             (original / "package.nix").read_bytes())
+            self.assertEqual(archive.extractfile("licenses/musl/COPYRIGHT").read(),
+                             (original / "musl/COPYRIGHT").read_bytes())
+        replacement = self.root / "unselected-license"
+        replacement.write_bytes((original / "package.nix").read_bytes())
+        (merged / "package.nix").unlink()
+        (merged / "package.nix").symlink_to(replacement)
+        with self.assertRaisesRegex(ValueError, "installed license"):
+            materials.export(self.spec, self.archive)
+        (merged / "package.nix").unlink()
+        (merged / "package.nix").symlink_to(original / "package.nix")
+        (merged / "cycle").symlink_to(merged, target_is_directory=True)
+        with self.assertRaisesRegex(ValueError, "installed license"):
+            materials.export(self.spec, self.archive)
+
     def test_rejects_wrong_platform_and_source_provenance(self):
         for key, value in (("addressBits", 32), ("targetTriple", "wrong"), ("maximumMemoryBytes", 42)):
             changed = copy.deepcopy(self.spec)
