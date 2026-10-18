@@ -3,11 +3,15 @@
   apk,
   apk-wasm64,
   busybox-wasm64,
+  ca-certificates,
   image,
+  ncurses-wasm64,
+  openssl-wasm64,
   platform-wasm64,
   pkgs,
   sdk-wasm64,
   sqlite3-wasm64,
+  python-wasm64,
 }:
 let
   agent =
@@ -62,13 +66,17 @@ let
   # A real minimal system root, without runtime-child or test marker files.
   # Keep it independent of the default wasm32 distribution repository.
   rootfsFor =
-    format: withSqlite:
+    format: packages: size:
     import ../npm/linux-guest/rootfs.nix {
-      inherit format image pkgs;
-      size = if format == "ext4" then "64M" else "256M";
+      inherit
+        format
+        image
+        pkgs
+        size
+        ;
       apk = apk-wasm64;
       busybox = busybox-wasm64;
-      extraPackages = pkgs.lib.optional withSqlite sqlite3-wasm64;
+      extraPackages = builtins.attrValues packages;
       # Identity lookup for the existing root process, not login credentials.
       extraFiles = {
         "/etc/passwd" = pkgs.writeText "passwd" ''
@@ -85,16 +93,24 @@ let
         packages = {
           busybox = busybox-wasm64;
         }
-        // pkgs.lib.optionalAttrs withSqlite { sqlite3 = sqlite3-wasm64; };
+        // packages;
       };
     };
 in
 agent
 // {
   inherit bootFilesystem;
-  rootfs = rootfsFor "erofs" false;
-  rootfsExt4 = rootfsFor "ext4" false;
-  rootfsSqliteExt4 = rootfsFor "ext4" true;
+  rootfs = rootfsFor "erofs" { } "256M";
+  rootfsExt4 = rootfsFor "ext4" { } "64M";
+  rootfsSqliteExt4 = rootfsFor "ext4" { sqlite3 = sqlite3-wasm64; } "64M";
+  # Production runtime closure only: no scripts, sample applications or fixtures.
+  # Python's statically linked Readline retains its GPL distribution obligations.
+  rootfsPythonExt4 = rootfsFor "ext4" {
+    python = python-wasm64;
+    ncurses = ncurses-wasm64;
+    openssl = openssl-wasm64;
+    inherit ca-certificates;
+  } "256M";
   # Native PID 1 directly; no wasm32 shell or BusyBox in this boot image.
   bootDisk = image.mkGptDisk {
     name = "native-agent-wasm64.img";

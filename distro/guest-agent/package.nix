@@ -12,6 +12,10 @@
   apk-wasm64,
   busybox-wasm64,
   sqlite3-wasm64,
+  python-wasm64,
+  ncurses-wasm64,
+  openssl-wasm64,
+  ca-certificates,
 }:
 
 let
@@ -21,6 +25,10 @@ let
       apk-wasm64
       busybox-wasm64
       sqlite3-wasm64
+      python-wasm64
+      ncurses-wasm64
+      openssl-wasm64
+      ca-certificates
       image
       pkgs
       sdk-wasm64
@@ -157,6 +165,17 @@ package
     };
     profile = "sqlite-root";
     testFile = "agent-wasm64-sqlite-root-runtime.ts";
+  };
+  checks.python-root-wasm64 = import ./public-wasm64.nix {
+    inherit bytes pkgs node-workspace;
+    kernel = kernel-wasm64;
+    assets = {
+      runtimeBootDisk = nativeWasm64.bootDisk;
+      runtimeRootfs = nativeWasm64.rootfsPythonExt4;
+    };
+    applicationArchive = "${python-wasm64.applicationExample}/application.pyz";
+    profile = "python-root";
+    testFile = "agent-wasm64-python-root-runtime.ts";
   };
   checks.public-userland-wasm64 = import ./public-wasm64.nix {
     inherit bytes pkgs node-workspace;

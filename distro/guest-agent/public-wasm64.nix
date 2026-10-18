@@ -16,6 +16,7 @@
       ""
   }",
   testFile ? "agent-wasm64-public-runtime.ts",
+  applicationArchive ? "",
 }:
 assert !networking || userland;
 pkgs.stdenvNoCC.mkDerivation {
@@ -28,6 +29,7 @@ pkgs.stdenvNoCC.mkDerivation {
   env.CI = "true";
   env.AGENT_WASM64_BOOT_DISK = assets.runtimeBootDisk;
   env.AGENT_WASM64_ROOTFS = assets.runtimeRootfs;
+  env.AGENT_WASM64_APPLICATION = applicationArchive;
   env.AGENT_WASM64_USERLAND = if userland then "1" else "";
   env.AGENT_WASM64_NETWORKING = if networking then "1" else "";
   pnpmDeps = node-workspace.deps;
