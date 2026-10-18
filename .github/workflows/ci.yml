@@ -270,6 +270,12 @@ jobs:
           mkdir sdk-selected-sources
           cp "$bundle/sdk-selected-sources.tar.gz" "$bundle/README.md" \
             "$bundle/SHA256SUMS" sdk-selected-sources/
+          test "$(git rev-parse HEAD)" = "$GITHUB_SHA"
+          git diff --quiet HEAD --
+          python3 -B distro/sdk/checkout-bundle-test.py
+          python3 -B distro/sdk/checkout-bundle.py export . "$GITHUB_SHA" \
+            sdk-selected-sources/distro-checkout.tar.gz
+          (cd sdk-selected-sources && sha256sum distro-checkout.tar.gz >> SHA256SUMS)
           (cd sdk-selected-sources && sha256sum --check SHA256SUMS)
       - name: Upload validated SDK source inputs
         if: ${{ success() && (matrix.check == 'sdk-check-source-bundle' || matrix.check == 'sdk-wasm64-check-source-bundle') }}

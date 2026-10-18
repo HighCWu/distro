@@ -34,4 +34,16 @@ arbitrary overrides or apply patches. Installed scripts/profile retain their
 original Nix paths. Linux's source tree here does not replace a kernel
 binary's matching final config and complete build/source materials. All
 upstream licenses remain applicable; SDK-owned collection code uses MIT.
+Public source-check artifacts additionally include `distro-checkout.tar.gz`,
+the matching committed distro recipe tree under `distro/`, including its flake
+lock, scripts, patches and notices. Its Git archive commit comment is checked
+against the workflow SHA, and every tracked blob's bytes, type and executable
+mode are compared with Git objects without extracting files. Missing/changed
+members from export-ignore/export-subst attributes are rejected. It excludes
+Git history and submodule contents (a tracked submodule is rejected, not silently
+omitted). Dirty worktree files cannot substitute for committed recipe bytes.
+The workflow appends this archive's checksum to the artifact's SHA256SUMS;
+the standalone Nix sourceBundle output does not include this Git-based archive.
+This addition supplies the matching distro checkout, not the remaining build
+dependencies, a signature, or proof of a complete corresponding-source closure.
 Temporary Actions artifacts are validation artifacts, not durable releases.
