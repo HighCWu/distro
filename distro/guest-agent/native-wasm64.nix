@@ -4,6 +4,7 @@
   apk-wasm64,
   busybox-wasm64,
   ca-certificates,
+  git-wasm64,
   image,
   ncurses-wasm64,
   openssl-wasm64,
@@ -103,6 +104,12 @@ agent
   rootfs = rootfsFor "erofs" { } "256M";
   rootfsExt4 = rootfsFor "ext4" { } "64M";
   rootfsSqliteExt4 = rootfsFor "ext4" { sqlite3 = sqlite3-wasm64; } "64M";
+  # Optional runtime recipe, not a release/license-compatibility approval.
+  # Git's static HTTP helper already contains its linked libraries and notices.
+  rootfsGitExt4 = rootfsFor "ext4" {
+    git = git-wasm64;
+    inherit ca-certificates;
+  } "256M";
   # Production runtime closure only: no scripts, sample applications or fixtures.
   # Python's statically linked Readline retains its GPL distribution obligations.
   rootfsPythonExt4 = rootfsFor "ext4" {

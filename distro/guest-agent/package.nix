@@ -16,6 +16,7 @@
   ncurses-wasm64,
   openssl-wasm64,
   ca-certificates,
+  git-wasm64,
 }:
 
 let
@@ -29,6 +30,7 @@ let
       ncurses-wasm64
       openssl-wasm64
       ca-certificates
+      git-wasm64
       image
       pkgs
       sdk-wasm64
@@ -165,6 +167,16 @@ package
     };
     profile = "sqlite-root";
     testFile = "agent-wasm64-sqlite-root-runtime.ts";
+  };
+  checks.git-root-wasm64 = import ./public-wasm64.nix {
+    inherit bytes pkgs node-workspace;
+    kernel = kernel-wasm64;
+    assets = {
+      runtimeBootDisk = nativeWasm64.bootDisk;
+      runtimeRootfs = nativeWasm64.rootfsGitExt4;
+    };
+    profile = "git-root";
+    testFile = "agent-wasm64-git-root-runtime.ts";
   };
   checks.python-root-wasm64 = import ./public-wasm64.nix {
     inherit bytes pkgs node-workspace;
