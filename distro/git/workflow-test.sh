@@ -8,6 +8,7 @@ fail() {
 
 export PATH=/bin:/sbin:/usr/bin:/usr/sbin
 export HOME=/root
+/bin/sh /git-notice-check.sh || fail "selected Git notices missing or changed"
 # A committer identity without depending on any global config.
 export GIT_AUTHOR_NAME=Test GIT_AUTHOR_EMAIL=test@example.com
 export GIT_COMMITTER_NAME=Test GIT_COMMITTER_EMAIL=test@example.com

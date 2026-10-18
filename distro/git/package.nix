@@ -18,6 +18,7 @@ stdenv.mkDerivation (finalAttrs: {
   pname = "git";
   version = "2.55.0";
   inherit src;
+  meta.license = pkgs.lib.licenses.gpl2Only;
   nativeBuildInputs = [ pkgs.nodejs ];
 
   # git creates every child through run-command.c:start_command(): a fork()
@@ -161,6 +162,8 @@ stdenv.mkDerivation (finalAttrs: {
       node ${../busybox/check-binary.mjs} ${../../packages/kernel/src/wasm_binary.ts} \
         "$program" ${toString platform.addressBits} ${toString platform.maximumMemoryBytes}
     done
+    bash ${./install-notices.sh} . ${curl} "$out" ${./notices.md} \
+      ${./run-command-posix-spawn.patch} ${../sdk/LICENSE.MIT}
   '';
 
   passthru.apk.depends = [
@@ -175,6 +178,7 @@ stdenv.mkDerivation (finalAttrs: {
         vm-test.installedTest {
           name = "git-${name}";
           inherit init;
+          files."/git-notice-check.sh" = ./notice-check.sh;
           # BusyBox supplies /bin/sh for Git's installed scripts and hooks,
           # cat (the pager), and the coreutils the test drives.
           contents = [
