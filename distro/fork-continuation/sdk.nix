@@ -39,7 +39,7 @@ let
         "--sysroot=${forkRoot}"
       ]
       ++ platform.compilerFlags
-      ++ [ "$${execution}/fork-execution.o" ]
+      ++ [ ("$" + "${execution}/fork-execution.o") ]
       ++ map (flag: "$-Wl,${flag}") (
         platform.linkerFlags
         ++ [
@@ -133,8 +133,10 @@ pkgs.symlinkJoin {
           cp ${./sdk.test.js} fork-continuation/sdk.test.js
           cp ${./finalize.sh} fork-continuation/finalize.sh
           cp ${./package.nix} fork-continuation/package.nix
+          cp ${./sdk.nix} fork-continuation/sdk.nix
           cp ${../default.nix} default.nix
           node --test fork-continuation/sdk.test.js
+          grep -F -- ${lib.escapeShellArg ("$" + "${execution}/fork-execution.o")} ${config}
           mkdir $out
         '';
   };

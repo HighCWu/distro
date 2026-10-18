@@ -91,3 +91,10 @@ test("the dual-width runtime corpus consumes the installed SDK tools", () => {
   const scope = readFileSync(new URL("../default.nix", import.meta.url), "utf8");
   assert.match(scope, /sdk-fork-continuation = self\.sdk-fork-continuation-wasm64/);
 });
+
+test("execution object path is interpolated separately from Clang's link-only dollar prefix", () => {
+  const recipe = readFileSync(new URL("./sdk.nix", import.meta.url), "utf8");
+  assert.ok(recipe.includes('("$" + "${execution}/fork-execution.o")'));
+  assert.ok(!recipe.includes("$${execution}"), "Nix would escape the execution interpolation");
+  assert.match(recipe, /grep -F -- .*execution.*fork-execution\.o.*\$\{config\}/);
+});
