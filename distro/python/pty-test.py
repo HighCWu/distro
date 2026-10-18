@@ -5,6 +5,7 @@ import os
 import json
 import errno
 import select
+import signal
 import stat
 import subprocess
 import sys
@@ -78,6 +79,25 @@ def session_child(slave):
     # creates the new session before acquiring the controlling terminal.
     os.login_tty(slave)
     tty.setraw(0, termios.TCSANOW)
+    events = {"resize": [], "interrupt": 0}
+
+    def resized(signum, frame):
+        events["resize"].append(termios.tcgetwinsize(0))
+        assert os.write(1, b"W") == 1
+
+    def interrupted(signum, frame):
+        events["interrupt"] += 1
+        # Restore fully raw input before acknowledging: subsequent binary
+        # input includes VINTR/VQUIT/VSUSP bytes and must not signal again.
+        tty.setraw(0, termios.TCSANOW)
+        assert os.write(1, b"I") == 1
+
+    signal.signal(signal.SIGWINCH, resized)
+    signal.signal(signal.SIGINT, interrupted)
+    attributes = termios.tcgetattr(0)
+    attributes[3] |= termios.ISIG
+    attributes[6][termios.VINTR] = b"\x03"
+    termios.tcsetattr(0, termios.TCSANOW, attributes)
     terminal = os.open("/dev/tty", os.O_RDWR | os.O_NOCTTY)
     try:
         identity = {
@@ -94,6 +114,7 @@ def session_child(slave):
         block = os.read(0, len(SESSION_INPUT) - len(incoming))
         assert block, "terminal input closed early"
         incoming.extend(block)
+    assert events == {"resize": [(41, 99)], "interrupt": 1}, events
     outgoing = bytes(incoming)[::-1]
     while outgoing:
         count = os.write(1, outgoing)
@@ -134,6 +155,11 @@ def exercise_session():
         assert record["pid"] == process.pid, record
         assert record["session"] == record["group"] == record["foreground"] == process.pid, record
         assert record["terminal"] is True and record["stdio"] is True, record
+        # Use actual terminal operations, not kill(pid, signal). Handshakes
+        # prove each handler ran before any next phase or binary input.
+        termios.tcsetwinsize(master, (41, 99))
+        transfer(master, master, b"", b"W")
+        transfer(master, master, b"\x03", b"I")
         transfer(master, master, SESSION_INPUT, SESSION_INPUT[::-1])
         assert os.write(master, b"!") == 1
         output, errors = process.communicate(timeout=10)
@@ -182,6 +208,7 @@ def exercise_session():
                     os.close(slave)
                 os.close(master)
     print("Python PTY session: controlling terminal, foreground group, binary I/O and reaping verified")
+    print("Python PTY signals: resize and terminal-generated interrupt reach foreground child")
 
 
 def negative_control():
@@ -206,6 +233,21 @@ def negative_control():
             else:
                 raise AssertionError("corrupted PTY bytes were accepted")
         print(marker)
+
+    original_read = os.read
+    for selected in (b"W", b"I"):
+        def corrupt_acknowledgement(fd, count):
+            block = original_read(fd, count)
+            return b"?" if block == selected else block
+
+        with patch.object(os, "read", corrupt_acknowledgement):
+            try:
+                exercise_session()
+            except AssertionError as error:
+                assert str(error) == "PTY payload differs", error
+            else:
+                raise AssertionError("corrupted terminal signal acknowledgement was accepted")
+    print("Python PTY signal fixture: injected resize and interrupt acknowledgement corruption rejected")
 
 
 if __name__ == "__main__":

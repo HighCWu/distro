@@ -29,6 +29,7 @@ const stages = [
     "Python process: large duplex binary pipes preserve backpressure, bytes and child cleanup",
     "Python PTY: character devices, CLOEXEC, canonical/raw binary I/O and window size verified",
     "Python PTY session: controlling terminal, foreground group, binary I/O and reaping verified",
+    "Python PTY signals: resize and terminal-generated interrupt reach foreground child",
   ],
   [
     "Python mmap: private anonymous bytes, buffer lifetime and close verified",

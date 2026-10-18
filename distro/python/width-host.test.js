@@ -293,6 +293,11 @@ test("Python PTY fixture preserves canonical/raw bytes and rejects injected corr
   );
   assert.match(result.stdout, /injected byte corruption rejected/);
   assert.match(result.stdout, /injected session byte corruption rejected/);
+  assert.match(result.stdout, /injected resize and interrupt acknowledgement corruption rejected/);
+  assert.match(
+    result.stdout,
+    /Python PTY signals: resize and terminal-generated interrupt reach foreground child/,
+  );
   assert.match(
     result.stdout,
     /Python PTY session: controlling terminal, foreground group, binary I\/O and reaping verified/,
