@@ -4,7 +4,7 @@ if [[ $# -ne 2 ]]; then
   echo "usage: wasm-linux-fork-finalize linked.wasm output.wasm" >&2
   exit 64
 fi
-if [[ ! -f "$1" || "$1" -ef "$2" ]]; then
+if [[ ! -f $1 || $1 -ef $2 ]]; then
   echo "input must exist and output must be a different file" >&2
   exit 64
 fi
