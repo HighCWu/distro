@@ -43,10 +43,7 @@ let
         passthru.checks.runtime = vm-test.rawInitramfsTest {
           name = "fork-continuation-${platform.wasmArch}";
           init = "${program}/fork.wasm";
-          files."/fork-exec" = {
-            source = "${program}/exec-child.wasm";
-            mode = "0755";
-          };
+          files."/fork-exec" = "${program}/exec-child.wasm";
           cpus = 2;
         };
       }
