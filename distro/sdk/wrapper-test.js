@@ -10,6 +10,41 @@ const script = template
 function run(args) {
   return spawnSync("bash", ["-c", script, "sdk", ...args], { encoding: "utf8" });
 }
+test("implicit host search paths are removed without changing build flags", () => {
+  const inspect = template.replaceAll("@compiler@", "env").replaceAll("@configArgument@", "");
+  const paths = [
+    "CPATH",
+    "C_INCLUDE_PATH",
+    "CPLUS_INCLUDE_PATH",
+    "OBJC_INCLUDE_PATH",
+    "LIBRARY_PATH",
+  ];
+  const flags = {
+    CFLAGS: "-O2 -I/explicit-target",
+    CXXFLAGS: "-std=c++17",
+    LDFLAGS: "-L/explicit-target",
+  };
+  const result = spawnSync("bash", ["-c", inspect, "sdk"], {
+    encoding: "utf8",
+    env: {
+      ...process.env,
+      ...Object.fromEntries(paths.map((key) => [key, "/host-poison"])),
+      ...flags,
+    },
+  });
+  assert.equal(result.status, 0, result.stderr);
+  const actual = Object.fromEntries(
+    result.stdout
+      .trim()
+      .split("\n")
+      .map((line) => {
+        const split = line.indexOf("=");
+        return [line.slice(0, split), line.slice(split + 1)];
+      }),
+  );
+  for (const key of paths) assert.equal(actual[key], undefined, `${key} must not reach Clang`);
+  for (const [key, value] of Object.entries(flags)) assert.equal(actual[key], value);
+});
 test("link forwards profile and user arguments without splitting", () => {
   const result = run(["input with spaces.o", "-o", "app.wasm"]);
   assert.equal(result.status, 0, result.stderr);

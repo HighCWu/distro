@@ -1,0 +1,2 @@
+// SPDX-License-Identifier: MIT
+#error SDK_HOST_INCLUDE_PATH_LEAKED

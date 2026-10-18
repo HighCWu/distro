@@ -342,7 +342,17 @@ let
           node --test ${./.}/exception-codegen-test.js
         mkdir $out
         # Separate compilation is part of the public consumer contract.
-        wasm-linux-c++ -std=c++17 -O2 -pthread -Werror -c ${../toolchain-smoke/runtime-cxx.cc} -o runtime.o
+        # A host-style CPATH must not shadow the target C++ standard library.
+        # First prove that the same pinned frontend sees the poison without
+        # the SDK wrapper; this is preprocessing only, not a host target link.
+        poison_status=0
+        CPATH=${./host-path-poison} ${llvm-toolchain}/bin/clang++ \
+          --target=${platform.targetTriple} --sysroot=${sysroot} \
+          -E ${../toolchain-smoke/runtime-cxx.cc} > /dev/null 2> poison.log || poison_status=$?
+        test "$poison_status" -ne 0
+        grep -q SDK_HOST_INCLUDE_PATH_LEAKED poison.log
+        CPATH=${./host-path-poison} CPLUS_INCLUDE_PATH=${./host-path-poison} \
+          wasm-linux-c++ -std=c++17 -O2 -pthread -Werror -c ${../toolchain-smoke/runtime-cxx.cc} -o runtime.o
         wasm-linux-c++ -pthread -Wl,--fatal-warnings runtime.o -o $out/runtime-cxx.wasm
         chmod 0755 $out/runtime-cxx.wasm
       '';
