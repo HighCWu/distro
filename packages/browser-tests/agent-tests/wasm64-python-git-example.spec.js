@@ -44,6 +44,31 @@ for (const persistent of [false, true])
           sha256: "4de6ff0a51a4cd16f2bb867a3f3ff954ee6509504b64ba03c20eb4b34adf2b81",
         });
         if (persistent) {
+          // A second real page shares the origin's locks, not the Linux instance.
+          // Both create and open must fail before fetching or replacing a template.
+          const contender = await page.context().newPage();
+          try {
+            let contenderTemplates = 0;
+            await contender.route("**/root.ext4", (route) => {
+              contenderTemplates++;
+              return route.abort();
+            });
+            await contender.goto("/");
+            await contender.locator("#disk-name").fill(diskName);
+            for (const mode of ["open", "create"]) {
+              await contender.locator("#storage-mode").selectOption(mode);
+              await contender.locator("#start").click();
+              await expect(contender.locator("#state")).toContainText(
+                "already open in another page",
+              );
+              await expect(contender.locator("#start")).toBeEnabled();
+              await expect(contender.locator("#save-stop")).toBeDisabled();
+              await expect(state).toHaveText("running");
+            }
+            expect(contenderTemplates).toBe(0);
+          } finally {
+            await contender.close();
+          }
           await page.locator("#save-stop").click();
           await expect(state).toHaveText("stopped", { timeout: 60000 });
           let templateRequests = 0;
