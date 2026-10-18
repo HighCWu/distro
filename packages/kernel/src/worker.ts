@@ -2,6 +2,7 @@
 
 import { listen_endpoint, post_endpoint } from "./endpoint.ts";
 import { platform } from "./platform.ts";
+import { inject_copy_fault, type CopyFault } from "./copy-fault.ts";
 import { user_mmap } from "./user-mmap.ts";
 import { FileMmapCopy } from "./file-mmap-copy.ts";
 import {
@@ -49,11 +50,13 @@ export interface InitMessage {
   user: UserContext | null;
   /** One-shot user-memory copy result: 0 pending, 1 complete, negative errno. */
   user_copy_status: UserCopyStatus | null;
+  copy_fault?: CopyFault;
 }
 export interface ForwardedInitMessage {
   type: "forwarded_init";
   port: MessagePort;
   user_copy_status: UserCopyStatus | null;
+  copy_fault?: CopyFault;
 }
 export type WorkerMessage =
   | {
@@ -497,6 +500,7 @@ function start({
   kernel_address,
   user: initial_user_context,
   user_copy_status,
+  copy_fault,
 }: InitMessage) {
   const cancelled = () => {
     if (!user_copy_failed(user_copy_status)) return false;
@@ -505,6 +509,7 @@ function start({
     return true;
   };
   if (cancelled()) return;
+  if (user_copy_status) inject_copy_fault(copy_fault, "initialize");
   // Refresh every WebAssembly.Memory received across a worker boundary
   // immediately, including any future additions to InitMessage. Chromium can
   // retain the fixed-length buffer wrapper captured before another isolate
@@ -522,6 +527,7 @@ function start({
     // private backing store is owned by the destination isolate, not the
     // long-lived parent.
     try {
+      inject_copy_fault(copy_fault, "allocate");
       const source = memory_bytes(user_context.memory, 0);
       if (!source) throw new RangeError("invalid source memory");
       const copied = allocate_shared_memory(
@@ -643,7 +649,7 @@ listen_endpoint(endpoint, {
     if (message.type === "forwarded_init") {
       message.port.onmessage = ({ data }) => {
         message.port.close();
-        start(data as InitMessage);
+        start({ ...(data as InitMessage), copy_fault: message.copy_fault });
       };
       message.port.start();
       return;

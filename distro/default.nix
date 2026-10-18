@@ -111,6 +111,7 @@ lib.makeScope (scope: lib.callPackageWith ({ inherit lib pkgs; } // scope)) (
     };
     fork-continuation = callPackage ./fork-continuation/package.nix { };
     fork-continuation-wasm64 = callPackage ./fork-continuation/package.nix {
+      kernel = self.kernel-wasm64;
       platform = self.platform-wasm64;
       sysroot = self.sysroot-wasm64;
       llvm-toolchain = self.llvm-toolchain-wasm64;

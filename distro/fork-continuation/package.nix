@@ -7,6 +7,7 @@
   llvm-toolchain,
   vm-test,
   sdk-fork-continuation,
+  kernel,
 }:
 let
   helperFlags = lib.escapeShellArgs (
@@ -30,6 +31,15 @@ let
           files."/fork-exec" = "${program}/exec-child.wasm";
           cpus = 2;
         };
+        passthru.checks.faults =
+          (vm-test.override {
+            kernel = kernel.override { copyFaultTest = true; };
+          }).rawInitramfsTest
+            {
+              name = "fork-faults-${platform.wasmArch}";
+              init = "${program}/fork-fault.wasm";
+              cpus = 2;
+            };
       }
       ''
         mkdir -p $out
@@ -45,6 +55,10 @@ let
         wasm-linux-fork-finalize raw.wasm $out/fork.wasm
         chmod 0755 $out/fork.wasm
         chmod 0755 $out/exec-child.wasm
+        wasm-linux-fork-cc -O2 -pthread -Wall -Wextra -Werror -c ${./fault-runtime.c} -o fault.o
+        wasm-linux-fork-cc -pthread fault.o -o fault-linked.wasm
+        wasm-linux-fork-finalize fault-linked.wasm $out/fork-fault.wasm
+        chmod 0755 $out/fork-fault.wasm
       '';
 in
 program

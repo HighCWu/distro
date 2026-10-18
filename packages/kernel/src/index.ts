@@ -4,6 +4,7 @@ import { type DeviceTreeNode, generate_devicetree, section_properties } from "./
 import { platform, type WorkerHandle } from "./platform.ts";
 import { cache_successful_load } from "./resource-cache.ts";
 import { checked_cpu_count } from "./boot-options.ts";
+import { create_copy_fault_plan } from "./copy-fault.ts";
 import { discard_worker, post_worker_init, terminate_workers } from "./worker-start.ts";
 import { configure_machine, run_machine_booted } from "./plugin-internal.ts";
 import type { MachinePluginInput } from "./plugin.ts";
@@ -191,6 +192,7 @@ export async function bootMachine(options: BootMachineOptions): Promise<Machine>
   const configured = await configure_machine(options.args ?? [], options.plugins ?? []);
   const { devices, plugins } = configured;
   const workers = new Set<WorkerHandle>();
+  const next_copy_fault = create_copy_fault_plan();
   let closed = false;
   let failed = false;
   let finish_error: unknown;
@@ -388,10 +390,11 @@ export async function bootMachine(options: BootMachineOptions): Promise<Machine>
         },
       });
       try {
+        const copy_fault = init.user_copy_status ? next_copy_fault() : null;
         post_worker_init(
           workers,
           worker,
-          init,
+          copy_fault ? { ...init, copy_fault } : init,
           init.type === "forwarded_init" ? [init.port] : undefined,
         );
       } catch (error) {

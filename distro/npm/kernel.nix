@@ -3,6 +3,8 @@
   linux,
   node-workspace,
   pkgs,
+  lib,
+  copyFaultTest ? false,
 }:
 
 pkgs.stdenvNoCC.mkDerivation (finalAttrs: {
@@ -16,6 +18,11 @@ pkgs.stdenvNoCC.mkDerivation (finalAttrs: {
     pkgs.pnpmConfigHook
     node-workspace.pnpm
   ];
+
+  postPatch = lib.optionalString copyFaultTest ''
+    substituteInPlace packages/kernel/src/copy-fault.ts \
+      --replace-fail 'export const copy_fault_test = false;' 'export const copy_fault_test = true;'
+  '';
 
   buildPhase = ''
     runHook preBuild
