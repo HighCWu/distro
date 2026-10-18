@@ -29,7 +29,9 @@ pkgs.stdenvNoCC.mkDerivation {
   env.CI = "true";
   env.AGENT_WASM64_BOOT_DISK = assets.runtimeBootDisk;
   env.AGENT_WASM64_ROOTFS = assets.runtimeRootfs;
-  env.AGENT_WASM64_APPLICATION = applicationArchive;
+  # env rejects raw Nix paths; interpolation copies file inputs into the store
+  # and retains their dependency context, while preserving existing strings.
+  env.AGENT_WASM64_APPLICATION = "${applicationArchive}";
   env.AGENT_WASM64_USERLAND = if userland then "1" else "";
   env.AGENT_WASM64_NETWORKING = if networking then "1" else "";
   pnpmDeps = node-workspace.deps;

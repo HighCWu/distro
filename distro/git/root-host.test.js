@@ -86,6 +86,11 @@ test("combined Python Git root selects matching runtimes without installing the 
     'testFile = "agent-wasm64-python-git-root-runtime.ts";',
   ])
     assert.ok(check[1].includes(required), required);
+  const runner = readFileSync(new URL("../guest-agent/public-wasm64.nix", import.meta.url), "utf8");
+  assert.ok(
+    runner.includes('env.AGENT_WASM64_APPLICATION = "${applicationArchive}";'),
+    "raw path assets are coerced with retained Nix dependency context before entering env",
+  );
 });
 
 test("combined SDK workload imports exact source and retains only ext4 bytes across fresh instances", () => {
