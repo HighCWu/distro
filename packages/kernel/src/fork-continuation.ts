@@ -64,14 +64,17 @@ export function dispatch_fork_syscall(
   const zero = (value: WasmAddress | undefined) => value === 0 || value === 0n;
   if ((nr === 220 || nr === 220n) && zero(args[0])) {
     let result: number;
-    if (!zero(args[1])) result = -22; // EINVAL: no callback argument
-    else if (
+    if (!zero(args[1])) {
+      result = -22; // EINVAL: no callback argument
+    } else if (
       args.length !== 6 ||
       (args[2] !== 17 && args[2] !== 17n) ||
       args.slice(3).some((value) => !zero(value))
-    )
+    ) {
       result = -95;
-    else result = fork?.syscallCheckpoint(allowed) ?? -95;
+    } else {
+      result = fork?.syscallCheckpoint(allowed) ?? -95;
+    }
     return typeof nr === "bigint" ? BigInt(result) : result;
   }
   return fork ? fork.kernelCall(invoke) : invoke();
