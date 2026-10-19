@@ -4,13 +4,14 @@ import { spawn } from "node:child_process";
 import { readFile } from "node:fs/promises";
 import { createInterface } from "node:readline";
 import { chromium, firefox } from "playwright";
-import { assertForkOutput } from "./fork-contract.js";
+import { assertForkOutput, forkIterations } from "./fork-contract.js";
 
 const project = process.argv[2];
 const engines = { chromium, firefox };
 assert.ok(Object.hasOwn(engines, project), "unsupported browser project");
 const { addressBits } = JSON.parse(await readFile("profile.json", "utf8"));
 assert.ok(addressBits === 32 || addressBits === 64, "invalid address width");
+const iterations = forkIterations(process.env.FORK_BROWSER_STABILITY);
 
 const server = spawn(process.execPath, ["server.js"], { stdio: ["ignore", "pipe", "inherit"] });
 const lines = createInterface({ input: server.stdout });
@@ -43,6 +44,7 @@ try {
       });
       browser = await engines[project].launch({ headless: true });
       console.log(`fork browser: ${project} ${browser.version()}, wasm${addressBits}`);
+      console.log(`fork browser: required iterations per profile ${iterations}`);
       const page = await browser.newPage();
       const errors = [];
       page.on("pageerror", (error) => {
@@ -58,7 +60,7 @@ try {
       // runRuntimeSmoke resolves only AFTER machine.closed and final console
       // callbacks. Repeating on the same page exercises fresh Worker lifetimes.
       for (const mode of ["normal", "faults"]) {
-        for (let iteration = 1; iteration <= 2; iteration++) {
+        for (let iteration = 1; iteration <= iterations; iteration++) {
           active = `wasm${addressBits} ${mode} iteration ${iteration}`;
           console.log(`fork browser: ${active} begin`);
           const output = await page.evaluate((mode) => globalThis.bootForkRuntimeSmoke(mode), mode);

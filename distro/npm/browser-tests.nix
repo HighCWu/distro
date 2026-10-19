@@ -374,6 +374,16 @@ let
           }
         )
       )
+      // {
+        fork-wasm64-chromium-stability =
+          (playwright.mkCheck {
+            name = "browser-tests-fork-wasm64-chromium-stability";
+            suite = forkSuite 64;
+            project = "chromium";
+            script = "fork-browser-check.mjs";
+          }).overrideAttrs
+            { FORK_BROWSER_STABILITY = "1"; };
+      }
       // (lib.genAttrs
         [
           "python-wasm32-chromium"

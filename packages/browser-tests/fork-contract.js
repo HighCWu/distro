@@ -1,6 +1,12 @@
 // SPDX-License-Identifier: MIT
 import assert from "node:assert/strict";
 
+// A bounded test-only repeat profile; not a runtime or SDK setting.
+export function forkIterations(stability) {
+  assert.ok(stability === undefined || stability === "1", "unknown fork stability profile");
+  return stability === "1" ? 4 : 2;
+}
+
 export const forkStages = [
   "fork: raw syscall continuation, identity, isolation and wait pass",
   "fork-exec: untransformed raw clone refusal pass",
