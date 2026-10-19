@@ -5,8 +5,10 @@ import { platform } from "./platform.ts";
 import {
   fork_signal_test,
   fork_resume_signal_test,
+  fork_child_signal_test,
   inject_saved_fork_signal,
   inject_resume_fork_signal,
+  inject_child_fork_signal,
 } from "./fork-signal-test.ts";
 import {
   inject_copy_fault,
@@ -27,6 +29,7 @@ import {
   fork_continuation_exports_supported,
   uses_fork_continuation,
   resume_fork_parent,
+  resume_fork_child,
 } from "./fork-continuation.ts";
 import {
   settle_user_copy,
@@ -375,6 +378,22 @@ function user_imports({
             fork && snapshot.entry === fn && (arg === 0 || arg === 0n),
             "invalid fork child entry",
           );
+          if (fork_child_signal_test) {
+            const continuation = fork;
+            // switch_entry is still a kernel startup callback. Defer all test
+            // syscalls until the regular user.call boundary, before rewinding.
+            call_entry = () => {
+              assert(context && context.fork_continuation === snapshot);
+              resume_fork_child(context, continuation, () =>
+                continuation.kernelCall(() =>
+                  inject_child_fork_signal(get_kernel_instance().exports.syscall, kernel_address),
+                ),
+              );
+              call_entry = call_start;
+              call_start();
+            };
+            return;
+          }
           fork.resumeChild(snapshot);
           delete context.fork_continuation;
           call_entry = call_start;

@@ -39,6 +39,22 @@ export function resume_fork_parent(
   continuation.resumeParent(result);
 }
 
+/** Private test path, invoked at user.call, never inside switch_entry. */
+export function resume_fork_child(
+  owner: { fork_continuation?: ForkSnapshot },
+  continuation: ForkContinuation,
+  beforeResume: () => void,
+): void {
+  const snapshot = owner.fork_continuation;
+  if (!snapshot) throw new Error("missing fork child snapshot");
+  try {
+    beforeResume();
+    continuation.resumeChild(snapshot);
+  } finally {
+    delete owner.fork_continuation;
+  }
+}
+
 const functions = [
   "_start",
   "__wasm_fork_abi",

@@ -7,10 +7,12 @@
   copyFaultTest ? false,
   forkSignalTest ? false,
   forkResumeSignalTest ? false,
+  forkChildSignalTest ? false,
 }:
 
 assert lib.assertMsg (
   !(forkSignalTest && forkResumeSignalTest)
+  && !(forkChildSignalTest && (forkSignalTest || forkResumeSignalTest))
 ) "fork signal timing test profiles must remain independent";
 pkgs.stdenvNoCC.mkDerivation (finalAttrs: {
   pname = "lowland-kernel";
@@ -36,6 +38,10 @@ pkgs.stdenvNoCC.mkDerivation (finalAttrs: {
     + lib.optionalString forkResumeSignalTest ''
       substituteInPlace packages/kernel/src/fork-signal-test.ts \
         --replace-fail 'export const fork_resume_signal_test = false;' 'export const fork_resume_signal_test = true;'
+    ''
+    + lib.optionalString forkChildSignalTest ''
+      substituteInPlace packages/kernel/src/fork-signal-test.ts \
+        --replace-fail 'export const fork_child_signal_test = false;' 'export const fork_child_signal_test = true;'
     '';
 
   buildPhase = ''

@@ -7,6 +7,7 @@ import {
   fork_continuation_exports_supported,
   uses_fork_continuation,
   resume_fork_parent,
+  resume_fork_child,
   type ForkSnapshot,
 } from "../src/fork-continuation.ts";
 import { user_module_imports_supported } from "../src/wasm.ts";
@@ -173,6 +174,62 @@ test("syscall import versions are explicit; an unknown version is not admitted",
 });
 
 for (const address of ["i32", "i64"] as const) {
+  test(`${address}: child injection precedes rewind and stack/TLS restore at the deferred user boundary`, () => {
+    const parent = fixture(address, true),
+      child = fixture(address, true),
+      p = parent.pointer;
+    parent.controller.syscallCheckpoint(true);
+    const snapshot = parent.controller.suspend();
+    const owner: { fork_continuation?: ForkSnapshot } = { fork_continuation: snapshot };
+    child.exports.__stack_pointer.value = p(8192);
+    child.exports.__tls_base.value = p(4096);
+    let called = false;
+    const deferred = () =>
+      resume_fork_child(owner, child.controller, () => {
+        called = true;
+        assert.equal(child.exports.asyncify_get_state(), 0);
+        assert.equal(child.exports.__stack_pointer.value, p(8192));
+        assert.equal(child.exports.__tls_base.value, p(4096));
+        assert.equal(owner.fork_continuation, snapshot);
+        child.controller.kernelCall(() =>
+          assert.equal(child.controller.syscallCheckpoint(true), -95),
+        );
+      });
+    assert.equal(called, false, "startup registration must not inject");
+    deferred();
+    assert.equal(called, true);
+    assert.equal(child.exports.asyncify_get_state(), 2);
+    assert.equal(child.exports.__stack_pointer.value, snapshot.stack);
+    assert.equal(child.exports.__tls_base.value, snapshot.tls);
+    assert.equal("fork_continuation" in owner, false);
+    assert.equal(child.controller.syscallCheckpoint(true), 0);
+    assert.throws(deferred, /missing fork child snapshot/);
+  });
+
+  test(`${address}: child injection failure clears metadata and never starts rewind`, () => {
+    const parent = fixture(address, true),
+      child = fixture(address, true);
+    parent.controller.syscallCheckpoint(true);
+    const owner: { fork_continuation?: ForkSnapshot } = {
+      fork_continuation: parent.controller.suspend(),
+    };
+    const failure = new Error("child signal syscall failed");
+    assert.throws(
+      () =>
+        resume_fork_child(owner, child.controller, () => {
+          throw failure;
+        }),
+      (error) => error === failure,
+    );
+    assert.equal("fork_continuation" in owner, false);
+    assert.equal(child.exports.asyncify_get_state(), 0);
+    assert.throws(
+      () =>
+        resume_fork_child(owner, child.controller, () => assert.fail("missing snapshot injected")),
+      /missing fork child snapshot/,
+    );
+  });
+
   test(`${address}: post-clone hook sees cleared metadata and stopped unwind before parent rewind`, () => {
     const f = fixture(address, true),
       p = f.pointer;

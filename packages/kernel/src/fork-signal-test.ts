@@ -4,13 +4,14 @@ import type { Instance, WasmAddressType } from "./wasm.ts";
 
 export const fork_signal_test = false;
 export const fork_resume_signal_test = false;
+export const fork_child_signal_test = false;
 
 export function inject_saved_fork_signal(
   syscall: Instance["exports"]["syscall"],
   address: WasmAddressType,
 ): void {
   if (!fork_signal_test) return;
-  inject_parent_signal(syscall, address);
+  inject_current_signal(syscall, address);
 }
 
 export function inject_resume_fork_signal(
@@ -18,10 +19,18 @@ export function inject_resume_fork_signal(
   address: WasmAddressType,
 ): void {
   if (!fork_resume_signal_test) return;
-  inject_parent_signal(syscall, address);
+  inject_current_signal(syscall, address);
 }
 
-function inject_parent_signal(
+export function inject_child_fork_signal(
+  syscall: Instance["exports"]["syscall"],
+  address: WasmAddressType,
+): void {
+  if (!fork_child_signal_test) return;
+  inject_current_signal(syscall, address);
+}
+
+function inject_current_signal(
   syscall: Instance["exports"]["syscall"],
   address: WasmAddressType,
 ): void {
@@ -34,7 +43,7 @@ function inject_parent_signal(
     Number(pid) <= 0 ||
     Number(pid) > 0x7fffffff
   )
-    throw new Error("fork signal test: invalid parent PID");
+    throw new Error("fork signal test: invalid signal target PID");
   // Linux/Wasm's existing getpid=172, kill=129 and SIGUSR1=10.
   if (syscall(p(129), pid, p(10), zero, zero, zero, zero) !== zero)
     throw new Error("fork signal test: kill failed");
