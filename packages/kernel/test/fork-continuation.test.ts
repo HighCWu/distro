@@ -173,6 +173,44 @@ test("syscall import versions are explicit; an unknown version is not admitted",
 });
 
 for (const address of ["i32", "i64"] as const) {
+  test(`${address}: saved-fork hook runs after suspend and before clone, with scoped metadata`, () => {
+    const f = fixture(address, true),
+      p = f.pointer;
+    const owner: { fork_continuation?: ForkSnapshot } = {};
+    const events: string[] = [];
+    f.exports.__wasm_fork_clone = () => {
+      events.push("clone");
+      return p(1234);
+    };
+    f.controller.syscallCheckpoint(true);
+    resume_fork_parent(owner, f.controller, () => {
+      assert.equal(f.exports.asyncify_get_state(), 0);
+      assert.ok(owner.fork_continuation);
+      events.push("saved");
+    });
+    assert.deepEqual(events, ["saved", "clone"]);
+    assert.equal("fork_continuation" in owner, false);
+    assert.equal(f.controller.syscallCheckpoint(true), 1234);
+  });
+
+  test(`${address}: saved-fork hook failure clears metadata and does not create a child`, () => {
+    const f = fixture(address, true);
+    const owner: { fork_continuation?: ForkSnapshot } = {};
+    const failure = new Error("injected signal setup error");
+    f.exports.__wasm_fork_clone = () => {
+      assert.fail("failed hook reached clone");
+    };
+    f.controller.syscallCheckpoint(true);
+    assert.throws(
+      () =>
+        resume_fork_parent(owner, f.controller, () => {
+          throw failure;
+        }),
+      (error) => error === failure,
+    );
+    assert.equal("fork_continuation" in owner, false);
+  });
+
   test(`${address}: copy failures rewind errno, clear clone metadata and permit a later fork`, () => {
     const f = fixture(address, true),
       p = f.pointer;

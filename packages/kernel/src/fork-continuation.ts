@@ -22,10 +22,12 @@ export interface ForkSnapshot {
 export function resume_fork_parent(
   owner: { fork_continuation?: ForkSnapshot },
   continuation: ForkContinuation,
+  afterSuspend?: () => void,
 ): void {
   owner.fork_continuation = continuation.suspend();
   let result: WasmAddress;
   try {
+    afterSuspend?.();
     result = continuation.clone();
   } finally {
     delete owner.fork_continuation;

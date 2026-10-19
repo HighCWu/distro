@@ -2,6 +2,7 @@
 
 import { listen_endpoint, post_endpoint } from "./endpoint.ts";
 import { platform } from "./platform.ts";
+import { fork_signal_test, inject_saved_fork_signal } from "./fork-signal-test.ts";
 import {
   inject_copy_fault,
   type CopyFault,
@@ -321,7 +322,20 @@ function user_imports({
             call_entry();
             if (fork?.unwinding()) {
               assert(context);
-              resume_fork_parent(context, fork);
+              const continuation = fork;
+              resume_fork_parent(
+                context,
+                continuation,
+                fork_signal_test
+                  ? () =>
+                      continuation.kernelCall(() =>
+                        inject_saved_fork_signal(
+                          get_kernel_instance().exports.syscall,
+                          kernel_address,
+                        ),
+                      )
+                  : undefined,
+              );
             }
           } catch (error) {
             if (error === HALT_USER) continue;

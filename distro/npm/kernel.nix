@@ -5,6 +5,7 @@
   pkgs,
   lib,
   copyFaultTest ? false,
+  forkSignalTest ? false,
 }:
 
 pkgs.stdenvNoCC.mkDerivation (finalAttrs: {
@@ -19,10 +20,15 @@ pkgs.stdenvNoCC.mkDerivation (finalAttrs: {
     node-workspace.pnpm
   ];
 
-  postPatch = lib.optionalString copyFaultTest ''
-    substituteInPlace packages/kernel/src/copy-fault.ts \
-      --replace-fail 'export const copy_fault_test = false;' 'export const copy_fault_test = true;'
-  '';
+  postPatch =
+    lib.optionalString copyFaultTest ''
+      substituteInPlace packages/kernel/src/copy-fault.ts \
+        --replace-fail 'export const copy_fault_test = false;' 'export const copy_fault_test = true;'
+    ''
+    + lib.optionalString forkSignalTest ''
+      substituteInPlace packages/kernel/src/fork-signal-test.ts \
+        --replace-fail 'export const fork_signal_test = false;' 'export const fork_signal_test = true;'
+    '';
 
   buildPhase = ''
     runHook preBuild

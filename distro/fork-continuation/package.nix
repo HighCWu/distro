@@ -40,6 +40,15 @@ let
               init = "${program}/fork-fault.wasm";
               cpus = 2;
             };
+        passthru.checks.signals =
+          (vm-test.override {
+            kernel = kernel.override { forkSignalTest = true; };
+          }).rawInitramfsTest
+            {
+              name = "fork-signals-${platform.wasmArch}";
+              init = "${program}/fork-signal.wasm";
+              cpus = 2;
+            };
       }
       ''
         mkdir -p $out
@@ -59,6 +68,10 @@ let
         wasm-linux-fork-cc -pthread fault.o -o fault-linked.wasm
         wasm-linux-fork-finalize fault-linked.wasm $out/fork-fault.wasm
         chmod 0755 $out/fork-fault.wasm
+        wasm-linux-fork-cc -O2 -pthread -Wall -Wextra -Werror -c ${./signal-runtime.c} -o signal.o
+        wasm-linux-fork-cc -pthread signal.o -o signal-linked.wasm
+        wasm-linux-fork-finalize signal-linked.wasm $out/fork-signal.wasm
+        chmod 0755 $out/fork-signal.wasm
       '';
 in
 program

@@ -97,7 +97,7 @@ test("default fault seam is disabled; a build-only substitution enables a finite
   assert.throws(() => enabled.join_copy_timeout(escaped), /result changed/);
   const recipe = readFileSync(new URL("../npm/kernel.nix", import.meta.url), "utf8");
   assert.match(recipe, /copyFaultTest \? false/);
-  assert.match(recipe, /postPatch = lib.optionalString copyFaultTest/);
+  assert.match(recipe, /postPatch =\s+lib.optionalString copyFaultTest/);
   const workload = readFileSync(new URL("./package.nix", import.meta.url), "utf8");
   assert.match(workload, /checks.faults/);
   assert.match(workload, /kernel = kernel.override \{ copyFaultTest = true; \}/);
