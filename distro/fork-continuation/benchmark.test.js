@@ -141,6 +141,24 @@ test("only three complete fresh boots per case certify grouped medians and proce
     assert.throws(() => validateBoot({ ...boots[0], ...patch }, m, m.cases[0]));
 });
 
+test("fresh measurement runs in the distro cache scope without the ordinary heavy matrix", () => {
+  const workflow = readFileSync(
+    new URL("../../.github/workflows/fork-benchmark.yml", import.meta.url),
+    "utf8",
+  );
+  const ci = readFileSync(new URL("../../.github/workflows/ci.yml", import.meta.url), "utf8");
+  assert.match(workflow, /nix-targeted-v1-\$\{\{ runner.os \}\}-wasm\$\{\{ matrix.bits \}\}-/);
+  assert.doesNotMatch(workflow, /repository:|sources\/distro/);
+  assert.match(workflow, /test "\$\(git rev-parse HEAD\)" = "\$GITHUB_SHA"/);
+  assert.match(workflow, /cancel-in-progress: false/);
+  assert.match(workflow, /node result-fork-benchmark\/benchmark-run.mjs/);
+  assert.match(ci, /uses: \.\/.github\/workflows\/fork-benchmark.yml/);
+  assert.match(ci, /!inputs\['python-forkless-host'\] && !inputs\['fork-benchmark'\]/);
+  assert.match(ci, /needs: benchmark-mode/);
+  assert.match(ci, /test -z "\$REQUESTED_HEAVY_CHECK"/);
+  assert.match(ci, /test "\$PYTHON_FORKLESS_HOST" != true/);
+});
+
 test("assets, admission controls and fresh-process driver remain explicit", () => {
   const recipe = readFileSync(new URL("./benchmark.nix", import.meta.url), "utf8");
   assert.match(recipe, /flagsFor sdk-fork-continuation.sysroot/);

@@ -1,0 +1,82 @@
+# SPDX-License-Identifier: MIT
+name: Fresh fork benchmark
+
+on:
+  workflow_call:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: fork-benchmark-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  benchmark:
+    name: Fresh fork wasm${{ matrix.bits }}
+    runs-on: ubuntu-24.04
+    timeout-minutes: 180
+    strategy:
+      fail-fast: false
+      max-parallel: 1
+      matrix:
+        bits: [32, 64]
+    steps:
+      - uses: actions/checkout@v6
+      - name: Verify the exact dispatched source
+        run: |
+          test "$(git rev-parse HEAD)" = "$GITHUB_SHA"
+          git diff --quiet HEAD --
+      - uses: actions/setup-node@v6
+        with:
+          node-version: '24'
+          package-manager-cache: false
+      - uses: nixbuild/nix-quick-install-action@v35
+      - uses: nix-community/cache-nix-action@v7
+        with:
+          primary-key: fork-benchmark-${{ matrix.bits }}-${{ runner.os }}-${{ github.sha }}
+          restore-prefixes-first-match: |
+            nix-targeted-v1-${{ runner.os }}-wasm${{ matrix.bits }}-
+            nix-ci-${{ runner.os }}-
+          save: false
+      - uses: cachix/cachix-action@v17
+        with:
+          name: linuxwasm
+      - name: Validate contracts and formatting
+        run: |
+          node --test distro/fork-continuation/benchmark.test.js
+          nix build --no-link --print-build-logs .#checks.x86_64-linux.formatting
+      - name: Build immutable inputs, not cached benchmark results
+        env:
+          BITS: ${{ matrix.bits }}
+        run: |
+          suffix=""
+          if [[ "$BITS" == 64 ]]; then suffix="-wasm64"; fi
+          nix build --print-build-logs --out-link result-fork-benchmark \
+            ".#legacyPackages.x86_64-linux.fork-continuation$suffix.benchmarkAssets"
+      - name: Measure three fresh Node processes and Linux boots per case
+        env:
+          BITS: ${{ matrix.bits }}
+        run: |
+          mkdir -p results provenance
+          {
+            printf 'distro_revision=%s\npointer_bits=%s\n' "$GITHUB_SHA" "$BITS"
+            printf 'run=%s/%s/actions/runs/%s\nattempt=%s\n' \
+              "$GITHUB_SERVER_URL" "$GITHUB_REPOSITORY" "$GITHUB_RUN_ID" "$GITHUB_RUN_ATTEMPT"
+            uname -a
+            lscpu
+            readlink -f result-fork-benchmark
+            sha256sum result-fork-benchmark/manifest.json result-fork-benchmark/benchmark.c
+            git show HEAD:distro/linux/package.nix
+            git show HEAD:distro/llvm-toolchain/unwrapped.nix
+          } > "provenance/wasm$BITS.txt"
+          node result-fork-benchmark/benchmark-run.mjs result-fork-benchmark "results/wasm$BITS"
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: fork-benchmark-wasm${{ matrix.bits }}-${{ github.sha }}
+          path: |
+            results/
+            provenance/
+          if-no-files-found: warn
+          retention-days: 7

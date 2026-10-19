@@ -18,11 +18,34 @@ on:
         required: false
         type: boolean
         default: false
+      fork-benchmark:
+        description: Run fresh single-thread fork measurements using this repository's build cache
+        required: false
+        type: boolean
+        default: false
 
 jobs:
+  benchmark-mode:
+    name: Validate benchmark dispatch mode
+    if: ${{ github.event_name == 'workflow_dispatch' && inputs['fork-benchmark'] }}
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: read
+    steps:
+      - name: Reject conflicting check modes
+        env:
+          REQUESTED_HEAVY_CHECK: ${{ inputs['heavy-check'] }}
+          PYTHON_FORKLESS_HOST: ${{ inputs['python-forkless-host'] }}
+        run: |
+          test -z "$REQUESTED_HEAVY_CHECK"
+          test "$PYTHON_FORKLESS_HOST" != true
+  fork-benchmark:
+    needs: benchmark-mode
+    if: ${{ github.event_name == 'workflow_dispatch' && inputs['fork-benchmark'] }}
+    uses: ./.github/workflows/fork-benchmark.yml
   python-forkless-host:
     name: Native Python forkless replay
-    if: ${{ github.event_name == 'workflow_dispatch' && inputs['python-forkless-host'] }}
+    if: ${{ github.event_name == 'workflow_dispatch' && inputs['python-forkless-host'] && !inputs['fork-benchmark'] }}
     runs-on: ubuntu-24.04
     timeout-minutes: 15
     permissions:
@@ -41,7 +64,7 @@ jobs:
 
   plan:
     name: Plan checks
-    if: ${{ !inputs['python-forkless-host'] }}
+    if: ${{ !inputs['python-forkless-host'] && !inputs['fork-benchmark'] }}
     runs-on: ubuntu-24.04
     permissions:
       contents: read
