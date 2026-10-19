@@ -173,6 +173,75 @@ test("syscall import versions are explicit; an unknown version is not admitted",
 });
 
 for (const address of ["i32", "i64"] as const) {
+  test(`${address}: post-clone hook sees cleared metadata and stopped unwind before parent rewind`, () => {
+    const f = fixture(address, true),
+      p = f.pointer;
+    const owner: { fork_continuation?: ForkSnapshot } = {};
+    const events: string[] = [];
+    f.exports.__wasm_fork_clone = () => {
+      assert.ok(owner.fork_continuation);
+      events.push("clone");
+      return p(1234);
+    };
+    f.controller.syscallCheckpoint(true);
+    resume_fork_parent(
+      owner,
+      f.controller,
+      () => events.push("saved"),
+      () => {
+        assert.equal(f.exports.asyncify_get_state(), 0);
+        assert.equal("fork_continuation" in owner, false);
+        events.push("before-resume");
+      },
+    );
+    assert.deepEqual(events, ["saved", "clone", "before-resume"]);
+    assert.equal(f.exports.asyncify_get_state(), 2);
+    assert.equal(f.controller.syscallCheckpoint(true), 1234);
+  });
+
+  test(`${address}: clone failure skips post-clone hook and preserves errno and later reuse`, () => {
+    const f = fixture(address, true),
+      p = f.pointer;
+    const owner: { fork_continuation?: ForkSnapshot } = {};
+    for (const value of [-11, -12, 1234]) {
+      f.controller.syscallCheckpoint(true);
+      f.exports.__wasm_fork_clone = () => p(value);
+      let injected = false;
+      resume_fork_parent(owner, f.controller, undefined, () => {
+        injected = true;
+      });
+      assert.equal(injected, value > 0);
+      assert.equal("fork_continuation" in owner, false);
+      assert.equal(f.controller.syscallCheckpoint(true), value);
+    }
+  });
+
+  test(`${address}: clone trap or post-clone hook trap cannot report successful parent rewind`, () => {
+    for (const cloneTraps of [false, true]) {
+      const f = fixture(address, true),
+        p = f.pointer;
+      const owner: { fork_continuation?: ForkSnapshot } = {};
+      const failure = new Error("post-clone signal test failed");
+      let called = false;
+      f.exports.__wasm_fork_clone = () => {
+        if (cloneTraps) throw failure;
+        return p(1234);
+      };
+      f.controller.syscallCheckpoint(true);
+      assert.throws(
+        () =>
+          resume_fork_parent(owner, f.controller, undefined, () => {
+            called = true;
+            throw failure;
+          }),
+        (error) => error === failure,
+      );
+      assert.equal(called, !cloneTraps);
+      assert.equal("fork_continuation" in owner, false);
+      assert.equal(f.exports.asyncify_get_state(), 0);
+    }
+  });
+
   test(`${address}: saved-fork hook runs after suspend and before clone, with scoped metadata`, () => {
     const f = fixture(address, true),
       p = f.pointer;

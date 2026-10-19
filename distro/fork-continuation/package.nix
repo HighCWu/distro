@@ -49,6 +49,15 @@ let
               init = "${program}/fork-signal.wasm";
               cpus = 2;
             };
+        passthru.checks.resume-signals =
+          (vm-test.override {
+            kernel = kernel.override { forkResumeSignalTest = true; };
+          }).rawInitramfsTest
+            {
+              name = "fork-resume-signals-${platform.wasmArch}";
+              init = "${program}/fork-resume-signal.wasm";
+              cpus = 2;
+            };
       }
       ''
         mkdir -p $out
@@ -72,6 +81,10 @@ let
         wasm-linux-fork-cc -pthread signal.o -o signal-linked.wasm
         wasm-linux-fork-finalize signal-linked.wasm $out/fork-signal.wasm
         chmod 0755 $out/fork-signal.wasm
+        wasm-linux-fork-cc -O2 -pthread -Wall -Wextra -Werror -DFORK_SIGNAL_AFTER_CLONE -c ${./signal-runtime.c} -o resume-signal.o
+        wasm-linux-fork-cc -pthread resume-signal.o -o resume-signal-linked.wasm
+        wasm-linux-fork-finalize resume-signal-linked.wasm $out/fork-resume-signal.wasm
+        chmod 0755 $out/fork-resume-signal.wasm
       '';
 in
 program

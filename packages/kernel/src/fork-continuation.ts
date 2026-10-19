@@ -23,6 +23,7 @@ export function resume_fork_parent(
   owner: { fork_continuation?: ForkSnapshot },
   continuation: ForkContinuation,
   afterSuspend?: () => void,
+  beforeParentResume?: () => void,
 ): void {
   owner.fork_continuation = continuation.suspend();
   let result: WasmAddress;
@@ -32,6 +33,9 @@ export function resume_fork_parent(
   } finally {
     delete owner.fork_continuation;
   }
+  // A private test hook after successful clone, with no published snapshot
+  // metadata left in the parent and before Asyncify starts rewinding.
+  if (result > 0) beforeParentResume?.();
   continuation.resumeParent(result);
 }
 

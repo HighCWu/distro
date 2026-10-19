@@ -3,12 +3,28 @@
 import type { Instance, WasmAddressType } from "./wasm.ts";
 
 export const fork_signal_test = false;
+export const fork_resume_signal_test = false;
 
 export function inject_saved_fork_signal(
   syscall: Instance["exports"]["syscall"],
   address: WasmAddressType,
 ): void {
   if (!fork_signal_test) return;
+  inject_parent_signal(syscall, address);
+}
+
+export function inject_resume_fork_signal(
+  syscall: Instance["exports"]["syscall"],
+  address: WasmAddressType,
+): void {
+  if (!fork_resume_signal_test) return;
+  inject_parent_signal(syscall, address);
+}
+
+function inject_parent_signal(
+  syscall: Instance["exports"]["syscall"],
+  address: WasmAddressType,
+): void {
   const p = (value: number) => (address === "i64" ? BigInt(value) : value);
   const zero = p(0);
   const pid = syscall(p(172), zero, zero, zero, zero, zero, zero);
