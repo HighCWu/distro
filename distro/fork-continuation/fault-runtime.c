@@ -64,6 +64,18 @@ int main(void)
     no_children();
   }
   puts("fork-fault: initialization and allocation errors, atfork, mask and no-child pass");
+  errno = 0;
+  pid_t timed = fork();
+  if (!timed) _exit(119);
+  require(timed == -1 && errno == EAGAIN, "publication timeout errno");
+  failures++;
+  require(getpid() == original && prepares == failures && parents == failures && !children,
+    "timeout identity or atfork");
+  require(local == 21 && global_value == 31 && tls_value == 41 && *heap == 51,
+    "timeout changed memory");
+  check_mask();
+  no_children();
+  puts("fork-fault: publication timeout, late child rejection and parent recovery pass");
 #endif
   for (int i = 0; i < 8; i++) {
     pid_t pid = fork();

@@ -18,6 +18,7 @@ export const forkStages = [
 
 export const forkFaultStages = [
   "fork-fault: initialization and allocation errors, atfork, mask and no-child pass",
+  "fork-fault: publication timeout, late child rejection and parent recovery pass",
   "fork-fault: eight recovery forks, identity, TLS, isolation and single reap pass",
   "::vm-test::pass",
 ];

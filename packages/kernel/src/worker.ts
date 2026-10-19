@@ -2,7 +2,14 @@
 
 import { listen_endpoint, post_endpoint } from "./endpoint.ts";
 import { platform } from "./platform.ts";
-import { inject_copy_fault, type CopyFault } from "./copy-fault.ts";
+import {
+  inject_copy_fault,
+  type CopyFault,
+  copy_status_words,
+  pause_copy_publication,
+  acknowledge_copy_timeout,
+  join_copy_timeout,
+} from "./copy-fault.ts";
 import { user_mmap } from "./user-mmap.ts";
 import { FileMmapCopy } from "./file-mmap-copy.ts";
 import {
@@ -571,7 +578,9 @@ function start({
       memory,
       spawn_worker(fn, arg, name, user, copy_user_memory) {
         const direct = new MessageChannel();
-        const user_copy_status = copy_user_memory ? new Int32Array(new SharedArrayBuffer(4)) : null;
+        const user_copy_status = copy_user_memory
+          ? new Int32Array(new SharedArrayBuffer(4 * copy_status_words()))
+          : null;
         postMessage(
           {
             type: "spawn_worker",
@@ -593,6 +602,7 @@ function start({
         } satisfies InitMessage);
         if (!user_copy_status) return 0;
         const result = wait_user_copy(user_copy_status);
+        join_copy_timeout(user_copy_status);
         return result === USER_COPY_COMPLETE ? 0 : result;
       },
       boot_console_write(message) {
@@ -626,7 +636,9 @@ function start({
 
   const instance = new WebAssembly.Instance(vmlinux, imports) as Instance;
   user.prepare();
+  if (user_copy_status) pause_copy_publication(copy_fault, user_copy_status);
   if (user_copy_status && !settle_user_copy(user_copy_status, USER_COPY_COMPLETE)) {
+    acknowledge_copy_timeout(copy_fault, user_copy_status);
     postMessage({ type: "worker_exit" });
     platform.quit();
     return;

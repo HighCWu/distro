@@ -7,6 +7,7 @@ import { join } from "node:path";
 import { pathToFileURL, fileURLToPath } from "node:url";
 import { spawnSync } from "node:child_process";
 import test from "node:test";
+import { Worker } from "node:worker_threads";
 
 test("default fault seam is disabled; a build-only substitution enables a finite per-machine plan", async (t) => {
   const source = readFileSync(
@@ -24,7 +25,7 @@ test("default fault seam is disabled; a build-only substitution enables a finite
   const enabled = await import(pathToFileURL(path).href);
   const first = enabled.create_copy_fault_plan(),
     second = enabled.create_copy_fault_plan();
-  for (const expected of ["initialize", "allocate", null, null]) {
+  for (const expected of ["initialize", "allocate", "timeout", null, null]) {
     assert.equal(first(), expected);
     assert.equal(second(), expected);
   }
@@ -34,6 +35,66 @@ test("default fault seam is disabled; a build-only substitution enables a finite
   );
   assert.throws(() => enabled.inject_copy_fault("allocate", "allocate"), /injected copy allocate/);
   assert.doesNotThrow(() => enabled.inject_copy_fault("initialize", "allocate"));
+  assert.equal(enabled.copy_status_words(), 3);
+  const status = new Int32Array(new SharedArrayBuffer(12));
+  enabled.mark_copy_timeout(status, "timeout");
+  const copyModule = new URL("../../packages/kernel/src/user-copy.ts", import.meta.url).href;
+  const worker = new Worker(
+    `
+    const { parentPort } = require('node:worker_threads');
+    parentPort.once('message', async (status) => {
+      const enabled = await import(${JSON.stringify(pathToFileURL(path).href)});
+      const { settle_user_copy, USER_COPY_COMPLETE } = await import(${JSON.stringify(copyModule)});
+      parentPort.postMessage('ready');
+      enabled.pause_copy_publication('timeout', status);
+      const published = settle_user_copy(status, USER_COPY_COMPLETE);
+      if (!published) enabled.acknowledge_copy_timeout('timeout', status);
+      parentPort.postMessage({ published, entered: published, result: Atomics.load(status, 0) });
+      parentPort.close();
+    });
+  `,
+    { eval: true },
+  );
+  t.after(() => worker.terminate());
+  const exited = new Promise((resolve) => worker.once("exit", resolve));
+  const message = () =>
+    new Promise((resolve, reject) => {
+      const fail = (error) => {
+        worker.off("message", receive);
+        reject(error);
+      };
+      const receive = (value) => {
+        worker.off("error", fail);
+        resolve(value);
+      };
+      worker.once("message", receive);
+      worker.once("error", fail);
+    });
+  const ready = message();
+  worker.postMessage(status);
+  assert.equal(await ready, "ready");
+  Atomics.wait(status, 1, 0, 2000);
+  assert.equal(Atomics.load(status, 1), 1, "child reached publication gate");
+  const outcome = message();
+  const { wait_user_copy } = await import(copyModule);
+  assert.equal(wait_user_copy(status, 0), -11);
+  enabled.join_copy_timeout(status);
+  assert.deepEqual(await outcome, { published: false, entered: false, result: -11 });
+  assert.equal(Atomics.load(status, 1), 2);
+  assert.equal(await exited, 0);
+  const noCheckpoint = new Int32Array(new SharedArrayBuffer(12));
+  Atomics.store(noCheckpoint, 0, -11);
+  assert.throws(
+    () => enabled.acknowledge_copy_timeout("timeout", noCheckpoint),
+    /missing publication/,
+  );
+  const escaped = new Int32Array(new SharedArrayBuffer(12));
+  enabled.mark_copy_timeout(escaped, "timeout");
+  Atomics.store(escaped, 0, 1);
+  Atomics.store(escaped, 1, 2);
+  assert.throws(() => enabled.pause_copy_publication("timeout", escaped), /expected parent EAGAIN/);
+  Atomics.store(escaped, 1, 2);
+  assert.throws(() => enabled.join_copy_timeout(escaped), /result changed/);
   const recipe = readFileSync(new URL("../npm/kernel.nix", import.meta.url), "utf8");
   assert.match(recipe, /copyFaultTest \? false/);
   assert.match(recipe, /postPatch = lib.optionalString copyFaultTest/);
