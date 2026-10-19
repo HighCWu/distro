@@ -23,6 +23,14 @@ on:
         required: false
         type: boolean
         default: false
+      fork-benchmark-width:
+        description: Pointer width for a fresh benchmark (only with fork-benchmark)
+        type: choice
+        options:
+          - both
+          - wasm32
+          - wasm64
+        default: both
 
 jobs:
   benchmark-mode:
@@ -43,6 +51,8 @@ jobs:
     needs: benchmark-mode
     if: ${{ github.event_name == 'workflow_dispatch' && inputs['fork-benchmark'] }}
     uses: ./.github/workflows/fork-benchmark.yml
+    with:
+      widths: ${{ inputs['fork-benchmark-width'] == 'wasm32' && '[32]' || inputs['fork-benchmark-width'] == 'wasm64' && '[64]' || '[32,64]' }}
   python-forkless-host:
     name: Native Python forkless replay
     if: ${{ github.event_name == 'workflow_dispatch' && inputs['python-forkless-host'] && !inputs['fork-benchmark'] }}

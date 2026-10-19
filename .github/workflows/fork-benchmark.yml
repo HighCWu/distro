@@ -3,6 +3,11 @@ name: Fresh fork benchmark
 
 on:
   workflow_call:
+    inputs:
+      widths:
+        description: JSON pointer-width matrix selected by the dispatch workflow
+        type: string
+        default: '[32,64]'
 
 permissions:
   contents: read
@@ -20,11 +25,14 @@ jobs:
       fail-fast: false
       max-parallel: 1
       matrix:
-        bits: [32, 64]
+        bits: ${{ fromJSON(inputs.widths) }}
     steps:
       - uses: actions/checkout@v6
       - name: Verify the exact dispatched source
+        env:
+          BITS: ${{ matrix.bits }}
         run: |
+          case "$BITS" in 32|64) ;; *) exit 1 ;; esac
           test "$(git rev-parse HEAD)" = "$GITHUB_SHA"
           git diff --quiet HEAD --
       - uses: actions/setup-node@v6

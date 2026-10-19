@@ -155,6 +155,8 @@ test("fresh measurement runs in the distro cache scope without the ordinary heav
   assert.match(ci, /uses: \.\/.github\/workflows\/fork-benchmark.yml/);
   assert.match(ci, /!inputs\['python-forkless-host'\] && !inputs\['fork-benchmark'\]/);
   assert.match(ci, /needs: benchmark-mode/);
+  assert.match(ci, /fork-benchmark-width:/);
+  assert.match(workflow, /bits: \$\{\{ fromJSON\(inputs.widths\) \}\}/);
   assert.match(ci, /test -z "\$REQUESTED_HEAVY_CHECK"/);
   assert.match(ci, /test "\$PYTHON_FORKLESS_HOST" != true/);
 });
