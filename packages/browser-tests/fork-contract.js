@@ -35,8 +35,19 @@ export const forkSignalStages = [
   "::vm-test::pass",
 ];
 
+export const forkResumeSignalStages = [
+  "fork-signal: post-clone pre-rewind parent pending and child isolation pass",
+  "fork-signal: two post-clone forks, stack, TLS and single delivery pass",
+  "::vm-test::pass",
+];
+
 export function assertForkOutput(output, mode = "normal") {
-  const stages = { normal: forkStages, faults: forkFaultStages, signals: forkSignalStages };
+  const stages = {
+    normal: forkStages,
+    faults: forkFaultStages,
+    signals: forkSignalStages,
+    "resume-signals": forkResumeSignalStages,
+  };
   assert.ok(Object.hasOwn(stages, mode), "unknown fork test mode");
   assert.equal(typeof output, "string", "missing runtime console output");
   assert.ok(!output.includes("::vm-test::fail"), "user program reported failure");
