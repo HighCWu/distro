@@ -38,6 +38,11 @@ test("default fault seam is disabled; a build-only substitution enables a finite
   assert.equal(enabled.copy_status_words(), 3);
   const status = new Int32Array(new SharedArrayBuffer(12));
   enabled.mark_copy_timeout(status, "timeout");
+  assert.throws(() => enabled.require_copy_wait_progress(status, 0), /scheduler did not run/);
+  assert.doesNotThrow(() => enabled.require_copy_wait_progress(status, 1));
+  assert.doesNotThrow(() =>
+    enabled.require_copy_wait_progress(new Int32Array(new SharedArrayBuffer(12)), 0),
+  );
   const copyModule = new URL("../../packages/kernel/src/user-copy.ts", import.meta.url).href;
   const worker = new Worker(
     `

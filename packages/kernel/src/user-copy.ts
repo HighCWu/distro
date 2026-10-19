@@ -25,7 +25,11 @@ export function reject_user_copy(status: UserCopyStatus | null): boolean {
 }
 
 /** Wait for a child worker to finish its private-memory snapshot. */
-export function wait_user_copy(status: UserCopyStatus, timeout_ms = 30_000): number {
+export function wait_user_copy(
+  status: UserCopyStatus,
+  timeout_ms = 30_000,
+  cooperate?: () => void,
+): number {
   // A system clock adjustment must not extend or shorten a pending snapshot.
   const deadline = performance.now() + timeout_ms;
 
@@ -34,9 +38,18 @@ export function wait_user_copy(status: UserCopyStatus, timeout_ms = 30_000): num
     if (result !== 0) return result;
 
     const remaining = deadline - performance.now();
-    if (remaining <= 0 || Atomics.wait(status, 0, 0, remaining) === "timed-out") {
+    if (remaining <= 0) {
       settle_user_copy(status, USER_COPY_TRY_AGAIN);
       return Atomics.load(status, 0);
     }
+    // Older kernels retain the original synchronous wait. New kernels can
+    // schedule the sleeping parent between slices without resetting the
+    // absolute deadline or treating a slice timeout as the request timeout.
+    const waited = Atomics.wait(status, 0, 0, cooperate ? Math.min(remaining, 10) : remaining);
+    if (!cooperate && waited === "timed-out") {
+      settle_user_copy(status, USER_COPY_TRY_AGAIN);
+      return Atomics.load(status, 0);
+    }
+    if (cooperate && Atomics.load(status, 0) === 0 && performance.now() < deadline) cooperate();
   }
 }

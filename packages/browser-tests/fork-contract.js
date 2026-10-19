@@ -51,6 +51,7 @@ export function assertForkOutput(output, mode = "normal") {
   assert.ok(Object.hasOwn(stages, mode), "unknown fork test mode");
   assert.equal(typeof output, "string", "missing runtime console output");
   assert.ok(!output.includes("::vm-test::fail"), "user program reported failure");
+  assert.ok(!/rcu:.*detected.*stall/i.test(output), "RCU CPU stall during fork check");
   const lines = new Set(output.split(/\r?\n/));
   for (const stage of stages[mode]) assert.ok(lines.has(stage), `missing stage: ${stage}`);
 }

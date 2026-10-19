@@ -8,6 +8,7 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <sys/wait.h>
+#include <time.h>
 #include <unistd.h>
 
 static int prepares, parents, children, global_value = 31;
@@ -64,10 +65,18 @@ int main(void)
     no_children();
   }
   puts("fork-fault: initialization and allocation errors, atfork, mask and no-child pass");
+  struct timespec timeout_start, timeout_end;
+  require(!clock_gettime(CLOCK_MONOTONIC, &timeout_start), "timeout start clock");
   errno = 0;
   pid_t timed = fork();
   if (!timed) _exit(119);
   require(timed == -1 && errno == EAGAIN, "publication timeout errno");
+  require(!clock_gettime(CLOCK_MONOTONIC, &timeout_end), "timeout end clock");
+  long long elapsed_ns = (long long)(timeout_end.tv_sec - timeout_start.tv_sec) * 1000000000LL +
+    timeout_end.tv_nsec - timeout_start.tv_nsec;
+  // Tolerate clock resolution, but never let a short wait replace the real
+  // 30-second snapshot deadline when adding cooperative scheduler progress.
+  require(elapsed_ns >= 29000000000LL, "publication timeout returned too early");
   failures++;
   require(getpid() == original && prepares == failures && parents == failures && !children,
     "timeout identity or atfork");

@@ -11,6 +11,25 @@ import {
   forkIterations,
 } from "./fork-contract.js";
 
+test("even a complete fork corpus cannot hide an RCU CPU stall warning", () => {
+  for (const [mode, stages] of [
+    ["normal", forkStages],
+    ["faults", forkFaultStages],
+    ["signals", forkSignalStages],
+    ["resume-signals", forkResumeSignalStages],
+  ]) {
+    for (const warning of [
+      "rcu: INFO: rcu_sched detected stalls on CPUs/tasks:",
+      "rcu: INFO: rcu_preempt self-detected stall on CPU",
+    ]) {
+      assert.throws(
+        () => assertForkOutput(`${stages.join("\n")}\n${warning}`, mode),
+        /RCU CPU stall/,
+      );
+    }
+  }
+});
+
 test("stability profile requires four full iterations; default stays two and unknown inputs fail", () => {
   assert.equal(forkIterations(undefined), 2);
   assert.equal(forkIterations("1"), 4);

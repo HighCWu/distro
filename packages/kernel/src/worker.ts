@@ -15,6 +15,8 @@ import {
   pause_copy_publication,
   acknowledge_copy_timeout,
   join_copy_timeout,
+  copy_fault_test,
+  require_copy_wait_progress,
 } from "./copy-fault.ts";
 import { user_mmap } from "./user-mmap.ts";
 import { FileMmapCopy } from "./file-mmap-copy.ts";
@@ -629,7 +631,17 @@ function start({
           user_copy_status,
         } satisfies InitMessage);
         if (!user_copy_status) return 0;
-        const result = wait_user_copy(user_copy_status);
+        const schedule = instance.exports.copy_worker_wait;
+        let scheduling_points = 0;
+        const cooperate =
+          schedule && copy_fault_test
+            ? () => {
+                schedule();
+                scheduling_points++;
+              }
+            : schedule;
+        const result = wait_user_copy(user_copy_status, 30_000, cooperate);
+        require_copy_wait_progress(user_copy_status, scheduling_points);
         join_copy_timeout(user_copy_status);
         return result === USER_COPY_COMPLETE ? 0 : result;
       },

@@ -20,6 +20,8 @@ export interface Instance extends WebAssembly.Instance {
     get_thread_area(): WasmAddress;
     copy_siginfo(to: WasmAddress): number;
     clear_siginfo(): void;
+    /** Private kernel scheduling point during copy_thread; absent on older kernels. */
+    copy_worker_wait?(): void;
   };
 }
 

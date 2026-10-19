@@ -15,6 +15,119 @@ import {
 
 const copy_status = () => new Int32Array(new SharedArrayBuffer(Int32Array.BYTES_PER_ELEMENT));
 
+test("cooperative copy wait yields between slices without extending its original deadline", (context) => {
+  let now = 0,
+    yields = 0;
+  const waits: number[] = [];
+  context.mock.method(performance, "now", () => now);
+  context.mock.method(
+    Atomics,
+    "wait",
+    (_array: unknown, _index: number, _value: number, timeout: number) => {
+      waits.push(timeout);
+      now += timeout;
+      return "timed-out" as const;
+    },
+  );
+  const status = copy_status();
+  assert.equal(
+    wait_user_copy(status, 25, () => {
+      yields++;
+      now += 2;
+    }),
+    USER_COPY_TRY_AGAIN,
+  );
+  assert.deepEqual(waits, [10, 10, 1]);
+  assert.equal(yields, 2);
+  assert.equal(now, 25);
+  assert.equal(settle_user_copy(status, USER_COPY_COMPLETE), false);
+});
+
+test("cooperative copy observes completion or failure after yielding, without another wait", (context) => {
+  for (const result of [USER_COPY_COMPLETE, USER_COPY_NO_MEMORY, USER_COPY_TRY_AGAIN]) {
+    const status = copy_status();
+    let now = 0,
+      waits = 0,
+      yields = 0;
+    context.mock.method(performance, "now", () => now);
+    context.mock.method(Atomics, "wait", () => {
+      waits++;
+      now++;
+      return "ok" as const;
+    });
+    assert.equal(
+      wait_user_copy(status, 30_000, () => {
+        yields++;
+        settle_user_copy(status, result);
+      }),
+      result,
+    );
+    assert.equal(waits, 1);
+    assert.equal(yields, 1);
+  }
+});
+
+test("time spent in the kernel scheduler counts against the same copy deadline", (context) => {
+  let now = 0,
+    waits = 0,
+    yields = 0;
+  context.mock.method(performance, "now", () => now);
+  context.mock.method(Atomics, "wait", () => {
+    waits++;
+    now += 10;
+    return "timed-out" as const;
+  });
+  const status = copy_status();
+  assert.equal(
+    wait_user_copy(status, 25, () => {
+      yields++;
+      now += 30;
+    }),
+    USER_COPY_TRY_AGAIN,
+  );
+  assert.equal(waits, 1);
+  assert.equal(yields, 1);
+  assert.equal(settle_user_copy(status, USER_COPY_COMPLETE), false);
+});
+
+test("cooperative copy skips scheduling for terminal results, expired deadlines and final publication", (context) => {
+  for (const result of [USER_COPY_COMPLETE, USER_COPY_NO_MEMORY, USER_COPY_TRY_AGAIN]) {
+    const status = copy_status();
+    settle_user_copy(status, result);
+    assert.equal(
+      wait_user_copy(status, 0, () => assert.fail("terminal result yielded")),
+      result,
+    );
+  }
+  assert.equal(
+    wait_user_copy(copy_status(), 0, () => assert.fail("expired request yielded")),
+    USER_COPY_TRY_AGAIN,
+  );
+  const status = copy_status();
+  context.mock.method(Atomics, "wait", () => {
+    settle_user_copy(status, USER_COPY_COMPLETE);
+    return "ok" as const;
+  });
+  assert.equal(
+    wait_user_copy(status, 30_000, () => assert.fail("published copy yielded")),
+    USER_COPY_COMPLETE,
+  );
+});
+
+test("a cooperative scheduling trap is not silently converted to a successful copy or errno", (context) => {
+  context.mock.method(Atomics, "wait", () => "ok" as const);
+  const status = copy_status();
+  const failure = new Error("scheduler trap");
+  assert.throws(
+    () =>
+      wait_user_copy(status, 30_000, () => {
+        throw failure;
+      }),
+    (error) => error === failure,
+  );
+  assert.equal(Atomics.load(status, 0), 0);
+});
+
 test("late initialization errors preserve timeout and allocation failures", () => {
   for (const errno of [USER_COPY_TRY_AGAIN, USER_COPY_NO_MEMORY]) {
     const status = copy_status();

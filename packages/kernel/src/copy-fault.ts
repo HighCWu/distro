@@ -17,6 +17,16 @@ export function copy_status_words(): number {
   return copy_fault_test ? 3 : 1;
 }
 
+// A real timeout check must exercise the new kernel's scheduling point,
+// rather than accidentally accepting the old-kernel synchronous fallback.
+export function require_copy_wait_progress(
+  status: Int32Array<SharedArrayBuffer>,
+  count: number,
+): void {
+  if (copy_fault_test && Atomics.load(status, 2) === 1 && count <= 0)
+    throw new Error("copy timeout test: kernel scheduler did not run during copy wait");
+}
+
 export function mark_copy_timeout(
   status: Int32Array<SharedArrayBuffer>,
   fault: CopyFault | null,
