@@ -29,11 +29,17 @@ export const forkFaultStages = [
   "::vm-test::pass",
 ];
 
+export const forkSignalStages = [
+  "fork-signal: saved-fork parent pending and child isolation pass",
+  "fork-signal: two forks, inherited mask, handler and single delivery pass",
+  "::vm-test::pass",
+];
+
 export function assertForkOutput(output, mode = "normal") {
-  assert.ok(mode === "normal" || mode === "faults", "unknown fork test mode");
+  const stages = { normal: forkStages, faults: forkFaultStages, signals: forkSignalStages };
+  assert.ok(Object.hasOwn(stages, mode), "unknown fork test mode");
   assert.equal(typeof output, "string", "missing runtime console output");
   assert.ok(!output.includes("::vm-test::fail"), "user program reported failure");
   const lines = new Set(output.split(/\r?\n/));
-  for (const stage of mode === "faults" ? forkFaultStages : forkStages)
-    assert.ok(lines.has(stage), `missing stage: ${stage}`);
+  for (const stage of stages[mode]) assert.ok(lines.has(stage), `missing stage: ${stage}`);
 }

@@ -2,7 +2,13 @@
 import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import test from "node:test";
-import { assertForkOutput, forkStages, forkFaultStages, forkIterations } from "./fork-contract.js";
+import {
+  assertForkOutput,
+  forkStages,
+  forkFaultStages,
+  forkSignalStages,
+  forkIterations,
+} from "./fork-contract.js";
 
 test("stability profile requires four full iterations; default stays two and unknown inputs fail", () => {
   assert.equal(forkIterations(undefined), 2);
@@ -58,22 +64,104 @@ test("fault gate requires both failure and recovery stages, not the normal corpu
   assert.throws(() => assertForkOutput("::vm-test::pass", "invalid"), /unknown fork/);
 });
 
-test("browser runner repeats both full profiles and packages an isolated fault loader", () => {
+test("signal gate requires the saved-fork stages and rejects other profiles and late failure", () => {
+  const source = readFileSync(
+    new URL("../../distro/fork-continuation/signal-runtime.c", import.meta.url),
+    "utf8",
+  );
+  for (const stage of forkSignalStages) assert.ok(source.includes(`"${stage}"`), stage);
+  assert.doesNotThrow(() => assertForkOutput(forkSignalStages.join("\n"), "signals"));
+  for (const missing of forkSignalStages)
+    assert.throws(
+      () =>
+        assertForkOutput(forkSignalStages.filter((line) => line !== missing).join("\n"), "signals"),
+      /missing stage/,
+    );
+  for (const stages of [forkStages, forkFaultStages])
+    assert.throws(() => assertForkOutput(stages.join("\n"), "signals"), /missing stage/);
+  for (const mode of ["normal", "faults"])
+    assert.throws(() => assertForkOutput(forkSignalStages.join("\n"), mode), /missing stage/);
+  assert.throws(
+    () => assertForkOutput(`${forkSignalStages.join("\n")}\n::vm-test::fail: late`, "signals"),
+    /reported failure/,
+  );
+  assert.throws(
+    () => assertForkOutput(forkSignalStages.map((line) => `prefix ${line}`).join("\n"), "signals"),
+    /missing stage/,
+  );
+  for (const mode of ["toString", "__proto__", "invalid"])
+    assert.throws(() => assertForkOutput("::vm-test::pass", mode), /unknown fork/);
+});
+
+test("browser app selects matching isolated loader and initramfs for each mode", async () => {
+  const source = readFileSync(new URL("./fork-app.js", import.meta.url), "utf8");
+  const app = {};
+  const loaders = ["normal", "faults", "signals"].map((name) => ({
+    bootMachine: name,
+    consoleDevice: `${name}-console`,
+    entropyDevice: `${name}-entropy`,
+  }));
+  const requests = [];
+  const install = new Function(
+    "normal",
+    "faults",
+    "signals",
+    "runRuntimeSmoke",
+    "crossOriginIsolated",
+    "fetch",
+    "globalThis",
+    source.replace(/^import .*;\n/gm, ""),
+  );
+  install(
+    ...loaders,
+    (options) => options,
+    true,
+    async (path) => {
+      requests.push(path);
+      return { ok: true, arrayBuffer: async () => new ArrayBuffer(0) };
+    },
+    app,
+  );
+  for (const [index, mode] of ["normal", "faults", "signals"].entries()) {
+    const options = app.bootForkRuntimeSmoke(mode);
+    assert.equal(options.bootMachine, loaders[index].bootMachine);
+    assert.equal(options.consoleDevice, loaders[index].consoleDevice);
+    assert.equal(options.entropyDevice, loaders[index].entropyDevice);
+    await options.loadInitramfs();
+  }
+  assert.deepEqual(requests, ["/runtime.cpio", "/faults.cpio", "/signals.cpio"]);
+  assert.equal(app.bootForkRuntimeSmoke().bootMachine, "normal");
+  for (const mode of ["toString", "__proto__", "invalid"])
+    assert.throws(() => app.bootForkRuntimeSmoke(mode), /unknown fork/);
+  install(...loaders, () => assert.fail("must not boot without isolation"), false, null, app);
+  assert.throws(() => app.bootForkRuntimeSmoke("signals"), /cross-origin isolation/);
+});
+
+test("browser runner repeats full profiles and packages independent fault and signal loaders", () => {
   const runner = readFileSync(new URL("./fork-browser-check.mjs", import.meta.url), "utf8");
-  assert.match(runner, /for \(const mode of \["normal", "faults"\]\)/);
-  assert.match(runner, /iteration <= iterations/);
+  assert.match(runner, /for \(const mode of \["normal", "faults", "signals"\]\)/);
+  assert.match(runner, /const requiredIterations = mode === "signals" \? 2 : iterations/);
+  assert.match(runner, /iteration <= requiredIterations/);
   assert.match(runner, /forkIterations\(process.env.FORK_BROWSER_STABILITY\)/);
   assert.match(runner, /300_000/);
   assert.match(runner, /bootForkRuntimeSmoke\(mode\)/);
   assert.match(runner, /assertForkOutput\(output, mode\)/);
   const app = readFileSync(new URL("./fork-app.js", import.meta.url), "utf8");
-  assert.match(app, /mode === "faults" \? faults : normal/);
-  assert.match(app, /mode === "faults" \? "\/faults.cpio" : "\/runtime.cpio"/);
+  assert.match(app, /kernel-signals\/dist\/index.js/);
   const recipe = readFileSync(
     new URL("../../distro/npm/browser-tests.nix", import.meta.url),
     "utf8",
   );
   assert.match(recipe, /faultAssets = runtime.checks.faults.runtimeAssets/);
+  assert.match(recipe, /signalAssets = runtime.checks.signals.runtimeAssets/);
+  assert.match(recipe, /signalKernel = .*override \{ forkSignalTest = true; \}/s);
+  assert.match(recipe, /signalAssets.disks == \[ \]/);
+  assert.match(recipe, /signalAssets.cpus == 2/);
+  assert.match(recipe, /cp \$\{signalAssets.initramfs\} \$out\/signals.cpio/);
+  assert.match(
+    recipe,
+    /cp -r \$\{signalKernel\}\/\. \$out\/node_modules\/@lowland\/kernel-signals\//,
+  );
   assert.match(recipe, /fork-wasm64-chromium-stability =/);
   assert.match(recipe, /overrideAttrs\s*\{\s*FORK_BROWSER_STABILITY = "1";\s*\}/);
   assert.match(recipe, /faultKernel = .*override \{ copyFaultTest = true; \}/s);

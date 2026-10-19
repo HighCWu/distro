@@ -59,8 +59,11 @@ try {
       await page.waitForFunction(() => typeof globalThis.bootForkRuntimeSmoke === "function");
       // runRuntimeSmoke resolves only AFTER machine.closed and final console
       // callbacks. Repeating on the same page exercises fresh Worker lifetimes.
-      for (const mode of ["normal", "faults"]) {
-        for (let iteration = 1; iteration <= iterations; iteration++) {
+      for (const mode of ["normal", "faults", "signals"]) {
+        // The existing stability profile repeats normal/faults four times;
+        // the new controlled signal corpus has its own fixed two-boot gate.
+        const requiredIterations = mode === "signals" ? 2 : iterations;
+        for (let iteration = 1; iteration <= requiredIterations; iteration++) {
           active = `wasm${addressBits} ${mode} iteration ${iteration}`;
           console.log(`fork browser: ${active} begin`);
           const output = await page.evaluate((mode) => globalThis.bootForkRuntimeSmoke(mode), mode);
