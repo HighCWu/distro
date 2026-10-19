@@ -17,8 +17,12 @@ const lines = createInterface({ input: server.stdout });
 let browser;
 let timer;
 let serverFailure;
+let active = "startup";
 const watchdog = new Promise((_, reject) => {
-  timer = setTimeout(() => reject(new Error("fork browser check watchdog expired")), 300_000);
+  timer = setTimeout(
+    () => reject(new Error(`fork browser check watchdog expired during ${active}`)),
+    300_000,
+  );
 });
 const serverDied = new Promise((_, reject) => {
   server.once("error", reject);
@@ -41,7 +45,12 @@ try {
       console.log(`fork browser: ${project} ${browser.version()}, wasm${addressBits}`);
       const page = await browser.newPage();
       const errors = [];
-      page.on("pageerror", (error) => errors.push(error.stack ?? String(error)));
+      page.on("pageerror", (error) => {
+        const message = error.stack ?? String(error);
+        errors.push(message);
+        console.error(`fork browser page error during ${active}: ${message}`);
+      });
+      page.on("crash", () => console.error(`fork browser page crashed during ${active}`));
       page.on("console", (message) => console.log(`[browser] ${message.text()}`));
       await page.goto(origin);
       assert.equal(await page.evaluate(() => crossOriginIsolated), true);
@@ -50,6 +59,8 @@ try {
       // callbacks. Repeating on the same page exercises fresh Worker lifetimes.
       for (const mode of ["normal", "faults"]) {
         for (let iteration = 1; iteration <= 2; iteration++) {
+          active = `wasm${addressBits} ${mode} iteration ${iteration}`;
+          console.log(`fork browser: ${active} begin`);
           const output = await page.evaluate((mode) => globalThis.bootForkRuntimeSmoke(mode), mode);
           console.log(output);
           assertForkOutput(output, mode);

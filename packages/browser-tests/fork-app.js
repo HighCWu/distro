@@ -11,6 +11,9 @@ globalThis.bootForkRuntimeSmoke = (mode = "normal") => {
     bootMachine,
     consoleDevice,
     entropyDevice,
+    onProgress(message) {
+      console.log(`fork progress: ${mode}: ${message}`);
+    },
     async loadInitramfs() {
       const response = await fetch(mode === "faults" ? "/faults.cpio" : "/runtime.cpio");
       if (!response.ok) throw new Error(`fork initramfs load failed: ${response.status}`);

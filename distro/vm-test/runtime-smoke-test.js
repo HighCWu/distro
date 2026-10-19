@@ -79,6 +79,49 @@ test("requires a complete user-program pass marker, not the kernel banner", asyn
   assert.equal(bannerOnly.closed, true);
 });
 
+test("live diagnostics identify boot, console and shutdown without altering returned output", async () => {
+  const state = fixture(["::vm-test::pass\n"]);
+  const events = [];
+  const output = await runRuntimeSmoke({
+    ...state.options,
+    onProgress: (event) => events.push(event),
+  });
+  assert.match(output, /::vm-test::pass/);
+  for (const event of [
+    "loading initramfs",
+    "boot requested",
+    "boot returned",
+    "user: ::vm-test::pass",
+    "user result received",
+    "shutdown requested",
+    "shutdown completed",
+  ])
+    assert.ok(events.includes(event), event);
+  assert.equal(events.at(-1), "shutdown completed");
+  const throwing = fixture(["::vm-test::pass\n"]);
+  assert.match(
+    await runRuntimeSmoke({
+      ...throwing.options,
+      onProgress() {
+        throw new Error("diagnostic failure");
+      },
+    }),
+    /::vm-test::pass/,
+  );
+  assert.equal(throwing.closed, true);
+});
+
+test("live diagnostics cannot replace a missing user result", async () => {
+  const state = fixture([]);
+  const events = [];
+  await assert.rejects(
+    runRuntimeSmoke({ ...state.options, onProgress: (event) => events.push(event) }),
+    /timed out/,
+  );
+  assert.ok(events.includes("user runtime timed out"));
+  assert.equal(state.closed, true);
+});
+
 test("a user-program pass waits for successful device shutdown", async () => {
   const state = fixture(["::vm-test::pass\n"], { closeDelay: true });
   let settled = false;

@@ -7,7 +7,14 @@ export async function runRuntimeSmoke({
   entropyDevice,
   loadInitramfs,
   timeoutMs = 120_000,
+  onProgress,
 }) {
+  // Test diagnostics must not change pass/failure or cleanup semantics.
+  const trace = (message) => {
+    try {
+      onProgress?.(message);
+    } catch {}
+  };
   let machine;
   let finished = false;
   let failed = false;
@@ -32,6 +39,7 @@ export async function runRuntimeSmoke({
     const consume = (lines) => {
       for (const line of lines) {
         output += `${line}\n`;
+        trace(`${required ? "user" : "boot"}: ${line}`);
         // Only the user console owns the test protocol. Boot diagnostics must
         // remain visible, but cannot certify that the user program ran.
         const status = required ? parseResult(line) : undefined;
@@ -61,19 +69,25 @@ export async function runRuntimeSmoke({
     });
   };
   const watchdog = new Promise((_, reject) => {
-    timer = setTimeout(() => reject(new Error(`${phase} timed out:\n${output}`)), timeoutMs);
+    timer = setTimeout(() => {
+      trace(`${phase} timed out`);
+      reject(new Error(`${phase} timed out:\n${output}`));
+    }, timeoutMs);
   });
   try {
     await Promise.race([
       (async () => {
+        trace("loading initramfs");
         const initcpio = await loadInitramfs();
         if (finished) return;
         const input = new TransformStream();
+        trace("boot requested");
         machine = await bootMachine({
           cpus: 2,
           initcpio,
           plugins: [consoleDevice(input.readable, consoleOutput(true)), entropyDevice()],
         });
+        trace("boot returned");
         if (finished) {
           machine.close();
           await machine.closed.catch(() => {});
@@ -86,6 +100,7 @@ export async function runRuntimeSmoke({
           if (!finished) reportFailure(new Error("machine closed before completion"));
         }, reportFailure);
         await result;
+        trace("user result received");
       })(),
       watchdog,
     ]);
@@ -98,8 +113,10 @@ export async function runRuntimeSmoke({
     try {
       if (machine) {
         if (!failed) phase = "runtime shutdown";
+        trace("shutdown requested");
         machine.close();
         await Promise.race([machine.closed, watchdog]);
+        trace("shutdown completed");
       }
     } catch (error) {
       // A program pass is provisional until device flush/close completes.
