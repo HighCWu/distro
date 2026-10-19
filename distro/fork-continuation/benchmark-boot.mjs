@@ -22,6 +22,12 @@ const output = await runRuntimeSmoke({
   consoleDevice: kernel.consoleDevice,
   entropyDevice: kernel.entropyDevice,
   loadInitramfs: async () => new Uint8Array(readFileSync(join(assets, `${c.id}.cpio`))),
+  completionReady:
+    m.profile && c.kind === "fork"
+      ? (output) =>
+          output.split(/\r?\n/).filter((line) => line.startsWith("fork-profile: ")).length >=
+          (m.samples + m.warmups) * 5
+      : undefined,
 });
 // runRuntimeSmoke has awaited machine.closed and the final console callbacks.
 parseBenchmarkOutput(output, m, c);

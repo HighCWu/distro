@@ -6,6 +6,7 @@ import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { spawnSync } from "node:child_process";
 import test from "node:test";
+import { parseProfileOutput } from "./benchmark-profile.js";
 import {
   benchmarkCases,
   validateManifest,
@@ -139,6 +140,85 @@ test("only three complete fresh boots per case certify grouped medians and proce
     { caseId: "other" },
   ])
     assert.throws(() => validateBoot({ ...boots[0], ...patch }, m, m.cases[0]));
+});
+
+test("diagnostic admission requires all five phases for six distinct requests, including warmup", () => {
+  const m = { ...manifest(), profile: true },
+    c = m.cases.find((c) => c.kind === "fork");
+  const records = Array.from({ length: 6 }, (_, i) => [
+    { schemaVersion: 1, request: `copy-${i}`, kind: "worker-start-message", ns: 40 },
+    { schemaVersion: 1, request: `copy-${i}`, kind: "parent-ready", ns: 100 },
+    {
+      schemaVersion: 1,
+      request: `copy-${i}`,
+      kind: "child-ready",
+      ns: 50,
+      allocate_ns: 5,
+      copy_ns: 10,
+      kernel_instance_ns: 15,
+      user_instance_ns: 10,
+    },
+    { schemaVersion: 1, request: `copy-${i}`, kind: "child-prepare-rewind", ns: 0 },
+    { schemaVersion: 1, request: `copy-${i}`, kind: "child-rewind-checkpoint", ns: 8 },
+  ]).flat();
+  const text = (list) => list.map((r) => `fork-profile: ${JSON.stringify(r)}`).join("\n");
+  const valid = text(records);
+  assert.equal(parseProfileOutput(valid, m, c).length, 6);
+  assert.equal(
+    parseProfileOutput(text([...records].reverse()), m, c).length,
+    6,
+    "arrival order across Workers is not a clock",
+  );
+  assert.equal(parseBenchmarkOutput(output(rows(m, c)) + "\n" + valid, m, c).length, 5);
+  const corruptions = [
+    records.slice(1),
+    records.slice(5),
+    [...records, records[0]],
+    records.map((r, i) => (i === 0 ? { ...r, ns: -1 } : r)),
+    records.map((r, i) => (i === 2 ? { ...r, copy_ns: null } : r)),
+    records.map((r, i) => (i === 2 ? { ...r, kind: "rewind-start-only" } : r)),
+    records.map((r, i) => (i === 3 ? { ...r, request: "wrong-id" } : r)),
+  ];
+  for (const list of corruptions) assert.throws(() => parseProfileOutput(text(list), m, c));
+  assert.throws(
+    () => parseProfileOutput(valid, manifest(), c),
+    "baseline must not silently accept instrumentation",
+  );
+  assert.throws(
+    () => parseProfileOutput(valid, m, m.cases[0]),
+    "non-fork controls must remain clean",
+  );
+  assert.throws(() => parseProfileOutput("", m, c));
+  assert.throws(() => validateManifest({ ...m, profile: "true" }));
+});
+
+test("diagnostic kernel selection is opt-in and incompatible with fault/signal seams", () => {
+  const recipe = readFileSync(new URL("./package.nix", import.meta.url), "utf8");
+  const kernel = readFileSync(new URL("../npm/kernel.nix", import.meta.url), "utf8");
+  const worker = readFileSync(
+    new URL("../../packages/kernel/src/worker.ts", import.meta.url),
+    "utf8",
+  );
+  const seam = readFileSync(
+    new URL("../../packages/kernel/src/fork-profile.ts", import.meta.url),
+    "utf8",
+  );
+  assert.match(recipe, /benchmarkProfileAssets/);
+  assert.match(recipe, /forkProfileTest = true/);
+  assert.match(kernel, /forkProfileTest \? false/);
+  assert.match(kernel, /profiling must not combine with fault or signal/);
+  assert.match(seam, /export const fork_profile_test = false/);
+  assert.match(worker, /profile\.measure\("allocate_ns"/);
+  assert.match(worker, /profile\.measure\("copy_ns"/);
+  assert.match(worker, /profile\.measure\("kernel_instance_ns"/);
+  assert.match(worker, /profile\.measure\("user_instance_ns"/);
+  assert.match(worker, /profile\.prepareChild/);
+  assert.match(worker, /profile\.childRewound/);
+  assert.match(
+    worker,
+    /4 \* copy_status_words\(\)/,
+    "copy status and publication protocol are unchanged",
+  );
 });
 
 test("fresh measurement runs in the distro cache scope without the ordinary heavy matrix", () => {

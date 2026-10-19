@@ -8,6 +8,7 @@
   sdk-fork-continuation,
   kernel,
   image,
+  profile ? false,
 }:
 let
   flagsFor =
@@ -76,16 +77,19 @@ let
       ];
   cases = workCases ++ forkCases;
   manifest = pkgs.writeText "fork-benchmark.json" (
-    builtins.toJSON {
-      schemaVersion = 1;
-      inherit (platform) addressBits;
-      samples = 5;
-      warmups = 1;
-      workIterations = 262144;
-      syscallIterations = 4096;
-      inherit cases;
-      cpus = 2;
-    }
+    builtins.toJSON (
+      {
+        schemaVersion = 1;
+        inherit (platform) addressBits;
+        samples = 5;
+        warmups = 1;
+        workIterations = 262144;
+        syscallIterations = 4096;
+        inherit cases;
+        cpus = 2;
+      }
+      // lib.optionalAttrs profile { profile = true; }
+    )
   );
 in
 # Build immutable inputs only. Fresh measurement is a separate workflow step,
@@ -97,6 +101,7 @@ pkgs.runCommand "fork-benchmark-assets-${platform.wasmArch}" { } ''
   cp ${manifest} $out/manifest.json
   cp ${./benchmark.c} $out/benchmark.c
   cp ${./benchmark-contract.js} $out/benchmark-contract.js
+  cp ${./benchmark-profile.js} $out/benchmark-profile.js
   cp ${./benchmark-boot.mjs} $out/benchmark-boot.mjs
   cp ${./benchmark-run.mjs} $out/benchmark-run.mjs
   cp ${../../packages/browser-tests/runtime-smoke.js} $out/runtime-smoke.js

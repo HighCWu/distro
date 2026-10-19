@@ -6,6 +6,7 @@ import { join, resolve } from "node:path";
 import { spawnSync } from "node:child_process";
 import { cpus } from "node:os";
 import { validateManifest, validateBoot, summarizeBoots } from "./benchmark-contract.js";
+import { parseProfileOutput } from "./benchmark-profile.js";
 
 assert.equal(process.argv.length, 4, "usage: benchmark-run.mjs assets new-results-directory");
 const assets = resolve(process.argv[2]),
@@ -74,12 +75,32 @@ const report = {
     asyncifySameLink: ratio("fork-libc-asyncify", "fork-libc-raw"),
     sdkEndToEnd: ratio("sdk-asyncify", "default"),
   },
+  ...(m.profile
+    ? {
+        phaseDiagnostics: boots
+          .filter((b) => m.cases.find((c) => c.id === b.caseId).kind === "fork")
+          .map((b) => ({
+            caseId: b.caseId,
+            repeat: b.repeat,
+            requests: parseProfileOutput(
+              b.output,
+              m,
+              m.cases.find((c) => c.id === b.caseId),
+            ),
+          })),
+      }
+    : {}),
   limitations: [
     "Three fresh boots per case; samples inside one boot are not independent boots.",
     "RSS is Linux Node whole-process lifetime high-water KiB, including kernel, JIT, Workers and shutdown, not user-program RSS or browser memory.",
     "Linear bytes are allocation sizes, not resident memory or proof of complete resource reclamation.",
     "No absolute performance thresholds; CI hosts, JIT and scheduling can vary.",
     "Same-link Asyncify control omits the continuation object; the actual SDK's untransformed module is never admitted or booted.",
+    ...(m.profile
+      ? [
+          "Diagnostic builds perturb timings; do not compare their numbers as an uninstrumented baseline. Child-ready and parent-ready overlap; phases are not an additive decomposition. All six requests, including warmup, are retained.",
+        ]
+      : []),
   ],
 };
 writeFileSync(join(results, "report.json"), JSON.stringify(report, null, 2) + "\n");

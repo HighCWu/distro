@@ -38,6 +38,19 @@ let
             image
             ;
         };
+        passthru.benchmarkProfileAssets = import ./benchmark.nix {
+          inherit
+            pkgs
+            lib
+            platform
+            sysroot
+            llvm-toolchain
+            sdk-fork-continuation
+            image
+            ;
+          kernel = kernel.override { forkProfileTest = true; };
+          profile = true;
+        };
         passthru.checks.runtime = vm-test.rawInitramfsTest {
           name = "fork-continuation-${platform.wasmArch}";
           init = "${program}/fork.wasm";

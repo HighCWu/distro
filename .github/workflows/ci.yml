@@ -31,6 +31,10 @@ on:
           - wasm32
           - wasm64
         default: both
+      fork-benchmark-profile:
+        description: Use the separate diagnostic kernel, never a baseline performance claim
+        type: boolean
+        default: false
 
 jobs:
   benchmark-mode:
@@ -52,6 +56,7 @@ jobs:
     if: ${{ github.event_name == 'workflow_dispatch' && inputs['fork-benchmark'] }}
     uses: ./.github/workflows/fork-benchmark.yml
     with:
+      profile: ${{ inputs['fork-benchmark-profile'] }}
       widths: ${{ inputs['fork-benchmark-width'] == 'wasm32' && '[32]' || inputs['fork-benchmark-width'] == 'wasm64' && '[64]' || '[32,64]' }}
   python-forkless-host:
     name: Native Python forkless replay

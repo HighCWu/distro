@@ -26,6 +26,7 @@ import {
   wasm_table_get,
 } from "./wasm.ts";
 import type { ForwardedInitMessage, InitMessage, WorkerMessage } from "./worker.ts";
+import { create_fork_profile } from "./fork-profile.ts";
 
 export type { DeviceTreeNode } from "./devicetree.ts";
 export {
@@ -330,6 +331,9 @@ export async function bootMachine(options: BootMachineOptions): Promise<Machine>
         if (init.type === "forwarded_init") init.port.close();
         return;
       }
+      const spawn_profile = create_fork_profile(init.fork_profile, (line) =>
+        boot_console_write(new TextEncoder().encode(line).buffer),
+      );
       const worker = platform.spawn_worker(name, {
         on_message(raw) {
           const message = raw as WorkerMessage;
@@ -340,6 +344,7 @@ export async function bootMachine(options: BootMachineOptions): Promise<Machine>
                   type: "forwarded_init",
                   port: message.port,
                   user_copy_status: message.user_copy_status,
+                  ...(message.fork_profile ? { fork_profile: message.fork_profile } : {}),
                 });
               } catch (error) {
                 message.port.close();
@@ -347,6 +352,9 @@ export async function bootMachine(options: BootMachineOptions): Promise<Machine>
                   void fail(error);
                 }
               }
+              break;
+            case "fork_profile_started":
+              spawn_profile?.workerStarted();
               break;
             case "boot_console_write":
               boot_console_write(message.message);

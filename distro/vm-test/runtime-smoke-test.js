@@ -13,19 +13,28 @@ const { runRuntimeSmoke } = await import(
 
 function fixture(
   lines,
-  { bootDelay = false, closeConsole = false, bootLines = [], closeError, closeDelay = false } = {},
+  {
+    bootDelay = false,
+    closeConsole = false,
+    bootLines = [],
+    closeError,
+    closeDelay = false,
+    holdBootConsole = false,
+  } = {},
 ) {
   let writer;
   let closed = false;
   let releaseBoot;
   let resolveClosed;
   let rejectClosed;
+  let bootController;
   const finishClose = () => (closeError ? rejectClosed(closeError) : resolveClosed());
   const machine = {
     bootConsole: new ReadableStream({
       start(controller) {
+        bootController = controller;
         for (const line of bootLines) controller.enqueue(new TextEncoder().encode(line));
-        controller.close();
+        if (!holdBootConsole) controller.close();
       },
     }),
     closed: new Promise((resolve, reject) => {
@@ -39,6 +48,8 @@ function fixture(
   };
   return {
     finishClose,
+    writeBoot: (line) => bootController.enqueue(new TextEncoder().encode(line)),
+    closeBoot: () => bootController.close(),
     write: (line) => writer.write(new TextEncoder().encode(line)),
     abort: (error) => writer.abort(error),
     get closed() {
@@ -69,6 +80,37 @@ function fixture(
     },
   };
 }
+
+test("diagnostic completion waits for late boot records without closing Workers on user pass", async () => {
+  const state = fixture(["::vm-test::pass\n"], { holdBootConsole: true });
+  const check = runRuntimeSmoke({
+    ...state.options,
+    timeoutMs: 1000,
+    completionReady: (output) => output.includes("diagnostic-ready\n"),
+  });
+  await new Promise((resolve) => setImmediate(resolve));
+  assert.equal(state.closed, false);
+  state.writeBoot("diagnostic-ready\n");
+  state.closeBoot();
+  assert.match(await check, /diagnostic-ready/);
+  assert.equal(state.closed, true);
+});
+
+test("a missing or broken diagnostic gate cannot bypass the watchdog or cleanup", async () => {
+  for (const completionReady of [
+    () => false,
+    () => {
+      throw Error("broken diagnostic gate");
+    },
+  ]) {
+    const state = fixture(["::vm-test::pass\n"]);
+    await assert.rejects(
+      runRuntimeSmoke({ ...state.options, completionReady }),
+      /timed out|broken diagnostic gate/,
+    );
+    assert.equal(state.closed, true);
+  }
+});
 
 test("requires a complete user-program pass marker, not the kernel banner", async () => {
   const positive = fixture(["Linux version test\n", "::vm-test::pa", "ss\n"]);

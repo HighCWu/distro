@@ -4,6 +4,9 @@ name: Fresh fork benchmark
 on:
   workflow_call:
     inputs:
+      profile:
+        type: boolean
+        default: false
       widths:
         description: JSON pointer-width matrix selected by the dispatch workflow
         type: string
@@ -57,11 +60,14 @@ jobs:
       - name: Build immutable inputs, not cached benchmark results
         env:
           BITS: ${{ matrix.bits }}
+          PROFILE: ${{ inputs.profile }}
         run: |
           suffix=""
+          attribute=benchmarkAssets
+          if [[ "$PROFILE" == true ]]; then attribute=benchmarkProfileAssets; fi
           if [[ "$BITS" == 64 ]]; then suffix="-wasm64"; fi
           nix build --print-build-logs --out-link result-fork-benchmark \
-            ".#legacyPackages.x86_64-linux.fork-continuation$suffix.benchmarkAssets"
+            ".#legacyPackages.x86_64-linux.fork-continuation$suffix.$attribute"
       - name: Measure three fresh Node processes and Linux boots per case
         env:
           BITS: ${{ matrix.bits }}
@@ -82,7 +88,7 @@ jobs:
       - uses: actions/upload-artifact@v4
         if: always()
         with:
-          name: fork-benchmark-wasm${{ matrix.bits }}-${{ github.sha }}
+          name: fork-benchmark-wasm${{ matrix.bits }}-${{ inputs.profile && 'profile' || 'baseline' }}-${{ github.sha }}
           path: |
             results/
             provenance/

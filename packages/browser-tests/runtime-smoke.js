@@ -8,6 +8,7 @@ export async function runRuntimeSmoke({
   loadInitramfs,
   timeoutMs = 120_000,
   onProgress,
+  completionReady,
 }) {
   // Test diagnostics must not change pass/failure or cleanup semantics.
   const trace = (message) => {
@@ -50,10 +51,20 @@ export async function runRuntimeSmoke({
         const status = required ? parseResult(line) : undefined;
         if (status?.passed) {
           reportedPass = true;
-          resolveResult();
         } else if (status)
           reportFailure(new Error(`${status.reason}\nRuntime console:\n${output}`));
         else if (line.includes("Kernel panic - not syncing")) reportFailure(new Error(line));
+        // A diagnostic build may still have records queued on other Worker
+        // ports after the user console reports pass. Do not terminate those
+        // Workers until the test-only output gate is satisfied. The same
+        // watchdog bounds missing records; default callers have no extra gate.
+        if (reportedPass && !runtimeFailure) {
+          try {
+            if (!completionReady || completionReady(output)) resolveResult();
+          } catch (error) {
+            reportFailure(error);
+          }
+        }
       }
     };
     return new WritableStream({

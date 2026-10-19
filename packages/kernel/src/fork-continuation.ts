@@ -133,6 +133,8 @@ export class ForkContinuation {
   private descriptor: WasmAddress | null = null;
   private result: number | null = null;
   private kernelDepth = 0;
+  private rewindingChild = false;
+  private readonly childRewound: (() => void) | undefined;
   private readonly e: WebAssembly.Exports;
   private readonly memory: WebAssembly.Memory;
   private readonly address: WasmAddressType;
@@ -141,7 +143,9 @@ export class ForkContinuation {
     instance: WebAssembly.Instance,
     memory: WebAssembly.Memory,
     address: WasmAddressType,
+    childRewound?: () => void,
   ) {
+    this.childRewound = childRewound;
     this.e = instance.exports;
     this.memory = memory;
     this.address = address;
@@ -218,6 +222,12 @@ export class ForkContinuation {
       this.call("asyncify_stop_rewind");
       this.descriptor = null;
       this.result = null;
+      if (this.rewindingChild) {
+        this.rewindingChild = false;
+        try {
+          this.childRewound?.();
+        } catch {}
+      }
       return result;
     }
     // Do not unwind through a kernel call, signal trampoline or callback clone.
@@ -301,6 +311,7 @@ export class ForkContinuation {
     this.global("__tls_base").value = snapshot.tls;
     this.descriptor = snapshot.descriptor;
     this.result = 0;
+    this.rewindingChild = true;
     this.call("asyncify_start_rewind", snapshot.descriptor);
   }
 }

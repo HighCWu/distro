@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: MIT
 import assert from "node:assert/strict";
+import { parseProfileOutput } from "./benchmark-profile.js";
 
 export const benchmarkCases = [
   ["default", "work", "default", 0],
@@ -11,6 +12,7 @@ export const benchmarkCases = [
 
 export function validateManifest(m) {
   assert.equal(m.schemaVersion, 1);
+  assert.equal(typeof (m.profile ?? false), "boolean");
   assert.ok(m.addressBits === 32 || m.addressBits === 64);
   assert.equal(m.samples, 5);
   assert.equal(m.warmups, 1);
@@ -39,6 +41,7 @@ export function parseBenchmarkOutput(output, m, c) {
   assert.ok(!output.includes("::vm-test::fail"), "runtime failure");
   assert.ok(!/rcu:.*detected.*stall/i.test(output), "RCU stall");
   const lines = output.split(/\r?\n/);
+  parseProfileOutput(output, m, c);
   assert.equal(
     lines.filter((line) => line === "::vm-test::pass").length,
     1,

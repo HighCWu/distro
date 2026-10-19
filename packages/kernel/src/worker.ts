@@ -3,6 +3,12 @@
 import { listen_endpoint, post_endpoint } from "./endpoint.ts";
 import { platform } from "./platform.ts";
 import {
+  create_fork_profile,
+  new_fork_profile_request,
+  type ForkProfile,
+  type ForkProfileRequest,
+} from "./fork-profile.ts";
+import {
   fork_signal_test,
   fork_resume_signal_test,
   fork_child_signal_test,
@@ -69,12 +75,14 @@ export interface InitMessage {
   /** One-shot user-memory copy result: 0 pending, 1 complete, negative errno. */
   user_copy_status: UserCopyStatus | null;
   copy_fault?: CopyFault;
+  fork_profile?: ForkProfileRequest;
 }
 export interface ForwardedInitMessage {
   type: "forwarded_init";
   port: MessagePort;
   user_copy_status: UserCopyStatus | null;
   copy_fault?: CopyFault;
+  fork_profile?: ForkProfileRequest;
 }
 export type WorkerMessage =
   | {
@@ -82,8 +90,10 @@ export type WorkerMessage =
       name: string;
       port: MessagePort;
       user_copy_status: UserCopyStatus | null;
+      fork_profile?: ForkProfileRequest;
     }
   | { type: "boot_console_write"; message: ArrayBuffer }
+  | { type: "fork_profile_started" }
   | { type: "boot_console_close" }
   | { type: "terminate_machine"; reason: MachineTerminationReason }
   | { type: "run_on_main"; fn: WasmAddress; arg: WasmAddress }
@@ -96,17 +106,21 @@ const unavailable = () => {
 const endpoint = platform.worker_endpoint();
 const postMessage = (message: WorkerMessage, transfer?: Transferable[]) =>
   post_endpoint(endpoint, message, transfer);
+const profile_output = (line: string) =>
+  postMessage({ type: "boot_console_write", message: new TextEncoder().encode(line).buffer });
 
 function user_imports({
   kernel_memory,
   kernel_address,
   get_kernel_instance,
   parent_user: parent,
+  profile,
 }: {
   kernel_memory: WebAssembly.Memory;
   kernel_address: WasmAddressType;
   get_kernel_instance: () => Instance;
   parent_user: UserContext | null;
+  profile?: ForkProfile;
 }): {
   context: UserContext | null;
   prepare(): void;
@@ -240,7 +254,12 @@ function user_imports({
     assert(context);
     instance = create_instance(context);
     fork = uses_fork_continuation(context.module)
-      ? new ForkContinuation(instance, context.memory, context.address)
+      ? new ForkContinuation(
+          instance,
+          context.memory,
+          context.address,
+          profile ? () => profile.childRewound() : undefined,
+        )
       : null;
   }
 
@@ -394,7 +413,8 @@ function user_imports({
             };
             return;
           }
-          fork.resumeChild(snapshot);
+          if (profile) profile.prepareChild(() => fork!.resumeChild(snapshot));
+          else fork.resumeChild(snapshot);
           delete context.fork_continuation;
           call_entry = call_start;
           return;
@@ -557,7 +577,10 @@ function start({
   user: initial_user_context,
   user_copy_status,
   copy_fault,
+  fork_profile,
 }: InitMessage) {
+  const profile = create_fork_profile(fork_profile, profile_output);
+  if (profile) postMessage({ type: "fork_profile_started" });
   const cancelled = () => {
     if (!user_copy_failed(user_copy_status)) return false;
     postMessage({ type: "worker_exit" });
@@ -586,15 +609,14 @@ function start({
       inject_copy_fault(copy_fault, "allocate");
       const source = memory_bytes(user_context.memory, 0);
       if (!source) throw new RangeError("invalid source memory");
-      const copied = allocate_shared_memory(
-        source.byteLength / 0x10000,
-        user_context.maximum_pages,
-        undefined,
-        user_context.address,
-      );
+      const { maximum_pages, address } = user_context;
+      const allocate = () =>
+        allocate_shared_memory(source.byteLength / 0x10000, maximum_pages, undefined, address);
+      const copied = profile ? profile.measure("allocate_ns", allocate) : allocate();
       const destination = memory_bytes(copied.memory, 0, source.byteLength);
       if (!destination) throw new RangeError("invalid destination memory");
-      destination.set(source);
+      if (profile) profile.measure("copy_ns", () => destination.set(source));
+      else destination.set(source);
       user_context = { ...user_context, ...copied };
     } catch {
       settle_user_copy(user_copy_status, USER_COPY_NO_MEMORY);
@@ -610,6 +632,7 @@ function start({
     kernel_address,
     get_kernel_instance: () => instance,
     parent_user: user_context,
+    profile,
   });
 
   const imports = {
@@ -630,12 +653,15 @@ function start({
         const user_copy_status = copy_user_memory
           ? new Int32Array(new SharedArrayBuffer(4 * copy_status_words()))
           : null;
+        const fork_profile = copy_user_memory ? new_fork_profile_request() : undefined;
+        const parent_profile = create_fork_profile(fork_profile, profile_output);
         postMessage(
           {
             type: "spawn_worker",
             name,
             port: direct.port1,
             user_copy_status,
+            ...(fork_profile ? { fork_profile } : {}),
           },
           [direct.port1],
         );
@@ -648,6 +674,7 @@ function start({
           kernel_address,
           user,
           user_copy_status,
+          ...(fork_profile ? { fork_profile } : {}),
         } satisfies InitMessage);
         if (!user_copy_status) return 0;
         const schedule = instance.exports.copy_worker_wait;
@@ -662,6 +689,7 @@ function start({
         const result = wait_user_copy(user_copy_status, 30_000, cooperate);
         require_copy_wait_progress(user_copy_status, scheduling_points);
         join_copy_timeout(user_copy_status);
+        if (result === USER_COPY_COMPLETE) parent_profile?.parentReady();
         return result === USER_COPY_COMPLETE ? 0 : result;
       },
       boot_console_write(message) {
@@ -693,8 +721,12 @@ function start({
     },
   } satisfies Imports;
 
-  const instance = new WebAssembly.Instance(vmlinux, imports) as Instance;
-  user.prepare();
+  const instantiate_kernel = () => new WebAssembly.Instance(vmlinux, imports) as Instance;
+  const instance = profile
+    ? profile.measure("kernel_instance_ns", instantiate_kernel)
+    : instantiate_kernel();
+  if (profile) profile.measure("user_instance_ns", () => user.prepare());
+  else user.prepare();
   if (user_copy_status) pause_copy_publication(copy_fault, user_copy_status);
   if (user_copy_status && !settle_user_copy(user_copy_status, USER_COPY_COMPLETE)) {
     acknowledge_copy_timeout(copy_fault, user_copy_status);
@@ -702,6 +734,7 @@ function start({
     platform.quit();
     return;
   }
+  profile?.childReady();
   try {
     wasm_table_get(instance.exports.__indirect_function_table, fn)!(arg);
   } catch (error) {
