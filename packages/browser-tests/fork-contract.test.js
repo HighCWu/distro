@@ -8,6 +8,7 @@ import {
   forkFaultStages,
   forkSignalStages,
   forkResumeSignalStages,
+  forkChildSignalStages,
   forkIterations,
 } from "./fork-contract.js";
 
@@ -17,6 +18,7 @@ test("even a complete fork corpus cannot hide an RCU CPU stall warning", () => {
     ["faults", forkFaultStages],
     ["signals", forkSignalStages],
     ["resume-signals", forkResumeSignalStages],
+    ["child-signals", forkChildSignalStages],
   ]) {
     for (const warning of [
       "rcu: INFO: rcu_sched detected stalls on CPUs/tasks:",
@@ -87,6 +89,7 @@ test("fault gate requires both failure and recovery stages, not the normal corpu
 for (const [mode, expected] of [
   ["signals", forkSignalStages],
   ["resume-signals", forkResumeSignalStages],
+  ["child-signals", forkChildSignalStages],
 ]) {
   test(`${mode} gate requires its own stages and rejects other profiles and late failure`, () => {
     const source = readFileSync(
@@ -105,6 +108,7 @@ for (const [mode, expected] of [
       ["faults", forkFaultStages],
       ["signals", forkSignalStages],
       ["resume-signals", forkResumeSignalStages],
+      ["child-signals", forkChildSignalStages],
     ]) {
       if (otherMode === mode) continue;
       assert.throws(() => assertForkOutput(stages.join("\n"), mode), /missing stage/);
@@ -126,7 +130,7 @@ for (const [mode, expected] of [
 test("browser app selects matching isolated loader and initramfs for each mode", async () => {
   const source = readFileSync(new URL("./fork-app.js", import.meta.url), "utf8");
   const app = {};
-  const modes = ["normal", "faults", "signals", "resume-signals"];
+  const modes = ["normal", "faults", "signals", "resume-signals", "child-signals"];
   const loaders = modes.map((name) => ({
     bootMachine: name,
     consoleDevice: `${name}-console`,
@@ -138,6 +142,7 @@ test("browser app selects matching isolated loader and initramfs for each mode",
     "faults",
     "signals",
     "resumeSignals",
+    "childSignals",
     "runRuntimeSmoke",
     "crossOriginIsolated",
     "fetch",
@@ -166,6 +171,7 @@ test("browser app selects matching isolated loader and initramfs for each mode",
     "/faults.cpio",
     "/signals.cpio",
     "/resume-signals.cpio",
+    "/child-signals.cpio",
   ]);
   assert.equal(app.bootForkRuntimeSmoke().bootMachine, "normal");
   for (const mode of ["toString", "__proto__", "invalid"])
@@ -177,7 +183,10 @@ test("browser app selects matching isolated loader and initramfs for each mode",
 
 test("browser runner repeats full profiles and packages independent fault and signal loaders", () => {
   const runner = readFileSync(new URL("./fork-browser-check.mjs", import.meta.url), "utf8");
-  assert.match(runner, /for \(const mode of \["normal", "faults", "signals", "resume-signals"\]\)/);
+  assert.match(
+    runner,
+    /for \(const mode of \[\s*"normal",\s*"faults",\s*"signals",\s*"resume-signals",\s*"child-signals",?\s*\]\)/,
+  );
   assert.match(
     runner,
     /const requiredIterations = mode === "normal" \|\| mode === "faults" \? iterations : 2/,
@@ -190,6 +199,7 @@ test("browser runner repeats full profiles and packages independent fault and si
   const app = readFileSync(new URL("./fork-app.js", import.meta.url), "utf8");
   assert.match(app, /kernel-signals\/dist\/index.js/);
   assert.match(app, /kernel-resume-signals\/dist\/index.js/);
+  assert.match(app, /kernel-child-signals\/dist\/index.js/);
   const recipe = readFileSync(
     new URL("../../distro/npm/browser-tests.nix", import.meta.url),
     "utf8",
@@ -197,6 +207,15 @@ test("browser runner repeats full profiles and packages independent fault and si
   assert.match(recipe, /faultAssets = runtime.checks.faults.runtimeAssets/);
   assert.match(recipe, /signalAssets = runtime.checks.signals.runtimeAssets/);
   assert.match(recipe, /resumeSignalAssets = runtime.checks.resume-signals.runtimeAssets/);
+  assert.match(recipe, /childSignalAssets = runtime.checks.child-signals.runtimeAssets/);
+  assert.match(recipe, /childSignalKernel = .*override \{\s*forkChildSignalTest = true;\s*\}/s);
+  assert.match(recipe, /childSignalAssets.disks == \[ \]/);
+  assert.match(recipe, /childSignalAssets.cpus == 2/);
+  assert.match(recipe, /cp \$\{childSignalAssets.initramfs\} \$out\/child-signals.cpio/);
+  assert.match(
+    recipe,
+    /cp -r \$\{childSignalKernel\}\/\. \$out\/node_modules\/@lowland\/kernel-child-signals\//,
+  );
   assert.match(recipe, /resumeSignalKernel = .*override \{\s*forkResumeSignalTest = true;\s*\}/s);
   assert.match(recipe, /resumeSignalAssets.disks == \[ \]/);
   assert.match(recipe, /resumeSignalAssets.cpus == 2/);

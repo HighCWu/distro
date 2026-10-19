@@ -475,6 +475,10 @@ let
       resumeSignalKernel = (if bits == 64 then kernel-wasm64 else kernel).override {
         forkResumeSignalTest = true;
       };
+      childSignalAssets = runtime.checks.child-signals.runtimeAssets;
+      childSignalKernel = (if bits == 64 then kernel-wasm64 else kernel).override {
+        forkChildSignalTest = true;
+      };
       profile = pkgs.writeText "fork-browser-profile.json" (builtins.toJSON { addressBits = bits; });
     in
     assert lib.assertMsg (
@@ -486,6 +490,8 @@ let
       && signalAssets.cpus == 2
       && resumeSignalAssets.disks == [ ]
       && resumeSignalAssets.cpus == 2
+      && childSignalAssets.disks == [ ]
+      && childSignalAssets.cpus == 2
     ) "fork browser fixture requires two CPUs and no disks";
     pkgs.runCommand "fork-wasm${toString bits}-browser-tests" { } ''
       mkdir -p $out/node_modules/@lowland/bytes $out/node_modules/@lowland/kernel
@@ -502,6 +508,7 @@ let
       cp ${faultAssets.initramfs} $out/faults.cpio
       cp ${signalAssets.initramfs} $out/signals.cpio
       cp ${resumeSignalAssets.initramfs} $out/resume-signals.cpio
+      cp ${childSignalAssets.initramfs} $out/child-signals.cpio
       cp -r ${bytes}/. $out/node_modules/@lowland/bytes/
       cp -r ${(if bits == 64 then kernel-wasm64 else kernel)}/. $out/node_modules/@lowland/kernel/
       mkdir -p $out/node_modules/@lowland/kernel-faults
@@ -510,6 +517,8 @@ let
       cp -r ${signalKernel}/. $out/node_modules/@lowland/kernel-signals/
       mkdir -p $out/node_modules/@lowland/kernel-resume-signals
       cp -r ${resumeSignalKernel}/. $out/node_modules/@lowland/kernel-resume-signals/
+      mkdir -p $out/node_modules/@lowland/kernel-child-signals
+      cp -r ${childSignalKernel}/. $out/node_modules/@lowland/kernel-child-signals/
     '';
 
   gitSuite =

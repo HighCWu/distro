@@ -41,12 +41,19 @@ export const forkResumeSignalStages = [
   "::vm-test::pass",
 ];
 
+export const forkChildSignalStages = [
+  "fork-signal: child pre-rewind pending and parent isolation pass",
+  "fork-signal: two child-restored forks, stack, TLS and single delivery pass",
+  "::vm-test::pass",
+];
+
 export function assertForkOutput(output, mode = "normal") {
   const stages = {
     normal: forkStages,
     faults: forkFaultStages,
     signals: forkSignalStages,
     "resume-signals": forkResumeSignalStages,
+    "child-signals": forkChildSignalStages,
   };
   assert.ok(Object.hasOwn(stages, mode), "unknown fork test mode");
   assert.equal(typeof output, "string", "missing runtime console output");

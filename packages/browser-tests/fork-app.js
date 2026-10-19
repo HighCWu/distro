@@ -3,6 +3,7 @@ import * as normal from "@lowland/kernel";
 import * as faults from "./node_modules/@lowland/kernel-faults/dist/index.js";
 import * as signals from "./node_modules/@lowland/kernel-signals/dist/index.js";
 import * as resumeSignals from "./node_modules/@lowland/kernel-resume-signals/dist/index.js";
+import * as childSignals from "./node_modules/@lowland/kernel-child-signals/dist/index.js";
 import { runRuntimeSmoke } from "./runtime-smoke.js";
 
 const profiles = {
@@ -10,6 +11,7 @@ const profiles = {
   faults: { loader: faults, initramfs: "/faults.cpio" },
   signals: { loader: signals, initramfs: "/signals.cpio" },
   "resume-signals": { loader: resumeSignals, initramfs: "/resume-signals.cpio" },
+  "child-signals": { loader: childSignals, initramfs: "/child-signals.cpio" },
 };
 
 globalThis.bootForkRuntimeSmoke = (mode = "normal") => {
