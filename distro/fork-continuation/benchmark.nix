@@ -78,7 +78,7 @@ let
   manifest = pkgs.writeText "fork-benchmark.json" (
     builtins.toJSON {
       schemaVersion = 1;
-      addressBits = platform.addressBits;
+      inherit (platform) addressBits;
       samples = 5;
       warmups = 1;
       workIterations = 262144;
