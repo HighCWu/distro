@@ -48,12 +48,16 @@ try {
       await page.waitForFunction(() => typeof globalThis.bootForkRuntimeSmoke === "function");
       // runRuntimeSmoke resolves only AFTER machine.closed and final console
       // callbacks. Repeating on the same page exercises fresh Worker lifetimes.
-      for (let iteration = 1; iteration <= 2; iteration++) {
-        const output = await page.evaluate(() => globalThis.bootForkRuntimeSmoke());
-        console.log(output);
-        assertForkOutput(output);
-        assert.deepEqual(errors, [], "browser page errors");
-        console.log(`fork browser: wasm${addressBits} iteration ${iteration} and shutdown pass`);
+      for (const mode of ["normal", "faults"]) {
+        for (let iteration = 1; iteration <= 2; iteration++) {
+          const output = await page.evaluate((mode) => globalThis.bootForkRuntimeSmoke(mode), mode);
+          console.log(output);
+          assertForkOutput(output, mode);
+          assert.deepEqual(errors, [], "browser page errors");
+          console.log(
+            `fork browser: wasm${addressBits} ${mode} iteration ${iteration} and shutdown pass`,
+          );
+        }
       }
       if (serverFailure) throw serverFailure;
     })(),

@@ -457,10 +457,12 @@ let
     let
       runtime = if bits == 64 then fork-continuation-wasm64 else fork-continuation;
       assets = runtime.checks.runtime.runtimeAssets;
+      faultAssets = runtime.checks.faults.runtimeAssets;
+      faultKernel = (if bits == 64 then kernel-wasm64 else kernel).override { copyFaultTest = true; };
       profile = pkgs.writeText "fork-browser-profile.json" (builtins.toJSON { addressBits = bits; });
     in
     assert lib.assertMsg (
-      assets.disks == [ ] && assets.cpus == 2
+      assets.disks == [ ] && assets.cpus == 2 && faultAssets.disks == [ ] && faultAssets.cpus == 2
     ) "fork browser fixture requires two CPUs and no disks";
     pkgs.runCommand "fork-wasm${toString bits}-browser-tests" { } ''
       mkdir -p $out/node_modules/@lowland/bytes $out/node_modules/@lowland/kernel
@@ -474,8 +476,11 @@ let
       cp ${source}/server.js $out/server.js
       cp ${profile} $out/profile.json
       cp ${assets.initramfs} $out/runtime.cpio
+      cp ${faultAssets.initramfs} $out/faults.cpio
       cp -r ${bytes}/. $out/node_modules/@lowland/bytes/
       cp -r ${(if bits == 64 then kernel-wasm64 else kernel)}/. $out/node_modules/@lowland/kernel/
+      mkdir -p $out/node_modules/@lowland/kernel-faults
+      cp -r ${faultKernel}/. $out/node_modules/@lowland/kernel-faults/
     '';
 
   gitSuite =

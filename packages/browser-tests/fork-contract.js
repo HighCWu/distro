@@ -16,9 +16,17 @@ export const forkStages = [
   "::vm-test::pass",
 ];
 
-export function assertForkOutput(output) {
+export const forkFaultStages = [
+  "fork-fault: initialization and allocation errors, atfork, mask and no-child pass",
+  "fork-fault: eight recovery forks, identity, TLS, isolation and single reap pass",
+  "::vm-test::pass",
+];
+
+export function assertForkOutput(output, mode = "normal") {
+  assert.ok(mode === "normal" || mode === "faults", "unknown fork test mode");
   assert.equal(typeof output, "string", "missing runtime console output");
   assert.ok(!output.includes("::vm-test::fail"), "user program reported failure");
   const lines = new Set(output.split(/\r?\n/));
-  for (const stage of forkStages) assert.ok(lines.has(stage), `missing stage: ${stage}`);
+  for (const stage of mode === "faults" ? forkFaultStages : forkStages)
+    assert.ok(lines.has(stage), `missing stage: ${stage}`);
 }
