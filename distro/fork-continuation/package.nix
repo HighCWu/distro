@@ -8,6 +8,7 @@
   vm-test,
   sdk-fork-continuation,
   kernel,
+  image,
 }:
 let
   helperFlags = lib.escapeShellArgs (
@@ -25,6 +26,18 @@ let
           llvm-toolchain
           sdk-fork-continuation
         ];
+        passthru.benchmarkAssets = import ./benchmark.nix {
+          inherit
+            pkgs
+            lib
+            platform
+            sysroot
+            llvm-toolchain
+            sdk-fork-continuation
+            kernel
+            image
+            ;
+        };
         passthru.checks.runtime = vm-test.rawInitramfsTest {
           name = "fork-continuation-${platform.wasmArch}";
           init = "${program}/fork.wasm";
