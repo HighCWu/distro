@@ -31,6 +31,11 @@ export async function runRuntimeSmoke({
   });
   void result.catch(() => {});
   const reportFailure = (error) => {
+    // Device abort can arrive before machine.closed rejects with the original
+    // Worker failure. Log every cause, even after the first rejection wins.
+    trace(
+      `runtime failure: ${error instanceof Error ? (error.stack ?? error.message) : String(error)}`,
+    );
     runtimeFailure ??= error instanceof Error ? error : new Error(String(error));
     rejectResult(runtimeFailure);
   };

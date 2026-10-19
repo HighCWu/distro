@@ -122,6 +122,23 @@ test("live diagnostics cannot replace a missing user result", async () => {
   assert.equal(state.closed, true);
 });
 
+test("early unreasoned console abort cannot hide later machine failure diagnostics", async () => {
+  const state = fixture([], { closeDelay: true, closeError: new Error("original Worker failure") });
+  const events = [];
+  const check = runRuntimeSmoke({ ...state.options, onProgress: (event) => events.push(event) });
+  const rejected = assert.rejects(check, /undefined/);
+  await new Promise((resolve) => setImmediate(resolve));
+  await state.abort(undefined);
+  await new Promise((resolve) => setImmediate(resolve));
+  state.finishClose();
+  await rejected;
+  assert.ok(events.some((event) => event === "runtime failure: undefined"));
+  assert.ok(
+    events.some((event) => event.includes("runtime failure: Error: original Worker failure")),
+  );
+  assert.equal(state.closed, true);
+});
+
 test("a user-program pass waits for successful device shutdown", async () => {
   const state = fixture(["::vm-test::pass\n"], { closeDelay: true });
   let settled = false;
