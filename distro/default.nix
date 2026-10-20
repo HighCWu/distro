@@ -118,6 +118,13 @@ lib.makeScope (scope: lib.callPackageWith ({ inherit lib pkgs; } // scope)) (
       vm-test = vmTestWasm64;
       sdk-fork-continuation = self.sdk-fork-continuation-wasm64;
     };
+    dash-fork = callPackage ./dash-fork/package.nix { };
+    dash-fork-wasm64 = callPackage ./dash-fork/package.nix {
+      platform = self.platform-wasm64;
+      sdk-fork-continuation = self.sdk-fork-continuation-wasm64;
+      busybox = self.busybox-wasm64;
+      vm-test = vmTestWasm64;
+    };
 
     # The wasm stdenv: nixpkgs' generic stdenv with a cc-wrapped fork toolchain
     # and wasm32-unknown-linux-musl as the host platform. Everything below here
