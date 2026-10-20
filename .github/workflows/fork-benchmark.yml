@@ -17,6 +17,9 @@ on:
       worker-transform:
         type: boolean
         default: false
+      native-compare:
+        type: boolean
+        default: false
 
 permissions:
   contents: read
@@ -62,6 +65,7 @@ jobs:
       - name: Validate contracts and formatting
         run: |
           node --experimental-vm-modules --test distro/fork-continuation/benchmark.test.js distro/fork-continuation/worker-bundle.test.js
+          node --test distro/fork-continuation/latency.test.js
           nix build --no-link --print-build-logs .#checks.x86_64-linux.formatting
       - name: Build immutable inputs, not cached benchmark results
         env:
@@ -69,6 +73,7 @@ jobs:
           PROFILE: ${{ inputs.profile }}
           WORKER_PAIR: ${{ inputs.worker-pair }}
           WORKER_TRANSFORM: ${{ inputs.worker-transform }}
+          NATIVE_COMPARE: ${{ inputs.native-compare }}
         run: |
           suffix=""
           attribute=benchmarkAssets
@@ -82,6 +87,12 @@ jobs:
             test "$WORKER_PAIR" != true
             attribute=benchmarkWorkerTransformAssets
           fi
+          if [[ "$NATIVE_COMPARE" == true ]]; then
+            test "$PROFILE" != true
+            test "$WORKER_PAIR" != true
+            test "$WORKER_TRANSFORM" != true
+            attribute=nativeComparisonAssets
+          fi
           if [[ "$BITS" == 64 ]]; then suffix="-wasm64"; fi
           nix build --print-build-logs --out-link result-fork-benchmark \
             ".#legacyPackages.x86_64-linux.fork-continuation$suffix.$attribute"
@@ -90,6 +101,7 @@ jobs:
           BITS: ${{ matrix.bits }}
           WORKER_PAIR: ${{ inputs.worker-pair }}
           WORKER_TRANSFORM: ${{ inputs.worker-transform }}
+          NATIVE_COMPARE: ${{ inputs.native-compare }}
         run: |
           mkdir -p results provenance
           {
@@ -99,7 +111,9 @@ jobs:
             uname -a
             lscpu
             readlink -f result-fork-benchmark
-            if [[ "$WORKER_TRANSFORM" == true ]]; then
+            if [[ "$NATIVE_COMPARE" == true ]]; then
+              sha256sum result-fork-benchmark/manifest.json result-fork-benchmark/latency.c result-fork-benchmark/latency-exec.c
+            elif [[ "$WORKER_TRANSFORM" == true ]]; then
               sha256sum result-fork-benchmark/{baseline,transformed}/manifest.json
             elif [[ "$WORKER_PAIR" == true ]]; then
               sha256sum result-fork-benchmark/{baseline,bundled}/manifest.json
@@ -109,7 +123,9 @@ jobs:
             git show HEAD:distro/linux/package.nix
             git show HEAD:distro/llvm-toolchain/unwrapped.nix
           } > "provenance/wasm$BITS.txt"
-          if [[ "$WORKER_PAIR" == true || "$WORKER_TRANSFORM" == true ]]; then
+          if [[ "$NATIVE_COMPARE" == true ]]; then
+            node result-fork-benchmark/latency-run.mjs result-fork-benchmark "results/wasm$BITS"
+          elif [[ "$WORKER_PAIR" == true || "$WORKER_TRANSFORM" == true ]]; then
             node result-fork-benchmark/benchmark-pair.mjs result-fork-benchmark "results/wasm$BITS"
           else
             node result-fork-benchmark/benchmark-run.mjs result-fork-benchmark "results/wasm$BITS"
@@ -117,7 +133,7 @@ jobs:
       - uses: actions/upload-artifact@v4
         if: always()
         with:
-          name: fork-benchmark-wasm${{ matrix.bits }}-${{ inputs.worker-transform && 'worker-transform' || inputs.worker-pair && 'worker-pair' || inputs.profile && 'profile' || 'baseline' }}-${{ github.sha }}
+          name: fork-benchmark-wasm${{ matrix.bits }}-${{ inputs.native-compare && 'native-compare' || inputs.worker-transform && 'worker-transform' || inputs.worker-pair && 'worker-pair' || inputs.profile && 'profile' || 'baseline' }}-${{ github.sha }}
           path: |
             results/
             provenance/

@@ -74,6 +74,18 @@ let
             image
             ;
         };
+        passthru.nativeComparisonAssets = import ./latency.nix {
+          inherit
+            pkgs
+            lib
+            platform
+            sysroot
+            llvm-toolchain
+            sdk-fork-continuation
+            kernel
+            image
+            ;
+        };
         passthru.benchmarkProfileAssets = import ./benchmark.nix {
           inherit
             pkgs

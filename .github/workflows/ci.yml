@@ -43,6 +43,10 @@ on:
         description: Entry-only ESM conversion control, without bundling or default changes
         type: boolean
         default: false
+      fork-benchmark-native-compare:
+        description: Same-host native Linux and Node fork/exec latency experiment
+        type: boolean
+        default: false
 
 jobs:
   benchmark-mode:
@@ -59,6 +63,7 @@ jobs:
           PROFILE: ${{ inputs['fork-benchmark-profile'] }}
           WORKER_PAIR: ${{ inputs['fork-benchmark-worker-pair'] }}
           WORKER_TRANSFORM: ${{ inputs['fork-benchmark-worker-transform'] }}
+          NATIVE_COMPARE: ${{ inputs['fork-benchmark-native-compare'] }}
         run: |
           test -z "$REQUESTED_HEAVY_CHECK"
           test "$PYTHON_FORKLESS_HOST" != true
@@ -66,6 +71,11 @@ jobs:
           if [[ "$WORKER_TRANSFORM" == true ]]; then
             test "$PROFILE" != true
             test "$WORKER_PAIR" != true
+          fi
+          if [[ "$NATIVE_COMPARE" == true ]]; then
+            test "$PROFILE" != true
+            test "$WORKER_PAIR" != true
+            test "$WORKER_TRANSFORM" != true
           fi
   fork-benchmark:
     needs: benchmark-mode
@@ -75,6 +85,7 @@ jobs:
       profile: ${{ inputs['fork-benchmark-profile'] }}
       worker-pair: ${{ inputs['fork-benchmark-worker-pair'] }}
       worker-transform: ${{ inputs['fork-benchmark-worker-transform'] }}
+      native-compare: ${{ inputs['fork-benchmark-native-compare'] }}
       widths: ${{ inputs['fork-benchmark-width'] == 'wasm32' && '[32]' || inputs['fork-benchmark-width'] == 'wasm64' && '[64]' || '[32,64]' }}
   python-forkless-host:
     name: Native Python forkless replay
