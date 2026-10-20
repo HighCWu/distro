@@ -7,6 +7,7 @@ import { fileURLToPath } from "node:url";
 import { spawnSync } from "node:child_process";
 import test from "node:test";
 import { parseProfileOutput } from "./benchmark-profile.js";
+import { captureProfileOutput } from "./benchmark-profile-capture.js";
 import {
   benchmarkCases,
   validateManifest,
@@ -142,6 +143,43 @@ test("only three complete fresh boots per case certify grouped medians and proce
     assert.throws(() => validateBoot({ ...boots[0], ...patch }, m, m.cases[0]));
 });
 
+test("private host collector preserves ordinary errors, waits for all records and restores its logger", async () => {
+  const forwarded = [];
+  const logger = {
+    error(...args) {
+      assert.equal(this, logger);
+      forwarded.push(args);
+    },
+  };
+  const original = logger.error;
+  const capture = captureProfileOutput(true, 2, logger);
+  let done = false;
+  void capture.completion.then(() => {
+    done = true;
+  });
+  logger.error('fork-profile: {"one":1}\n');
+  await Promise.resolve();
+  assert.equal(done, false);
+  logger.error("ordinary worker error", 42);
+  assert.deepEqual(forwarded, [["ordinary worker error", 42]]);
+  logger.error('fork-profile: {"two":2}');
+  await capture.completion;
+  assert.equal(done, true);
+  assert.equal(capture.lines.length, 2);
+  capture.restore();
+  assert.equal(logger.error, original);
+});
+
+test("disabled host collection leaves the logger untouched and has no completion gate", () => {
+  const logger = { error() {} };
+  const original = logger.error;
+  const capture = captureProfileOutput(false, 30, logger);
+  assert.equal(logger.error, original);
+  assert.equal(capture.completion, undefined);
+  capture.restore();
+  assert.equal(logger.error, original);
+});
+
 test("diagnostic admission requires all five phases for six distinct requests, including warmup", () => {
   const m = { ...manifest(), profile: true },
     c = m.cases.find((c) => c.kind === "fork");
@@ -214,6 +252,14 @@ test("diagnostic kernel selection is opt-in and incompatible with fault/signal s
   assert.match(worker, /profile\.measure\("user_instance_ns"/);
   assert.match(worker, /profile\.prepareChild/);
   assert.match(worker, /profile\.childRewound/);
+  assert.match(worker, /type: "fork_profile_record"/);
+  const main = readFileSync(new URL("../../packages/kernel/src/index.ts", import.meta.url), "utf8");
+  assert.match(main, /case "fork_profile_record"/);
+  assert.match(main, /create_fork_profile\(init.fork_profile, emit_fork_profile_record\)/);
+  assert.doesNotMatch(
+    main,
+    /create_fork_profile\(init.fork_profile,[\s\S]{0,100}boot_console_write/,
+  );
   assert.match(
     worker,
     /4 \* copy_status_words\(\)/,

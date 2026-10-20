@@ -102,6 +102,7 @@ pkgs.runCommand "fork-benchmark-assets-${platform.wasmArch}" { } ''
   cp ${./benchmark.c} $out/benchmark.c
   cp ${./benchmark-contract.js} $out/benchmark-contract.js
   cp ${./benchmark-profile.js} $out/benchmark-profile.js
+  cp ${./benchmark-profile-capture.js} $out/benchmark-profile-capture.js
   cp ${./benchmark-boot.mjs} $out/benchmark-boot.mjs
   cp ${./benchmark-run.mjs} $out/benchmark-run.mjs
   cp ${../../packages/browser-tests/runtime-smoke.js} $out/runtime-smoke.js

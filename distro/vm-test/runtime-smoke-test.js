@@ -2,6 +2,8 @@
 import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import { test } from "node:test";
+import { Worker } from "node:worker_threads";
+import { captureProfileOutput } from "../fork-continuation/benchmark-profile-capture.js";
 
 const source = readFileSync(
   new URL("../../packages/browser-tests/runtime-smoke.js", import.meta.url),
@@ -13,28 +15,19 @@ const { runRuntimeSmoke } = await import(
 
 function fixture(
   lines,
-  {
-    bootDelay = false,
-    closeConsole = false,
-    bootLines = [],
-    closeError,
-    closeDelay = false,
-    holdBootConsole = false,
-  } = {},
+  { bootDelay = false, closeConsole = false, bootLines = [], closeError, closeDelay = false } = {},
 ) {
   let writer;
   let closed = false;
   let releaseBoot;
   let resolveClosed;
   let rejectClosed;
-  let bootController;
   const finishClose = () => (closeError ? rejectClosed(closeError) : resolveClosed());
   const machine = {
     bootConsole: new ReadableStream({
       start(controller) {
-        bootController = controller;
         for (const line of bootLines) controller.enqueue(new TextEncoder().encode(line));
-        if (!holdBootConsole) controller.close();
+        controller.close();
       },
     }),
     closed: new Promise((resolve, reject) => {
@@ -48,8 +41,6 @@ function fixture(
   };
   return {
     finishClose,
-    writeBoot: (line) => bootController.enqueue(new TextEncoder().encode(line)),
-    closeBoot: () => bootController.close(),
     write: (line) => writer.write(new TextEncoder().encode(line)),
     abort: (error) => writer.abort(error),
     get closed() {
@@ -81,34 +72,80 @@ function fixture(
   };
 }
 
-test("diagnostic completion waits for late boot records without closing Workers on user pass", async () => {
-  const state = fixture(["::vm-test::pass\n"], { holdBootConsole: true });
+test("host diagnostics complete after user pass even when the boot console is already closed", async () => {
+  const state = fixture(["::vm-test::pass\n"]);
+  let complete;
+  const additionalCompletion = new Promise((resolve) => {
+    complete = resolve;
+  });
   const check = runRuntimeSmoke({
     ...state.options,
     timeoutMs: 1000,
-    completionReady: (output) => output.includes("diagnostic-ready\n"),
+    additionalCompletion,
   });
   await new Promise((resolve) => setImmediate(resolve));
   assert.equal(state.closed, false);
-  state.writeBoot("diagnostic-ready\n");
-  state.closeBoot();
-  assert.match(await check, /diagnostic-ready/);
+  complete();
+  assert.match(await check, /::vm-test::pass/);
   assert.equal(state.closed, true);
 });
 
-test("a missing or broken diagnostic gate cannot bypass the watchdog or cleanup", async () => {
-  for (const completionReady of [
-    () => false,
-    () => {
-      throw Error("broken diagnostic gate");
-    },
+test("a missing or rejected diagnostic promise cannot bypass the watchdog or cleanup", async () => {
+  for (const makeCompletion of [
+    () => new Promise(() => {}),
+    () => Promise.reject(Error("broken diagnostic gate")),
   ]) {
     const state = fixture(["::vm-test::pass\n"]);
     await assert.rejects(
-      runRuntimeSmoke({ ...state.options, completionReady }),
+      runRuntimeSmoke({ ...state.options, additionalCompletion: makeCompletion() }),
       /timed out|broken diagnostic gate/,
     );
     assert.equal(state.closed, true);
+  }
+});
+
+test("user failures still reject promptly while diagnostics are pending", async () => {
+  const state = fixture(["::vm-test::pass\n"]);
+  const check = runRuntimeSmoke({
+    ...state.options,
+    timeoutMs: 1000,
+    additionalCompletion: new Promise(() => {}),
+  });
+  const rejected = assert.rejects(check, /late user failure/);
+  await new Promise((resolve) => setImmediate(resolve));
+  await state.write("::vm-test::fail: late user failure\n");
+  await rejected;
+  assert.equal(state.closed, true);
+});
+
+test("real Worker diagnostics wake the host gate independently of the closed Linux boot stream", async () => {
+  const logger = {
+    error() {
+      throw Error("unexpected non-diagnostic output");
+    },
+  };
+  const capture = captureProfileOutput(true, 1, logger);
+  const worker = new Worker(
+    'const {parentPort}=require("node:worker_threads");parentPort.once("message",line=>parentPort.postMessage(line));',
+    { eval: true },
+  );
+  worker.on("message", (line) => logger.error(line));
+  try {
+    const state = fixture(["::vm-test::pass\n"]);
+    const check = runRuntimeSmoke({
+      ...state.options,
+      timeoutMs: 1000,
+      additionalCompletion: capture.completion,
+    });
+    await new Promise((resolve) => setImmediate(resolve));
+    assert.equal(state.closed, false);
+    worker.postMessage('fork-profile: {"request":"late-worker"}');
+    assert.match(await check, /::vm-test::pass/);
+    assert.equal(capture.lines.length, 1);
+    assert.equal(state.closed, true);
+  } finally {
+    capture.restore();
+    await worker.terminate();
   }
 });
 

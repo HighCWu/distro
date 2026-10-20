@@ -8,7 +8,7 @@ export async function runRuntimeSmoke({
   loadInitramfs,
   timeoutMs = 120_000,
   onProgress,
-  completionReady,
+  additionalCompletion,
 }) {
   // Test diagnostics must not change pass/failure or cleanup semantics.
   const trace = (message) => {
@@ -40,6 +40,11 @@ export async function runRuntimeSmoke({
     runtimeFailure ??= error instanceof Error ? error : new Error(String(error));
     rejectResult(runtimeFailure);
   };
+  let additionalReady = !additionalCompletion;
+  void additionalCompletion?.then(() => {
+    additionalReady = true;
+    if (reportedPass) resolveResult();
+  }, reportFailure);
   const consoleOutput = (required) => {
     const decoder = new LineDecoder();
     const consume = (lines) => {
@@ -54,17 +59,10 @@ export async function runRuntimeSmoke({
         } else if (status)
           reportFailure(new Error(`${status.reason}\nRuntime console:\n${output}`));
         else if (line.includes("Kernel panic - not syncing")) reportFailure(new Error(line));
-        // A diagnostic build may still have records queued on other Worker
-        // ports after the user console reports pass. Do not terminate those
-        // Workers until the test-only output gate is satisfied. The same
-        // watchdog bounds missing records; default callers have no extra gate.
-        if (reportedPass && !runtimeFailure) {
-          try {
-            if (!completionReady || completionReady(output)) resolveResult();
-          } catch (error) {
-            reportFailure(error);
-          }
-        }
+        // Private host diagnostics can arrive after the final console line,
+        // even after Linux closed its early boot stream. Their completion
+        // wakes this gate directly; it does not need another console write.
+        if (reportedPass && !runtimeFailure && additionalReady) resolveResult();
       }
     };
     return new WritableStream({

@@ -2,6 +2,13 @@
 // Private diagnostic build only: no boot option, user import or Linux UAPI.
 export const fork_profile_test = false;
 
+// The Linux early boot stream is closed before user programs run. Forward
+// private diagnostic records to the host logger instead; the Node test runner
+// captures this one prefix without changing Machine or Linux interfaces.
+export function emit_fork_profile_record(line: string): void {
+  if (fork_profile_test) console.error(line.trimEnd());
+}
+
 export interface ForkProfileRequest {
   id: string;
 }

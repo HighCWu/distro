@@ -94,6 +94,7 @@ export type WorkerMessage =
     }
   | { type: "boot_console_write"; message: ArrayBuffer }
   | { type: "fork_profile_started" }
+  | { type: "fork_profile_record"; line: string }
   | { type: "boot_console_close" }
   | { type: "terminate_machine"; reason: MachineTerminationReason }
   | { type: "run_on_main"; fn: WasmAddress; arg: WasmAddress }
@@ -106,8 +107,7 @@ const unavailable = () => {
 const endpoint = platform.worker_endpoint();
 const postMessage = (message: WorkerMessage, transfer?: Transferable[]) =>
   post_endpoint(endpoint, message, transfer);
-const profile_output = (line: string) =>
-  postMessage({ type: "boot_console_write", message: new TextEncoder().encode(line).buffer });
+const profile_output = (line: string) => postMessage({ type: "fork_profile_record", line });
 
 function user_imports({
   kernel_memory,
