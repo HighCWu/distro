@@ -17,7 +17,7 @@ export function latencyManifest(m) {
   return m;
 }
 export function parseLatency(output, m, c, variant) {
-  assert.ok(variant === "native" || variant === "node");
+  assert.ok(["native", "node", "chromium", "firefox"].includes(variant));
   assert.equal(typeof output, "string");
   assert.ok(!/::vm-test::fail|rcu:.*detected.*stall|fork-profile:/i.test(output));
   const lines = output.split(/\r?\n/);
@@ -38,10 +38,18 @@ export function parseLatency(output, m, c, variant) {
   }
   return rows;
 }
-export function latencySchedule(m) {
+export function latencySchedule(m, variants = ["native", "node"]) {
+  assert.ok(
+    JSON.stringify(variants) === JSON.stringify(["native", "node"]) ||
+      JSON.stringify(variants) === JSON.stringify(["native", "node", "chromium", "firefox"]),
+    "unknown comparison profile",
+  );
   return [0, 1, 2].flatMap((repeat) =>
     (repeat % 2 ? [...m.cases].reverse() : m.cases).flatMap((c, i) =>
-      ((repeat + i) % 2 ? ["node", "native"] : ["native", "node"]).map((variant) => ({
+      [
+        ...variants.slice((repeat + i) % variants.length),
+        ...variants.slice(0, (repeat + i) % variants.length),
+      ].map((variant) => ({
         repeat,
         caseId: c.id,
         variant,
@@ -53,18 +61,24 @@ export function quantile(values, p) {
   assert.ok(values.length && p > 0 && p <= 1);
   return [...values].sort((a, b) => a - b)[Math.ceil(values.length * p) - 1];
 }
-export function latencySummary(boots, m) {
+export function latencySummary(boots, m, variants = ["native", "node"]) {
   assert.deepEqual(
     boots.map(({ repeat, caseId, variant }) => ({ repeat, caseId, variant })),
-    latencySchedule(m),
+    latencySchedule(m, variants),
   );
   return m.cases.map((c) => ({
     caseId: c.id,
     variants: Object.fromEntries(
-      ["native", "node"].map((variant) => {
+      variants.map((variant) => {
         const group = boots.filter((b) => b.caseId === c.id && b.variant === variant);
         const rows = group.map((b) => {
           assert.equal(b.closed, true);
+          if (variant === "chromium" || variant === "firefox") {
+            assert.equal(b.browserClosed, true);
+            assert.equal(typeof b.browserVersion, "string");
+            assert.ok(b.browserVersion.length > 0);
+            assert.equal(b.pageEnvironment.crossOriginIsolated, true);
+          }
           return parseLatency(b.output, m, c, variant);
         });
         return [

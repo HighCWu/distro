@@ -47,6 +47,10 @@ on:
         description: Same-host native Linux and Node fork/exec latency experiment
         type: boolean
         default: false
+      fork-benchmark-browser-compare:
+        description: Same-host native, Node, Chromium and Firefox latency measurement
+        type: boolean
+        default: false
 
 jobs:
   benchmark-mode:
@@ -64,6 +68,7 @@ jobs:
           WORKER_PAIR: ${{ inputs['fork-benchmark-worker-pair'] }}
           WORKER_TRANSFORM: ${{ inputs['fork-benchmark-worker-transform'] }}
           NATIVE_COMPARE: ${{ inputs['fork-benchmark-native-compare'] }}
+          BROWSER_COMPARE: ${{ inputs['fork-benchmark-browser-compare'] }}
         run: |
           test -z "$REQUESTED_HEAVY_CHECK"
           test "$PYTHON_FORKLESS_HOST" != true
@@ -77,6 +82,12 @@ jobs:
             test "$WORKER_PAIR" != true
             test "$WORKER_TRANSFORM" != true
           fi
+          if [[ "$BROWSER_COMPARE" == true ]]; then
+            test "$PROFILE" != true
+            test "$WORKER_PAIR" != true
+            test "$WORKER_TRANSFORM" != true
+            test "$NATIVE_COMPARE" != true
+          fi
   fork-benchmark:
     needs: benchmark-mode
     if: ${{ github.event_name == 'workflow_dispatch' && inputs['fork-benchmark'] }}
@@ -86,6 +97,7 @@ jobs:
       worker-pair: ${{ inputs['fork-benchmark-worker-pair'] }}
       worker-transform: ${{ inputs['fork-benchmark-worker-transform'] }}
       native-compare: ${{ inputs['fork-benchmark-native-compare'] }}
+      browser-compare: ${{ inputs['fork-benchmark-browser-compare'] }}
       widths: ${{ inputs['fork-benchmark-width'] == 'wasm32' && '[32]' || inputs['fork-benchmark-width'] == 'wasm64' && '[64]' || '[32,64]' }}
   python-forkless-host:
     name: Native Python forkless replay

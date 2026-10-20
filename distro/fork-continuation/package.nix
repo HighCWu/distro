@@ -9,6 +9,7 @@
   sdk-fork-continuation,
   kernel,
   image,
+  playwright,
 }:
 let
   transformedKernel = import ./worker-bundle.nix {
@@ -85,6 +86,10 @@ let
             kernel
             image
             ;
+        };
+        passthru.browserComparisonAssets = import ./latency-browser.nix {
+          inherit pkgs lib playwright;
+          assets = program.nativeComparisonAssets;
         };
         passthru.benchmarkProfileAssets = import ./benchmark.nix {
           inherit
