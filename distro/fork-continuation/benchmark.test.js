@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: MIT
 import assert from "node:assert/strict";
-import { mkdtempSync, readFileSync, rmSync } from "node:fs";
+import { mkdtempSync, readFileSync, rmSync, mkdirSync, writeFileSync, copyFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -8,6 +8,7 @@ import { spawnSync } from "node:child_process";
 import test from "node:test";
 import { parseProfileOutput, profileKinds } from "./benchmark-profile.js";
 import { captureProfileOutput } from "./benchmark-profile-capture.js";
+import { pairSchedule, summarizePair } from "./benchmark-pair.js";
 import {
   benchmarkCases,
   validateManifest,
@@ -79,6 +80,119 @@ const boot = (m, c, repeat) => ({
   kernelLinearBytes: 1048576,
   output: output(rows(m, c)),
   repeat,
+});
+
+test("worker pair requires all adjacent alternating fresh boots and uninstrumented evidence", () => {
+  const m = manifest(),
+    schedule = pairSchedule(m);
+  assert.equal(schedule.length, 42);
+  for (let i = 0; i < schedule.length; i += 2) {
+    const a = schedule[i],
+      b = schedule[i + 1];
+    assert.equal(a.caseId, b.caseId);
+    assert.equal(a.repeat, b.repeat);
+    assert.notEqual(a.variant, b.variant);
+  }
+  assert.deepEqual(
+    new Set(schedule.filter((s) => s.caseId === "fork-1").map((s) => s.variant)),
+    new Set(["baseline", "bundled"]),
+  );
+  const boots = schedule.map((s) => ({
+    ...boot(
+      m,
+      m.cases.find((c) => c.id === s.caseId),
+      s.repeat,
+    ),
+    ...s,
+  }));
+  const report = summarizePair(boots, m);
+  assert.equal(report.summary.baseline.length, 7);
+  for (const r of report.ratios)
+    for (const v of Object.values(r.bundledOverBaseline)) assert.equal(v, 1);
+  assert.throws(() => summarizePair(boots.slice(1), m));
+  assert.throws(() => summarizePair([...boots].reverse(), m));
+  assert.throws(() => summarizePair(boots, { ...m, profile: true }));
+  assert.throws(() =>
+    summarizePair(
+      boots.map((b, i) => (i === 0 ? { ...b, closed: false } : b)),
+      m,
+    ),
+  );
+  assert.throws(() =>
+    summarizePair(
+      boots.map((b, i) => (i === 0 ? { ...b, output: b.output + "::vm-test::fail\n" } : b)),
+      m,
+    ),
+  );
+});
+
+test("bundle experiment stays private, preserves package inputs and gates measurements on recovery", () => {
+  const bundle = readFileSync(new URL("./worker-bundle.nix", import.meta.url), "utf8");
+  assert.match(bundle, /--format=esm --platform=neutral/);
+  assert.match(bundle, /--tree-shaking=false --ignore-annotations --keep-names/);
+  assert.match(bundle, /--legal-comments=inline/);
+  assert.doesNotMatch(bundle, /--minify|--splitting/);
+  const recipe = readFileSync(new URL("./package.nix", import.meta.url), "utf8");
+  assert.match(recipe, /test -e \$\{bundledRuntime\}/);
+  assert.match(recipe, /test -e \$\{bundledFaults\}/);
+  assert.match(recipe, /copyFaultTest = true/);
+  const runner = readFileSync(new URL("./benchmark-pair.mjs", import.meta.url), "utf8");
+  assert.match(runner, /spawnSync\(process.execPath/);
+  assert.match(runner, /150_000/);
+  assert.match(runner, /kernel\/vmlinux.wasm/);
+  assert.match(runner, /kernel\/dist\/index.js/);
+  assert.match(runner, /assert.deepEqual\(manifests.baseline, manifests.bundled\)/);
+  const ci = readFileSync(new URL("../../.github/workflows/ci.yml", import.meta.url), "utf8");
+  assert.match(ci, /fork-benchmark-worker-pair:/);
+  assert.match(ci, /if \[\[ "\$WORKER_PAIR" == true \]\]; then test "\$PROFILE" != true; fi/);
+});
+
+test("paired driver saves all raw outputs, rejects changed inputs and never overwrites results", (t) => {
+  const dir = mkdtempSync(join(tmpdir(), "fork-pair-driver-"));
+  t.after(() => rmSync(dir, { recursive: true, force: true }));
+  const m = manifest();
+  for (const name of [
+    "benchmark-pair.mjs",
+    "benchmark-pair.js",
+    "benchmark-contract.js",
+    "benchmark-profile.js",
+  ])
+    copyFileSync(new URL(name, import.meta.url), join(dir, name));
+  for (const variant of ["baseline", "bundled"]) {
+    const root = join(dir, variant);
+    mkdirSync(join(root, "kernel/dist"), { recursive: true });
+    mkdirSync(join(root, "binaries"));
+    writeFileSync(join(root, "manifest.json"), JSON.stringify(m));
+    writeFileSync(join(root, "binaries/program.wasm"), "identical Wasm");
+    writeFileSync(join(root, "kernel/vmlinux.wasm"), "identical kernel");
+    writeFileSync(join(root, "kernel/dist/index.js"), "identical entry");
+    writeFileSync(join(root, "kernel/dist/worker.js"), variant);
+    writeFileSync(join(root, "kernel/worker-bundle-version.txt"), "fixture-only");
+    writeFileSync(join(root, "kernel/worker-bundle-meta.json"), "{}");
+    const fake = Object.fromEntries(m.cases.map((c) => [c.id, boot(m, c, 0)]));
+    for (const b of Object.values(fake)) delete b.repeat;
+    writeFileSync(
+      join(root, "benchmark-boot.mjs"),
+      `console.log(JSON.stringify(${JSON.stringify(fake)}[process.argv[3]]));`,
+    );
+    for (const c of m.cases) writeFileSync(join(root, `${c.id}.cpio`), "identical initramfs");
+  }
+  const run = (result) =>
+    spawnSync(process.execPath, [join(dir, "benchmark-pair.mjs"), dir, result], {
+      encoding: "utf8",
+      timeout: 15000,
+    });
+  const result = join(dir, "results");
+  const first = run(result);
+  assert.equal(first.status, 0, first.stderr);
+  assert.match(first.stdout, /all 42 fresh boots, metrics and shutdown pass/);
+  const report = JSON.parse(readFileSync(join(result, "report.json"), "utf8"));
+  assert.equal(report.boots.length, 42);
+  for (const b of report.boots)
+    assert.ok(readFileSync(join(result, `${b.variant}-${b.repeat}-${b.caseId}.stdout`), "utf8"));
+  assert.notEqual(run(result).status, 0);
+  writeFileSync(join(dir, "bundled/binaries/program.wasm"), "changed");
+  assert.notEqual(run(join(dir, "changed-results")).status, 0);
 });
 
 test("manifest fixes bounded fresh workloads and excludes the SDK's untransformed ABI module", () => {

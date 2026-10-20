@@ -11,6 +11,9 @@ on:
         description: JSON pointer-width matrix selected by the dispatch workflow
         type: string
         default: '[32,64]'
+      worker-pair:
+        type: boolean
+        default: false
 
 permissions:
   contents: read
@@ -55,22 +58,28 @@ jobs:
           name: linuxwasm
       - name: Validate contracts and formatting
         run: |
-          node --test distro/fork-continuation/benchmark.test.js
+          node --test distro/fork-continuation/benchmark.test.js distro/fork-continuation/worker-bundle.test.js
           nix build --no-link --print-build-logs .#checks.x86_64-linux.formatting
       - name: Build immutable inputs, not cached benchmark results
         env:
           BITS: ${{ matrix.bits }}
           PROFILE: ${{ inputs.profile }}
+          WORKER_PAIR: ${{ inputs.worker-pair }}
         run: |
           suffix=""
           attribute=benchmarkAssets
           if [[ "$PROFILE" == true ]]; then attribute=benchmarkProfileAssets; fi
+          if [[ "$WORKER_PAIR" == true ]]; then
+            test "$PROFILE" != true
+            attribute=benchmarkWorkerPairAssets
+          fi
           if [[ "$BITS" == 64 ]]; then suffix="-wasm64"; fi
           nix build --print-build-logs --out-link result-fork-benchmark \
             ".#legacyPackages.x86_64-linux.fork-continuation$suffix.$attribute"
       - name: Measure three fresh Node processes and Linux boots per case
         env:
           BITS: ${{ matrix.bits }}
+          WORKER_PAIR: ${{ inputs.worker-pair }}
         run: |
           mkdir -p results provenance
           {
@@ -80,15 +89,23 @@ jobs:
             uname -a
             lscpu
             readlink -f result-fork-benchmark
-            sha256sum result-fork-benchmark/manifest.json result-fork-benchmark/benchmark.c
+            if [[ "$WORKER_PAIR" == true ]]; then
+              sha256sum result-fork-benchmark/{baseline,bundled}/manifest.json
+            else
+              sha256sum result-fork-benchmark/manifest.json result-fork-benchmark/benchmark.c
+            fi
             git show HEAD:distro/linux/package.nix
             git show HEAD:distro/llvm-toolchain/unwrapped.nix
           } > "provenance/wasm$BITS.txt"
-          node result-fork-benchmark/benchmark-run.mjs result-fork-benchmark "results/wasm$BITS"
+          if [[ "$WORKER_PAIR" == true ]]; then
+            node result-fork-benchmark/benchmark-pair.mjs result-fork-benchmark "results/wasm$BITS"
+          else
+            node result-fork-benchmark/benchmark-run.mjs result-fork-benchmark "results/wasm$BITS"
+          fi
       - uses: actions/upload-artifact@v4
         if: always()
         with:
-          name: fork-benchmark-wasm${{ matrix.bits }}-${{ inputs.profile && 'profile' || 'baseline' }}-${{ github.sha }}
+          name: fork-benchmark-wasm${{ matrix.bits }}-${{ inputs.worker-pair && 'worker-pair' || inputs.profile && 'profile' || 'baseline' }}-${{ github.sha }}
           path: |
             results/
             provenance/

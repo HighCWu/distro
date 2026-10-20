@@ -11,6 +11,22 @@
   image,
 }:
 let
+  bundledKernel = import ./worker-bundle.nix { inherit pkgs kernel; };
+  bundledFaultKernel = import ./worker-bundle.nix {
+    inherit pkgs;
+    kernel = kernel.override { copyFaultTest = true; };
+  };
+  bundledRuntime = (vm-test.override { kernel = bundledKernel; }).rawInitramfsTest {
+    name = "fork-worker-bundle-${platform.wasmArch}";
+    init = "${program}/fork.wasm";
+    files."/fork-exec" = "${program}/exec-child.wasm";
+    cpus = 2;
+  };
+  bundledFaults = (vm-test.override { kernel = bundledFaultKernel; }).rawInitramfsTest {
+    name = "fork-worker-bundle-faults-${platform.wasmArch}";
+    init = "${program}/fork-fault.wasm";
+    cpus = 2;
+  };
   helperFlags = lib.escapeShellArgs (
     [
       "--target=${platform.targetTriple}"
@@ -51,6 +67,33 @@ let
           kernel = kernel.override { forkProfileTest = true; };
           profile = true;
         };
+        passthru.benchmarkWorkerPairAssets =
+          let
+            bundledAssets = import ./benchmark.nix {
+              inherit
+                pkgs
+                lib
+                platform
+                sysroot
+                llvm-toolchain
+                sdk-fork-continuation
+                image
+                ;
+              kernel = bundledKernel;
+            };
+          in
+          pkgs.runCommand "fork-worker-pair-assets-${platform.wasmArch}" { } ''
+            # Correctness, real timeout rollback and recovery precede measurement.
+            test -e ${bundledRuntime}
+            test -e ${bundledFaults}
+            mkdir $out
+            ln -s ${program.benchmarkAssets} $out/baseline
+            ln -s ${bundledAssets} $out/bundled
+            cp ${./benchmark-pair.mjs} $out/benchmark-pair.mjs
+            cp ${./benchmark-pair.js} $out/benchmark-pair.js
+            cp ${./benchmark-contract.js} $out/benchmark-contract.js
+            cp ${./benchmark-profile.js} $out/benchmark-profile.js
+          '';
         passthru.checks.runtime = vm-test.rawInitramfsTest {
           name = "fork-continuation-${platform.wasmArch}";
           init = "${program}/fork.wasm";
