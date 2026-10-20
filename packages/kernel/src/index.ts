@@ -333,6 +333,7 @@ export async function bootMachine(options: BootMachineOptions): Promise<Machine>
       }
       const spawn_profile = create_fork_profile(init.fork_profile, emit_fork_profile_record);
       const worker = platform.spawn_worker(name, {
+        profileStartup: Boolean(spawn_profile),
         on_message(raw) {
           const message = raw as WorkerMessage;
           switch (message.type) {
@@ -353,6 +354,18 @@ export async function bootMachine(options: BootMachineOptions): Promise<Machine>
               break;
             case "fork_profile_started":
               spawn_profile?.workerStarted();
+              break;
+            case "fork_profile_online":
+              spawn_profile?.workerOnline();
+              break;
+            case "fork_profile_main_turn":
+              spawn_profile?.mainTurn();
+              break;
+            case "fork_profile_module_ready":
+              spawn_profile?.moduleReady(message.module_ns);
+              break;
+            case "fork_profile_init_posted":
+              spawn_profile?.initPosted(message.queued_ns, message.post_ns);
               break;
             case "fork_profile_record":
               emit_fork_profile_record(message.line);
@@ -398,6 +411,7 @@ export async function bootMachine(options: BootMachineOptions): Promise<Machine>
           void fail(error);
         },
       });
+      spawn_profile?.workerConstructed();
       try {
         const copy_fault = init.user_copy_status ? next_copy_fault() : null;
         if (init.user_copy_status) mark_copy_timeout(init.user_copy_status, copy_fault);

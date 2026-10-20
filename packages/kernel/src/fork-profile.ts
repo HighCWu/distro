@@ -14,6 +14,9 @@ export interface ForkProfileRequest {
 }
 type Measure = "allocate_ns" | "copy_ns" | "kernel_instance_ns" | "user_instance_ns";
 export type ForkProfileEvent =
+  | { kind: "worker-construct" | "worker-online" | "worker-main-turn"; ns: number }
+  | { kind: "worker-module-ready"; ns: number; module_ns: number }
+  | { kind: "worker-init-posted"; ns: number; queued_ns: number; post_ns: number }
   | { kind: "worker-start-message"; ns: number }
   | { kind: "parent-ready"; ns: number }
   | {
@@ -59,7 +62,7 @@ export class ForkProfile {
     // diagnostics fail the separate profiling corpus, not the production ABI.
     try {
       this.emit(
-        `fork-profile: ${JSON.stringify({ schemaVersion: 1, request: this.request.id, ...event })}\n`,
+        `fork-profile: ${JSON.stringify({ schemaVersion: 2, request: this.request.id, ...event })}\n`,
       );
     } catch {}
   }
@@ -76,6 +79,21 @@ export class ForkProfile {
   }
   workerStarted(): void {
     this.report({ kind: "worker-start-message", ns: this.elapsed(this.started) });
+  }
+  workerConstructed(): void {
+    this.report({ kind: "worker-construct", ns: this.elapsed(this.started) });
+  }
+  workerOnline(): void {
+    this.report({ kind: "worker-online", ns: this.elapsed(this.started) });
+  }
+  mainTurn(): void {
+    this.report({ kind: "worker-main-turn", ns: this.elapsed(this.started) });
+  }
+  moduleReady(module_ns: number): void {
+    this.report({ kind: "worker-module-ready", ns: this.elapsed(this.started), module_ns });
+  }
+  initPosted(queued_ns: number, post_ns: number): void {
+    this.report({ kind: "worker-init-posted", ns: this.elapsed(this.started), queued_ns, post_ns });
   }
   childReady(): void {
     this.report({ kind: "child-ready", ns: this.elapsed(this.started), ...this.measurements });

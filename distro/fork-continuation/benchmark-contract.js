@@ -13,6 +13,10 @@ export const benchmarkCases = [
 export function validateManifest(m) {
   assert.equal(m.schemaVersion, 1);
   assert.equal(typeof (m.profile ?? false), "boolean");
+  if (m.profileVersion !== undefined) {
+    assert.equal(m.profile, true);
+    assert.ok(m.profileVersion === 1 || m.profileVersion === 2, "unknown diagnostic version");
+  }
   assert.ok(m.addressBits === 32 || m.addressBits === 64);
   assert.equal(m.samples, 5);
   assert.equal(m.warmups, 1);

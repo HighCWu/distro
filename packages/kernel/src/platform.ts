@@ -7,6 +7,8 @@
 import { listen_endpoint, post_endpoint, type EmitterEndpoint, type Endpoint } from "./endpoint.ts";
 import { assert } from "./util.ts";
 import { compile_web_wasm } from "./web-wasm.ts";
+import { fork_profile_test } from "./fork-profile.ts";
+import { profiled_init_queue } from "./profiled-init.ts";
 
 export interface WorkerHandle {
   post(message: unknown, transfer?: Transferable[]): void;
@@ -14,6 +16,7 @@ export interface WorkerHandle {
 }
 
 export interface WorkerHandlers {
+  profileStartup?: boolean;
   on_message(message: unknown): void;
   on_error(error: Error): void;
 }
@@ -68,6 +71,8 @@ const web: Platform = {
 // Hand-written types for the slices of the node builtins we use, so that
 // @types/node doesn't leak into a web-first package.
 interface NodeWorker extends EmitterEndpoint {
+  on: EmitterEndpoint["on"] & ((type: "online", listener: () => void) => void);
+  off: EmitterEndpoint["off"] & ((type: "online", listener: () => void) => void);
   terminate(): Promise<number>;
 }
 
@@ -95,9 +100,59 @@ function node(getBuiltinModule: GetBuiltinModule, process: NodeProcess): Platfor
       return { bytes, module: await WebAssembly.compile(bytes) };
     },
     spawn_worker(name, handlers) {
-      const worker = new Worker(new URL("./worker.js", import.meta.url), {
-        name,
-      });
+      const profiling = fork_profile_test && handlers.profileStartup === true;
+      const worker = new Worker(
+        new URL(profiling ? "./fork-profile-worker.js" : "./worker.js", import.meta.url),
+        {
+          name,
+        },
+      );
+      if (profiling) {
+        const queue = profiled_init_queue(
+          (message, transfer) => post_endpoint(worker, message, transfer),
+          (queued_ns, post_ns) =>
+            handlers.on_message({ type: "fork_profile_init_posted", queued_ns, post_ns }),
+          handlers.on_error,
+        );
+        const online = () => {
+          worker.off("online", online);
+          handlers.on_message({ type: "fork_profile_online" });
+        };
+        worker.on("online", online);
+        const probe = setTimeout(() => handlers.on_message({ type: "fork_profile_main_turn" }), 0);
+        const handle = worker_handle(
+          worker,
+          () => {
+            queue.stop();
+            clearTimeout(probe);
+            worker.off("online", online);
+            return worker.terminate();
+          },
+          {
+            on_error(error) {
+              queue.stop();
+              clearTimeout(probe);
+              handlers.on_error(error);
+            },
+            on_message(raw) {
+              const message = raw as { type?: string; module_ns?: number };
+              if (message.type === "fork_profile_module_ready") {
+                if (
+                  typeof message.module_ns !== "number" ||
+                  !Number.isSafeInteger(message.module_ns) ||
+                  message.module_ns < 0
+                ) {
+                  handlers.on_error(Error("invalid profiled module duration"));
+                  return;
+                }
+                handlers.on_message(raw);
+                queue.ready();
+              } else handlers.on_message(raw);
+            },
+          },
+        );
+        return { post: queue.post, terminate: handle.terminate };
+      }
       return worker_handle(worker, () => worker.terminate(), handlers);
     },
     worker_endpoint() {

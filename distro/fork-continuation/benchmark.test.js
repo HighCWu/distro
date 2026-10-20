@@ -6,7 +6,7 @@ import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { spawnSync } from "node:child_process";
 import test from "node:test";
-import { parseProfileOutput } from "./benchmark-profile.js";
+import { parseProfileOutput, profileKinds } from "./benchmark-profile.js";
 import { captureProfileOutput } from "./benchmark-profile-capture.js";
 import {
   benchmarkCases,
@@ -230,6 +230,51 @@ test("diagnostic admission requires all five phases for six distinct requests, i
   assert.throws(() => validateManifest({ ...m, profile: "true" }));
 });
 
+test("version two requires startup subphases, rejects mixed versions, and keeps version one readable", () => {
+  const m = { ...manifest(), profile: true, profileVersion: 2 },
+    c = m.cases.find((c) => c.kind === "fork");
+  validateManifest(m);
+  assert.equal(profileKinds(m).length, 10);
+  const records = Array.from({ length: 6 }, (_, i) =>
+    profileKinds(m).map((kind) => ({
+      schemaVersion: 2,
+      request: `v2-${i}`,
+      kind,
+      ns: 100,
+      ...(kind === "child-ready"
+        ? { allocate_ns: 1, copy_ns: 2, kernel_instance_ns: 3, user_instance_ns: 4 }
+        : {}),
+      ...(kind === "worker-module-ready" ? { module_ns: 5 } : {}),
+      ...(kind === "worker-init-posted" ? { queued_ns: 6, post_ns: 7 } : {}),
+    })),
+  ).flat();
+  const text = (list) => list.map((r) => `fork-profile: ${JSON.stringify(r)}`).join("\n");
+  assert.equal(parseProfileOutput(text(records), m, c).length, 6);
+  assert.throws(() =>
+    parseProfileOutput(text(records.filter((r) => r.kind !== "worker-online")), m, c),
+  );
+  assert.throws(() =>
+    parseProfileOutput(text(records.map((r) => ({ ...r, schemaVersion: 1 }))), m, c),
+  );
+  assert.throws(() =>
+    parseProfileOutput(
+      text(records.map((r) => (r.kind === "worker-module-ready" ? { ...r, module_ns: -1 } : r))),
+      m,
+      c,
+    ),
+  );
+  assert.throws(() =>
+    parseProfileOutput(
+      text(records.map((r) => (r.kind === "worker-init-posted" ? { ...r, queued_ns: null } : r))),
+      m,
+      c,
+    ),
+  );
+  assert.throws(() => validateManifest({ ...m, profileVersion: 3 }));
+  assert.throws(() => validateManifest({ ...m, profile: false }));
+  assert.equal(profileKinds({ ...m, profileVersion: 1 }).length, 5);
+});
+
 test("diagnostic kernel selection is opt-in and incompatible with fault/signal seams", () => {
   const recipe = readFileSync(new URL("./package.nix", import.meta.url), "utf8");
   const kernel = readFileSync(new URL("../npm/kernel.nix", import.meta.url), "utf8");
@@ -256,6 +301,17 @@ test("diagnostic kernel selection is opt-in and incompatible with fault/signal s
   const main = readFileSync(new URL("../../packages/kernel/src/index.ts", import.meta.url), "utf8");
   assert.match(main, /case "fork_profile_record"/);
   assert.match(main, /create_fork_profile\(init.fork_profile, emit_fork_profile_record\)/);
+  const platform = readFileSync(
+    new URL("../../packages/kernel/src/platform.ts", import.meta.url),
+    "utf8",
+  );
+  assert.match(platform, /fork_profile_test && handlers.profileStartup === true/);
+  assert.match(platform, /profiling \? "\.\/fork-profile-worker.js" : "\.\/worker.js"/);
+  assert.match(platform, /worker.on\("online", online\)/);
+  assert.match(platform, /queue.stop\(\)/);
+  assert.match(platform, /clearTimeout\(probe\)/);
+  const boot = readFileSync(new URL("./benchmark-boot.mjs", import.meta.url), "utf8");
+  assert.match(boot, /profileKinds\(m\).length/);
   assert.doesNotMatch(
     main,
     /create_fork_profile\(init.fork_profile,[\s\S]{0,100}boot_console_write/,

@@ -88,7 +88,10 @@ let
         inherit cases;
         cpus = 2;
       }
-      // lib.optionalAttrs profile { profile = true; }
+      // lib.optionalAttrs profile {
+        profile = true;
+        profileVersion = 2;
+      }
     )
   );
 in

@@ -6,6 +6,7 @@ import { pathToFileURL } from "node:url";
 import { validateManifest, parseBenchmarkOutput } from "./benchmark-contract.js";
 import { runRuntimeSmoke } from "./runtime-smoke.js";
 import { captureProfileOutput } from "./benchmark-profile-capture.js";
+import { profileKinds } from "./benchmark-profile.js";
 
 assert.equal(process.platform, "linux", "peak RSS units are specified for Linux only");
 assert.equal(process.argv.length, 4, "usage: benchmark-boot.mjs assets case-id");
@@ -17,7 +18,7 @@ const kernel = await import(pathToFileURL(join(assets, "kernel/dist/index.js")).
 let machine;
 const capture = captureProfileOutput(
   m.profile === true,
-  c.kind === "fork" ? (m.samples + m.warmups) * 5 : 0,
+  c.kind === "fork" ? (m.samples + m.warmups) * profileKinds(m).length : 0,
 );
 let consoleOutput;
 try {

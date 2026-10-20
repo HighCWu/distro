@@ -94,6 +94,9 @@ export type WorkerMessage =
     }
   | { type: "boot_console_write"; message: ArrayBuffer }
   | { type: "fork_profile_started" }
+  | { type: "fork_profile_online" | "fork_profile_main_turn" }
+  | { type: "fork_profile_module_ready"; module_ns: number }
+  | { type: "fork_profile_init_posted"; queued_ns: number; post_ns: number }
   | { type: "fork_profile_record"; line: string }
   | { type: "boot_console_close" }
   | { type: "terminate_machine"; reason: MachineTerminationReason }

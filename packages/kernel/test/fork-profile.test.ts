@@ -33,6 +33,35 @@ test("enabled requests use distinct opaque identifiers", () => {
   assert.notEqual(a.id, b.id);
 });
 
+test("startup v2 records keep cumulative host markers distinct from local module/send durations", () => {
+  let time = 0;
+  const events: Array<Record<string, unknown>> = [];
+  const profile = create_fork_profile(
+    { id: "startup-v2" },
+    (line) => events.push(JSON.parse(line.slice(14))),
+    true,
+    () => time,
+  )!;
+  time = 1;
+  profile.workerConstructed();
+  time = 10;
+  profile.workerOnline();
+  time = 11;
+  profile.mainTurn();
+  time = 12;
+  profile.moduleReady(4e6);
+  time = 13;
+  profile.initPosted(9e6, 1e6);
+  assert.deepEqual(
+    events.map((e) => e.ns),
+    [1e6, 10e6, 11e6, 12e6, 13e6],
+  );
+  assert.ok(events.every((e) => e.schemaVersion === 2));
+  assert.equal(events[3]?.module_ns, 4e6);
+  assert.equal(events[4]?.queued_ns, 9e6);
+  assert.equal(events[4]?.post_ns, 1e6);
+});
+
 test("Worker start notification is measured wholly on the main clock, including dispatch delay", () => {
   let clock = 5000;
   const events: Array<{ kind: string; ns: number }> = [];
