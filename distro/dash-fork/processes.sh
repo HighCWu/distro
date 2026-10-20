@@ -12,9 +12,13 @@ work=${DASH_TEST_WORK:-/tmp/dash-fork}
 
 scope=parent
 (
+  # Intentionally change only the child's copy; the parent is checked below.
+  # shellcheck disable=SC2030
   scope=child
   [ "$scope" = child ]
 ) || fail 'subshell execution'
+# The lost child assignment is precisely the isolation property under test.
+# shellcheck disable=SC2031
 [ "$scope" = parent ] || fail 'subshell isolation'
 captured=$("$bb" printf 'external-command\n\n') || fail 'external command substitution'
 [ "$captured" = external-command ] || fail 'command substitution bytes'
