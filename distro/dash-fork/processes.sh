@@ -8,6 +8,12 @@ fail() {
 bb=${DASH_TEST_BUSYBOX:-/bin/busybox}
 shell=${DASH_TEST_SHELL:-/bin/dash}
 work=${DASH_TEST_WORK:-/tmp/dash-fork}
+# Non-interactive background jobs open /dev/null for their default stdin.
+# A raw initramfs has an empty /dev; never mount over the host's device tree.
+if [ "${DASH_TEST_HOST:-0}" != 1 ]; then
+  "$bb" mount -t devtmpfs devtmpfs /dev || fail 'mount runtime devices'
+fi
+[ -c /dev/null ] || fail 'missing null character device'
 "$bb" mkdir -p "$work" || fail 'create workspace'
 
 scope=parent

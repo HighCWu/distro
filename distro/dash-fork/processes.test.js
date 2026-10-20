@@ -51,4 +51,11 @@ test("candidate preserves upstream source and keeps the fork fallback applicatio
   assert.match(recipe, /bsd3\s+gpl2Plus/);
   assert.match(recipe, /cpus = 2/);
   assert.doesNotMatch(recipe, /patches\s*=|substituteInPlace|callback.clone/);
+  const script = readFileSync(new URL("./processes.sh", import.meta.url), "utf8");
+  assert.match(
+    script,
+    /if \[ "\$\{DASH_TEST_HOST:-0\}" != 1 \]; then\s+"\$bb" mount -t devtmpfs devtmpfs \/dev/,
+  );
+  assert.match(script, /\[ -c \/dev\/null \]/);
+  assert.ok(script.indexOf("mount -t devtmpfs") < script.indexOf("child=$!"));
 });
