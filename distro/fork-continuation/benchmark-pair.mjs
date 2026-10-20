@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: MIT
 import assert from "node:assert/strict";
 import { createHash } from "node:crypto";
-import { mkdirSync, readFileSync, readdirSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, readFileSync, readdirSync, writeFileSync } from "node:fs";
 import { cpus } from "node:os";
 import { join, resolve } from "node:path";
 import { spawnSync } from "node:child_process";
@@ -11,13 +11,22 @@ import { pairSchedule, summarizePair } from "./benchmark-pair.js";
 assert.equal(process.argv.length, 4, "usage: benchmark-pair.mjs pair-assets new-results");
 const assets = resolve(process.argv[2]),
   results = resolve(process.argv[3]);
+const selection = existsSync(join(assets, "experiment.json"))
+  ? JSON.parse(readFileSync(join(assets, "experiment.json"), "utf8"))
+  : { experiment: "worker-bundle-v1", variant: "bundled" };
+assert.ok(
+  (selection.experiment === "worker-bundle-v1" && selection.variant === "bundled") ||
+    (selection.experiment === "worker-transform-v1" && selection.variant === "transformed"),
+  "unknown experiment/variant pair",
+);
+const variant = selection.variant;
 const manifests = Object.fromEntries(
-  ["baseline", "bundled"].map((v) => [
+  ["baseline", variant].map((v) => [
     v,
     validateManifest(JSON.parse(readFileSync(join(assets, v, "manifest.json"), "utf8"))),
   ]),
 );
-assert.deepEqual(manifests.baseline, manifests.bundled);
+assert.deepEqual(manifests.baseline, manifests[variant]);
 const m = manifests.baseline;
 assert.notEqual(m.profile, true);
 const hash = (file) => createHash("sha256").update(readFileSync(file)).digest("hex");
@@ -27,7 +36,7 @@ const binaries = Object.fromEntries(
     .sort()
     .map((name) => {
       const sha256 = hash(join(assets, "baseline/binaries", name));
-      assert.equal(hash(join(assets, "bundled/binaries", name)), sha256);
+      assert.equal(hash(join(assets, variant, "binaries", name)), sha256);
       return [name, sha256];
     }),
 );
@@ -36,10 +45,10 @@ for (const file of [
   "kernel/dist/index.js",
   ...m.cases.map((c) => `${c.id}.cpio`),
 ])
-  assert.equal(hash(join(assets, "baseline", file)), hash(join(assets, "bundled", file)), file);
+  assert.equal(hash(join(assets, "baseline", file)), hash(join(assets, variant, file)), file);
 mkdirSync(results);
 const boots = [];
-for (const item of pairSchedule(m)) {
+for (const item of pairSchedule(m, variant)) {
   const { variant, repeat, caseId } = item;
   console.log(`fork pair: ${variant} ${repeat} ${caseId} begin`);
   const root = join(assets, variant);
@@ -63,7 +72,7 @@ for (const item of pairSchedule(m)) {
 }
 const report = {
   schemaVersion: 1,
-  experiment: "worker-bundle-v1",
+  experiment: selection.experiment,
   measuredAt: new Date().toISOString(),
   manifest: m,
   environment: {
@@ -73,22 +82,27 @@ const report = {
   },
   binaries,
   workers: Object.fromEntries(
-    ["baseline", "bundled"].map((v) => [v, hash(join(assets, v, "kernel/dist/worker.js"))]),
+    ["baseline", variant].map((v) => [v, hash(join(assets, v, "kernel/dist/worker.js"))]),
   ),
   bundlerVersion: readFileSync(
-    join(assets, "bundled/kernel/worker-bundle-version.txt"),
+    join(assets, variant, "kernel/worker-bundle-version.txt"),
     "utf8",
   ).trim(),
   bundleMetadata: JSON.parse(
-    readFileSync(join(assets, "bundled/kernel/worker-bundle-meta.json"), "utf8"),
+    readFileSync(join(assets, variant, "kernel/worker-bundle-meta.json"), "utf8"),
   ),
   boots,
-  ...summarizePair(boots, m),
+  ...summarizePair(boots, m, variant),
   limitations: [
     "Three adjacent alternating fresh-process pairs per case; within-boot samples are not independent boots.",
     "Uninstrumented Node only; no browser, pooling, COW or multithread fork claim.",
     "A single CI host run cannot establish a stable general speedup; no performance threshold.",
-    "Only worker.js is bundled; index and kernel/user Wasm inputs are byte-identical.",
+    "Only worker.js is changed; index and kernel/user Wasm inputs are byte-identical.",
+    ...(variant === "transformed"
+      ? [
+          "Entry-only ESM transform retains dependency modules; it does not isolate every dependency rewrite performed by a full bundle.",
+        ]
+      : []),
   ],
 };
 writeFileSync(join(results, "report.json"), JSON.stringify(report, null, 2) + "\n");

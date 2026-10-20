@@ -141,58 +141,105 @@ test("bundle experiment stays private, preserves package inputs and gates measur
   assert.match(runner, /150_000/);
   assert.match(runner, /kernel\/vmlinux.wasm/);
   assert.match(runner, /kernel\/dist\/index.js/);
-  assert.match(runner, /assert.deepEqual\(manifests.baseline, manifests.bundled\)/);
+  assert.match(runner, /assert.deepEqual\(manifests.baseline, manifests\[variant\]\)/);
   const ci = readFileSync(new URL("../../.github/workflows/ci.yml", import.meta.url), "utf8");
   assert.match(ci, /fork-benchmark-worker-pair:/);
   assert.match(ci, /if \[\[ "\$WORKER_PAIR" == true \]\]; then test "\$PROFILE" != true; fi/);
 });
 
-test("paired driver saves all raw outputs, rejects changed inputs and never overwrites results", (t) => {
-  const dir = mkdtempSync(join(tmpdir(), "fork-pair-driver-"));
-  t.after(() => rmSync(dir, { recursive: true, force: true }));
-  const m = manifest();
-  for (const name of [
-    "benchmark-pair.mjs",
-    "benchmark-pair.js",
-    "benchmark-contract.js",
-    "benchmark-profile.js",
-  ])
-    copyFileSync(new URL(name, import.meta.url), join(dir, name));
-  for (const variant of ["baseline", "bundled"]) {
-    const root = join(dir, variant);
-    mkdirSync(join(root, "kernel/dist"), { recursive: true });
-    mkdirSync(join(root, "binaries"));
-    writeFileSync(join(root, "manifest.json"), JSON.stringify(m));
-    writeFileSync(join(root, "binaries/program.wasm"), "identical Wasm");
-    writeFileSync(join(root, "kernel/vmlinux.wasm"), "identical kernel");
-    writeFileSync(join(root, "kernel/dist/index.js"), "identical entry");
-    writeFileSync(join(root, "kernel/dist/worker.js"), variant);
-    writeFileSync(join(root, "kernel/worker-bundle-version.txt"), "fixture-only");
-    writeFileSync(join(root, "kernel/worker-bundle-meta.json"), "{}");
-    const fake = Object.fromEntries(m.cases.map((c) => [c.id, boot(m, c, 0)]));
-    for (const b of Object.values(fake)) delete b.repeat;
-    writeFileSync(
-      join(root, "benchmark-boot.mjs"),
-      `console.log(JSON.stringify(${JSON.stringify(fake)}[process.argv[3]]));`,
+for (const variant of ["bundled", "transformed"])
+  test(`${variant}: paired driver saves raw outputs and rejects changed inputs and overwrites`, (t) => {
+    const dir = mkdtempSync(join(tmpdir(), "fork-pair-driver-"));
+    t.after(() => rmSync(dir, { recursive: true, force: true }));
+    const m = manifest();
+    for (const name of [
+      "benchmark-pair.mjs",
+      "benchmark-pair.js",
+      "benchmark-contract.js",
+      "benchmark-profile.js",
+    ])
+      copyFileSync(new URL(name, import.meta.url), join(dir, name));
+    if (variant === "transformed")
+      writeFileSync(
+        join(dir, "experiment.json"),
+        JSON.stringify({ experiment: "worker-transform-v1", variant }),
+      );
+    for (const v of ["baseline", variant]) {
+      const root = join(dir, v);
+      mkdirSync(join(root, "kernel/dist"), { recursive: true });
+      mkdirSync(join(root, "binaries"));
+      writeFileSync(join(root, "manifest.json"), JSON.stringify(m));
+      writeFileSync(join(root, "binaries/program.wasm"), "identical Wasm");
+      writeFileSync(join(root, "kernel/vmlinux.wasm"), "identical kernel");
+      writeFileSync(join(root, "kernel/dist/index.js"), "identical entry");
+      writeFileSync(join(root, "kernel/dist/worker.js"), v);
+      writeFileSync(join(root, "kernel/worker-bundle-version.txt"), "fixture-only");
+      writeFileSync(join(root, "kernel/worker-bundle-meta.json"), "{}");
+      const fake = Object.fromEntries(m.cases.map((c) => [c.id, boot(m, c, 0)]));
+      for (const b of Object.values(fake)) delete b.repeat;
+      writeFileSync(
+        join(root, "benchmark-boot.mjs"),
+        `console.log(JSON.stringify(${JSON.stringify(fake)}[process.argv[3]]));`,
+      );
+      for (const c of m.cases) writeFileSync(join(root, `${c.id}.cpio`), "identical initramfs");
+    }
+    const run = (result) =>
+      spawnSync(process.execPath, [join(dir, "benchmark-pair.mjs"), dir, result], {
+        encoding: "utf8",
+        timeout: 15000,
+      });
+    const result = join(dir, "results");
+    const first = run(result);
+    assert.equal(first.status, 0, first.stderr);
+    assert.match(first.stdout, /all 42 fresh boots, metrics and shutdown pass/);
+    const report = JSON.parse(readFileSync(join(result, "report.json"), "utf8"));
+    assert.equal(report.boots.length, 42);
+    assert.equal(
+      report.experiment,
+      variant === "transformed" ? "worker-transform-v1" : "worker-bundle-v1",
     );
-    for (const c of m.cases) writeFileSync(join(root, `${c.id}.cpio`), "identical initramfs");
-  }
-  const run = (result) =>
-    spawnSync(process.execPath, [join(dir, "benchmark-pair.mjs"), dir, result], {
-      encoding: "utf8",
-      timeout: 15000,
-    });
-  const result = join(dir, "results");
-  const first = run(result);
-  assert.equal(first.status, 0, first.stderr);
-  assert.match(first.stdout, /all 42 fresh boots, metrics and shutdown pass/);
-  const report = JSON.parse(readFileSync(join(result, "report.json"), "utf8"));
-  assert.equal(report.boots.length, 42);
-  for (const b of report.boots)
-    assert.ok(readFileSync(join(result, `${b.variant}-${b.repeat}-${b.caseId}.stdout`), "utf8"));
-  assert.notEqual(run(result).status, 0);
-  writeFileSync(join(dir, "bundled/binaries/program.wasm"), "changed");
-  assert.notEqual(run(join(dir, "changed-results")).status, 0);
+    assert.deepEqual(new Set(report.boots.map((b) => b.variant)), new Set(["baseline", variant]));
+    for (const r of report.ratios)
+      for (const ratio of Object.values(r[`${variant}OverBaseline`])) assert.equal(ratio, 1);
+    for (const b of report.boots)
+      assert.ok(readFileSync(join(result, `${b.variant}-${b.repeat}-${b.caseId}.stdout`), "utf8"));
+    assert.notEqual(run(result).status, 0);
+    writeFileSync(
+      join(dir, "experiment.json"),
+      JSON.stringify({ experiment: "worker-transform-v1", variant: "bundled" }),
+    );
+    assert.notEqual(run(join(dir, "unknown-results")).status, 0);
+    writeFileSync(
+      join(dir, "experiment.json"),
+      JSON.stringify({
+        experiment: variant === "transformed" ? "worker-transform-v1" : "worker-bundle-v1",
+        variant,
+      }),
+    );
+    writeFileSync(join(dir, variant, "binaries/program.wasm"), "changed");
+    assert.notEqual(run(join(dir, "changed-results")).status, 0);
+  });
+
+test("transform-only control retains original graph, independent gates and exclusive dispatch", () => {
+  const recipe = readFileSync(new URL("./package.nix", import.meta.url), "utf8");
+  assert.match(recipe, /benchmarkWorkerTransformAssets/);
+  assert.match(recipe, /transformOnly = true/);
+  assert.match(recipe, /test -e \$\{transformedRuntime\}/);
+  assert.match(recipe, /test -e \$\{transformedFaults\}/);
+  const builder = readFileSync(new URL("./worker-bundle.nix", import.meta.url), "utf8");
+  assert.match(builder, /transformOnly \? false/);
+  assert.match(builder, /optionalString \(!transformOnly\) "--bundle"/);
+  const ci = readFileSync(new URL("../../.github/workflows/ci.yml", import.meta.url), "utf8");
+  assert.match(ci, /fork-benchmark-worker-transform:/);
+  assert.match(ci, /test "\$WORKER_PAIR" != true/);
+  const workflow = readFileSync(
+    new URL("../../.github/workflows/fork-benchmark.yml", import.meta.url),
+    "utf8",
+  );
+  assert.match(workflow, /attribute=benchmarkWorkerTransformAssets/);
+  assert.match(workflow, /test "\$PROFILE" != true/);
+  assert.match(workflow, /\{baseline,transformed\}\/manifest.json/);
+  assert.throws(() => pairSchedule(manifest(), "unknown"));
 });
 
 test("manifest fixes bounded fresh workloads and excludes the SDK's untransformed ABI module", () => {

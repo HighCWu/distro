@@ -45,3 +45,54 @@ test("closed bundle admission rejects changed kernel/entry, external imports and
   writeFileSync(join(bundled, "dist/worker.js"), "module graph");
   assert.throws(() => checkBundle(original, bundled));
 });
+
+test("transform control parses rather than evaluates and refuses import changes or merged inputs", (t) => {
+  const dir = mkdtempSync(join(tmpdir(), "worker-transform-check-"));
+  t.after(() => rmSync(dir, { recursive: true, force: true }));
+  const original = join(dir, "original"),
+    transformed = join(dir, "transformed");
+  const source = `import {a} from './a.js';\nimport './b.js';\nthrow Error('must never evaluate');\n`;
+  for (const root of [original, transformed]) {
+    mkdirSync(join(root, "dist"), { recursive: true });
+    writeFileSync(
+      join(root, "dist/worker.js"),
+      source + (root === transformed ? "// transformed\n" : ""),
+    );
+    writeFileSync(join(root, "dist/a.js"), "export const a = 1;");
+    writeFileSync(join(root, "dist/b.js"), "// same dependency");
+  }
+  const entry = "/original/dist/worker.js";
+  const output = {
+    entryPoint: entry,
+    imports: ["./a.js", "./b.js"].map((path) => ({
+      path,
+      kind: "import-statement",
+      external: true,
+    })),
+  };
+  const meta = { inputs: { [entry]: {} }, outputs: { "dist/worker.js": output } };
+  const save = (value) =>
+    writeFileSync(join(transformed, "worker-bundle-meta.json"), JSON.stringify(value));
+  save(meta);
+  checkBundle(original, transformed, "transform");
+  for (const wrong of [
+    { ...meta, inputs: { [entry]: {}, dependency: {} } },
+    { ...meta, outputs: { a: { ...output, imports: [] } } },
+    {
+      ...meta,
+      outputs: {
+        a: { ...output, imports: output.imports.map((i) => ({ ...i, external: false })) },
+      },
+    },
+  ]) {
+    save(wrong);
+    assert.throws(() => checkBundle(original, transformed, "transform"));
+  }
+  save(meta);
+  writeFileSync(join(transformed, "dist/worker.js"), source.replace("./a.js", "./c.js"));
+  assert.throws(() => checkBundle(original, transformed, "transform"));
+  writeFileSync(join(transformed, "dist/worker.js"), source + "// changed");
+  writeFileSync(join(transformed, "dist/a.js"), "export const a = 2;");
+  assert.throws(() => checkBundle(original, transformed, "transform"));
+  assert.throws(() => checkBundle(original, transformed, "unknown"));
+});

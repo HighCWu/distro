@@ -11,6 +11,26 @@
   image,
 }:
 let
+  transformedKernel = import ./worker-bundle.nix {
+    inherit pkgs kernel;
+    transformOnly = true;
+  };
+  transformedFaultKernel = import ./worker-bundle.nix {
+    inherit pkgs;
+    kernel = kernel.override { copyFaultTest = true; };
+    transformOnly = true;
+  };
+  transformedRuntime = (vm-test.override { kernel = transformedKernel; }).rawInitramfsTest {
+    name = "fork-worker-transform-${platform.wasmArch}";
+    init = "${program}/fork.wasm";
+    files."/fork-exec" = "${program}/exec-child.wasm";
+    cpus = 2;
+  };
+  transformedFaults = (vm-test.override { kernel = transformedFaultKernel; }).rawInitramfsTest {
+    name = "fork-worker-transform-faults-${platform.wasmArch}";
+    init = "${program}/fork-fault.wasm";
+    cpus = 2;
+  };
   bundledKernel = import ./worker-bundle.nix { inherit pkgs kernel; };
   bundledFaultKernel = import ./worker-bundle.nix {
     inherit pkgs;
@@ -89,6 +109,39 @@ let
             mkdir $out
             ln -s ${program.benchmarkAssets} $out/baseline
             ln -s ${bundledAssets} $out/bundled
+            cp ${./benchmark-pair.mjs} $out/benchmark-pair.mjs
+            cp ${./benchmark-pair.js} $out/benchmark-pair.js
+            cp ${./benchmark-contract.js} $out/benchmark-contract.js
+            cp ${./benchmark-profile.js} $out/benchmark-profile.js
+          '';
+        passthru.benchmarkWorkerTransformAssets =
+          let
+            transformedAssets = import ./benchmark.nix {
+              inherit
+                pkgs
+                lib
+                platform
+                sysroot
+                llvm-toolchain
+                sdk-fork-continuation
+                image
+                ;
+              kernel = transformedKernel;
+            };
+            selection = pkgs.writeText "worker-transform-experiment.json" (
+              builtins.toJSON {
+                experiment = "worker-transform-v1";
+                variant = "transformed";
+              }
+            );
+          in
+          pkgs.runCommand "fork-worker-transform-pair-assets-${platform.wasmArch}" { } ''
+            test -e ${transformedRuntime}
+            test -e ${transformedFaults}
+            mkdir $out
+            ln -s ${program.benchmarkAssets} $out/baseline
+            ln -s ${transformedAssets} $out/transformed
+            cp ${selection} $out/experiment.json
             cp ${./benchmark-pair.mjs} $out/benchmark-pair.mjs
             cp ${./benchmark-pair.js} $out/benchmark-pair.js
             cp ${./benchmark-contract.js} $out/benchmark-contract.js

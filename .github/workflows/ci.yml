@@ -39,6 +39,10 @@ on:
         description: Uninstrumented original/bundled Worker experiment, not a default build
         type: boolean
         default: false
+      fork-benchmark-worker-transform:
+        description: Entry-only ESM conversion control, without bundling or default changes
+        type: boolean
+        default: false
 
 jobs:
   benchmark-mode:
@@ -54,10 +58,15 @@ jobs:
           PYTHON_FORKLESS_HOST: ${{ inputs['python-forkless-host'] }}
           PROFILE: ${{ inputs['fork-benchmark-profile'] }}
           WORKER_PAIR: ${{ inputs['fork-benchmark-worker-pair'] }}
+          WORKER_TRANSFORM: ${{ inputs['fork-benchmark-worker-transform'] }}
         run: |
           test -z "$REQUESTED_HEAVY_CHECK"
           test "$PYTHON_FORKLESS_HOST" != true
           if [[ "$WORKER_PAIR" == true ]]; then test "$PROFILE" != true; fi
+          if [[ "$WORKER_TRANSFORM" == true ]]; then
+            test "$PROFILE" != true
+            test "$WORKER_PAIR" != true
+          fi
   fork-benchmark:
     needs: benchmark-mode
     if: ${{ github.event_name == 'workflow_dispatch' && inputs['fork-benchmark'] }}
@@ -65,6 +74,7 @@ jobs:
     with:
       profile: ${{ inputs['fork-benchmark-profile'] }}
       worker-pair: ${{ inputs['fork-benchmark-worker-pair'] }}
+      worker-transform: ${{ inputs['fork-benchmark-worker-transform'] }}
       widths: ${{ inputs['fork-benchmark-width'] == 'wasm32' && '[32]' || inputs['fork-benchmark-width'] == 'wasm64' && '[64]' || '[32,64]' }}
   python-forkless-host:
     name: Native Python forkless replay
