@@ -15,7 +15,7 @@ export function validateManifest(m) {
   assert.equal(typeof (m.profile ?? false), "boolean");
   if (m.profileVersion !== undefined) {
     assert.equal(m.profile, true);
-    assert.ok(m.profileVersion === 1 || m.profileVersion === 2, "unknown diagnostic version");
+    assert.ok([1, 2, 3].includes(m.profileVersion), "unknown diagnostic version");
   }
   assert.ok(m.addressBits === 32 || m.addressBits === 64);
   assert.equal(m.samples, 5);

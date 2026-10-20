@@ -651,7 +651,7 @@ function start({
       address: kernel_address,
       is_worker: true,
       memory,
-      spawn_worker(fn, arg, name, user, copy_user_memory) {
+      spawn_worker(fn, arg, name, user, copy_user_memory): number {
         const direct = new MessageChannel();
         const user_copy_status = copy_user_memory
           ? new Int32Array(new SharedArrayBuffer(4 * copy_status_words()))
@@ -688,8 +688,16 @@ function start({
                 schedule();
                 scheduling_points++;
               }
-            : schedule;
-        const result = wait_user_copy(user_copy_status, 30_000, cooperate);
+            : schedule && parent_profile
+              ? () =>
+                  parent_profile.cooperate(
+                    schedule,
+                    () => Atomics.load(user_copy_status, 0) === USER_COPY_COMPLETE,
+                  )
+              : schedule;
+        const result = parent_profile
+          ? parent_profile.wait(() => wait_user_copy(user_copy_status, 30_000, cooperate))
+          : wait_user_copy(user_copy_status, 30_000, cooperate);
         require_copy_wait_progress(user_copy_status, scheduling_points);
         join_copy_timeout(user_copy_status);
         if (result === USER_COPY_COMPLETE) parent_profile?.parentReady();

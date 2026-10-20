@@ -18,7 +18,14 @@ export type ForkProfileEvent =
   | { kind: "worker-module-ready"; ns: number; module_ns: number }
   | { kind: "worker-init-posted"; ns: number; queued_ns: number; post_ns: number }
   | { kind: "worker-start-message"; ns: number }
-  | { kind: "parent-ready"; ns: number }
+  | {
+      kind: "parent-ready";
+      ns: number;
+      wait_ns: number;
+      cooperate_ns: number;
+      cooperate_count: number;
+      ready_after_cooperate_count: number;
+    }
   | {
       kind: "child-ready";
       ns: number;
@@ -35,6 +42,10 @@ export class ForkProfile {
   private readonly started: number;
   private rewind: number | null = null;
   private completed = false;
+  private wait_ns = 0;
+  private cooperate_ns = 0;
+  private cooperate_count = 0;
+  private ready_after_cooperate_count = 0;
   readonly request: ForkProfileRequest;
   private readonly emit: (line: string) => void;
   private readonly now: () => number;
@@ -62,7 +73,7 @@ export class ForkProfile {
     // diagnostics fail the separate profiling corpus, not the production ABI.
     try {
       this.emit(
-        `fork-profile: ${JSON.stringify({ schemaVersion: 2, request: this.request.id, ...event })}\n`,
+        `fork-profile: ${JSON.stringify({ schemaVersion: 3, request: this.request.id, ...event })}\n`,
       );
     } catch {}
   }
@@ -75,7 +86,34 @@ export class ForkProfile {
     }
   }
   parentReady(): void {
-    this.report({ kind: "parent-ready", ns: this.elapsed(this.started) });
+    this.report({
+      kind: "parent-ready",
+      ns: this.elapsed(this.started),
+      wait_ns: this.wait_ns,
+      cooperate_ns: this.cooperate_ns,
+      cooperate_count: this.cooperate_count,
+      ready_after_cooperate_count: this.ready_after_cooperate_count,
+    });
+  }
+  wait<T>(callback: () => T): T {
+    const start = this.now();
+    try {
+      return callback();
+    } finally {
+      this.wait_ns += this.elapsed(start);
+    }
+  }
+  cooperate(callback: () => void, ready: () => boolean): void {
+    const start = this.now();
+    this.cooperate_count++;
+    try {
+      callback();
+    } finally {
+      this.cooperate_ns += this.elapsed(start);
+    }
+    // This is an observation after returning, not a timestamp of publication:
+    // it cannot establish how long the parent slept after the child was ready.
+    if (ready()) this.ready_after_cooperate_count++;
   }
   workerStarted(): void {
     this.report({ kind: "worker-start-message", ns: this.elapsed(this.started) });

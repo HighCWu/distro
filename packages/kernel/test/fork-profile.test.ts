@@ -56,7 +56,7 @@ test("startup v2 records keep cumulative host markers distinct from local module
     events.map((e) => e.ns),
     [1e6, 10e6, 11e6, 12e6, 13e6],
   );
-  assert.ok(events.every((e) => e.schemaVersion === 2));
+  assert.ok(events.every((e) => e.schemaVersion === 3));
   assert.equal(events[3]?.module_ns, 4e6);
   assert.equal(events[4]?.queued_ns, 9e6);
   assert.equal(events[4]?.post_ns, 1e6);
@@ -122,6 +122,59 @@ test("profile phases use local durations and distinguish preparation from reachi
   time += 9;
   parent.parentReady();
   assert.equal(events[3]?.ns, 9e6, "clock origin does not enter the elapsed duration");
+});
+
+test("parent wait includes nested cooperation without cross-isolate timestamps", () => {
+  let time = 0;
+  const events: Array<Record<string, number>> = [];
+  const profile = create_fork_profile(
+    { id: "wait-v3" },
+    (line) => events.push(JSON.parse(line.slice(14))),
+    true,
+    () => time,
+  )!;
+  time = 2;
+  assert.equal(
+    profile.wait(() => {
+      time += 10;
+      profile.cooperate(
+        () => {
+          time += 4;
+        },
+        () => false,
+      );
+      time += 10;
+      profile.cooperate(
+        () => {
+          time += 6;
+        },
+        () => true,
+      );
+      return 1;
+    }),
+    1,
+  );
+  profile.parentReady();
+  assert.equal(events[0]?.wait_ns, 30e6);
+  assert.equal(events[0]?.cooperate_ns, 10e6);
+  assert.equal(events[0]?.cooperate_count, 2);
+  assert.equal(events[0]?.ready_after_cooperate_count, 1);
+  assert.equal(events[0]?.ns, 32e6);
+  const failure = Error("schedule failure");
+  assert.throws(
+    () =>
+      profile.wait(() =>
+        profile.cooperate(
+          () => {
+            throw failure;
+          },
+          () => {
+            assert.fail("not observed after a failed schedule");
+          },
+        ),
+      ),
+    (e) => e === failure,
+  );
 });
 
 test("diagnostics preserve callback return values and exceptions; broken output is non-fatal", () => {

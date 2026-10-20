@@ -9,7 +9,7 @@ export function profileKinds(manifest) {
     "child-prepare-rewind",
     "child-rewind-checkpoint",
   ];
-  return (manifest.profileVersion ?? 1) === 2
+  return (manifest.profileVersion ?? 1) >= 2
     ? [
         ...kinds,
         "worker-construct",
@@ -39,15 +39,22 @@ export function parseProfileOutput(output, manifest, c) {
     assert.ok(record.request.length > 0 && record.request.length <= 100);
     assert.ok(kinds.includes(record.kind), "unknown diagnostic kind");
     const fields =
-      record.kind === "child-ready"
-        ? ["ns", "allocate_ns", "copy_ns", "kernel_instance_ns", "user_instance_ns"]
-        : record.kind === "worker-module-ready"
-          ? ["ns", "module_ns"]
-          : record.kind === "worker-init-posted"
-            ? ["ns", "queued_ns", "post_ns"]
-            : ["ns"];
+      record.kind === "parent-ready" && manifest.profileVersion === 3
+        ? ["ns", "wait_ns", "cooperate_ns", "cooperate_count", "ready_after_cooperate_count"]
+        : record.kind === "child-ready"
+          ? ["ns", "allocate_ns", "copy_ns", "kernel_instance_ns", "user_instance_ns"]
+          : record.kind === "worker-module-ready"
+            ? ["ns", "module_ns"]
+            : record.kind === "worker-init-posted"
+              ? ["ns", "queued_ns", "post_ns"]
+              : ["ns"];
     for (const field of fields)
       assert.ok(Number.isSafeInteger(record[field]) && record[field] >= 0, `invalid ${field}`);
+    if (record.kind === "parent-ready" && manifest.profileVersion === 3) {
+      assert.ok(record.cooperate_ns <= record.wait_ns && record.wait_ns <= record.ns);
+      assert.ok(record.ready_after_cooperate_count <= record.cooperate_count);
+      assert.ok(record.cooperate_count !== 0 || record.cooperate_ns === 0);
+    }
     const group = requests.get(record.request) ?? {};
     assert.ok(!Object.hasOwn(group, record.kind), "duplicate diagnostic phase");
     group[record.kind] = record;

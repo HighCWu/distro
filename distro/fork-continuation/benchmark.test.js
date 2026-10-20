@@ -431,9 +431,49 @@ test("version two requires startup subphases, rejects mixed versions, and keeps 
       c,
     ),
   );
-  assert.throws(() => validateManifest({ ...m, profileVersion: 3 }));
+  assert.throws(() => validateManifest({ ...m, profileVersion: 4 }));
   assert.throws(() => validateManifest({ ...m, profile: false }));
   assert.equal(profileKinds({ ...m, profileVersion: 1 }).length, 5);
+});
+
+test("version three requires bounded parent wait and scheduler observations", () => {
+  const m = { ...manifest(), profile: true, profileVersion: 3 };
+  const c = m.cases.find((c) => c.kind === "fork");
+  validateManifest(m);
+  const records = Array.from({ length: 6 }, (_, i) =>
+    profileKinds(m).map((kind) => ({
+      schemaVersion: 3,
+      request: `wait-${i}`,
+      kind,
+      ns: 100,
+      ...(kind === "parent-ready"
+        ? { wait_ns: 90, cooperate_ns: 20, cooperate_count: 2, ready_after_cooperate_count: 1 }
+        : {}),
+      ...(kind === "child-ready"
+        ? { allocate_ns: 1, copy_ns: 2, kernel_instance_ns: 3, user_instance_ns: 4 }
+        : {}),
+      ...(kind === "worker-module-ready" ? { module_ns: 5 } : {}),
+      ...(kind === "worker-init-posted" ? { queued_ns: 6, post_ns: 7 } : {}),
+    })),
+  ).flat();
+  const text = (list) => list.map((r) => `fork-profile: ${JSON.stringify(r)}`).join("\n");
+  assert.equal(parseProfileOutput(text(records), m, c).length, 6);
+  for (const fields of [
+    { wait_ns: undefined },
+    { wait_ns: 101 },
+    { cooperate_ns: 91 },
+    { cooperate_count: 0 },
+    { ready_after_cooperate_count: 3 },
+    { cooperate_count: 1.5 },
+    { cooperate_ns: -1 },
+  ])
+    assert.throws(() =>
+      parseProfileOutput(
+        text(records.map((r) => (r.kind === "parent-ready" ? { ...r, ...fields } : r))),
+        m,
+        c,
+      ),
+    );
 });
 
 test("diagnostic kernel selection is opt-in and incompatible with fault/signal seams", () => {

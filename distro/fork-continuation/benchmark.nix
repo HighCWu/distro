@@ -90,7 +90,7 @@ let
       }
       // lib.optionalAttrs profile {
         profile = true;
-        profileVersion = 2;
+        profileVersion = 3;
       }
     )
   );
