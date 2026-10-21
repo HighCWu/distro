@@ -202,6 +202,10 @@ let
             name = "inotify-${platform.wasmArch}";
             init = "${programs}/inotify.wasm";
           };
+          dnotify = vm-test.rawInitramfsTest {
+            name = "dnotify-${platform.wasmArch}";
+            init = "${programs}/dnotify.wasm";
+          };
           ipv6 = vm-test.rawInitramfsTest {
             name = "ipv6-${platform.wasmArch}";
             init = "${programs}/ipv6.wasm";
@@ -269,6 +273,9 @@ let
         clang ${compileFlags} -O2 -Wall -Wextra -Werror ${./file-handle.c} -o $out/file-handle.wasm
         chmod 0755 $out/file-handle.wasm
         wasm-validate --enable-memory64 --enable-threads --enable-exceptions $out/file-handle.wasm
+        clang ${compileFlags} -O2 -Wall -Wextra -Werror ${./dnotify.c} -o $out/dnotify.wasm
+        chmod 0755 $out/dnotify.wasm
+        wasm-validate --enable-memory64 --enable-threads --enable-exceptions $out/dnotify.wasm
         clang ${compileFlags} -O2 -Wall -Wextra -Werror ${./large-file.c} -o $out/large-file.wasm
         chmod 0755 $out/large-file.wasm
         wasm-validate --enable-memory64 --enable-threads --enable-exceptions $out/large-file.wasm
