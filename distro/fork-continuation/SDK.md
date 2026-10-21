@@ -32,6 +32,16 @@ threads is rejected. Dynamic modules, C++ EH/SjLj, vfork and multithreaded fork
 are not supported. The fixed 256 KiB continuation buffer traps on overflow;
 overflow is not a recoverable fork errno. No performance guarantee is made.
 
+The v2 import also adapts Linux `clone3` (435) for the same limited fork shape:
+zero flags, SIGCHLD exit signal, no alternate stack, tid/pidfd/TLS/cgroup options.
+The u64 `clone_args` layout is identical on both pointer widths. Sizes from 64
+through 65536 bytes are bounded and read-checked; unknown tail bytes must be zero.
+Malformed sizes/addresses/tails return EINVAL/EFAULT/E2BIG; other unsupported
+shapes return EOPNOTSUPP, not full Linux clone3 flag compatibility. The old
+callback import returns ENOSYS for clone3 instead of invoking kernel clone
+without a continuation. This does not extend multithread fork or raw-caller
+libc cleanup guarantees. Target acceptance is recorded separately in the project.
+
 `share/linux-wasm-fork-sdk/profile.json` records the experimental profile.
 `build-materials/` retains the profile/musl recipes, compiler configuration,
 Binaryen source and license, and links to the default SDK materials and selected

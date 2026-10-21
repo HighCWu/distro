@@ -174,6 +174,73 @@ test("syscall import versions are explicit; an unknown version is not admitted",
 });
 
 for (const address of ["i32", "i64"] as const) {
+  test(`${address}: clone3 resumes the admitted parent/child request without rereading arguments`, () => {
+    const f = fixture(address, true),
+      p = f.pointer;
+    const view = new DataView(f.memory.buffer);
+    view.setBigUint64(4096 + 32, 17n, true);
+    let kernel = 0;
+    const invoke = () => {
+      kernel++;
+      return p(999);
+    };
+    const dispatch = (layout: "flags-v2" | "callback-v1", pointer = 4096, size = 88) =>
+      dispatch_fork_syscall(
+        f.controller,
+        p(435),
+        [p(pointer), p(size), p(777), p(0), p(0), p(0)],
+        true,
+        invoke,
+        layout,
+      );
+    assert.equal(dispatch("callback-v1"), p(-38));
+    assert.equal(
+      dispatch_fork_syscall(
+        null,
+        p(435),
+        [p(4096), p(88), p(0), p(0), p(0), p(0)],
+        true,
+        invoke,
+        "flags-v2",
+      ),
+      p(-95),
+    );
+    assert.equal(
+      f.controller.kernelCall(() => dispatch("flags-v2")),
+      p(-95),
+    );
+    assert.equal(dispatch("flags-v2", 4096, 63), p(-22));
+    assert.equal(f.calls.descriptors, 0);
+    assert.equal(dispatch("flags-v2"), p(0));
+    assert.equal(dispatch("flags-v2"), p(-16));
+    const snapshot = f.controller.suspend();
+    const child = fixture(address, true);
+    new Uint8Array(child.memory.buffer).set(new Uint8Array(f.memory.buffer));
+    child.controller.resumeChild(snapshot);
+    // The arguments can alias saved-frame storage. Rewind must complete the
+    // old request even if the current memory/pointer no longer parses.
+    assert.equal(
+      dispatch_fork_syscall(
+        child.controller,
+        p(435),
+        [p(0), p(0), p(0), p(0), p(0), p(0)],
+        true,
+        invoke,
+        "flags-v2",
+      ),
+      p(0),
+    );
+    f.controller.resumeParent(p(-11));
+    assert.equal(dispatch("flags-v2", 0, 0), p(-11));
+    assert.equal(f.calls.descriptors, 1);
+    assert.equal(dispatch("flags-v2"), p(0));
+    f.controller.suspend();
+    f.controller.resumeParent(p(123));
+    assert.equal(dispatch("flags-v2", 0, 0), p(123));
+    assert.equal(f.calls.descriptors, 2);
+    assert.equal(kernel, 0, "clone3 must never reach callback-based kernel clone directly");
+  });
+
   test(`${address}: child injection precedes rewind and stack/TLS restore at the deferred user boundary`, () => {
     const parent = fixture(address, true),
       child = fixture(address, true),

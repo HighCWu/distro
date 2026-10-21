@@ -79,6 +79,9 @@ int main(int argc, char **argv)
 	extern int raw_clone_continuation_probe(void);
 	require(raw_clone_continuation_probe(), "raw syscall continuation and recovery");
 	puts("fork: raw syscall continuation, identity, isolation and wait pass");
+	extern int raw_clone3_continuation_probe(void);
+	require(raw_clone3_continuation_probe(), "clone3 continuation, validation and recovery");
+	puts("fork: clone3 fork ABI, versioned arguments, isolation and recovery pass");
 #endif
 	int pipefd[2], status, fd;
 	char buffer[3] = {0};

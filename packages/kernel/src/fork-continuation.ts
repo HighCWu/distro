@@ -8,6 +8,7 @@ import {
   type WasmAddress,
   type WasmAddressType,
 } from "./wasm.ts";
+import { clone3_fork_request } from "./clone3-args.ts";
 
 export interface ForkSnapshot {
   version: 1;
@@ -102,6 +103,17 @@ export function dispatch_fork_syscall(
   layout: CloneSyscallLayout = "callback-v1",
 ): WasmAddress {
   const zero = (value: WasmAddress | undefined) => value === 0 || value === 0n;
+  if (nr === 435 || nr === 435n) {
+    // clone3 has no legacy callback layout. Never let it reach copy_thread
+    // without a user continuation; the old import explicitly reports ENOSYS.
+    const result =
+      layout !== "flags-v2"
+        ? -38
+        : args.length !== 6
+          ? -22
+          : (fork?.clone3Checkpoint(args[0]!, args[1]!, allowed) ?? -95);
+    return typeof nr === "bigint" ? BigInt(result) : result;
+  }
   if ((nr === 220 || nr === 220n) && layout === "flags-v2") {
     // The import name selects the ABI. Never infer a layout from flag values
     // or from a possible function-table index. The sixth register is unused
@@ -247,6 +259,16 @@ export class ForkContinuation {
     }
     if (this.state() !== 0 || this.descriptor !== null) return -16;
     return this.checkpoint(this.call("__wasm_fork_descriptor"), allowed);
+  }
+
+  clone3Checkpoint(pointer: WasmAddress, size: WasmAddress, allowed: boolean): number {
+    if (!allowed || this.kernelDepth !== 0 || !("__wasm_fork_syscall_abi" in this.e)) return -95;
+    // A rewind finishes the already-admitted request, rather than parsing a
+    // second request from memory that the saved-frame machinery may change.
+    if (this.state() === 2) return this.syscallCheckpoint(allowed);
+    if (this.state() !== 0 || this.descriptor !== null) return -16;
+    const error = clone3_fork_request(this.memory, this.address, pointer, size);
+    return error || this.syscallCheckpoint(allowed);
   }
 
   kernelCall<T>(callback: () => T): T {

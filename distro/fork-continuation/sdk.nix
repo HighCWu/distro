@@ -79,6 +79,7 @@ let
       syscallContinuationAbi = 1;
       syscallImport = "linux.syscall_v2";
       callbackCloneImport = "linux.syscall";
+      clone3ForkSubset = true;
       binaryenVersion = pkgs.binaryen.version;
       continuationBufferBytes = 262144;
       overflowBehavior = "trap";

@@ -9,6 +9,7 @@ export function forkIterations(stability) {
 
 export const forkStages = [
   "fork: raw syscall continuation, identity, isolation and wait pass",
+  "fork: clone3 fork ABI, versioned arguments, isolation and recovery pass",
   "fork-exec: untransformed raw clone refusal pass",
   "fork: pending signal isolation and inherited handler pass",
   "fork: continuation, PID, TLS, atfork, mask, memory, fd and nested wait pass",
