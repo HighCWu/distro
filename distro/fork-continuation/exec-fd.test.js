@@ -21,14 +21,20 @@ for (const cc of ["gcc", "clang"])
       "(long)last, (long)flags, 0L",
       "(long)last, (long)(flags & ~range_cloexec), 0L",
     );
+    const exclusiveEnd = original.replace(
+      "(long)last, (long)flags, 0L",
+      "(long)(last == first ? last : last - 1), (long)flags, 0L",
+    );
     assert.notEqual(leaked, original);
     assert.notEqual(noop, original);
     assert.notEqual(lostCloexec, original);
+    assert.notEqual(exclusiveEnd, original);
     for (const [name, source] of [
       ["normal", original],
       ["leaked-executable", leaked],
       ["range-noop", noop],
       ["range-lost-cloexec", lostCloexec],
+      ["range-exclusive-end", exclusiveEnd],
     ]) {
       const input = join(dir, name + ".c"),
         binary = join(dir, name);
@@ -48,7 +54,9 @@ for (const cc of ["gcc", "clang"])
           run.stdout,
           name === "range-noop"
             ? /range reversed bounds/
-            : /replacement identity, TLS, inherited fd and CLOEXEC/,
+            : name === "range-exclusive-end"
+              ? /range inclusivity, holes, upper bound and child isolation/
+              : /replacement identity, TLS, inherited fd and CLOEXEC/,
         );
         assert.doesNotMatch(run.stdout, /::vm-test::pass/);
       }

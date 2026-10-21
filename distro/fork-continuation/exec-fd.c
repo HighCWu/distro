@@ -48,12 +48,12 @@ static void range_control(int data)
 	errno = 0;
 	require(range_close(first, last, 1) == -1 && errno == EINVAL, "range invalid flags");
 	require(fcntl(first, F_GETFD) == 0 && fcntl(last, F_GETFD) == 0, "rejection preserves descriptors");
-	for (int mode = 0; mode < 2; mode++) {
+	for (int mode = 0; mode < 3; mode++) {
 		pid_t child = fork();
 		require(child >= 0, "fork before range close");
 		if (!child) {
-			if (range_close(first, mode ? UINT_MAX : (unsigned)hole,
-				mode ? range_unshare : 0) != 0) _exit(111);
+			unsigned end = mode == 2 ? UINT_MAX : (unsigned)(mode == 1 ? last : first);
+			if (range_close(first, end, mode == 2 ? range_unshare : 0) != 0) _exit(111);
 			errno = 0;
 			if (fcntl(first, F_GETFD) != -1 || errno != EBADF) _exit(112);
 			errno = 0;
