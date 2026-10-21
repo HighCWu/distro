@@ -80,3 +80,33 @@ exercise()
     assert.match(result.stderr, /AssertionError/);
     assert.doesNotMatch(result.stdout, /error recovery verified/);
   });
+
+for (const mode of ["false-success", "discard-data"])
+  test(`Python private flush rejects ${mode}`, () => {
+    const fixture = fileURLToPath(new URL("./mmap-test.py", import.meta.url));
+    const source = `
+import mmap, runpy, sys
+namespace = runpy.run_path(sys.argv[1])
+mode = sys.argv[2]
+class BrokenMapping(mmap.mmap):
+    def flush(self, *args):
+        if mode == "false-success":
+            return None
+        result = super().flush(*args)
+        self[0] ^= 1
+        return result
+def broken(size):
+    return BrokenMapping(-1, size, flags=mmap.MAP_PRIVATE, prot=mmap.PROT_READ | mmap.PROT_WRITE)
+exercise = namespace["exercise_flush"]
+exercise.__globals__["private_mapping"] = broken
+exercise()
+`;
+    const run = spawnSync("python3", ["-c", source, fixture, mode], {
+      encoding: "utf8",
+      timeout: 10000,
+    });
+    assert.equal(run.error, undefined);
+    assert.notEqual(run.status, 0);
+    assert.match(run.stderr, /AssertionError/);
+    assert.doesNotMatch(run.stdout, /without file writeback/);
+  });

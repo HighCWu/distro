@@ -93,15 +93,20 @@ def exercise_resize():
     print("Python mmap: resize growth, shrink, zero tail, exported buffers and error recovery verified")
 
 
-def exercise_kernel_boundaries():
-    # The standard msync wrapper is available, but the default NOMMU kernel
-    # does not implement writeback. Never accept a fabricated flush success.
+def exercise_flush():
+    # Private anonymous mappings have no file writeback. Successful msync
+    # still requires a valid registered range, flags and aligned address.
     with private_mapping(mmap.PAGESIZE) as mapping:
         mapping[0] = 0x81
-        error = expect_error(OSError, mapping.flush)
-        assert error.errno == errno.ENOSYS, error
-        assert mapping[0] == 0x81
-    print("Python mmap: flush explicitly reports unsupported msync")
+        assert mapping.flush() is None and mapping[0] == 0x81, "flush changed private data"
+        assert mapping.flush(0, 0) is None
+        error = expect_error(OSError, lambda: mapping.flush(1, 1))
+        assert error.errno == errno.EINVAL, error
+        assert mapping[0] == 0x81, "failed flush changed private data"
+    print("Python mmap: private flush preserves data and rejects unaligned ranges without file writeback")
+
+
+def exercise_kernel_boundaries():
     # CPython's default anonymous request is MAP_SHARED, not MAP_PRIVATE.
     error = expect_error(OSError, lambda: mmap.mmap(-1, mmap.PAGESIZE))
     assert error.errno == errno.EINVAL, error
@@ -125,5 +130,6 @@ if __name__ == "__main__":
     assert sys.argv[1:] in ([], ["--kernel-boundaries"]), sys.argv
     exercise_buffers()
     exercise_resize()
+    exercise_flush()
     if sys.argv[1:]:
         exercise_kernel_boundaries()

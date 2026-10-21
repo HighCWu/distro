@@ -2,12 +2,29 @@
 
 import assert from "node:assert/strict";
 import test from "node:test";
-import { user_mmap, user_mremap } from "../src/user-mmap.ts";
+import { user_mmap, user_mremap, user_msync } from "../src/user-mmap.ts";
 
 const anonymous_private = 0x22;
 
 for (const address_type of ["i32", "i64"] as const) {
   const address = (value: number) => (address_type === "i64" ? BigInt(value) : value);
+
+  test(`${address_type}: private msync forwards typed registers and refuses unknown allocator coverage`, () => {
+    const pointer = address_type === "i64" ? 0x100010000n : -2147418112;
+    const args = [pointer, address(65536), 4] as const;
+    assert.equal(user_msync({}, address_type, ...args), address(-38));
+    let calls = 0;
+    const exports = {
+      __wasm_msync: (...actual: unknown[]) => {
+        calls++;
+        assert.deepEqual(actual, args);
+        return address(calls === 1 ? 0 : -12);
+      },
+    };
+    assert.equal(user_msync(exports, address_type, ...args), address(0));
+    assert.equal(user_msync(exports, address_type, ...args), address(-12));
+    assert.equal(calls, 2);
+  });
 
   test(`${address_type}: mremap preserves registers and old modules refuse without mmap fallback`, () => {
     const raw = address_type === "i64" ? 0x100010000n : -2147418112;

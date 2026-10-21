@@ -506,6 +506,7 @@ export async function bootMachine(options: BootMachineOptions): Promise<Machine>
         munmap: unavailable,
       },
       user_v2: {
+        msync: unavailable,
         mmap: unavailable,
         mremap: unavailable,
       },

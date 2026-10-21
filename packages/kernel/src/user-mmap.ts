@@ -2,6 +2,20 @@
 
 import type { WasmAddress, WasmAddressType } from "./wasm.ts";
 
+/** Private mapping coverage is checked by the process allocator, not guessed
+ * from linear-memory bounds. An older allocator must refuse, never fake sync. */
+export function user_msync(
+  exports: WebAssembly.Exports,
+  addressType: WasmAddressType,
+  addr: WasmAddress,
+  len: WasmAddress,
+  flags: number,
+): WasmAddress {
+  const callback = exports.__wasm_msync;
+  if (typeof callback !== "function") return addressType === "i64" ? -38n : -38;
+  return callback(addr, len, flags) as WasmAddress;
+}
+
 /** Standard mremap admission belongs to Linux; old allocators refuse explicitly. */
 export function user_mremap(
   exports: WebAssembly.Exports,
