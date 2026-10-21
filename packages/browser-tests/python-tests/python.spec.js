@@ -23,6 +23,7 @@ for (const [variant, title, stages] of [
     "runs installed Python private anonymous mmap boundaries through Linux",
     [
       "Python mmap: private anonymous bytes, buffer lifetime and close verified",
+      "Python mmap: resize growth, shrink, zero tail, exported buffers and error recovery verified",
       "Python mmap: flush explicitly reports unsupported msync",
       "Python mmap: default shared and file mappings rejected by default kernel",
     ],
