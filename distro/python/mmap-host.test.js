@@ -27,6 +27,7 @@ test("target fixture requires explicit kernel rejection checks, without overridi
   );
   assert.match(recipe, /mmap = vm-test\.installedTest/);
   assert.ok(recipe.includes("grep -qx '#define HAVE_MREMAP 1'"));
+  assert.ok(recipe.includes("grep -qx '#define HAVE_MADVISE 1'"));
   assert.ok(recipe.includes('files."/mmap-test.py" = ./mmap-test.py;'));
   const script = readFileSync(new URL("./mmap-test.sh", import.meta.url), "utf8");
   assert.match(script, /python3 \/mmap-test.py --kernel-boundaries; then/);
@@ -79,6 +80,33 @@ exercise()
     assert.notEqual(result.status, 0);
     assert.match(result.stderr, /AssertionError/);
     assert.doesNotMatch(result.stdout, /error recovery verified/);
+  });
+
+for (const mode of ["noop", "wrong-range"])
+  test(`Python madvise rejects ${mode}`, () => {
+    const fixture = fileURLToPath(new URL("./mmap-test.py", import.meta.url));
+    const source = `
+import mmap, runpy, sys
+namespace = runpy.run_path(sys.argv[1])
+mode = sys.argv[2]
+class BrokenMapping(mmap.mmap):
+    def madvise(self, advice, *args):
+        if mode == "noop": return None
+        return super().madvise(advice)
+def broken(size):
+    return BrokenMapping(-1, size, flags=mmap.MAP_PRIVATE, prot=mmap.PROT_READ | mmap.PROT_WRITE)
+exercise = namespace["exercise_advice"]
+exercise.__globals__["private_mapping"] = broken
+exercise()
+`;
+    const run = spawnSync("python3", ["-c", source, fixture, mode], {
+      encoding: "utf8",
+      timeout: 10000,
+    });
+    assert.equal(run.error, undefined);
+    assert.notEqual(run.status, 0);
+    assert.match(run.stderr, /AssertionError/);
+    assert.doesNotMatch(run.stdout, /rejects invalid advice/);
   });
 
 for (const mode of ["false-success", "discard-data"])

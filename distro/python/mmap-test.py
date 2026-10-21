@@ -106,6 +106,29 @@ def exercise_flush():
     print("Python mmap: private flush preserves data and rejects unaligned ranges without file writeback")
 
 
+def exercise_advice():
+    page = mmap.PAGESIZE
+    with private_mapping(3 * page) as mapping:
+        mapping[:] = b"\x47" * (3 * page)
+        for hint in (mmap.MADV_NORMAL, mmap.MADV_RANDOM, mmap.MADV_SEQUENTIAL, mmap.MADV_WILLNEED):
+            assert mapping.madvise(hint) is None
+        assert mapping[:] == b"\x47" * (3 * page)
+        view = memoryview(mapping)
+        assert mapping.madvise(mmap.MADV_DONTNEED, page, 1) is None
+        assert bytes(view[:page]) == b"\x47" * page
+        assert bytes(view[page:2*page]) == bytes(page)
+        assert bytes(view[2*page:]) == b"\x47" * page
+        view[page] = 0x81
+        assert mapping[page] == 0x81
+        error = expect_error(OSError, lambda: mapping.madvise(-1))
+        assert error.errno == errno.EINVAL and mapping[page] == 0x81
+        view.release()
+        assert mapping.madvise(mmap.MADV_DONTNEED) is None
+        assert mapping[:] == bytes(3 * page)
+        assert mapping.flush() is None
+    print("Python mmap: madvise discards anonymous pages, preserves neighbors and live views, and rejects invalid advice")
+
+
 def exercise_kernel_boundaries():
     # CPython's default anonymous request is MAP_SHARED, not MAP_PRIVATE.
     error = expect_error(OSError, lambda: mmap.mmap(-1, mmap.PAGESIZE))
@@ -131,5 +154,6 @@ if __name__ == "__main__":
     exercise_buffers()
     exercise_resize()
     exercise_flush()
+    exercise_advice()
     if sys.argv[1:]:
         exercise_kernel_boundaries()

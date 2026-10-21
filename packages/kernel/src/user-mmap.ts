@@ -2,6 +2,19 @@
 
 import type { WasmAddress, WasmAddressType } from "./wasm.ts";
 
+/** Only the allocator can authorize discard without erasing unrelated bytes. */
+export function user_madvise(
+  exports: WebAssembly.Exports,
+  addressType: WasmAddressType,
+  addr: WasmAddress,
+  len: WasmAddress,
+  advice: number,
+): WasmAddress {
+  const callback = exports.__wasm_madvise;
+  if (typeof callback !== "function") return addressType === "i64" ? -38n : -38;
+  return callback(addr, len, advice) as WasmAddress;
+}
+
 /** Private mapping coverage is checked by the process allocator, not guessed
  * from linear-memory bounds. An older allocator must refuse, never fake sync. */
 export function user_msync(

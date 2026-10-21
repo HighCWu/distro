@@ -62,6 +62,7 @@ rec {
     "--export=__wasm_munmap"
     "--export=__wasm_mremap"
     "--export=__wasm_msync"
+    "--export=__wasm_madvise"
     # clang's wasm-linux toolchain defaults the table base to 3, reserving
     # function-pointer values 1 and 2 for SIG_IGN and SIG_HOLD.
     # wasm-ld's default shadow stack is 64 KiB, which terminal setup in

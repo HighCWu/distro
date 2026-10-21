@@ -189,6 +189,10 @@ let
             name = "msync-${platform.wasmArch}";
             init = "${programs}/msync.wasm";
           };
+          madvise = vm-test.rawInitramfsTest {
+            name = "madvise-${platform.wasmArch}";
+            init = "${programs}/madvise.wasm";
+          };
         }
         // lib.optionalAttrs (platform.addressBits == 32) {
           user-access-upper32 = vm-test.rawInitramfsTest {
@@ -211,6 +215,9 @@ let
         clang ${compileFlags} -O2 -Wall -Wextra -Werror ${./msync.c} -o $out/msync.wasm
         chmod 0755 $out/msync.wasm
         wasm-validate --enable-memory64 --enable-threads --enable-exceptions $out/msync.wasm
+        clang ${compileFlags} -O2 -Wall -Wextra -Werror ${./madvise.c} -o $out/madvise.wasm
+        chmod 0755 $out/madvise.wasm
+        wasm-validate --enable-memory64 --enable-threads --enable-exceptions $out/madvise.wasm
         clang++ ${compileFlags} ${cxxSource} -o $out/smoke-cxx.wasm
         clang++ ${compileFlags} -std=c++17 -O2 -pthread -Wl,--fatal-warnings ${./runtime-cxx.cc} -o $out/runtime-cxx.wasm
         chmod 0755 $out/smoke-c.wasm $out/smoke-cxx.wasm

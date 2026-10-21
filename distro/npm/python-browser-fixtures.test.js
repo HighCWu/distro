@@ -35,6 +35,7 @@ const stages = [
     "Python mmap: private anonymous bytes, buffer lifetime and close verified",
     "Python mmap: resize growth, shrink, zero tail, exported buffers and error recovery verified",
     "Python mmap: private flush preserves data and rejects unaligned ranges without file writeback",
+    "Python mmap: madvise discards anonymous pages, preserves neighbors and live views, and rejects invalid advice",
     "Python mmap: default shared and file mappings rejected by default kernel",
   ],
 ];

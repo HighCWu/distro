@@ -329,6 +329,7 @@ let
               and (.patches | length) == ${toString (builtins.length finalAttrs.patches)}' "$materials/build.json"
             grep -qx '#define SIZEOF_VOID_P ${toString (builtins.div platform.addressBits 8)}' "$materials/pyconfig.h"
             grep -qx '#define HAVE_MREMAP 1' "$materials/pyconfig.h"
+            grep -qx '#define HAVE_MADVISE 1' "$materials/pyconfig.h"
             index=0
             for patch in ${lib.escapeShellArgs (map toString finalAttrs.patches)}; do
               printf -v name '%03d.patch' "$index"
