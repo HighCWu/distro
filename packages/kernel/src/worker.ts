@@ -67,6 +67,7 @@ import {
   type WasmAddressType,
   wasm_address_to_number,
   wasm_pointer_to_number,
+  wasm_size_to_number,
   wasm_table_get,
   type UserContext,
 } from "./wasm.ts";
@@ -472,17 +473,17 @@ function user_imports({
 
       // memory:
       read(to, from, n) {
-        const length = wasm_address_to_number(n, "copy length");
+        const length = wasm_size_to_number(n);
         if (!context) return length;
         return read_user_memory(kernel_memory, to, context.memory, from, length);
       },
       write(to, from, n) {
-        const length = wasm_address_to_number(n, "copy length");
+        const length = wasm_size_to_number(n);
         if (!context) return length;
         return write_user_memory(context.memory, to, kernel_memory, from, length);
       },
       write_zeroes(to, n) {
-        const length = wasm_address_to_number(n, "zero fill length");
+        const length = wasm_size_to_number(n);
         if (!context) return length;
         return clear_user_memory(context.memory, to, length);
       },

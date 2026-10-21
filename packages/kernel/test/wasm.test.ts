@@ -18,6 +18,7 @@ import {
   wasm_address_from_number,
   wasm_address_to_number,
   wasm_pointer_to_number,
+  wasm_size_to_number,
   wasm_table_get,
   type WasmMemoryDescriptor,
 } from "../src/wasm.ts";
@@ -94,6 +95,19 @@ test("raw i32 pointer registers retain their unsigned bits without relaxing meta
   for (const invalid of [-0x80000001, 0x100000000, 0.5, NaN, Infinity, -1n, 1n << 54n])
     assert.throws(() => wasm_pointer_to_number(invalid), RangeError);
   assert.throws(() => wasm_address_to_number(-1), RangeError, "host metadata remains strict");
+});
+
+test("raw size_t decoding preserves unsigned bits without narrowing memory64 or host lengths", () => {
+  for (const [raw, expected] of [
+    [-2147483648, 2147483648],
+    [-1, 4294967295],
+    [0, 0],
+  ] as const)
+    assert.equal(wasm_size_to_number(raw), expected);
+  assert.equal(wasm_size_to_number(0x100000007n), 0x100000007);
+  for (const bad of [-2147483649, 4294967296, 0.5, NaN, -1n, 1n << 54n])
+    assert.throws(() => wasm_size_to_number(bad), RangeError);
+  assert.throws(() => wasm_address_to_number(-1), RangeError);
 });
 
 test("a real Wasm i32 import passes signed pointers that the user-access decoder recovers", () => {

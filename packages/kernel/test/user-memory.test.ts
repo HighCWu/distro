@@ -9,6 +9,55 @@ import {
   user_atomic_word,
 } from "../src/user-memory.ts";
 
+test("real i32 size_t imports return residue without allocating or copying a huge range", () => {
+  const string = (value: string) => [value.length, ...new TextEncoder().encode(value)];
+  const section = (id: number, bytes: number[]) => [id, bytes.length, ...bytes];
+  const module = new WebAssembly.Module(
+    new Uint8Array([
+      0,
+      97,
+      115,
+      109,
+      1,
+      0,
+      0,
+      0,
+      ...section(1, [1, 0x60, 1, 0x7f, 1, 0x7f]),
+      ...section(2, [1, ...string("env"), ...string("copy"), 0, 0]),
+      ...section(3, [1, 0]),
+      ...section(7, [1, ...string("copy"), 0, 1]),
+      ...section(10, [1, 6, 0, 0x20, 0, 0x10, 0, 0x0b]),
+    ]),
+  );
+  const kernel = new WebAssembly.Memory({ initial: 1 });
+  const user = new WebAssembly.Memory({ initial: 1 });
+  for (const operation of ["read", "write", "clear"] as const) {
+    let seen = 0;
+    const instance = new WebAssembly.Instance(module, {
+      env: {
+        copy(length: number) {
+          seen = length;
+          if (operation === "read") return read_user_memory(kernel, 8, user, 65534, length);
+          if (operation === "write") return write_user_memory(user, 65534, kernel, 8, length);
+          return clear_user_memory(user, 65534, length);
+        },
+      },
+    });
+    for (const length of [0x80000000, 0xffffffff]) {
+      const k = new Uint8Array(kernel.buffer),
+        u = new Uint8Array(user.buffer);
+      k.fill(19);
+      u.fill(23);
+      const result = (instance.exports.copy as CallableFunction)(length);
+      assert.equal(seen, length - 0x100000000);
+      assert.equal(result >>> 0, length - (operation === "clear" ? 2 : 0));
+      assert.ok(k.every((value) => value === 19));
+      assert.ok(u.subarray(0, 65534).every((value) => value === 23));
+      assert.deepEqual([...u.subarray(65534)], operation === "clear" ? [0, 0] : [23, 23]);
+    }
+  }
+});
+
 for (const address of ["i32", "i64"] as const) {
   const p = (value: number) => (address === "i64" ? BigInt(value) : value);
   test(`${address}: NULL user copy is rejected without mutating either memory`, () => {

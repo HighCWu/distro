@@ -3,7 +3,7 @@
 // A C NULL user pointer is not a mapping, even though Wasm memory contains byte 0.
 import {
   memory_bytes,
-  wasm_address_to_number,
+  wasm_size_to_number,
   wasm_pointer_to_number,
   type WasmAddress,
 } from "./wasm.ts";
@@ -31,7 +31,7 @@ function copy(
   length: WasmAddress,
   toUser: boolean,
 ): number {
-  const count = wasm_address_to_number(length, "copy length");
+  const count = wasm_size_to_number(length);
   if (!count) return 0;
   let kernelBytes;
   try {
@@ -75,7 +75,7 @@ export function clear_user_memory(
   to: WasmAddress,
   length: WasmAddress,
 ): number {
-  const count = wasm_address_to_number(length, "zero fill length");
+  const count = wasm_size_to_number(length);
   if (!count) return 0;
   const output = user_prefix(user, to, count);
   if (!output) return count;

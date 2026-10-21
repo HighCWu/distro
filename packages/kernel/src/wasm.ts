@@ -69,9 +69,18 @@ export function wasm_address_to_number(value: WasmAddress, name = "Wasm address"
  * Wasm i32 imports carry signed Numbers even for pointers above 2 GiB.
  * Do not narrow non-i32 Numbers or memory64 BigInts to make them fit. */
 export function wasm_pointer_to_number(value: WasmAddress): number {
+  return wasm_unsigned_word_to_number(value);
+}
+
+/** Decode an unsigned size_t register, not a host length or signed syscall result. */
+export function wasm_size_to_number(value: WasmAddress): number {
+  return wasm_unsigned_word_to_number(value);
+}
+
+function wasm_unsigned_word_to_number(value: WasmAddress): number {
   if (typeof value === "number") {
     if (!Number.isInteger(value) || value < -0x80000000 || value > 0xffffffff)
-      throw new RangeError("invalid Wasm32 pointer register");
+      throw new RangeError("invalid unsigned Wasm32 register");
     return value >>> 0;
   }
   return wasm_address_to_number(value);
