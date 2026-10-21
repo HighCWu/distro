@@ -259,24 +259,56 @@ test("installed Python PID 1 mounts runtime devices before descriptor and interp
   assert.doesNotMatch(script, /mknod.*\/dev\/null/);
 });
 
-test("native Python workflow mode does not schedule the target build matrix or use publishing credentials", () => {
-  const workflow = readFileSync(new URL("../../.github/workflows/ci.yml", import.meta.url), "utf8");
+function assertNativeWorkflow(workflow) {
+  // These are controlled, two-space top-level job headers, not a general YAML
+  // parser. Other jobs may precede this one; do not assume jobs: is adjacent.
+  const jobBody = (name) => {
+    const jobs = workflow.split("\njobs:\n")[1];
+    assert.ok(jobs, "missing workflow jobs");
+    const body = ("\n" + jobs).split(`\n  ${name}:\n`)[1];
+    assert.ok(body, `missing workflow job ${name}`);
+    return body.split(/\n  [A-Za-z0-9_-]+:\n/)[0];
+  };
   assert.match(
     workflow,
     /python-forkless-host:\n\s+description:[^\n]+\n\s+required: false\n\s+type: boolean\n\s+default: false/,
   );
-  const job = workflow.split("jobs:\n  python-forkless-host:\n")[1].split("\n  plan:\n")[0];
+  const job = jobBody("python-forkless-host");
   assert.ok(
     job.includes("github.event_name == 'workflow_dispatch' && inputs['python-forkless-host']"),
   );
+  assert.ok(job.includes("!inputs['fork-benchmark']"));
   assert.ok(job.includes("timeout-minutes: 15"));
   assert.ok(job.includes("contents: read"));
   assert.ok(job.includes('run: test -z "$REQUESTED_HEAVY_CHECK"'));
   assert.ok(job.includes("nix build '.#checks.x86_64-linux.python-check-forkless-host'"));
   assert.doesNotMatch(job, /secrets\.|cachix|cache-nix|statuses: write|contents: write/);
   assert.match(
-    workflow,
-    /plan:\n\s+name: Plan checks\n\s+if: \$\{\{ !inputs\['python-forkless-host'\] \}\}/,
+    jobBody("plan"),
+    /if: \$\{\{ !inputs\['python-forkless-host'\] && !inputs\['fork-benchmark'\] \}\}/,
+  );
+}
+
+test("native Python workflow mode does not schedule the target build matrix or use publishing credentials", () => {
+  const workflow = readFileSync(new URL("../../.github/workflows/ci.yml", import.meta.url), "utf8");
+  assertNativeWorkflow(workflow);
+  assertNativeWorkflow(
+    workflow.replace("jobs:\n", "jobs:\n  unrelated:\n    runs-on: ubuntu-24.04\n"),
+  );
+  assert.throws(() =>
+    assertNativeWorkflow(workflow.replace("!inputs['python-forkless-host']", "true")),
+  );
+  assert.throws(() =>
+    assertNativeWorkflow(
+      workflow.replace(/(\n  python-forkless-host:[\s\S]*?contents:) read/, "$1 write"),
+    ),
+  );
+  assert.throws(
+    () =>
+      assertNativeWorkflow(
+        workflow.replace(/^  python-forkless-host:\n/m, "  missing-python-job:\n"),
+      ),
+    /missing workflow job/,
   );
 });
 
