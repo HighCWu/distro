@@ -169,6 +169,9 @@ stdenv.mkDerivation (finalAttrs: {
     test ! -e "$out/bin/sh"
   '';
 
+  # Reuse the exact upstream maintenance series in independent candidates.
+  # This is metadata only; it does not change this package's build inputs.
+  passthru.gnuPatches = gnuPatches;
   passthru.apk = {
     depends = [
       "busybox"

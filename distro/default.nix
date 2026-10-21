@@ -119,6 +119,14 @@ lib.makeScope (scope: lib.callPackageWith ({ inherit lib pkgs; } // scope)) (
       sdk-fork-continuation = self.sdk-fork-continuation-wasm64;
     };
     dash-fork = callPackage ./dash-fork/package.nix { };
+    bash-fork = callPackage ./bash-fork/package.nix { };
+    bash-fork-wasm64 = callPackage ./bash-fork/package.nix {
+      platform = self.platform-wasm64;
+      sdk-fork-continuation = self.sdk-fork-continuation-wasm64;
+      llvm-toolchain = self.llvm-toolchain-wasm64;
+      busybox = self.busybox-wasm64;
+      vm-test = vmTestWasm64;
+    };
     dash-fork-wasm64 = callPackage ./dash-fork/package.nix {
       platform = self.platform-wasm64;
       sdk-fork-continuation = self.sdk-fork-continuation-wasm64;
