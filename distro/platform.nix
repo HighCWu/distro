@@ -53,6 +53,8 @@ rec {
     "--max-memory=${toString maximumMemoryBytes}"
     "--shared-memory"
     "--export-table"
+    # Versioned signal execution ABI needs the mutable C linear-stack global.
+    "--export=__stack_pointer"
     # Pull the direct anonymous mapping runtime into every executable. Raw
     # SYS_mmap callers need the callback even when no C mmap symbol reference
     # would otherwise extract its libc archive member.

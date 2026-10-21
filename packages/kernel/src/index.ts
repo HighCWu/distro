@@ -505,6 +505,10 @@ export async function bootMachine(options: BootMachineOptions): Promise<Machine>
         mmap: unavailable,
         munmap: unavailable,
       },
+      user_signal_v1: {
+        stack_pointer: unavailable,
+        call_handler: unavailable,
+      },
       user_v2: {
         mremap_fixed: unavailable,
         mmap_fixed: unavailable,

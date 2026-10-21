@@ -5,6 +5,8 @@ import type { ForkSnapshot } from "./fork-continuation.ts";
 
 export interface Instance extends WebAssembly.Instance {
   exports: {
+    /** New kernels expose their C stack for non-local callback unwinding. */
+    __stack_pointer?: WebAssembly.Global;
     __indirect_function_table: WebAssembly.Table;
     boot(): void;
     trigger_irq(irq: number): void;
@@ -20,6 +22,8 @@ export interface Instance extends WebAssembly.Instance {
     get_thread_area(): WasmAddress;
     copy_siginfo(to: WasmAddress): number;
     clear_siginfo(): void;
+    copy_signal_frame?(stack: WasmAddress, mask: WasmAddress): number;
+    finish_signal_frame?(stack: WasmAddress, mask: WasmAddress): number;
     /** Private kernel scheduling point during copy_thread; absent on older kernels. */
     copy_worker_wait?(): void;
     /** Capability 1 joins unpublished Workers after a post-copy fork failure. */
@@ -112,6 +116,8 @@ const supported_user_module_imports = new Set([
   "linux\0syscall_v2\0function",
   "linux\0get_thread_area\0function",
   "linux\0copy_siginfo\0function",
+  "linux_signal_v1\0frame\0function",
+  "linux_signal_v1\0finish\0function",
   "linux_mmap_init_v1\0copy\0function",
   "linux_fork_v1\0checkpoint\0function",
 ]);
@@ -244,17 +250,7 @@ export interface Imports {
     call(): void;
     switch_entry(fn: WasmAddress, arg: WasmAddress): void;
     call_signal_handler(fn: WasmAddress, sig: number): void;
-    call_siginfo_handler(
-      trampoline: WasmAddress,
-      fn: WasmAddress,
-      sig: number,
-      code: number,
-      pid: number,
-      uid: number,
-      value: number,
-      timerid: number,
-      overrun: number,
-    ): void;
+    call_siginfo_handler(trampoline: WasmAddress, fn: WasmAddress, sig: number): number;
     read(to: WasmAddress, from: WasmAddress, n: WasmAddress): number;
     write(to: WasmAddress, from: WasmAddress, n: WasmAddress): number;
     write_zeroes(to: WasmAddress, n: WasmAddress): number;
@@ -267,6 +263,18 @@ export interface Imports {
     ): number;
     mmap(len: WasmAddress): WasmAddress;
     munmap(addr: WasmAddress, len: WasmAddress): WasmAddress;
+  };
+  user_signal_v1: {
+    stack_pointer(to: WasmAddress): number;
+    call_handler(
+      trampoline: WasmAddress,
+      fn: WasmAddress,
+      sig: number,
+      sp: WasmAddress,
+      base: WasmAddress,
+      size: WasmAddress,
+      flags: number,
+    ): number;
   };
   user_v2: {
     mremap_fixed(

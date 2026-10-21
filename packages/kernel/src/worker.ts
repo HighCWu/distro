@@ -35,6 +35,11 @@ import {
   user_madvise,
 } from "./user-mmap.ts";
 import { FileMmapCopy } from "./file-mmap-copy.ts";
+import {
+  read_signal_stack_pointer,
+  call_on_signal_stack,
+  call_kernel_entry,
+} from "./signal-stack.ts";
 import { write_exec_image } from "./exec-image.ts";
 import {
   ForkContinuation,
@@ -144,6 +149,7 @@ function user_imports({
   prepare(): void;
   imports: Imports["user"];
   imports_v2: Imports["user_v2"];
+  imports_signal_v1: Imports["user_signal_v1"];
   imports_mmap_init_v1: Imports["user_mmap_init_v1"];
 } {
   const HALT_USER = Symbol("halt user");
@@ -201,7 +207,9 @@ function user_imports({
       ) => {
         const original_instance = instance;
         const invoke = () =>
-          kernel_instance.exports.syscall(nr, arg0, arg1, arg2, arg3, arg4, arg5);
+          call_kernel_entry(kernel_instance.exports, kernel_address, () =>
+            kernel_instance.exports.syscall(nr, arg0, arg1, arg2, arg3, arg4, arg5),
+          );
         const ret = dispatch_fork_syscall(
           fork,
           nr,
@@ -240,6 +248,22 @@ function user_imports({
           return result;
         },
       },
+      linux_signal_v1: {
+        finish(stack: WasmAddress, mask: WasmAddress) {
+          const invoke = () => kernel_instance.exports.finish_signal_frame?.(stack, mask) ?? -95;
+          const result = fork ? fork.kernelCall(invoke) : invoke();
+          const current = siginfo_copy_results.length - 1;
+          if (current >= 0 && result < 0 && result !== -95) siginfo_copy_results[current] = result;
+          return result;
+        },
+        frame(stack: WasmAddress, mask: WasmAddress) {
+          const invoke = () => kernel_instance.exports.copy_signal_frame?.(stack, mask) ?? -95;
+          const result = fork ? fork.kernelCall(invoke) : invoke();
+          const current = siginfo_copy_results.length - 1;
+          if (current >= 0 && result < 0 && result !== -95) siginfo_copy_results[current] = result;
+          return result;
+        },
+      },
     });
   }
 
@@ -263,7 +287,7 @@ function user_imports({
       : null;
   }
 
-  return {
+  const result: ReturnType<typeof user_imports> = {
     get context() {
       return context;
     },
@@ -439,6 +463,7 @@ function user_imports({
           f(sig);
         } finally {
           signal_depth--;
+          get_kernel_instance().exports.clear_siginfo();
         }
       },
       call_siginfo_handler(trampoline, fn, sig) {
@@ -529,6 +554,46 @@ function user_imports({
         return callback(addr, len) as WasmAddress;
       },
     },
+    imports_signal_v1: {
+      stack_pointer(to) {
+        if (!instance || !context) return -95;
+        const raw = read_signal_stack_pointer(instance.exports, context.memory, context.address);
+        if (raw === null) return -95;
+        try {
+          const value = wasm_pointer_to_number(raw);
+          if (kernel_address === "i32" && value > 0xffffffff) return -75;
+          const bytes = memory_bytes(
+            kernel_memory,
+            wasm_pointer_to_number(to),
+            kernel_address === "i64" ? 8 : 4,
+          );
+          if (!bytes) return -14;
+          const view = new DataView(bytes.buffer, bytes.byteOffset, bytes.byteLength);
+          if (kernel_address === "i64") view.setBigUint64(0, BigInt(value), true);
+          else view.setUint32(0, value, true);
+          return 0;
+        } catch {
+          return -14;
+        }
+      },
+      call_handler(trampoline, fn, sig, sp, base, size, flags) {
+        if (!instance || !context) return -95;
+        return call_on_signal_stack(
+          instance.exports,
+          context.memory,
+          context.address,
+          sp,
+          base,
+          size,
+          flags,
+          () => {
+            if (flags & 1) return result.imports.call_siginfo_handler(trampoline, fn, sig);
+            result.imports.call_signal_handler(fn, sig);
+            return 0;
+          },
+        );
+      },
+    },
     imports_v2: {
       mremap_fixed(addr, oldLen, newLen, newAddr) {
         assert(instance);
@@ -566,6 +631,7 @@ function user_imports({
       },
     },
   };
+  return result;
 }
 
 function start({
@@ -643,6 +709,7 @@ function start({
     },
     user: user.imports,
     user_v2: user.imports_v2,
+    user_signal_v1: user.imports_signal_v1,
     user_mmap_init_v1: user.imports_mmap_init_v1,
     kernel: kernel_imports({
       address: kernel_address,

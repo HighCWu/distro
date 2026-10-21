@@ -165,6 +165,16 @@ let
     ++ platform.compilerFlags
     ++ map (flag: "-Wl,${flag}") platform.linkerFlags
   );
+  legacySignalCompileFlags = lib.escapeShellArgs (
+    [
+      "--target=${platform.targetTriple}"
+      "--sysroot=${sysroot}"
+    ]
+    ++ platform.compilerFlags
+    ++ map (flag: "-Wl,${flag}") (
+      lib.filter (flag: flag != "--export=__stack_pointer") platform.linkerFlags
+    )
+  );
   programs =
     pkgs.runCommand "toolchain-smoke-${platform.wasmArch}"
       {
@@ -205,6 +215,14 @@ let
           dnotify = vm-test.rawInitramfsTest {
             name = "dnotify-${platform.wasmArch}";
             init = "${programs}/dnotify.wasm";
+          };
+          signal-altstack = vm-test.rawInitramfsTest {
+            name = "signal-altstack-${platform.wasmArch}";
+            init = "${programs}/signal-altstack.wasm";
+          };
+          signal-stack-legacy = vm-test.rawInitramfsTest {
+            name = "signal-stack-legacy-${platform.wasmArch}";
+            init = "${programs}/signal-stack-legacy.wasm";
           };
           ipv6 = vm-test.rawInitramfsTest {
             name = "ipv6-${platform.wasmArch}";
@@ -276,6 +294,19 @@ let
         clang ${compileFlags} -O2 -Wall -Wextra -Werror ${./dnotify.c} -o $out/dnotify.wasm
         chmod 0755 $out/dnotify.wasm
         wasm-validate --enable-memory64 --enable-threads --enable-exceptions $out/dnotify.wasm
+        clang ${compileFlags} -O2 -Wall -Wextra -Werror ${./signal-altstack.c} -o $out/signal-altstack.wasm
+        chmod 0755 $out/signal-altstack.wasm
+        wasm-validate --enable-memory64 --enable-threads --enable-exceptions $out/signal-altstack.wasm
+        wasm-objdump -x $out/signal-altstack.wasm > signal-altstack.dump
+        grep -F -- '-> "__stack_pointer"' signal-altstack.dump
+        clang ${legacySignalCompileFlags} -O2 -Wall -Wextra -Werror ${./signal-stack-legacy.c} -o $out/signal-stack-legacy.wasm
+        chmod 0755 $out/signal-stack-legacy.wasm
+        wasm-validate --enable-memory64 --enable-threads --enable-exceptions $out/signal-stack-legacy.wasm
+        wasm-objdump -x $out/signal-stack-legacy.wasm > signal-stack-legacy.dump
+        if grep -Fq -- '-> "__stack_pointer"' signal-stack-legacy.dump; then
+          echo 'legacy signal fixture unexpectedly exports its stack pointer' >&2
+          exit 1
+        fi
         clang ${compileFlags} -O2 -Wall -Wextra -Werror ${./large-file.c} -o $out/large-file.wasm
         chmod 0755 $out/large-file.wasm
         wasm-validate --enable-memory64 --enable-threads --enable-exceptions $out/large-file.wasm
