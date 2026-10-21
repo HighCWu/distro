@@ -2,6 +2,11 @@
 import assert from "node:assert/strict";
 
 export const processStages = {
+  execfd: [
+    "exec-fd: fexecve, execveat empty path and directory-relative execution pass",
+    "exec-fd: replacement identity, TLS, CLOEXEC and inherited file offset pass",
+    "exec-fd: standard exec errors preserve original image and later fork pass",
+  ],
   dash: [
     "dash: subshell, external exec and command substitution pass",
     "dash: pipelines and inherited fd redirection pass",

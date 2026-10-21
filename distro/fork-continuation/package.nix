@@ -175,6 +175,11 @@ let
           init = "${program}/process-control.wasm";
           cpus = 2;
         };
+        passthru.checks.exec-fd = vm-test.rawInitramfsTest {
+          name = "exec-fd-${platform.wasmArch}";
+          init = "${program}/exec-fd.wasm";
+          cpus = 2;
+        };
         passthru.checks.faults =
           (vm-test.override {
             kernel = kernel.override { copyFaultTest = true; };
@@ -215,6 +220,9 @@ let
       ''
         mkdir -p $out
         clang --version
+        wasm-linux-fork-cc -O2 -Wall -Wextra -Werror ${./exec-fd.c} -o exec-fd-linked.wasm
+        wasm-linux-fork-finalize exec-fd-linked.wasm $out/exec-fd.wasm
+        chmod 0755 $out/exec-fd.wasm
         wasm-linux-fork-cc -O2 -Wall -Wextra -Werror ${./process-control.c} -o process-control-linked.wasm
         wasm-linux-fork-finalize process-control-linked.wasm $out/process-control.wasm
         chmod 0755 $out/process-control.wasm
