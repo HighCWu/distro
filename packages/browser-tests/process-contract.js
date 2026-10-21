@@ -2,6 +2,12 @@
 import assert from "node:assert/strict";
 
 export const processStages = {
+  bash: [
+    "bash-fork: standard fork, local scopes, command substitution and pipelines pass",
+    "bash-fork: process substitution and coprocess fd lifetimes pass",
+    "bash-fork: background wait, signal trap and parent isolation pass",
+    "bash-fork: exec errors, syntax recovery and later child execution pass",
+  ],
   execfd: [
     "exec-fd: close_range bounds, holes, UNSHARE and parent isolation pass",
     "exec-fd: prlimit64 errors, libc limits and full-width rlim_t roundtrip pass",

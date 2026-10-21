@@ -1,5 +1,6 @@
 {
   basic-init,
+  bash-fork-wasm64,
   guest-agent,
   bytes,
   curl,
@@ -358,6 +359,8 @@ let
       // (lib.genAttrs erofsProjects erofsCheck)
       // (lib.genAttrs
         [
+          "process-bash-wasm64-chromium"
+          "process-bash-wasm64-firefox"
           "process-dash-wasm64-chromium"
           "process-dash-wasm64-firefox"
           "process-pidfd-wasm64-chromium"
@@ -369,7 +372,9 @@ let
           name:
           let
             corpus =
-              if lib.hasInfix "-dash-" name then
+              if lib.hasInfix "-bash-" name then
+                "bash"
+              else if lib.hasInfix "-dash-" name then
                 "dash"
               else if lib.hasInfix "-execfd-" name then
                 "execfd"
@@ -496,7 +501,10 @@ let
     bits: corpus:
     let
       assets =
-        if corpus == "dash" then
+        if corpus == "bash" then
+          assert bits == 64;
+          bash-fork-wasm64.checks.runtime.runtimeAssets
+        else if corpus == "dash" then
           (if bits == 64 then dash-fork-wasm64 else dash-fork).checks.runtime.runtimeAssets
         else if corpus == "execfd" then
           (if bits == 64 then fork-continuation-wasm64 else fork-continuation).checks.exec-fd.runtimeAssets
