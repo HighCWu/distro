@@ -3,11 +3,13 @@
 #include <errno.h>
 #include <fcntl.h>
 #include <sched.h>
+#include <stdint.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
 #include <sys/syscall.h>
 #include <sys/utsname.h>
+#include <sys/mman.h>
 #include <unistd.h>
 
 static void require(int ok, const char *message)
@@ -26,6 +28,59 @@ static void require(int ok, const char *message)
 static long call(long nr, long a, long b, long c, long d, long e, long f)
 {
 	return syscall(nr, a, b, c, d, e, f);
+}
+
+static void check_partial_copy(int *fds)
+{
+	volatile unsigned char *tail;
+#ifdef __wasm__
+	/* Reserve a fresh page instead of corrupting an active C stack or heap
+	 * object at the module's old memory end. This is a platform test only. */
+	size_t old_pages = __builtin_wasm_memory_grow(0, 1);
+	require(old_pages != (size_t)-1, "reserve boundary test page");
+	uint64_t end = ((uint64_t)old_pages + 1) * 65536;
+	tail = (void *)(uintptr_t)(end - 2);
+	char path[] = "/user-access-copy.XXXXXX";
+#else
+	long page = sysconf(_SC_PAGESIZE);
+	require(page > 0, "native page size");
+	unsigned char *mapping = mmap(NULL, (size_t)page * 2, PROT_READ | PROT_WRITE,
+		MAP_PRIVATE | MAP_ANONYMOUS, -1, 0);
+	require(mapping != MAP_FAILED && mprotect(mapping + page, (size_t)page, PROT_NONE) == 0,
+		"native inaccessible boundary");
+	tail = mapping + page - 2;
+	char path[] = "/tmp/user-access-copy.XXXXXX";
+#endif
+	int fd = mkstemp(path);
+	require(fd >= 0 && unlink(path) == 0, "anonymous regular file fixture");
+	char bytes[4];
+	require(write(fd, "ABCD", 4) == 4 && lseek(fd, 0, SEEK_SET) == 0, "seed regular file");
+	tail[0] = 'T'; tail[1] = 'U';
+	require(call(SYS_read, fd, (long)tail, 4, 0, 0, 0) == 2 && tail[0] == 'A' && tail[1] == 'B',
+		"partial regular file read and bytes");
+	require(lseek(fd, 0, SEEK_CUR) == 2 && read(fd, bytes, 2) == 2 && memcmp(bytes, "CD", 2) == 0,
+		"partial read advances only copied bytes");
+	tail[0] = 'T'; tail[1] = 'U';
+	require(lseek(fd, 0, SEEK_SET) == 0 && call(SYS_write, fd, (long)tail, 4, 0, 0, 0) == 2 &&
+		lseek(fd, 0, SEEK_CUR) == 2, "partial regular file write and position");
+	require(lseek(fd, 0, SEEK_SET) == 0 && read(fd, bytes, 4) == 4 && memcmp(bytes, "TUCD", 4) == 0,
+		"partial write preserves uncopied file suffix");
+	require(close(fd) == 0, "close regular file fixture");
+	require(write(fds[1], "WXYZ", 4) == 4, "queue pipe boundary bytes");
+	errno = 0;
+	require(call(SYS_read, fds[0], (long)tail, 4, 0, 0, 0) == -1 && errno == EFAULT &&
+		tail[0] == 'W' && tail[1] == 'X', "pipe read fault still copies valid user prefix");
+	require(read(fds[0], bytes, 4) == 4 && memcmp(bytes, "WXYZ", 4) == 0,
+		"faulted pipe read preserves the whole original queue");
+	errno = 0;
+	require(call(SYS_write, fds[1], (long)tail, 4, 0, 0, 0) == -1 && errno == EFAULT,
+		"pipe write rejects incomplete source buffer");
+	errno = 0;
+	require(read(fds[0], bytes, 1) == -1 && errno == EAGAIN, "faulted pipe write publishes no bytes");
+#ifndef __wasm__
+	require(munmap(mapping, (size_t)page * 2) == 0, "release native boundary fixture");
+#endif
+	puts("user-access: partial boundary copies preserve file positions, suffixes and pipe accounting pass");
 }
 
 int main(void)
@@ -54,6 +109,7 @@ int main(void)
 	require(call(SYS_futex, (long)&word, 5 | 128, 0, 0, 0, (1L << 28) | (1L << 12)) == -1 &&
 		errno == EFAULT && word == 0, "NULL futex atomic target");
 	puts("user-access: NULL data, pathname, structure and atomic targets reject without side effects pass");
+	check_partial_copy(fds);
 	struct utsname name;
 	require(uname(&name) == 0 && strcmp(name.sysname, "Linux") == 0, "valid structure retry");
 	require(write(fds[1], "S", 1) == 1 && read(fds[0], &byte, 1) == 1 && byte == 'S', "valid pipe retry");

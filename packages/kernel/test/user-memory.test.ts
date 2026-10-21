@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: MIT
 import assert from "node:assert/strict";
 import test from "node:test";
+import { allocate_shared_memory } from "../src/wasm.ts";
 import {
   read_user_memory,
   write_user_memory,
@@ -39,13 +40,41 @@ for (const address of ["i32", "i64"] as const) {
       assert.equal(write_user_memory(user, p(pointer), kernel, p(pointer), p(0)), 0);
       assert.equal(clear_user_memory(user, p(pointer), p(0)), 0);
     }
-    for (const pointer of [-1, 65533]) {
+    for (const pointer of [-1, 65536]) {
       assert.equal(read_user_memory(kernel, p(8), user, p(pointer), p(4)), 4);
       assert.equal(write_user_memory(user, p(pointer), kernel, p(8), p(4)), 4);
       assert.equal(clear_user_memory(user, p(pointer), p(4)), 4);
       assert.equal(read_user_memory(kernel, p(pointer), user, p(8), p(4)), 4);
       assert.equal(write_user_memory(user, p(8), kernel, p(pointer), p(4)), 4);
     }
+  });
+  test(`${address}: crossing user-memory end copies only the valid prefix and reports residue`, () => {
+    const kernel = new WebAssembly.Memory({ initial: 1 });
+    const user = new WebAssembly.Memory({ initial: 1, maximum: 2 });
+    const k = new Uint8Array(kernel.buffer),
+      u = new Uint8Array(user.buffer);
+    k.fill(19);
+    u.fill(23);
+    u.set([65, 66], 65534);
+    assert.equal(read_user_memory(kernel, p(8), user, p(65534), p(4)), 2);
+    assert.deepEqual([...k.subarray(8, 12)], [65, 66, 19, 19]);
+    k.set([71, 72, 73, 74], 8);
+    assert.equal(write_user_memory(user, p(65534), kernel, p(8), p(4)), 2);
+    assert.deepEqual([...u.subarray(65533)], [23, 71, 72]);
+    assert.equal(clear_user_memory(user, p(65534), p(4)), 2);
+    assert.deepEqual([...u.subarray(65533)], [23, 0, 0]);
+    // A malformed kernel-side range is not permission to touch user bytes.
+    assert.equal(read_user_memory(kernel, p(65534), user, p(8), p(4)), 4);
+    assert.equal(write_user_memory(user, p(8), kernel, p(65534), p(4)), 4);
+    assert.deepEqual([...u.subarray(8, 12)], [23, 23, 23, 23]);
+    user.grow(1);
+    new Uint8Array(user.buffer).set([81, 82, 83, 84], 65534);
+    assert.equal(
+      read_user_memory(kernel, p(8), user, p(65534), p(4)),
+      0,
+      "each call observes the current memory extent, not a stale pre-grow view",
+    );
+    assert.deepEqual([...k.subarray(8, 12)], [81, 82, 83, 84]);
   });
   test(`${address}: user atomic words reject NULL, misalignment and bounds without mutation`, () => {
     const user = new WebAssembly.Memory({ initial: 1, maximum: 2, shared: true });
@@ -55,5 +84,43 @@ for (const address of ["i32", "i64"] as const) {
     assert.equal(Atomics.exchange(last, 0, 37), 0);
     assert.equal(new DataView(user.buffer).getInt32(65532, true), 37);
     assert.equal(new DataView(user.buffer).getInt32(0, true), 0);
+  });
+  test(`${address}: Wasm memory.grow exposes the new extent to the next user copy`, () => {
+    const { memory } = allocate_shared_memory(1, 3, undefined, address);
+    const string = (value: string) => [value.length, ...new TextEncoder().encode(value)];
+    const section = (id: number, bytes: number[]) => [id, bytes.length, ...bytes];
+    const module = new WebAssembly.Module(
+      new Uint8Array([
+        0,
+        97,
+        115,
+        109,
+        1,
+        0,
+        0,
+        0,
+        ...section(1, [1, 0x60, 0, 1, address === "i64" ? 0x7e : 0x7f]),
+        ...section(2, [
+          1,
+          ...string("env"),
+          ...string("memory"),
+          2,
+          address === "i64" ? 7 : 3,
+          1,
+          3,
+        ]),
+        ...section(3, [1, 0]),
+        ...section(7, [1, ...string("grow"), 0, 0]),
+        ...section(10, [1, 6, 0, address === "i64" ? 0x42 : 0x41, 1, 0x40, 0, 0x0b]),
+      ]),
+    );
+    const instance = new WebAssembly.Instance(module, { env: { memory } });
+    const kernel = new WebAssembly.Memory({ initial: 1 });
+    assert.equal(read_user_memory(kernel, p(8), memory, p(65534), p(4)), 2);
+    assert.equal((instance.exports.grow as CallableFunction)(), p(1));
+    assert.equal(memory.buffer.byteLength, 131072);
+    new Uint8Array(memory.buffer).set([91, 92, 93, 94], 65534);
+    assert.equal(read_user_memory(kernel, p(8), memory, p(65534), p(4)), 0);
+    assert.deepEqual([...new Uint8Array(kernel.buffer, 8, 4)], [91, 92, 93, 94]);
   });
 }

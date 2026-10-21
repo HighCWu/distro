@@ -11,7 +11,7 @@ for (const cc of ["gcc", "clang"])
     const dir = mkdtempSync(join(tmpdir(), "user-access-"));
     t.after(() => rmSync(dir, { recursive: true, force: true }));
     const original = readFileSync(new URL("user-access.c", import.meta.url), "utf8");
-    for (const mode of ["normal", "false-uname", "bad-write"]) {
+    for (const mode of ["normal", "false-uname", "bad-write", "fake-prefix", "consume-pipe"]) {
       const source =
         mode === "normal"
           ? original
@@ -19,7 +19,15 @@ for (const cc of ["gcc", "clang"])
               "return syscall(nr, a, b, c, d, e, f);",
               mode === "false-uname"
                 ? "if (nr == SYS_uname && !a) { return 0; }\n  return syscall(nr, a, b, c, d, e, f);"
-                : `if (nr == SYS_write && !b && c == 1) {
+                : mode === "fake-prefix"
+                  ? "if (nr == SYS_read && c == 4) { return 2; }\n return syscall(nr, a, b, c, d, e, f);"
+                  : mode === "consume-pipe"
+                    ? `long result = syscall(nr, a, b, c, d, e, f);
+               if (nr == SYS_read && c == 4 && result == -1 && errno == EFAULT) {
+                 char discarded[4]; if (read((int)a, discarded, 4) != 4) return -2;
+                 errno = EFAULT;
+               } return result;`
+                    : `if (nr == SYS_write && !b && c == 1) {
             char byte = 'X'; if (write((int)a, &byte, 1) != 1) return -1;
             errno = EFAULT; return -1;
           } return syscall(nr, a, b, c, d, e, f);`,
@@ -36,13 +44,19 @@ for (const cc of ["gcc", "clang"])
       assert.equal(run.error, undefined);
       if (mode === "normal") {
         assert.equal(run.status, 0, run.stdout + run.stderr);
-        assert.equal((run.stdout.match(/user-access:.* pass/g) ?? []).length, 2);
+        assert.equal((run.stdout.match(/user-access:.* pass/g) ?? []).length, 3);
         assert.equal((run.stdout.match(/::vm-test::pass/g) ?? []).length, 1);
       } else {
         assert.notEqual(run.status, 0);
         assert.match(
           run.stdout,
-          mode === "false-uname" ? /NULL structure output/ : /failed write queues no bytes/,
+          mode === "false-uname"
+            ? /NULL structure output/
+            : mode === "fake-prefix"
+              ? /partial regular file read and bytes/
+              : mode === "consume-pipe"
+                ? /faulted pipe read preserves the whole original queue/
+                : /failed write queues no bytes/,
         );
         assert.doesNotMatch(run.stdout, /::vm-test::pass/);
       }
