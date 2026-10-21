@@ -65,7 +65,9 @@ for (const variant of ["interpreter", "mmap"]) {
   test(`Python ${variant} loads the installed writable root before boot`, async () => {
     const requests = [];
     const boots = [];
+    const progress = [];
     const context = loadApp({
+      console: { info: (line) => progress.push(line) },
       fetch: async (path) => {
         requests.push(path);
         return { ok: true, arrayBuffer: async () => new Uint8Array(512).buffer };
@@ -75,11 +77,13 @@ for (const variant of ["interpreter", "mmap"]) {
       blockDevice: (storage) => storage,
       bootMachine: async (options) => boots.push(options),
       runRuntimeSmoke: async (options) => {
+        options.onProgress("shutdown completed");
         await options.loadInitramfs();
         await options.bootMachine({ plugins: ["console", "entropy"] });
       },
     });
     await context.runPythonRuntime(variant);
+    assert.deepEqual(progress, [`[Python ${variant}] shutdown completed`]);
     assert.deepEqual(requests.sort(), [`/root-${variant}.ext4`, `/runtime-${variant}.cpio`].sort());
     assert.deepEqual(Array.from(boots[0].plugins.slice(0, 2)), ["console", "entropy"]);
     assert.equal(boots[0].plugins[2].capacity, 512);

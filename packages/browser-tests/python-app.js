@@ -29,6 +29,11 @@ globalThis.runPythonRuntime = (variant) => {
   if (variant !== "interpreter" && variant !== "mmap") throw new Error("invalid Python variant");
   let root;
   return runRuntimeSmoke({
+    // Preserve target stages and completed shutdown in public CI evidence.
+    // runRuntimeSmoke isolates diagnostics from completion/error semantics.
+    onProgress(message) {
+      console.info(`[Python ${variant}] ${message}`);
+    },
     bootMachine(options) {
       return bootMachine({
         ...options,
