@@ -176,6 +176,10 @@ let
           name = "toolchain-c-runtime-${platform.wasmArch}";
           init = "${programs}/smoke-c.wasm";
         };
+        passthru.checks.user-access = vm-test.rawInitramfsTest {
+          name = "user-access-${platform.wasmArch}";
+          init = "${programs}/user-access.wasm";
+        };
         nativeBuildInputs = [
           llvm-toolchain
           pkgs.wabt
@@ -184,11 +188,14 @@ let
       ''
         mkdir -p $out
         clang ${compileFlags} ${cSource} -o $out/smoke-c.wasm
+        clang ${compileFlags} -O2 -Wall -Wextra -Werror ${./user-access.c} -o $out/user-access.wasm
         clang++ ${compileFlags} ${cxxSource} -o $out/smoke-cxx.wasm
         clang++ ${compileFlags} -std=c++17 -O2 -pthread -Wl,--fatal-warnings ${./runtime-cxx.cc} -o $out/runtime-cxx.wasm
         chmod 0755 $out/smoke-c.wasm $out/smoke-cxx.wasm
         chmod 0755 $out/runtime-cxx.wasm
+        chmod 0755 $out/user-access.wasm
         wasm-validate --enable-memory64 --enable-threads --enable-exceptions $out/smoke-c.wasm
+        wasm-validate --enable-memory64 --enable-threads --enable-exceptions $out/user-access.wasm
         wasm-validate --enable-memory64 --enable-threads --enable-exceptions $out/smoke-cxx.wasm
         wasm-validate --enable-memory64 --enable-threads --enable-exceptions $out/runtime-cxx.wasm
       '';

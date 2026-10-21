@@ -46,6 +46,12 @@ import {
   wait_user_copy,
 } from "./user-copy.ts";
 import { assert } from "./util.ts";
+import {
+  read_user_memory,
+  write_user_memory,
+  clear_user_memory,
+  user_atomic_word,
+} from "./user-memory.ts";
 import { read_wasm_memories, user_memory_import } from "./wasm_binary.ts";
 import {
   allocate_shared_memory,
@@ -143,34 +149,6 @@ function user_imports({
   // not requested the active signal payload yet.
   const siginfo_copy_results: (number | null)[] = [];
   const mmap_copy = new FileMmapCopy(kernel_memory, kernel_address);
-
-  function copy_bytes(
-    destination_memory: WebAssembly.Memory,
-    destination: WasmAddress,
-    source_memory: WebAssembly.Memory,
-    source: WasmAddress,
-    length: WasmAddress,
-  ): number {
-    const requested = wasm_address_to_number(length, "copy length");
-    const to = memory_bytes(destination_memory, destination, length);
-    const from = memory_bytes(source_memory, source, length);
-    if (!to || !from) return requested;
-
-    try {
-      to.set(from);
-      return 0;
-    } catch {
-      return requested;
-    }
-  }
-
-  function user_atomic_word(uaddr: WasmAddress): Int32Array | null {
-    const address = wasm_address_to_number(uaddr);
-    if (!context || (address & 3) !== 0) return null;
-
-    const bytes = memory_bytes(context.memory, address, Int32Array.BYTES_PER_ELEMENT);
-    return bytes ? new Int32Array(bytes.buffer, bytes.byteOffset, 1) : null;
-  }
 
   function write_kernel_u32(addr: WasmAddress, value: number): boolean {
     const bytes = memory_bytes(kernel_memory, addr, Uint32Array.BYTES_PER_ELEMENT);
@@ -486,28 +464,20 @@ function user_imports({
       read(to, from, n) {
         const length = wasm_address_to_number(n, "copy length");
         if (!context) return length;
-        return copy_bytes(kernel_memory, to, context.memory, from, length);
+        return read_user_memory(kernel_memory, to, context.memory, from, length);
       },
       write(to, from, n) {
         const length = wasm_address_to_number(n, "copy length");
         if (!context) return length;
-        return copy_bytes(context.memory, to, kernel_memory, from, length);
+        return write_user_memory(context.memory, to, kernel_memory, from, length);
       },
       write_zeroes(to, n) {
         const length = wasm_address_to_number(n, "zero fill length");
         if (!context) return length;
-        const destination = memory_bytes(context.memory, to, length);
-        if (!destination) return length;
-
-        try {
-          destination.fill(0);
-          return 0;
-        } catch {
-          return length;
-        }
+        return clear_user_memory(context.memory, to, length);
       },
       futex_atomic_op(oldval, uaddr, op, oparg) {
-        const word = user_atomic_word(uaddr);
+        const word = context && user_atomic_word(context.memory, uaddr);
         if (!word) return -14; // bad address
 
         let old: number;
@@ -534,7 +504,7 @@ function user_imports({
         return write_kernel_u32(oldval, old) ? 0 : -14; // bad address
       },
       futex_atomic_cmpxchg(oldval, uaddr, expected, replacement) {
-        const word = user_atomic_word(uaddr);
+        const word = context && user_atomic_word(context.memory, uaddr);
         if (!word) return -14; // bad address
 
         const old = Atomics.compareExchange(word, 0, expected, replacement);
