@@ -208,9 +208,8 @@ let
           };
           large-file = vm-test.installedTest {
             name = "large-file-${platform.wasmArch}";
-            init = ./large-file-test.sh;
+            init = "${programs}/large-file.wasm";
             contents = [ busybox ];
-            files."/large-file.wasm" = "${programs}/large-file.wasm";
           };
         }
         // lib.optionalAttrs (platform.addressBits == 32) {
