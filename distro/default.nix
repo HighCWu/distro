@@ -98,6 +98,7 @@ lib.makeScope (scope: lib.callPackageWith ({ inherit lib pkgs; } // scope)) (
       llvm-toolchain = self.llvm-toolchain-wasm64;
       sysroot = self.sysroot-wasm64;
       vm-test = vmTestWasm64;
+      busybox = self.busybox-wasm64;
     };
     toolchain-smoke-runtime-wasm64 = self.toolchain-smoke-wasm64.checks.c-runtime;
     sdk-fork-continuation = callPackage ./fork-continuation/sdk.nix { };

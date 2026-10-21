@@ -5,6 +5,7 @@
   llvm-toolchain,
   sysroot,
   vm-test,
+  busybox,
 }:
 
 let
@@ -205,6 +206,12 @@ let
             name = "ipv6-${platform.wasmArch}";
             init = "${programs}/ipv6.wasm";
           };
+          large-file = vm-test.installedTest {
+            name = "large-file-${platform.wasmArch}";
+            init = ./large-file-test.sh;
+            contents = [ busybox ];
+            files."/large-file.wasm" = "${programs}/large-file.wasm";
+          };
         }
         // lib.optionalAttrs (platform.addressBits == 32) {
           user-access-upper32 = vm-test.rawInitramfsTest {
@@ -239,6 +246,9 @@ let
         clang ${compileFlags} -O2 -Wall -Wextra -Werror ${./ipv6.c} -o $out/ipv6.wasm
         chmod 0755 $out/ipv6.wasm
         wasm-validate --enable-memory64 --enable-threads --enable-exceptions $out/ipv6.wasm
+        clang ${compileFlags} -O2 -Wall -Wextra -Werror ${./large-file.c} -o $out/large-file.wasm
+        chmod 0755 $out/large-file.wasm
+        wasm-validate --enable-memory64 --enable-threads --enable-exceptions $out/large-file.wasm
         clang++ ${compileFlags} ${cxxSource} -o $out/smoke-cxx.wasm
         clang++ ${compileFlags} -std=c++17 -O2 -pthread -Wl,--fatal-warnings ${./runtime-cxx.cc} -o $out/runtime-cxx.wasm
         chmod 0755 $out/smoke-c.wasm $out/smoke-cxx.wasm
