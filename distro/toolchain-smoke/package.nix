@@ -210,6 +210,12 @@ let
             name = "fchmodat-${platform.wasmArch}";
             init = "${programs}/fchmodat.wasm";
           };
+          sysv-ipc = vm-test.installedTest {
+            name = "sysv-ipc-${platform.wasmArch}";
+            init = "${programs}/sysv-ipc.wasm";
+            contents = [ busybox ];
+            cpus = 2;
+          };
           large-file = vm-test.installedTest {
             name = "large-file-${platform.wasmArch}";
             init = "${programs}/large-file.wasm";
@@ -252,6 +258,9 @@ let
         clang ${compileFlags} -O2 -Wall -Wextra -Werror ${./fchmodat.c} -o $out/fchmodat.wasm
         chmod 0755 $out/fchmodat.wasm
         wasm-validate --enable-memory64 --enable-threads --enable-exceptions $out/fchmodat.wasm
+        clang ${compileFlags} -O2 -pthread -Wall -Wextra -Werror ${./sysv-ipc.c} -o $out/sysv-ipc.wasm
+        chmod 0755 $out/sysv-ipc.wasm
+        wasm-validate --enable-memory64 --enable-threads --enable-exceptions $out/sysv-ipc.wasm
         clang ${compileFlags} -O2 -Wall -Wextra -Werror ${./large-file.c} -o $out/large-file.wasm
         chmod 0755 $out/large-file.wasm
         wasm-validate --enable-memory64 --enable-threads --enable-exceptions $out/large-file.wasm
