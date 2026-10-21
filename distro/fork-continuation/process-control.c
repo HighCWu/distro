@@ -64,6 +64,41 @@ int main(void)
 	errno = 0;
 	require(signal_pid(fd, 0, 0x80000000U) == -1 && errno == EINVAL, "pidfd signal invalid flags");
 	puts("process-control: pidfd identity, readiness, CLOEXEC and rejection pass");
+	require(signal_pid(fd, SIGSTOP, 0) == 0, "stop child through pidfd");
+	for (int i = 0; i < 2; i++) {
+		siginfo_t stopped;
+		memset(&stopped, 0, sizeof(stopped));
+		require(waitid(P_PIDFD, (id_t)fd, &stopped, WSTOPPED | WNOWAIT) == 0,
+			"observe stopped child without consuming state");
+		require(stopped.si_pid == child && stopped.si_code == CLD_STOPPED && stopped.si_status == SIGSTOP,
+			"stopped identity and signal status");
+	}
+	require(waitpid(child, &status, WUNTRACED) == child && WIFSTOPPED(status) &&
+		WSTOPSIG(status) == SIGSTOP, "consume stopped status once");
+	siginfo_t unchanged;
+	memset(&unchanged, 0x5a, sizeof(unchanged));
+	require(waitid(P_PIDFD, (id_t)fd, &unchanged, WSTOPPED | WNOHANG) == 0 &&
+		unchanged.si_pid == 0, "consumed stop has no pending status");
+	require(poll(&p, 1, 0) == 0 && signal_pid(fd, 0, 0) == 0,
+		"stopped child remains alive and is not exit-ready");
+	puts("process-control: SIGSTOP, WSTOPPED WNOWAIT and single stop consumption pass");
+	require(signal_pid(fd, SIGCONT, 0) == 0, "continue child through pidfd");
+	for (int i = 0; i < 2; i++) {
+		siginfo_t continued;
+		memset(&continued, 0, sizeof(continued));
+		require(waitid(P_PIDFD, (id_t)fd, &continued, WCONTINUED | WNOWAIT) == 0,
+			"observe continued child without consuming state");
+		require(continued.si_pid == child && continued.si_code == CLD_CONTINUED && continued.si_status == SIGCONT,
+			"continued identity and signal status");
+	}
+	require(waitpid(child, &status, WCONTINUED) == child && WIFCONTINUED(status),
+		"consume continued status once");
+	memset(&unchanged, 0x5a, sizeof(unchanged));
+	require(waitid(P_PIDFD, (id_t)fd, &unchanged, WCONTINUED | WNOHANG) == 0 &&
+		unchanged.si_pid == 0, "consumed continuation has no pending status");
+	require(poll(&p, 1, 0) == 0 && signal_pid(fd, 0, 0) == 0,
+		"continued child remains alive and is not exit-ready");
+	puts("process-control: SIGCONT, WCONTINUED WNOWAIT and single continuation consumption pass");
 	require(signal_pid(fd, SIGTERM, 0) == 0, "signal child through pidfd");
 	require(poll(&p, 1, 5000) == 1 && (p.revents & POLLIN), "pidfd exit readiness");
 	for (int i = 0; i < 2; i++) {

@@ -17,6 +17,8 @@ export const processStages = {
   ],
   pidfd: [
     "process-control: pidfd identity, readiness, CLOEXEC and rejection pass",
+    "process-control: SIGSTOP, WSTOPPED WNOWAIT and single stop consumption pass",
+    "process-control: SIGCONT, WCONTINUED WNOWAIT and single continuation consumption pass",
     "process-control: pidfd signal, poll, waitid WNOWAIT and single reap pass",
     "process-control: later fork and wait recovery pass",
   ],
