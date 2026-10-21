@@ -64,6 +64,7 @@ stdenv.mkDerivation (finalAttrs: {
     make -j$NIX_BUILD_CORES defconfig
     config STATIC y
     config NOMMU y
+    config FEATURE_IPV6 y
     config STATIC_LIBGCC n
     config CROSS_COMPILER_PREFIX llvm-
     config EXTRA_CFLAGS '-I${linux.headers}/include ${lib.optionalString debug "-g"}'
@@ -203,5 +204,6 @@ stdenv.mkDerivation (finalAttrs: {
       processes = check "processes" ./process-test.sh;
       networking = check "networking" ./network-test.sh;
       inotify = check "inotify" ./inotify-test.sh;
+      ipv6 = check "ipv6" ./ipv6-test.sh;
     };
 })

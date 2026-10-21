@@ -14,8 +14,8 @@
     inherit pkgs;
     owner = "HighCWu";
     repo = "linux";
-    rev = "cb557f63cbefaa3653c4e156f9c077df9ae8fe66";
-    hash = "sha256-wyX5n9bSDMQHAuIS6DL/tGdjDbbEyD6oPR8R6lHgFTI=";
+    rev = "c5b78cfcce829885502ae07d4fbd0f0ecbb748a6";
+    hash = "sha256-dklaEoqDvIkOeRfG+Q7H4rwmFwmxbtj5XlEBQLepVhw=";
   },
 }:
 
@@ -106,6 +106,7 @@ pkgs.stdenvNoCC.mkDerivation (finalAttrs: {
     # Verify the resolved Kconfig, not merely the input defconfig intent.
     grep -qx 'CONFIG_INOTIFY_USER=y' .config
     grep -qx 'CONFIG_FSNOTIFY=y' .config
+    grep -qx 'CONFIG_IPV6=y' .config
 
     make vmlinux.wasm
 
