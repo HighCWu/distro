@@ -66,6 +66,13 @@ int main(void)
 	for (size_t i = 0; i < 6 * page; i++) require(base[i] == 0, "whole replacement zero");
 	base[5 * page] = 0x81;
 	require(msync(base, 6 * page, MS_SYNC) == 0 && base[5 * page] == 0x81, "replacement remains live");
+	require(munmap(NULL, page) == 0, "in-range unmapped hole remains a no-op");
+#if defined(__wasm__) && __SIZEOF_POINTER__ == 8
+	errno = 0;
+	require(munmap((void *)((uintptr_t)1 << 34), page) == -1 && errno == EINVAL,
+		"munmap outside TASK_SIZE rejects");
+	require(base[5 * page] == 0x81, "invalid unmap preserves live mapping");
+#endif
 	require(munmap(base, 6 * page) == 0, "cleanup");
 	puts("fixed-mmap: last old reference replacement, continued use and cleanup pass");
 	puts("::vm-test::pass");
