@@ -43,6 +43,7 @@ test("high layout remains a separate wasm32 package and whole-link finalization"
   const recipe = readFileSync(new URL("high32.nix", import.meta.url), "utf8");
   assert.match(recipe, /assert platform.addressBits == 32/);
   assert.match(recipe, /--global-base=2147483648/);
+  assert.match(recipe, /--no-stack-first/);
   assert.match(recipe, /wasm-linux-fork-finalize linked.wasm/);
   assert.match(recipe, /cpus = 2/);
 });

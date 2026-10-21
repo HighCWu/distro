@@ -24,7 +24,9 @@ let
       }
       ''
         mkdir $out
-        wasm-linux-fork-cc -O2 -Wall -Wextra -Werror -Wl,--global-base=2147483648 ${./high32.c} -o linked.wasm
+        # This pinned LLD defaults to stack-first: global-base alone leaves
+        # the stack below 8 MiB. Only this explicit test uses data-first.
+        wasm-linux-fork-cc -O2 -Wall -Wextra -Werror -Wl,--no-stack-first -Wl,--global-base=2147483648 ${./high32.c} -o linked.wasm
         wasm-linux-fork-finalize linked.wasm $out/probe.wasm
         cp ${./high32.c} ${./high32.nix} $out/
         ln -s ${sdk-fork-continuation.buildMaterials} $out/sdk-build-materials
