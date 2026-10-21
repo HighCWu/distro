@@ -83,7 +83,13 @@ test("syscall-only modules opt in using the exported ABI, with no private checkp
   );
 });
 
-function fixture(address: WasmAddressType, syscall = false, syscallAbi = 1, pidfdSupported = true) {
+function fixture(
+  address: WasmAddressType,
+  syscall = false,
+  syscallAbi = 1,
+  pidfdSupported = true,
+  registers = { stack: 32768, tls: 1024 },
+) {
   const pointer = (n: number): WasmAddress => (address === "i64" ? BigInt(n) : n);
   const memory = new WebAssembly.Memory({ initial: 1 });
   const view = new DataView(memory.buffer);
@@ -105,8 +111,8 @@ function fixture(address: WasmAddressType, syscall = false, syscallAbi = 1, pidf
     __wasm_fork_abi: () => 1,
     __wasm_fork_child_entry: () => pointer(7),
     __wasm_fork_clone: () => pointer(1234),
-    __stack_pointer: global(32768),
-    __tls_base: global(1024),
+    __stack_pointer: global(registers.stack),
+    __tls_base: global(registers.tls),
     asyncify_get_state: () => state,
     asyncify_start_unwind: (_descriptor: WasmAddress) => {
       assert.equal(state, 0);
@@ -176,6 +182,28 @@ test("syscall import versions are explicit; an unknown version is not admitted",
 });
 
 for (const address of ["i32", "i64"] as const) {
+  test(`${address}: raw high stack and TLS registers survive parent and child restore`, () => {
+    const registers = {
+      stack: address === "i32" ? 0x80000040 : 0x100000040,
+      tls: address === "i32" ? 0x80001000 : 0x100001000,
+    };
+    const parent = fixture(address, true, 2, true, registers);
+    const child = fixture(address, true, 2, true, registers);
+    assert.equal(parent.controller.syscallCheckpoint(true), 0);
+    const snapshot = parent.controller.suspend();
+    assert.equal(snapshot.stack, parent.exports.__stack_pointer.value);
+    assert.equal(snapshot.tls, parent.exports.__tls_base.value);
+    if (address === "i32") assert.ok(Number(snapshot.stack) < 0 && Number(snapshot.tls) < 0);
+    child.exports.__stack_pointer.value = child.pointer(4096);
+    child.exports.__tls_base.value = child.pointer(2048);
+    child.controller.resumeChild(snapshot);
+    assert.equal(child.exports.__stack_pointer.value, snapshot.stack);
+    assert.equal(child.exports.__tls_base.value, snapshot.tls);
+    assert.equal(child.controller.syscallCheckpoint(true), 0);
+    parent.controller.resumeParent(parent.pointer(123));
+    assert.equal(parent.controller.syscallCheckpoint(true), 123);
+  });
+
   test(`${address}: syscall ABI 1 stays compatible, ABI 2 enables clone3, unknown versions refuse`, () => {
     const old = fixture(address, true, 1),
       p = old.pointer;

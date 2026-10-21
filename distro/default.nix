@@ -110,6 +110,7 @@ lib.makeScope (scope: lib.callPackageWith ({ inherit lib pkgs; } // scope)) (
       sdk = self.sdk-wasm64;
     };
     fork-continuation = callPackage ./fork-continuation/package.nix { };
+    fork-high32 = callPackage ./fork-continuation/high32.nix { };
     fork-continuation-wasm64 = callPackage ./fork-continuation/package.nix {
       kernel = self.kernel-wasm64;
       platform = self.platform-wasm64;

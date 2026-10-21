@@ -3,7 +3,7 @@
 // clone admission, file inheritance, signals, exit and wait.
 import {
   memory_bytes,
-  wasm_address_to_number,
+  wasm_pointer_to_number,
   wasm_value_to_number,
   type WasmAddress,
   type WasmAddressType,
@@ -204,13 +204,13 @@ export class ForkContinuation {
       typeof value === (this.address === "i64" ? "bigint" : "number"),
       "pointer width mismatch",
     );
-    return wasm_address_to_number(value, "fork continuation pointer");
+    return wasm_pointer_to_number(value);
   }
   private validDescriptor(value: WasmAddress): boolean {
     try {
       const word = this.address === "i64" ? 8 : 4;
       const offset = this.pointer(value);
-      const bytes = memory_bytes(this.memory, value, 2 * word);
+      const bytes = memory_bytes(this.memory, offset, 2 * word);
       if (!bytes || offset % word) return false;
       const view = new DataView(bytes.buffer, bytes.byteOffset, bytes.byteLength);
       const start = word === 8 ? Number(view.getBigUint64(0, true)) : view.getUint32(0, true);
@@ -351,7 +351,7 @@ export class ForkContinuation {
     for (const value of [snapshot.descriptor, snapshot.stack, snapshot.tls, snapshot.entry])
       this.pointer(value);
     this.require(
-      memory_bytes(this.memory, snapshot.descriptor, this.address === "i64" ? 16 : 8),
+      memory_bytes(this.memory, this.pointer(snapshot.descriptor), this.address === "i64" ? 16 : 8),
       "invalid inherited descriptor",
     );
     this.global("__stack_pointer").value = snapshot.stack;
