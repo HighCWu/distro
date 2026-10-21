@@ -79,6 +79,22 @@ static void limit_control(struct rlimit *files)`,
       if (name === "normal" || name === "linux32-saturation") {
         assert.equal(run.status, 0, run.stdout + run.stderr);
         assertProcessOutput(run.stdout, "execfd");
+        const env = { ...process.env };
+        delete env.EXEC_FD_TEST;
+        for (const marker of [undefined, "wrong"]) {
+          if (marker !== undefined) env.EXEC_FD_TEST = marker;
+          const refused = spawnSync(binary, ["exec-fd-child", "1", "-1", "0", "0", "0"], {
+            encoding: "utf8",
+            env,
+            timeout: 10000,
+          });
+          assert.equal(refused.error, undefined);
+          assert.equal(
+            refused.status,
+            101,
+            "replacement rejects missing/invalid environment marker",
+          );
+        }
       } else {
         assert.notEqual(run.status, 0);
         assert.match(

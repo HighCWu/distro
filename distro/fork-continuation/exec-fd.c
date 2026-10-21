@@ -131,7 +131,8 @@ static int child_limit(int data, const struct rlimit *original)
 }
 static int replaced(int argc, char **argv)
 {
-	if (argc != 7 || !getenv("EXEC_FD_TEST") || strcmp(getenv("EXEC_FD_TEST"), "ready")) return 101;
+	const char *marker = getenv("EXEC_FD_TEST");
+	if (argc != 7 || !marker || strcmp(marker, "ready")) return 101;
 	if (getppid() != atoi(argv[2]) || tls != 17) return 102;
 	errno = 0;
 	if (fcntl(atoi(argv[3]), F_GETFD) != -1 || errno != EBADF) return 103;
