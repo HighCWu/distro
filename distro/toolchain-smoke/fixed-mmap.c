@@ -20,15 +20,44 @@ static void require(int ok, const char *message)
 	exit(1);
 #endif
 }
+static void advisory_mapping(size_t page)
+{
+	const int hints[] = {MAP_NORESERVE, MAP_STACK, MAP_POPULATE, MAP_NONBLOCK,
+		MAP_POPULATE | MAP_NONBLOCK, MAP_DENYWRITE | MAP_EXECUTABLE,
+		MAP_NORESERVE | MAP_STACK | MAP_POPULATE | MAP_NONBLOCK | MAP_DENYWRITE | MAP_EXECUTABLE};
+	for (unsigned h = 0; h < sizeof hints / sizeof hints[0]; h++) {
+		unsigned char *bytes = mmap(NULL, 2 * page, PROT_READ | PROT_WRITE,
+			MAP_PRIVATE | MAP_ANONYMOUS | hints[h], 12345, 0);
+		require(bytes != MAP_FAILED, "anonymous hints and ignored invalid fd");
+		for (size_t i = 0; i < 2 * page; i++) require(bytes[i] == 0, "advisory mappings stay zero initialized");
+		bytes[page] = 0x81;
+		require(msync(bytes, 2 * page, MS_SYNC) == 0 && bytes[page] == 0x81,
+			"hinted mappings remain registered and writable");
+		require(munmap(bytes, 2 * page) == 0, "hinted mapping cleanup");
+	}
+#ifdef __wasm__
+	const int unsupported[] = {MAP_GROWSDOWN, MAP_LOCKED, MAP_HUGETLB, MAP_SHARED};
+	for (unsigned i = 0; i < sizeof unsupported / sizeof unsupported[0]; i++) {
+		errno = 0;
+		require(mmap(NULL, page, PROT_READ | PROT_WRITE,
+			MAP_PRIVATE | MAP_ANONYMOUS | unsupported[i], -1, 0) == MAP_FAILED && errno == EINVAL,
+			"hints do not silently enable unsupported mapping semantics");
+	}
+#endif
+	puts("mmap: advisory flags and ignored anonymous fd preserve zero initialization, access and cleanup pass");
+}
+
 int main(void)
 {
 	size_t page = sysconf(_SC_PAGESIZE);
 	const int flags = MAP_PRIVATE | MAP_ANONYMOUS;
 	require(page && page <= 65536, "page size");
+	advisory_mapping(page);
 	unsigned char *base = mmap(NULL, 6 * page, PROT_READ | PROT_WRITE, flags, -1, 0);
 	require(base != MAP_FAILED, "initial mapping");
 	memset(base, 71, 6 * page);
-	require(mmap(base + 2 * page, 1, PROT_READ | PROT_WRITE, flags | MAP_FIXED, -1, 0) == base + 2 * page,
+	require(mmap(base + 2 * page, 1, PROT_READ | PROT_WRITE,
+		flags | MAP_FIXED | MAP_NORESERVE | MAP_POPULATE, 12345, 0) == base + 2 * page,
 		"middle-page replacement");
 	for (size_t i = 0; i < 6 * page; i++)
 		require(base[i] == (i >= 2 * page && i < 3 * page ? 0 : 71), "replacement zeroes only selected page");
@@ -40,12 +69,12 @@ int main(void)
 	base[2 * page] = 42;
 	errno = 0;
 	require(mmap(base + 2 * page, page, PROT_READ | PROT_WRITE,
-		flags | MAP_FIXED | MAP_FIXED_NOREPLACE, -1, 0) == MAP_FAILED && errno == EEXIST,
+		flags | MAP_FIXED | MAP_FIXED_NOREPLACE | MAP_STACK, 12345, 0) == MAP_FAILED && errno == EEXIST,
 		"NOREPLACE wins over FIXED");
 	require(base[2 * page] == 42, "NOREPLACE failure preserves bytes");
 	require(munmap(base + 2 * page, page) == 0, "make hole");
 	require(mmap(base + 2 * page, page, PROT_READ | PROT_WRITE,
-		flags | MAP_FIXED | MAP_FIXED_NOREPLACE, -1, 0) == base + 2 * page, "NOREPLACE fills hole");
+		flags | MAP_FIXED | MAP_FIXED_NOREPLACE | MAP_POPULATE, 12345, 0) == base + 2 * page, "NOREPLACE fills hole");
 	errno = 0;
 	require(mmap(base + 1, page, PROT_READ | PROT_WRITE, flags | MAP_FIXED, -1, 0)
 		== MAP_FAILED && errno == EINVAL, "misalignment rejects");

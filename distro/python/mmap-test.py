@@ -129,6 +129,23 @@ def exercise_advice():
     print("Python mmap: madvise discards anonymous pages, preserves neighbors and live views, and rejects invalid advice")
 
 
+def exercise_mapping_hints():
+    page = mmap.PAGESIZE
+    hints = (mmap.MAP_STACK, mmap.MAP_POPULATE, mmap.MAP_DENYWRITE | mmap.MAP_EXECUTABLE,
+             mmap.MAP_STACK | mmap.MAP_POPULATE | mmap.MAP_DENYWRITE | mmap.MAP_EXECUTABLE)
+    for hint in hints:
+        with mmap.mmap(-1, 2 * page, flags=mmap.MAP_PRIVATE | hint,
+                       prot=mmap.PROT_READ | mmap.PROT_WRITE) as mapping:
+            assert mapping[:] == bytes(2 * page)
+            mapping[page] = 0x81
+            assert mapping.flush() is None and mapping[page] == 0x81
+            mapping.resize(3 * page)
+            assert mapping[page] == 0x81 and mapping[2*page:] == bytes(page)
+            mapping.madvise(mmap.MADV_DONTNEED)
+            assert mapping[:] == bytes(3 * page)
+    print("Python mmap: advisory stack and populate flags preserve zero initialization, resize, advice and close")
+
+
 def exercise_kernel_boundaries():
     # CPython's default anonymous request is MAP_SHARED, not MAP_PRIVATE.
     error = expect_error(OSError, lambda: mmap.mmap(-1, mmap.PAGESIZE))
@@ -155,5 +172,6 @@ if __name__ == "__main__":
     exercise_resize()
     exercise_flush()
     exercise_advice()
+    exercise_mapping_hints()
     if sys.argv[1:]:
         exercise_kernel_boundaries()

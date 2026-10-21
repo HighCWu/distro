@@ -12,8 +12,8 @@ for (const cc of ["gcc", "clang"])
     t.after(() => rmSync(dir, { recursive: true, force: true }));
     const source = readFileSync(new URL("fixed-mmap.c", import.meta.url), "utf8");
     const bad = source.replace(
-      "flags | MAP_FIXED, -1, 0) == base + 2 * page",
-      "flags, -1, 0) == base + 2 * page",
+      "flags | MAP_FIXED | MAP_NORESERVE | MAP_POPULATE, 12345, 0) == base + 2 * page",
+      "flags | MAP_NORESERVE | MAP_POPULATE, 12345, 0) == base + 2 * page",
     );
     assert.ok(bad !== source);
     for (const [mode, body] of [

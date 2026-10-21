@@ -26,6 +26,7 @@ for (const [variant, title, stages] of [
       "Python mmap: resize growth, shrink, zero tail, exported buffers and error recovery verified",
       "Python mmap: private flush preserves data and rejects unaligned ranges without file writeback",
       "Python mmap: madvise discards anonymous pages, preserves neighbors and live views, and rejects invalid advice",
+      "Python mmap: advisory stack and populate flags preserve zero initialization, resize, advice and close",
       "Python mmap: default shared and file mappings rejected by default kernel",
     ],
   ],
