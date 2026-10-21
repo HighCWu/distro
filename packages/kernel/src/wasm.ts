@@ -269,6 +269,7 @@ export interface Imports {
     munmap(addr: WasmAddress, len: WasmAddress): WasmAddress;
   };
   user_v2: {
+    mmap_fixed(addr: WasmAddress, len: WasmAddress): WasmAddress;
     madvise(addr: WasmAddress, len: WasmAddress, advice: number): WasmAddress;
     msync(addr: WasmAddress, len: WasmAddress, flags: number): WasmAddress;
     mremap(

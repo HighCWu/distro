@@ -59,6 +59,7 @@ rec {
     "--undefined=__wasm_mmap"
     "--export=__wasm_mmap"
     "--export=__wasm_mmap_v2"
+    "--export=__wasm_mmap_fixed"
     "--export=__wasm_munmap"
     "--export=__wasm_mremap"
     "--export=__wasm_msync"

@@ -2,12 +2,42 @@
 
 import assert from "node:assert/strict";
 import test from "node:test";
-import { user_mmap, user_mremap, user_msync, user_madvise } from "../src/user-mmap.ts";
+import {
+  user_mmap,
+  user_mmap_fixed,
+  user_mremap,
+  user_msync,
+  user_madvise,
+} from "../src/user-mmap.ts";
 
 const anonymous_private = 0x22;
 
 for (const address_type of ["i32", "i64"] as const) {
   const address = (value: number) => (address_type === "i64" ? BigInt(value) : value);
+
+  test(`${address_type}: fixed replacement requires the new export, never legacy mmap`, () => {
+    const pointer = address_type === "i64" ? 0x100010000n : -2147418112;
+    const args = [pointer, address(65536)] as const;
+    const legacy = {
+      __wasm_mmap: () => {
+        throw new Error("legacy length-only allocator");
+      },
+      __wasm_mmap_v2: () => {
+        throw new Error("legacy request allocator");
+      },
+    };
+    assert.equal(user_mmap_fixed(legacy, address_type, ...args), address(-38));
+    let calls = 0;
+    const exports = {
+      ...legacy,
+      __wasm_mmap_fixed: (...actual: unknown[]) => {
+        assert.deepEqual(actual, args);
+        return ++calls === 1 ? pointer : address(-12);
+      },
+    };
+    assert.equal(user_mmap_fixed(exports, address_type, ...args), pointer);
+    assert.equal(user_mmap_fixed(exports, address_type, ...args), address(-12));
+  });
 
   test(`${address_type}: madvise requires allocator approval and preserves the pointer register`, () => {
     const pointer = address_type === "i64" ? 0x100010000n : -2147418112;

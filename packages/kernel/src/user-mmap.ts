@@ -2,6 +2,18 @@
 
 import type { WasmAddress, WasmAddressType } from "./wasm.ts";
 
+/** Never send replacement requests to legacy allocators that ignore FIXED. */
+export function user_mmap_fixed(
+  exports: WebAssembly.Exports,
+  addressType: WasmAddressType,
+  addr: WasmAddress,
+  len: WasmAddress,
+): WasmAddress {
+  const callback = exports.__wasm_mmap_fixed;
+  if (typeof callback !== "function") return addressType === "i64" ? -38n : -38;
+  return callback(addr, len) as WasmAddress;
+}
+
 /** Only the allocator can authorize discard without erasing unrelated bytes. */
 export function user_madvise(
   exports: WebAssembly.Exports,

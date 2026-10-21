@@ -9,8 +9,8 @@
   src ? pkgs.fetchFromGitHub {
     owner = "HighCWu";
     repo = "musl";
-    rev = "d61bd4aa393092e674839b9a645b7608b14503a9";
-    hash = "sha256-2bh6EZnhgrLVUjQupuVTHPu7edaUrtDFs86Pxvej8Ss=";
+    rev = "e6543914b77c8138fe51e2259f41b0cf7bc39501";
+    hash = "sha256-tEZuqBzBbLe3aDSV6VzYzKbC8wCmgl9DFIba5JILYsQ=";
   },
 }:
 
