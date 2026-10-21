@@ -216,6 +216,10 @@ let
             contents = [ busybox ];
             cpus = 2;
           };
+          file-handle = vm-test.installedTest {
+            name = "file-handle-${platform.wasmArch}";
+            init = "${programs}/file-handle.wasm";
+          };
           large-file = vm-test.installedTest {
             name = "large-file-${platform.wasmArch}";
             init = "${programs}/large-file.wasm";
@@ -261,6 +265,9 @@ let
         clang ${compileFlags} -O2 -pthread -Wall -Wextra -Werror ${./sysv-ipc.c} -o $out/sysv-ipc.wasm
         chmod 0755 $out/sysv-ipc.wasm
         wasm-validate --enable-memory64 --enable-threads --enable-exceptions $out/sysv-ipc.wasm
+        clang ${compileFlags} -O2 -Wall -Wextra -Werror ${./file-handle.c} -o $out/file-handle.wasm
+        chmod 0755 $out/file-handle.wasm
+        wasm-validate --enable-memory64 --enable-threads --enable-exceptions $out/file-handle.wasm
         clang ${compileFlags} -O2 -Wall -Wextra -Werror ${./large-file.c} -o $out/large-file.wasm
         chmod 0755 $out/large-file.wasm
         wasm-validate --enable-memory64 --enable-threads --enable-exceptions $out/large-file.wasm
