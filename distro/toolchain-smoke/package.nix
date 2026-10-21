@@ -219,6 +219,7 @@ let
           file-handle = vm-test.installedTest {
             name = "file-handle-${platform.wasmArch}";
             init = "${programs}/file-handle.wasm";
+            contents = [ busybox ];
           };
           large-file = vm-test.installedTest {
             name = "large-file-${platform.wasmArch}";
