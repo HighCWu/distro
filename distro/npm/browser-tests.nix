@@ -531,7 +531,7 @@ let
         builtins.toJSON {
           addressBits = bits;
           inherit corpus;
-          cpus = assets.cpus;
+          inherit (assets) cpus;
         }
       );
     in

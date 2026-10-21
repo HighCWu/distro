@@ -137,7 +137,7 @@ test("user-access browser recipes select exact variants, CPU counts and user sta
     recipe,
     /assert bits == 32;\s+toolchain-smoke\.checks\.user-access-upper32\.runtimeAssets/,
   );
-  assert.match(recipe, /cpus = assets.cpus/);
+  assert.match(recipe, /inherit \(assets\) cpus/);
   const source = readFileSync(
     new URL("../../distro/toolchain-smoke/user-access.c", import.meta.url),
     "utf8",
