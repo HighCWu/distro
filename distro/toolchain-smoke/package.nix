@@ -206,6 +206,10 @@ let
             name = "ipv6-${platform.wasmArch}";
             init = "${programs}/ipv6.wasm";
           };
+          fchmodat = vm-test.rawInitramfsTest {
+            name = "fchmodat-${platform.wasmArch}";
+            init = "${programs}/fchmodat.wasm";
+          };
           large-file = vm-test.installedTest {
             name = "large-file-${platform.wasmArch}";
             init = "${programs}/large-file.wasm";
@@ -245,6 +249,9 @@ let
         clang ${compileFlags} -O2 -Wall -Wextra -Werror ${./ipv6.c} -o $out/ipv6.wasm
         chmod 0755 $out/ipv6.wasm
         wasm-validate --enable-memory64 --enable-threads --enable-exceptions $out/ipv6.wasm
+        clang ${compileFlags} -O2 -Wall -Wextra -Werror ${./fchmodat.c} -o $out/fchmodat.wasm
+        chmod 0755 $out/fchmodat.wasm
+        wasm-validate --enable-memory64 --enable-threads --enable-exceptions $out/fchmodat.wasm
         clang ${compileFlags} -O2 -Wall -Wextra -Werror ${./large-file.c} -o $out/large-file.wasm
         chmod 0755 $out/large-file.wasm
         wasm-validate --enable-memory64 --enable-threads --enable-exceptions $out/large-file.wasm
