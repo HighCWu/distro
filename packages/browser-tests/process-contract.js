@@ -27,6 +27,7 @@ export const processStages = {
     "exec-fd: replacement identity, TLS, CLOEXEC and inherited file offset pass",
     "exec-fd: close_range CLOEXEC preserves fd until exec and closes on replacement pass",
     "exec-fd: child NOFILE enforcement, exec inheritance and parent limit isolation pass",
+    "exec-fd: malformed image abort preserves process and later descriptor exec pass",
     "exec-fd: standard exec errors preserve original image and later fork pass",
   ],
   dash: [

@@ -12,7 +12,15 @@ for (const cc of ["gcc", "clang"])
     const dir = mkdtempSync(join(tmpdir(), "exec-fd-contract-"));
     t.after(() => rmSync(dir, { recursive: true, force: true }));
     const original = readFileSync(new URL("exec-fd.c", import.meta.url), "utf8");
-    const leaked = original.replace("open(path, O_RDONLY | O_CLOEXEC)", "open(path, O_RDONLY)");
+    const leaked = original.replace(
+      "int executable = open(path, O_RDONLY | O_CLOEXEC)",
+      "int executable = open(path, O_RDONLY)",
+    );
+    const closedOnError = original.replace(
+      "return syscall(SYS_execveat, (long)fd, (long)path, (long)argv,\n\t\t(long)envp, (long)flags, 0L);",
+      "int result = syscall(SYS_execveat, (long)fd, (long)path, (long)argv,\n\t\t(long)envp, (long)flags, 0L);\n\tif (result == -1 && errno == ENOEXEC) close(fd);\n\treturn result;",
+    );
+    assert.notEqual(closedOnError, original);
     const noop = original.replace(
       "return syscall(SYS_close_range, (long)first, (long)last, (long)flags, 0L, 0L, 0L);",
       "(void)first; (void)last; (void)flags; return 0;",
@@ -62,6 +70,7 @@ static void limit_control(struct rlimit *files)`,
       ["normal", original],
       ["linux32-saturation", saturated],
       ["leaked-executable", leaked],
+      ["compile-error-closes-fd", closedOnError],
       ["range-noop", noop],
       ["range-lost-cloexec", lostCloexec],
       ["range-exclusive-end", exclusiveEnd],
@@ -99,13 +108,15 @@ static void limit_control(struct rlimit *files)`,
         assert.notEqual(run.status, 0);
         assert.match(
           run.stdout,
-          name === "range-noop"
-            ? /range reversed bounds/
-            : name === "range-exclusive-end"
-              ? /range inclusivity, holes, upper bound and child isolation/
-              : name === "narrow-resource-limit"
-                ? /full-width core limit roundtrip/
-                : /replacement identity, TLS, inherited fd and CLOEXEC/,
+          name === "compile-error-closes-fd"
+            ? /failed compilation preserves identity, TLS, CLOEXEC descriptors and offset/
+            : name === "range-noop"
+              ? /range reversed bounds/
+              : name === "range-exclusive-end"
+                ? /range inclusivity, holes, upper bound and child isolation/
+                : name === "narrow-resource-limit"
+                  ? /full-width core limit roundtrip/
+                  : /replacement identity, TLS, inherited fd and CLOEXEC/,
         );
         assert.doesNotMatch(run.stdout, /::vm-test::pass/);
       }

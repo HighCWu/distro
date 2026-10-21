@@ -8,6 +8,7 @@
 #include <stdlib.h>
 #include <string.h>
 #include <sys/resource.h>
+#include <sys/stat.h>
 #include <sys/syscall.h>
 #include <sys/wait.h>
 #include <unistd.h>
@@ -129,6 +130,45 @@ static int child_limit(int data, const struct rlimit *original)
 	for (int i = 0; i < count; i++) if (close(copies[i])) return 0;
 	return count > 0 && exhausted;
 }
+static void invalid_image_control(int executable, int data, char **args, char **env)
+{
+#ifdef __wasm__
+	char path[] = "/exec-fd-invalid.XXXXXX";
+#else
+	char path[] = "/tmp/exec-fd-invalid.XXXXXX";
+#endif
+	/* Valid Wasm header, malformed type section. The target must enter and
+	 * abort its compiler, not only reject a file with the wrong magic. Native
+	 * Linux rejects this non-ELF image; that is workload validation only. */
+	static const unsigned char invalid[] = {0, 'a', 's', 'm', 1, 0, 0, 0, 1, 1, 255};
+	int writer = mkstemp(path);
+	require(writer >= 0 && write(writer, invalid, sizeof invalid) == sizeof invalid &&
+		fchmod(writer, 0700) == 0 && close(writer) == 0, "create malformed executable");
+	int fd = open(path, O_RDONLY | O_CLOEXEC);
+	require(fd >= 0 && unlink(path) == 0, "open malformed executable read-only");
+	pid_t identity = getpid();
+	off_t position = lseek(data, 0, SEEK_CUR);
+	require(position >= 0, "record offset before malformed exec");
+	for (int i = 0; i < 2; i++) {
+		errno = 0;
+		require(at_exec(fd, "", args, env, AT_EMPTY_PATH) == -1 && errno == ENOEXEC,
+			"malformed Wasm image returns ENOEXEC");
+		require(getpid() == identity && tls == 71 && fcntl(fd, F_GETFD) == FD_CLOEXEC &&
+			fcntl(executable, F_GETFD) == FD_CLOEXEC && lseek(data, 0, SEEK_CUR) == position,
+			"failed compilation preserves identity, TLS, CLOEXEC descriptors and offset");
+	}
+	require(close(fd) == 0 && lseek(data, 0, SEEK_SET) == 0, "close malformed fixture and reset offset");
+	pid_t child = fork();
+	require(child >= 0, "fork after rejected compilation");
+	if (!child) { fexecve(executable, args, env); _exit(121); }
+	int status;
+	char byte;
+	require(waitpid(child, &status, 0) == child && WIFEXITED(status) && WEXITSTATUS(status) == 43 &&
+		read(data, &byte, 1) == 1 && byte == 'A' && tls == 71,
+		"successful descriptor exec after compiler abort");
+	puts("exec-fd: malformed image abort preserves process and later descriptor exec pass");
+}
+
 static int replaced(int argc, char **argv)
 {
 	const char *marker = getenv("EXEC_FD_TEST");
@@ -228,6 +268,7 @@ int main(int argc, char **argv)
 	puts("exec-fd: replacement identity, TLS, CLOEXEC and inherited file offset pass");
 	puts("exec-fd: close_range CLOEXEC preserves fd until exec and closes on replacement pass");
 	puts("exec-fd: child NOFILE enforcement, exec inheritance and parent limit isolation pass");
+	invalid_image_control(executable, data, child_args, child_env);
 	errno = 0;
 	require(at_exec(-1, "", child_args, child_env, AT_EMPTY_PATH) == -1 && errno == EBADF,
 		"execveat invalid descriptor");

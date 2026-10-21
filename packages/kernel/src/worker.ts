@@ -28,6 +28,7 @@ import {
 } from "./copy-fault.ts";
 import { user_mmap } from "./user-mmap.ts";
 import { FileMmapCopy } from "./file-mmap-copy.ts";
+import { write_exec_image } from "./exec-image.ts";
 import {
   ForkContinuation,
   dispatch_fork_syscall,
@@ -65,7 +66,6 @@ import {
   user_module_imports_supported,
   type WasmAddress,
   type WasmAddressType,
-  wasm_address_to_number,
   wasm_pointer_to_number,
   wasm_size_to_number,
   wasm_table_get,
@@ -276,19 +276,7 @@ function user_imports({
         }
       },
       compile_write(buf, offset, size) {
-        const source = wasm_address_to_number(buf);
-        const destination = offset >>> 0;
-        const length = size >>> 0;
-        const kernel_buffer = kernel_memory.buffer;
-        if (
-          !pending_module_bytes ||
-          source > kernel_buffer.byteLength - length ||
-          destination > pending_module_bytes.length - length
-        ) {
-          return -22; // invalid argument
-        }
-        pending_module_bytes.set(new Uint8Array(kernel_buffer, source, length), destination);
-        return 0;
+        return write_exec_image(pending_module_bytes, kernel_memory, buf, offset, size);
       },
       compile_end(maximum_memory_pages) {
         const bytes = pending_module_bytes;
