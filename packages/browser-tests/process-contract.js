@@ -1,7 +1,19 @@
 // SPDX-License-Identifier: MIT
 import assert from "node:assert/strict";
 
+const nullStage =
+  "user-access: NULL data, pathname, structure and atomic targets reject without side effects pass";
+const prefixStage =
+  "user-access: partial boundary copies preserve file positions, suffixes and pipe accounting pass";
+const recoveryStage = "user-access: zero lengths, valid retries and descriptor recovery pass";
 export const processStages = {
+  useraccess: [nullStage, prefixStage, recoveryStage],
+  upper32: [
+    nullStage,
+    prefixStage,
+    "user-access: wasm32 upper-half pipe buffers, structure output and atomic operands pass",
+    recoveryStage,
+  ],
   bash: [
     "bash-fork: standard fork, local scopes, command substitution and pipelines pass",
     "bash-fork: process substitution and coprocess fd lifetimes pass",
@@ -36,6 +48,10 @@ export function assertProcessOutput(output, corpus) {
   assert.ok(Object.hasOwn(processStages, corpus), "unknown process corpus");
   assert.doesNotMatch(output, /::vm-test::fail|Kernel panic|rcu:.*(?:stall|detected)/i);
   const lines = output.split(/\r?\n/);
+  const known = new Set(Object.values(processStages).flat());
+  for (const line of lines)
+    if (known.has(line))
+      assert.ok(processStages[corpus].includes(line), "unexpected process corpus stage");
   let previous = -1;
   for (const stage of [...processStages[corpus], "::vm-test::pass"]) {
     assert.equal(lines.filter((line) => line === stage).length, 1, `missing/duplicate ${stage}`);

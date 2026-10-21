@@ -6,6 +6,7 @@ export async function runRuntimeSmoke({
   consoleDevice,
   entropyDevice,
   loadInitramfs,
+  cpus = 2,
   timeoutMs = 120_000,
   onProgress,
   additionalCompletion,
@@ -97,7 +98,7 @@ export async function runRuntimeSmoke({
         const input = new TransformStream();
         trace("boot requested");
         machine = await bootMachine({
-          cpus: 2,
+          cpus,
           initcpio,
           plugins: [consoleDevice(input.readable, consoleOutput(true)), entropyDevice()],
         });

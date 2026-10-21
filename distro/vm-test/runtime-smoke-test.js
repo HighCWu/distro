@@ -15,7 +15,14 @@ const { runRuntimeSmoke } = await import(
 
 function fixture(
   lines,
-  { bootDelay = false, closeConsole = false, bootLines = [], closeError, closeDelay = false } = {},
+  {
+    bootDelay = false,
+    closeConsole = false,
+    bootLines = [],
+    closeError,
+    closeDelay = false,
+    expectedCpus = 2,
+  } = {},
 ) {
   let writer;
   let closed = false;
@@ -58,7 +65,7 @@ function fixture(
       },
       entropyDevice: () => ({}),
       async bootMachine(options) {
-        assert.equal(options.cpus, 2);
+        assert.equal(options.cpus, expectedCpus);
         assert.deepEqual(options.initcpio, new Uint8Array([1]));
         if (bootDelay)
           await new Promise((resolve) => {
@@ -71,6 +78,14 @@ function fixture(
     },
   };
 }
+
+test("explicit one-CPU profiles and the existing two-CPU profiles both await shutdown", async () => {
+  for (const cpus of [1, 2]) {
+    const state = fixture(["::vm-test::pass\n"], { expectedCpus: cpus });
+    assert.match(await runRuntimeSmoke({ ...state.options, cpus }), /::vm-test::pass/);
+    assert.equal(state.closed, true);
+  }
+});
 
 test("host diagnostics complete after user pass even when the boot console is already closed", async () => {
   const state = fixture(["::vm-test::pass\n"]);

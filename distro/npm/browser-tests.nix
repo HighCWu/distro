@@ -359,6 +359,10 @@ let
       // (lib.genAttrs erofsProjects erofsCheck)
       // (lib.genAttrs
         [
+          "process-useraccess-wasm64-chromium"
+          "process-useraccess-wasm64-firefox"
+          "process-upper32-wasm32-chromium"
+          "process-upper32-wasm32-firefox"
           "process-bash-wasm64-chromium"
           "process-bash-wasm64-firefox"
           "process-dash-wasm64-chromium"
@@ -372,7 +376,11 @@ let
           name:
           let
             corpus =
-              if lib.hasInfix "-bash-" name then
+              if lib.hasInfix "-upper32-" name then
+                "upper32"
+              else if lib.hasInfix "-useraccess-" name then
+                "useraccess"
+              else if lib.hasInfix "-bash-" name then
                 "bash"
               else if lib.hasInfix "-dash-" name then
                 "dash"
@@ -380,11 +388,12 @@ let
                 "execfd"
               else
                 "pidfd";
+            bits = if lib.hasInfix "-wasm32-" name then 32 else 64;
           in
           playwright.mkCheck {
             name = "browser-tests-${name}";
-            suite = processSuite 64 corpus;
-            project = lib.removePrefix "process-${corpus}-wasm64-" name;
+            suite = processSuite bits corpus;
+            project = lib.removePrefix "process-${corpus}-wasm${toString bits}-" name;
             script = "process-browser-check.mjs";
           }
         )
@@ -501,24 +510,34 @@ let
     bits: corpus:
     let
       assets =
-        if corpus == "bash" then
+        if corpus == "upper32" then
+          assert bits == 32;
+          toolchain-smoke.checks.user-access-upper32.runtimeAssets
+        else if corpus == "useraccess" then
+          (if bits == 64 then toolchain-smoke-wasm64 else toolchain-smoke).checks.user-access.runtimeAssets
+        else if corpus == "bash" then
           assert bits == 64;
           bash-fork-wasm64.checks.runtime.runtimeAssets
         else if corpus == "dash" then
           (if bits == 64 then dash-fork-wasm64 else dash-fork).checks.runtime.runtimeAssets
         else if corpus == "execfd" then
           (if bits == 64 then fork-continuation-wasm64 else fork-continuation).checks.exec-fd.runtimeAssets
-        else
+        else if corpus == "pidfd" then
           (if bits == 64 then fork-continuation-wasm64 else fork-continuation)
-          .checks.process-control.runtimeAssets;
+          .checks.process-control.runtimeAssets
+        else
+          throw "unknown process browser corpus: ${corpus}";
       profile = pkgs.writeText "process-profile.json" (
         builtins.toJSON {
           addressBits = bits;
           inherit corpus;
+          cpus = assets.cpus;
         }
       );
     in
-    assert assets.disks == [ ] && assets.cpus == 2;
+    assert
+      assets.disks == [ ]
+      && assets.cpus == (if corpus == "upper32" || corpus == "useraccess" then 1 else 2);
     pkgs.runCommand "${corpus}-wasm${toString bits}-browser-suite" { } ''
       mkdir -p $out/node_modules/@lowland/kernel $out/node_modules/@lowland/bytes
       ${playwright.linkRuntime "$out"}
