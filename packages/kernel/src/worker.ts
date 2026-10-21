@@ -26,7 +26,14 @@ import {
   copy_fault_test,
   require_copy_wait_progress,
 } from "./copy-fault.ts";
-import { user_mmap, user_mmap_fixed, user_mremap, user_msync, user_madvise } from "./user-mmap.ts";
+import {
+  user_mmap,
+  user_mmap_fixed,
+  user_mremap,
+  user_mremap_fixed,
+  user_msync,
+  user_madvise,
+} from "./user-mmap.ts";
 import { FileMmapCopy } from "./file-mmap-copy.ts";
 import { write_exec_image } from "./exec-image.ts";
 import {
@@ -523,6 +530,10 @@ function user_imports({
       },
     },
     imports_v2: {
+      mremap_fixed(addr, oldLen, newLen, newAddr) {
+        assert(instance);
+        return user_mremap_fixed(instance.exports, kernel_address, addr, oldLen, newLen, newAddr);
+      },
       mmap_fixed(addr, len) {
         assert(instance);
         return user_mmap_fixed(instance.exports, kernel_address, addr, len);

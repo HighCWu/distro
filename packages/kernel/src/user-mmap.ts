@@ -2,6 +2,20 @@
 
 import type { WasmAddress, WasmAddressType } from "./wasm.ts";
 
+/** Old resize allocators cannot atomically replace a chosen destination. */
+export function user_mremap_fixed(
+  exports: WebAssembly.Exports,
+  addressType: WasmAddressType,
+  addr: WasmAddress,
+  oldLen: WasmAddress,
+  newLen: WasmAddress,
+  newAddr: WasmAddress,
+): WasmAddress {
+  const callback = exports.__wasm_mremap_fixed;
+  if (typeof callback !== "function") return addressType === "i64" ? -38n : -38;
+  return callback(addr, oldLen, newLen, newAddr) as WasmAddress;
+}
+
 /** Never send replacement requests to legacy allocators that ignore FIXED. */
 export function user_mmap_fixed(
   exports: WebAssembly.Exports,

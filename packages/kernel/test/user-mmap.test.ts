@@ -6,6 +6,7 @@ import {
   user_mmap,
   user_mmap_fixed,
   user_mremap,
+  user_mremap_fixed,
   user_msync,
   user_madvise,
 } from "../src/user-mmap.ts";
@@ -14,6 +15,28 @@ const anonymous_private = 0x22;
 
 for (const address_type of ["i32", "i64"] as const) {
   const address = (value: number) => (address_type === "i64" ? BigInt(value) : value);
+
+  test(`${address_type}: fixed remap needs its own atomic export and retains all address registers`, () => {
+    const pointer = address_type === "i64" ? 0x100010000n : -2147418112;
+    const destination = address_type === "i64" ? 0x100080000n : -2146959360;
+    const args = [pointer, address(65536), address(131072), destination] as const;
+    const legacy = {
+      __wasm_mremap: () => {
+        throw new Error("must not resize through the old export");
+      },
+    };
+    assert.equal(user_mremap_fixed(legacy, address_type, ...args), address(-38));
+    let calls = 0;
+    const exports = {
+      ...legacy,
+      __wasm_mremap_fixed: (...actual: unknown[]) => {
+        assert.deepEqual(actual, args);
+        return ++calls === 1 ? destination : address(-12);
+      },
+    };
+    assert.equal(user_mremap_fixed(exports, address_type, ...args), destination);
+    assert.equal(user_mremap_fixed(exports, address_type, ...args), address(-12));
+  });
 
   test(`${address_type}: fixed replacement requires the new export, never legacy mmap`, () => {
     const pointer = address_type === "i64" ? 0x100010000n : -2147418112;

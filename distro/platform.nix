@@ -62,6 +62,7 @@ rec {
     "--export=__wasm_mmap_fixed"
     "--export=__wasm_munmap"
     "--export=__wasm_mremap"
+    "--export=__wasm_mremap_fixed"
     "--export=__wasm_msync"
     "--export=__wasm_madvise"
     # clang's wasm-linux toolchain defaults the table base to 3, reserving
