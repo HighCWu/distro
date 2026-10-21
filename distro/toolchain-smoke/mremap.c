@@ -20,6 +20,40 @@ static void require(int ok, const char *message)
 	exit(1);
 #endif
 }
+static void subrange(size_t page)
+{
+	unsigned char *base = mmap(NULL, 6 * page, PROT_READ | PROT_WRITE,
+		MAP_PRIVATE | MAP_ANONYMOUS, -1, 0);
+	require(base != MAP_FAILED, "subrange source");
+	for (size_t i = 0; i < 6; i++) memset(base + i * page, 11 + i, page);
+	require(mremap(base + page, 2 * page, page, 0) == base + page,
+		"shrink middle subrange without discarding unrequested suffix");
+	require(mmap(base + 2 * page, page, PROT_READ | PROT_WRITE,
+		MAP_PRIVATE | MAP_ANONYMOUS | MAP_FIXED_NOREPLACE, -1, 0) == base + 2 * page,
+		"reuse exact shrink hole");
+	unsigned char *moved = mremap(base + 4 * page, page, 2 * page, MREMAP_MAYMOVE);
+	require(moved != MAP_FAILED && moved != base + 4 * page, "relocate interior subrange");
+	for (size_t i = 0; i < 2 * page; i++)
+		require(moved[i] == (i < page ? 15 : 0), "interior moved data and zero expansion");
+	require(mmap(base + 4 * page, page, PROT_READ | PROT_WRITE,
+		MAP_PRIVATE | MAP_ANONYMOUS | MAP_FIXED_NOREPLACE, -1, 0) == base + 4 * page,
+		"reuse relocated hole");
+	for (size_t i = 0; i < 6 * page; i++) {
+		size_t index = i / page;
+		require(base[i] == (index == 2 || index == 4 ? 0 : 11 + index),
+			"both retained sides and fresh holes");
+	}
+	for (size_t i = 0; i < 6; i++) if (i != 2 && i != 4) {
+		errno = 0;
+		require(mmap(base + i * page, page, PROT_READ | PROT_WRITE,
+			MAP_PRIVATE | MAP_ANONYMOUS | MAP_FIXED_NOREPLACE, -1, 0) == MAP_FAILED &&
+			errno == EEXIST, "retained ranges remain registered, not just readable bytes");
+	}
+	require(munmap(moved, 2 * page) == 0 && munmap(base, 6 * page) == 0,
+		"subrange metadata and backing cleanup");
+	puts("mremap: subrange shrink and relocation preserve both sides and reusable holes pass");
+}
+
 int main(void)
 {
 	size_t page = sysconf(_SC_PAGESIZE);
@@ -56,6 +90,7 @@ int main(void)
 	for (size_t i = 0; i < 2 * page; i++) require(neighbor[i] == 91, "neighbor isolation");
 	puts("mremap: refused growth, anonymous relocation and neighboring mapping isolation pass");
 	require(munmap(moved, 4 * page) == 0 && munmap(neighbor, 2 * page) == 0, "release mappings");
+	subrange(page);
 	unsigned char *retry = mmap(NULL, page, PROT_READ | PROT_WRITE,
 		MAP_PRIVATE | MAP_ANONYMOUS, -1, 0);
 	require(retry != MAP_FAILED && retry[0] == 0 && munmap(retry, page) == 0, "later mapping recovery");
