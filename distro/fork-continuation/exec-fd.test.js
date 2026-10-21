@@ -25,16 +25,29 @@ for (const cc of ["gcc", "clang"])
       "(long)last, (long)flags, 0L",
       "(long)(last == first ? last : last - 1), (long)flags, 0L",
     );
+    const narrowLimit = original.replace(
+      "static void limit_control(struct rlimit *files)",
+      `static int narrow_prlimit(pid_t pid, int resource, const struct rlimit *next, struct rlimit *old)
+{
+  int result = prlimit(pid, resource, next, old);
+  if (!result && old && resource == RLIMIT_CORE) old->rlim_cur = (unsigned int)old->rlim_cur;
+  return result;
+}
+#define prlimit narrow_prlimit
+static void limit_control(struct rlimit *files)`,
+    );
     assert.notEqual(leaked, original);
     assert.notEqual(noop, original);
     assert.notEqual(lostCloexec, original);
     assert.notEqual(exclusiveEnd, original);
+    assert.notEqual(narrowLimit, original);
     for (const [name, source] of [
       ["normal", original],
       ["leaked-executable", leaked],
       ["range-noop", noop],
       ["range-lost-cloexec", lostCloexec],
       ["range-exclusive-end", exclusiveEnd],
+      ["narrow-resource-limit", narrowLimit],
     ]) {
       const input = join(dir, name + ".c"),
         binary = join(dir, name);
@@ -56,7 +69,9 @@ for (const cc of ["gcc", "clang"])
             ? /range reversed bounds/
             : name === "range-exclusive-end"
               ? /range inclusivity, holes, upper bound and child isolation/
-              : /replacement identity, TLS, inherited fd and CLOEXEC/,
+              : name === "narrow-resource-limit"
+                ? /full-width core limit roundtrip/
+                : /replacement identity, TLS, inherited fd and CLOEXEC/,
         );
         assert.doesNotMatch(run.stdout, /::vm-test::pass/);
       }

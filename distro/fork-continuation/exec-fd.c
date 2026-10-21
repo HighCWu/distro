@@ -7,6 +7,7 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <sys/resource.h>
 #include <sys/syscall.h>
 #include <sys/wait.h>
 #include <unistd.h>
@@ -71,14 +72,67 @@ static void range_control(int data)
 	require(close(first) == 0 && close(last) == 0, "range fixture cleanup");
 	puts("exec-fd: close_range bounds, holes, UNSHARE and parent isolation pass");
 }
+static void limit_control(struct rlimit *files)
+{
+	_Static_assert(sizeof(rlim_t) == 8 && sizeof(struct rlimit) == 16, "Linux prlimit64 layout");
+	struct rlimit observed, invalid = {1, 0};
+	require(getrlimit(RLIMIT_NOFILE, files) == 0 && files->rlim_cur >= 96,
+		"read initial file limit");
+	require(prlimit(0, RLIMIT_NOFILE, NULL, &observed) == 0 &&
+		observed.rlim_cur == files->rlim_cur && observed.rlim_max == files->rlim_max,
+		"prlimit and getrlimit agree");
+	errno = 0;
+	require(setrlimit(RLIMIT_NOFILE, &invalid) == -1 && errno == EINVAL, "invalid soft above hard limit");
+	errno = 0;
+	require(prlimit(0, -1, NULL, &observed) == -1 && errno == EINVAL, "invalid resource selector");
+	errno = 0;
+	require(syscall(SYS_prlimit64, 0L, (long)RLIMIT_NOFILE, 0L, -8L, 0L, 0L) == -1 &&
+		errno == EFAULT, "prlimit invalid output pointer");
+	errno = 0;
+	require(syscall(SYS_prlimit64, 0L, (long)RLIMIT_NOFILE, -8L, 0L, 0L, 0L) == -1 &&
+		errno == EFAULT, "prlimit invalid input pointer");
+	require(getrlimit(RLIMIT_NOFILE, &observed) == 0 &&
+		observed.rlim_cur == files->rlim_cur && observed.rlim_max == files->rlim_max,
+		"rejected limit requests preserve original limit");
+	struct rlimit core, wide;
+	const rlim_t high = 0x100000007ULL;
+	require(getrlimit(RLIMIT_CORE, &core) == 0 && core.rlim_max >= high, "wide core limit precondition");
+	wide = core;
+	wide.rlim_cur = high;
+	require(setrlimit(RLIMIT_CORE, &wide) == 0 && prlimit(0, RLIMIT_CORE, NULL, &observed) == 0 &&
+		observed.rlim_cur == high && observed.rlim_max == core.rlim_max, "full-width core limit roundtrip");
+	require(setrlimit(RLIMIT_CORE, &core) == 0 && getrlimit(RLIMIT_CORE, &observed) == 0 &&
+		observed.rlim_cur == core.rlim_cur && observed.rlim_max == core.rlim_max, "restore core limit");
+	puts("exec-fd: prlimit64 errors, libc limits and full-width rlim_t roundtrip pass");
+}
+static int child_limit(int data, const struct rlimit *original)
+{
+	struct rlimit reduced = *original, previous, observed;
+	reduced.rlim_cur = 32;
+	if (prlimit(0, RLIMIT_NOFILE, &reduced, &previous) ||
+		previous.rlim_cur != original->rlim_cur || previous.rlim_max != original->rlim_max ||
+		getrlimit(RLIMIT_NOFILE, &observed) || observed.rlim_cur != 32 ||
+		observed.rlim_max != original->rlim_max) return 0;
+	int copies[32], count = 0, exhausted = 0;
+	while (count < 32) {
+		int fd = dup(data);
+		if (fd < 0) { exhausted = errno == EMFILE; break; }
+		copies[count++] = fd;
+	}
+	for (int i = 0; i < count; i++) if (close(copies[i])) return 0;
+	return count > 0 && exhausted;
+}
 static int replaced(int argc, char **argv)
 {
-	if (argc != 5 || !getenv("EXEC_FD_TEST") || strcmp(getenv("EXEC_FD_TEST"), "ready")) return 101;
+	if (argc != 7 || !getenv("EXEC_FD_TEST") || strcmp(getenv("EXEC_FD_TEST"), "ready")) return 101;
 	if (getppid() != atoi(argv[2]) || tls != 17) return 102;
 	errno = 0;
 	if (fcntl(atoi(argv[3]), F_GETFD) != -1 || errno != EBADF) return 103;
 	char byte;
 	if (read(atoi(argv[4]), &byte, 1) != 1 || byte != 'D') return 104;
+	struct rlimit limit;
+	if (getrlimit(RLIMIT_NOFILE, &limit) || limit.rlim_cur != strtoull(argv[5], NULL, 10) ||
+		limit.rlim_max != strtoull(argv[6], NULL, 10)) return 108;
 	return 43;
 }
 int main(int argc, char **argv)
@@ -112,20 +166,29 @@ int main(int argc, char **argv)
 #endif
 	require(data >= 0 && write(data, "DATA", 4) == 4, "create inherited data");
 	range_control(data);
-	char parent[32], fdtext[32], datatext[32];
+	struct rlimit files;
+	limit_control(&files);
+	char parent[32], fdtext[32], datatext[32], soft[32], hard[32];
 	snprintf(parent, sizeof(parent), "%ld", (long)getpid());
 	snprintf(fdtext, sizeof(fdtext), "%d", executable);
 	snprintf(datatext, sizeof(datatext), "%d", data);
-	char *child_args[] = {"exec-fd", "exec-fd-child", parent, fdtext, datatext, NULL};
+	snprintf(soft, sizeof(soft), "%llu", (unsigned long long)files.rlim_cur);
+	snprintf(hard, sizeof(hard), "%llu", (unsigned long long)files.rlim_max);
+	char *child_args[] = {"exec-fd", "exec-fd-child", parent, fdtext, datatext, soft, hard, NULL};
 	char *child_env[] = {"EXEC_FD_TEST=ready", NULL};
 	tls = 71;
-	for (int mode = 0; mode < 5; mode++) {
+	for (int mode = 0; mode < 6; mode++) {
 		require(lseek(data, 0, SEEK_SET) == 0, "reset shared data offset");
 		pid_t child = fork();
 		require(child >= 0, "fork before descriptor exec");
 		if (!child) {
 			tls = 99;
-			if (mode >= 3) {
+			if (mode == 5) {
+				if (!child_limit(data, &files)) _exit(107);
+				snprintf(soft, sizeof(soft), "%u", 32U);
+				fexecve(executable, child_args, child_env);
+			}
+			else if (mode >= 3) {
 				int marked = fcntl(executable, F_DUPFD, 64);
 				if (marked < 64 || fcntl(marked, F_GETFD) != 0 ||
 					range_close(marked, marked, range_cloexec | (mode == 4 ? range_unshare : 0)) != 0 ||
@@ -149,10 +212,14 @@ int main(int argc, char **argv)
 		char byte;
 		require(read(data, &byte, 1) == 1 && byte == 'A' && tls == 71,
 			"parent TLS and shared file offset after exec");
+		struct rlimit unchanged;
+		require(getrlimit(RLIMIT_NOFILE, &unchanged) == 0 && unchanged.rlim_cur == files.rlim_cur &&
+			unchanged.rlim_max == files.rlim_max, "parent limits unaffected by child");
 	}
 	puts("exec-fd: fexecve, execveat empty path and directory-relative execution pass");
 	puts("exec-fd: replacement identity, TLS, CLOEXEC and inherited file offset pass");
 	puts("exec-fd: close_range CLOEXEC preserves fd until exec and closes on replacement pass");
+	puts("exec-fd: child NOFILE enforcement, exec inheritance and parent limit isolation pass");
 	errno = 0;
 	require(at_exec(-1, "", child_args, child_env, AT_EMPTY_PATH) == -1 && errno == EBADF,
 		"execveat invalid descriptor");
