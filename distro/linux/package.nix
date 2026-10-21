@@ -14,8 +14,8 @@
     inherit pkgs;
     owner = "HighCWu";
     repo = "linux";
-    rev = "31234c7fdee61a5a9d0b540528245ffd5866fe5c";
-    hash = "sha256-WimXuMifCGCierHqK4zetq59WP8Q42LFAFAXhFR8LIQ=";
+    rev = "cb557f63cbefaa3653c4e156f9c077df9ae8fe66";
+    hash = "sha256-wyX5n9bSDMQHAuIS6DL/tGdjDbbEyD6oPR8R6lHgFTI=";
   },
 }:
 
@@ -102,6 +102,10 @@ pkgs.stdenvNoCC.mkDerivation (finalAttrs: {
     ${lib.optionalString (mmapCopyTest || fileMmapCandidate) ''
       make olddefconfig
     ''}
+
+    # Verify the resolved Kconfig, not merely the input defconfig intent.
+    grep -qx 'CONFIG_INOTIFY_USER=y' .config
+    grep -qx 'CONFIG_FSNOTIFY=y' .config
 
     make vmlinux.wasm
 

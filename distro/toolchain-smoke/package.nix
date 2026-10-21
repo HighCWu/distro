@@ -197,6 +197,10 @@ let
             name = "fixed-mmap-${platform.wasmArch}";
             init = "${programs}/fixed-mmap.wasm";
           };
+          inotify = vm-test.rawInitramfsTest {
+            name = "inotify-${platform.wasmArch}";
+            init = "${programs}/inotify.wasm";
+          };
         }
         // lib.optionalAttrs (platform.addressBits == 32) {
           user-access-upper32 = vm-test.rawInitramfsTest {
@@ -225,6 +229,9 @@ let
         clang ${compileFlags} -O2 -Wall -Wextra -Werror ${./fixed-mmap.c} -o $out/fixed-mmap.wasm
         chmod 0755 $out/fixed-mmap.wasm
         wasm-validate --enable-memory64 --enable-threads --enable-exceptions $out/fixed-mmap.wasm
+        clang ${compileFlags} -O2 -Wall -Wextra -Werror ${./inotify.c} -o $out/inotify.wasm
+        chmod 0755 $out/inotify.wasm
+        wasm-validate --enable-memory64 --enable-threads --enable-exceptions $out/inotify.wasm
         clang++ ${compileFlags} ${cxxSource} -o $out/smoke-cxx.wasm
         clang++ ${compileFlags} -std=c++17 -O2 -pthread -Wl,--fatal-warnings ${./runtime-cxx.cc} -o $out/runtime-cxx.wasm
         chmod 0755 $out/smoke-c.wasm $out/smoke-cxx.wasm

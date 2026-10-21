@@ -83,6 +83,7 @@ stdenv.mkDerivation (finalAttrs: {
     config BOOTCHARTD n
     config CONSPY n
     config CROND y
+    config INOTIFYD y
     config CRONTAB y
     config DEVMEM n
     config FBSPLASH n
@@ -201,5 +202,6 @@ stdenv.mkDerivation (finalAttrs: {
       smoke = check "smoke" ./smoke-test.sh;
       processes = check "processes" ./process-test.sh;
       networking = check "networking" ./network-test.sh;
+      inotify = check "inotify" ./inotify-test.sh;
     };
 })
