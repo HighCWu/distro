@@ -95,12 +95,19 @@ static void limit_control(struct rlimit *files)
 		observed.rlim_cur == files->rlim_cur && observed.rlim_max == files->rlim_max,
 		"rejected limit requests preserve original limit");
 	struct rlimit core, wide;
-	const rlim_t high = 0x100000007ULL;
-	require(getrlimit(RLIMIT_CORE, &core) == 0 && core.rlim_max >= high, "wide core limit precondition");
-	wide = core;
-	wide.rlim_cur = high;
-	require(setrlimit(RLIMIT_CORE, &wide) == 0 && prlimit(0, RLIMIT_CORE, NULL, &observed) == 0 &&
-		observed.rlim_cur == high && observed.rlim_max == core.rlim_max, "full-width core limit roundtrip");
+	const rlim_t values[] = {0xfffffff0ULL, 0x100000007ULL};
+	require(getrlimit(RLIMIT_CORE, &core) == 0 && core.rlim_max == RLIM_INFINITY, "wide core limit precondition");
+	for (unsigned i = 0; i < sizeof(values) / sizeof(values[0]); i++) {
+		const rlim_t high = values[i];
+		/* Linux rlim64_is_infinity saturates at ULONG_MAX on 32-bit kernels.
+		 * The public structure still returns the full 64-bit infinity value. */
+		const rlim_t expected = sizeof(unsigned long) == 4 && high >= 0xffffffffULL ? RLIM_INFINITY : high;
+		wide = core;
+		wide.rlim_cur = high;
+		errno = 0;
+		require(setrlimit(RLIMIT_CORE, &wide) == 0 && prlimit(0, RLIMIT_CORE, NULL, &observed) == 0 &&
+			observed.rlim_cur == expected && observed.rlim_max == core.rlim_max, "full-width core limit roundtrip");
+	}
 	require(setrlimit(RLIMIT_CORE, &core) == 0 && getrlimit(RLIMIT_CORE, &observed) == 0 &&
 		observed.rlim_cur == core.rlim_cur && observed.rlim_max == core.rlim_max, "restore core limit");
 	puts("exec-fd: prlimit64 errors, libc limits and full-width rlim_t roundtrip pass");

@@ -41,8 +41,26 @@ static void limit_control(struct rlimit *files)`,
     assert.notEqual(lostCloexec, original);
     assert.notEqual(exclusiveEnd, original);
     assert.notEqual(narrowLimit, original);
+    // Native fixture simulation of Linux's 32-bit rlim64_is_infinity policy,
+    // not execution on a 32-bit kernel. Actual target checks remain separate.
+    const saturated = original
+      .replace(
+        "static void limit_control(struct rlimit *files)",
+        `static int saturated_setrlimit(int resource, const struct rlimit *limit)
+{
+  struct rlimit converted = *limit;
+  if (resource == RLIMIT_CORE && converted.rlim_cur >= 0xffffffffULL)
+    converted.rlim_cur = RLIM_INFINITY;
+  return setrlimit(resource, &converted);
+}
+#define setrlimit saturated_setrlimit
+static void limit_control(struct rlimit *files)`,
+      )
+      .replace("sizeof(unsigned long) == 4", "1");
+    assert.notEqual(saturated, original);
     for (const [name, source] of [
       ["normal", original],
+      ["linux32-saturation", saturated],
       ["leaked-executable", leaked],
       ["range-noop", noop],
       ["range-lost-cloexec", lostCloexec],
@@ -58,7 +76,7 @@ static void limit_control(struct rlimit *files)`,
       assert.equal(build.status, 0, build.stderr);
       const run = spawnSync(binary, [], { encoding: "utf8", timeout: 15000 });
       assert.equal(run.error, undefined);
-      if (name === "normal") {
+      if (name === "normal" || name === "linux32-saturation") {
         assert.equal(run.status, 0, run.stdout + run.stderr);
         assertProcessOutput(run.stdout, "execfd");
       } else {
