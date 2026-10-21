@@ -362,11 +362,19 @@ let
           "process-dash-wasm64-firefox"
           "process-pidfd-wasm64-chromium"
           "process-pidfd-wasm64-firefox"
+          "process-execfd-wasm64-chromium"
+          "process-execfd-wasm64-firefox"
         ]
         (
           name:
           let
-            corpus = if lib.hasInfix "-dash-" name then "dash" else "pidfd";
+            corpus =
+              if lib.hasInfix "-dash-" name then
+                "dash"
+              else if lib.hasInfix "-execfd-" name then
+                "execfd"
+              else
+                "pidfd";
           in
           playwright.mkCheck {
             name = "browser-tests-${name}";
@@ -490,6 +498,8 @@ let
       assets =
         if corpus == "dash" then
           (if bits == 64 then dash-fork-wasm64 else dash-fork).checks.runtime.runtimeAssets
+        else if corpus == "execfd" then
+          (if bits == 64 then fork-continuation-wasm64 else fork-continuation).checks.exec-fd.runtimeAssets
         else
           (if bits == 64 then fork-continuation-wasm64 else fork-continuation)
           .checks.process-control.runtimeAssets;
