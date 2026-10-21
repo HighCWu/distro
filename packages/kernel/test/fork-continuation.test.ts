@@ -83,7 +83,7 @@ test("syscall-only modules opt in using the exported ABI, with no private checkp
   );
 });
 
-function fixture(address: WasmAddressType, syscall = false) {
+function fixture(address: WasmAddressType, syscall = false, syscallAbi = 1) {
   const pointer = (n: number): WasmAddress => (address === "i64" ? BigInt(n) : n);
   const memory = new WebAssembly.Memory({ initial: 1 });
   const view = new DataView(memory.buffer);
@@ -128,7 +128,7 @@ function fixture(address: WasmAddressType, syscall = false) {
   const calls = { descriptors: 0 };
   if (syscall)
     Object.assign(exports, {
-      __wasm_fork_syscall_abi: () => 1,
+      __wasm_fork_syscall_abi: () => syscallAbi,
       __wasm_fork_descriptor: () => {
         calls.descriptors++;
         descriptor();
@@ -174,8 +174,55 @@ test("syscall import versions are explicit; an unknown version is not admitted",
 });
 
 for (const address of ["i32", "i64"] as const) {
+  test(`${address}: syscall ABI 1 stays compatible, ABI 2 enables clone3, unknown versions refuse`, () => {
+    const old = fixture(address, true, 1),
+      p = old.pointer;
+    assert.equal(
+      dispatch_fork_syscall(
+        old.controller,
+        p(435),
+        [p(0), p(0), p(0), p(0), p(0), p(0)],
+        true,
+        () => {
+          assert.fail("kernel clone3");
+        },
+        "flags-v2",
+      ),
+      p(-38),
+    );
+    assert.equal(old.calls.descriptors, 0);
+    assert.equal(
+      dispatch_fork_syscall(
+        old.controller,
+        p(220),
+        [p(17), p(0), p(0), p(0), p(0), p(0)],
+        true,
+        () => {
+          assert.fail("callback fallback");
+        },
+        "flags-v2",
+      ),
+      p(0),
+    );
+    assert.equal(old.calls.descriptors, 1);
+    assert.throws(() => fixture(address, true, 3), /unsupported syscall ABI version/);
+    const current = fixture(address, true, 2);
+    assert.equal(
+      dispatch_fork_syscall(
+        current.controller,
+        p(435),
+        [p(0), p(88), p(0), p(0), p(0), p(0)],
+        false,
+        () => p(0),
+        "flags-v2",
+      ),
+      p(-95),
+    );
+    assert.equal(current.calls.descriptors, 0);
+  });
+
   test(`${address}: clone3 resumes the admitted parent/child request without rereading arguments`, () => {
-    const f = fixture(address, true),
+    const f = fixture(address, true, 2),
       p = f.pointer;
     const view = new DataView(f.memory.buffer);
     view.setBigUint64(4096 + 32, 17n, true);
@@ -214,7 +261,7 @@ for (const address of ["i32", "i64"] as const) {
     assert.equal(dispatch("flags-v2"), p(0));
     assert.equal(dispatch("flags-v2"), p(-16));
     const snapshot = f.controller.suspend();
-    const child = fixture(address, true);
+    const child = fixture(address, true, 2);
     new Uint8Array(child.memory.buffer).set(new Uint8Array(f.memory.buffer));
     child.controller.resumeChild(snapshot);
     // The arguments can alias saved-frame storage. Rewind must complete the

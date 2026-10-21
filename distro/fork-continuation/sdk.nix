@@ -76,7 +76,7 @@ let
       inherit (platform) addressBits targetTriple;
       defaultSdkUnchanged = true;
       requiresFinalization = true;
-      syscallContinuationAbi = 1;
+      syscallContinuationAbi = 2;
       syscallImport = "linux.syscall_v2";
       callbackCloneImport = "linux.syscall";
       clone3ForkSubset = true;

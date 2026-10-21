@@ -150,6 +150,7 @@ export class ForkContinuation {
   private readonly e: WebAssembly.Exports;
   private readonly memory: WebAssembly.Memory;
   private readonly address: WasmAddressType;
+  private readonly syscallAbi: number;
 
   constructor(
     instance: WebAssembly.Instance,
@@ -166,13 +167,17 @@ export class ForkContinuation {
     for (const name of globals)
       this.require(this.e[name] instanceof WebAssembly.Global, `missing ${name}`);
     this.require(this.call("__wasm_fork_abi") === 1, "unsupported ABI version");
+    let syscallAbi = 0;
     if ("__wasm_fork_syscall_abi" in this.e) {
       this.require(
         typeof this.e.__wasm_fork_descriptor === "function",
         "missing syscall descriptor",
       );
-      this.require(this.call("__wasm_fork_syscall_abi") === 1, "unsupported syscall ABI version");
+      const version = this.call("__wasm_fork_syscall_abi");
+      this.require(version === 1 || version === 2, "unsupported syscall ABI version");
+      syscallAbi = version;
     }
+    this.syscallAbi = syscallAbi;
     this.require(this.state() === 0, "instance is not idle");
     this.pointer(this.global("__stack_pointer").value);
     this.pointer(this.global("__tls_base").value);
@@ -263,6 +268,7 @@ export class ForkContinuation {
 
   clone3Checkpoint(pointer: WasmAddress, size: WasmAddress, allowed: boolean): number {
     if (!allowed || this.kernelDepth !== 0 || !("__wasm_fork_syscall_abi" in this.e)) return -95;
+    if (this.syscallAbi < 2) return -38;
     // A rewind finishes the already-admitted request, rather than parsing a
     // second request from memory that the saved-frame machinery may change.
     if (this.state() === 2) return this.syscallCheckpoint(allowed);

@@ -14,12 +14,17 @@ for (const width of [32, 64]) {
     const dir = mkdtempSync(join(tmpdir(), "fork-link-"));
     t.after(() => rmSync(dir, { recursive: true, force: true }));
     mkdirSync(join(dir, "sys"));
-    writeFileSync(join(dir, "stdint.h"), "typedef __UINTPTR_TYPE__ uintptr_t;\n");
+    writeFileSync(
+      join(dir, "stdint.h"),
+      "typedef __UINTPTR_TYPE__ uintptr_t; typedef __UINT64_TYPE__ uint64_t;\n",
+    );
+    writeFileSync(join(dir, "stddef.h"), "#define offsetof(t, m) __builtin_offsetof(t, m)\n");
     writeFileSync(join(dir, "signal.h"), "#define SIGCHLD 17\n");
     writeFileSync(
       join(dir, "sys/syscall.h"),
       `
 #define SYS_clone 220
+#define SYS_clone3 435
 #define SYS_getpid 172
 #define SYS_getppid 173
 #define SYS_exit_group 94
@@ -46,10 +51,19 @@ for (const width of [32, 64]) {
     const execution = fileURLToPath(new URL("./execution.c", import.meta.url));
     const raw = fileURLToPath(new URL("./raw-clone.c", import.meta.url));
     const callbackObject = join(dir, "callback.o"),
-      rawObject = join(dir, "raw.o");
+      rawObject = join(dir, "raw.o"),
+      memoryObject = join(dir, "memory.o");
+    const memory = join(dir, "memory.c");
+    // The freestanding fixture has no libc; keep struct zeroing linkable without
+    // replacing the production probe's ordinary C initialization.
+    writeFileSync(
+      memory,
+      "void *memset(void *p, int c, __SIZE_TYPE__ n) { volatile unsigned char *b = p; while (n--) *b++ = (unsigned char)c; return p; }\n",
+    );
     for (const [source, output] of [
       [execution, callbackObject],
       [raw, rawObject],
+      [memory, memoryObject],
     ]) {
       const result = run(["-c", source, "-o", output]);
       assert.equal(result.status, 0, result.stderr || String(result.error));
@@ -59,8 +73,9 @@ for (const width of [32, 64]) {
       "-Wl,--no-entry",
       "-Wl,--export=raw_clone_continuation_probe",
       "-Wl,--export=raw_clone_refusal_probe",
+      "-Wl,--export=raw_clone3_continuation_probe",
     ];
-    const linked = run([callbackObject, rawObject, ...flags, "-o", output]);
+    const linked = run([callbackObject, rawObject, memoryObject, ...flags, "-o", output]);
     assert.equal(linked.status, 0, linked.stderr || String(linked.error));
     const module = new WebAssembly.Module(readFileSync(output));
     assert.deepEqual(
@@ -69,12 +84,34 @@ for (const width of [32, 64]) {
         .sort(),
       ["linux.syscall:function", "linux.syscall_v2:function"],
     );
+    const instance = new WebAssembly.Instance(module, {
+      linux: {
+        syscall: () => {
+          throw Error("unexpected kernel call");
+        },
+        syscall_v2: () => {
+          throw Error("unexpected kernel call");
+        },
+      },
+    });
+    assert.equal(
+      instance.exports.__wasm_fork_syscall_abi(),
+      2,
+      "new objects must not advertise ABI 1 to old loaders",
+    );
     const collision = join(dir, "collision.c");
     writeFileSync(
       collision,
       readFileSync(execution, "utf8").replaceAll("fork_callback_syscall", "raw_linux_syscall"),
     );
-    const rejected = run([collision, rawObject, ...flags, "-o", join(dir, "collision.wasm")]);
+    const rejected = run([
+      collision,
+      rawObject,
+      memoryObject,
+      ...flags,
+      "-o",
+      join(dir, "collision.wasm"),
+    ]);
     assert.notEqual(rejected.status, 0);
     assert.match(rejected.stderr, /import name mismatch/);
   });

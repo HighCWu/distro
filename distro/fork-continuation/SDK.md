@@ -32,7 +32,10 @@ threads is rejected. Dynamic modules, C++ EH/SjLj, vfork and multithreaded fork
 are not supported. The fixed 256 KiB continuation buffer traps on overflow;
 overflow is not a recoverable fork errno. No performance guarantee is made.
 
-The v2 import also adapts Linux `clone3` (435) for the same limited fork shape:
+New execution objects export syscall continuation ABI 2. Use a matching runtime;
+ABI-1-only loaders reject these objects, and new loaders still accept ABI 1 for
+the old clone subset. Only ABI 2 enables `clone3` through the v2 import.
+The v2 import adapts Linux `clone3` (435) for the same limited fork shape:
 zero flags, SIGCHLD exit signal, no alternate stack, tid/pidfd/TLS/cgroup options.
 The u64 `clone_args` layout is identical on both pointer widths. Sizes from 64
 through 65536 bytes are bounded and read-checked; unknown tail bytes must be zero.

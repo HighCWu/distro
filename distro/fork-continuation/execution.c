@@ -18,7 +18,9 @@ static struct {
 __attribute__((export_name("__wasm_fork_syscall_abi")))
 int __wasm_fork_syscall_abi(void)
 {
-	return 1;
+	/* Old loaders accept only 1 and must refuse this object before _start.
+	 * Version 2 requires the bounded clone3 adapter, not raw kernel clone3. */
+	return 2;
 }
 
 __attribute__((export_name("__wasm_fork_descriptor")))
