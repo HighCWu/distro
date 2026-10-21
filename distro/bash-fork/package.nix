@@ -10,6 +10,18 @@
   vm-test,
 }:
 let
+  # Isolate the execution-ABI prerequisite from the larger Bash build, so a
+  # Bash configure failure cannot hide the SjLj/continuation result.
+  sjlj =
+    pkgs.runCommand "fork-sjlj-${platform.wasmArch}"
+      {
+        nativeBuildInputs = [ sdk-fork-continuation ];
+      }
+      ''
+        mkdir $out
+        wasm-linux-fork-cc -O2 -Wall -Wextra -Werror ${./sjlj.c} -o linked.wasm
+        wasm-linux-fork-finalize linked.wasm $out/probe.wasm
+      '';
   candidate = pkgs.stdenvNoCC.mkDerivation {
     pname = "bash-standard-fork-candidate";
     inherit (bash) version src;
@@ -53,6 +65,7 @@ let
       chmod 0755 $out/bin/bash
       cp COPYING $out/share/licenses/bash/COPYING
       cp config.h config.log ${./package.nix} ${./processes.sh} \
+        ${./sjlj.c} ${./sjlj.test.js} ${./processes.test.js} \
         $out/share/bash-fork-materials/
       cp ${../bash/wasm-anonfile.patch} $out/share/bash-fork-materials/
       mkdir $out/share/bash-fork-materials/gnu-patches
@@ -73,12 +86,13 @@ let
         pkgs.runCommand "bash-standard-fork-host"
           {
             nativeBuildInputs = [ pkgs.nodejs ];
+            BASH_FORK_HOST_CC = "${pkgs.stdenv.cc}/bin/cc";
             BASH_FORK_HOST_SHELL = "${pkgs.bash}/bin/bash";
             BASH_FORK_HOST_BUSYBOX = "${pkgs.busybox}/bin/busybox";
             BASH_FORK_HOST_FALSE = "${pkgs.coreutils}/bin/false";
           }
           ''
-            node --test ${./.}/processes.test.js
+            node --test ${./.}/processes.test.js ${./.}/sjlj.test.js
             touch $out
           '';
       runtime = vm-test.rawInitramfsTest {
@@ -88,6 +102,11 @@ let
           candidate
           busybox
         ];
+        cpus = 2;
+      };
+      sjlj = vm-test.rawInitramfsTest {
+        name = "fork-sjlj-${platform.wasmArch}";
+        init = "${sjlj}/probe.wasm";
         cpus = 2;
       };
     };
