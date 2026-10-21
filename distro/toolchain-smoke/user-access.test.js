@@ -62,3 +62,14 @@ for (const cc of ["gcc", "clang"])
       }
     }
   });
+
+test("upper-half runtime is an explicit wasm32-only profile, not a default memory request", () => {
+  const recipe = readFileSync(new URL("package.nix", import.meta.url), "utf8");
+  assert.match(recipe, /optionalAttrs \(platform.addressBits == 32\)/);
+  assert.match(recipe, /user-access-upper32 = vm-test.rawInitramfsTest/);
+  assert.match(recipe, /-DUSER_ACCESS_UPPER32.*user-access-upper32\.wasm/);
+  const source = readFileSync(new URL("user-access.c", import.meta.url), "utf8");
+  assert.match(source, /#if !defined\(__wasm__\) \|\| __SIZEOF_POINTER__ != 4/);
+  assert.match(source, /#ifdef USER_ACCESS_UPPER32\s+check_upper_half\(fds\);/);
+  assert.match(source, /UINT32_C\(0x80000040\)/);
+});

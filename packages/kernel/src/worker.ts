@@ -66,6 +66,7 @@ import {
   type WasmAddress,
   type WasmAddressType,
   wasm_address_to_number,
+  wasm_pointer_to_number,
   wasm_table_get,
   type UserContext,
 } from "./wasm.ts";
@@ -151,7 +152,16 @@ function user_imports({
   const mmap_copy = new FileMmapCopy(kernel_memory, kernel_address);
 
   function write_kernel_u32(addr: WasmAddress, value: number): boolean {
-    const bytes = memory_bytes(kernel_memory, addr, Uint32Array.BYTES_PER_ELEMENT);
+    let bytes;
+    try {
+      bytes = memory_bytes(
+        kernel_memory,
+        wasm_pointer_to_number(addr),
+        Uint32Array.BYTES_PER_ELEMENT,
+      );
+    } catch {
+      return false;
+    }
     if (!bytes) return false;
 
     new DataView(bytes.buffer, bytes.byteOffset, bytes.byteLength).setUint32(0, value, true);

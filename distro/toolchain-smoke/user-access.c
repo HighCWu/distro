@@ -83,6 +83,37 @@ static void check_partial_copy(int *fds)
 	puts("user-access: partial boundary copies preserve file positions, suffixes and pipe accounting pass");
 }
 
+#ifdef USER_ACCESS_UPPER32
+#if !defined(__wasm__) || __SIZEOF_POINTER__ != 4
+#error USER_ACCESS_UPPER32 requires the dedicated wasm32 target
+#endif
+static void check_upper_half(int *fds)
+{
+	/* Explicit CI-only profile: reserve address range, touch only this fresh
+	 * high page. Do not turn ordinary smoke tests into large-memory requests. */
+	size_t pages = __builtin_wasm_memory_size(0);
+	const size_t desired = 32769; /* 2 GiB + one page */
+	require(pages < desired, "upper-half page is fresh");
+	require(__builtin_wasm_memory_grow(0, desired - pages) == pages,
+		"reserve wasm32 upper-half address range");
+	volatile unsigned char *bytes = (void *)(uintptr_t)UINT32_C(0x80000040);
+	bytes[0] = 'G'; bytes[1] = 'H';
+	require(call(SYS_write, fds[1], (long)bytes, 2, 0, 0, 0) == 2, "upper-half write source");
+	bytes[0] = 0; bytes[1] = 0;
+	require(call(SYS_read, fds[0], (long)bytes, 2, 0, 0, 0) == 2 &&
+		bytes[0] == 'G' && bytes[1] == 'H', "upper-half read destination");
+	struct utsname *name = (void *)(uintptr_t)UINT32_C(0x80000040);
+	require(uname(name) == 0 && strcmp(name->sysname, "Linux") == 0, "upper-half structure output");
+	volatile int *first = (void *)(uintptr_t)UINT32_C(0x80000400);
+	volatile int *second = (void *)(uintptr_t)UINT32_C(0x80000800);
+	*first = 0; *second = 7;
+	require(call(SYS_futex, (long)first, 5 | 128, 0, 0, (long)second,
+		(1L << 28) | (1L << 12) | 7) == 0 && *first == 0 && *second == 8,
+		"upper-half futex atomic operands");
+	puts("user-access: wasm32 upper-half pipe buffers, structure output and atomic operands pass");
+}
+#endif
+
 int main(void)
 {
 	int fds[2];
@@ -110,6 +141,9 @@ int main(void)
 		errno == EFAULT && word == 0, "NULL futex atomic target");
 	puts("user-access: NULL data, pathname, structure and atomic targets reject without side effects pass");
 	check_partial_copy(fds);
+#ifdef USER_ACCESS_UPPER32
+	check_upper_half(fds);
+#endif
 	struct utsname name;
 	require(uname(&name) == 0 && strcmp(name.sysname, "Linux") == 0, "valid structure retry");
 	require(write(fds[1], "S", 1) == 1 && read(fds[0], &byte, 1) == 1 && byte == 'S', "valid pipe retry");

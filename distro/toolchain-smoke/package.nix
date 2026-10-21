@@ -167,18 +167,26 @@ let
   programs =
     pkgs.runCommand "toolchain-smoke-${platform.wasmArch}"
       {
-        passthru.checks.cxx-runtime = vm-test.rawInitramfsTest {
-          name = "toolchain-cxx-runtime-${platform.wasmArch}";
-          init = "${programs}/runtime-cxx.wasm";
-          cpus = 2;
-        };
-        passthru.checks.c-runtime = vm-test.rawInitramfsTest {
-          name = "toolchain-c-runtime-${platform.wasmArch}";
-          init = "${programs}/smoke-c.wasm";
-        };
-        passthru.checks.user-access = vm-test.rawInitramfsTest {
-          name = "user-access-${platform.wasmArch}";
-          init = "${programs}/user-access.wasm";
+        passthru.checks = {
+          cxx-runtime = vm-test.rawInitramfsTest {
+            name = "toolchain-cxx-runtime-${platform.wasmArch}";
+            init = "${programs}/runtime-cxx.wasm";
+            cpus = 2;
+          };
+          c-runtime = vm-test.rawInitramfsTest {
+            name = "toolchain-c-runtime-${platform.wasmArch}";
+            init = "${programs}/smoke-c.wasm";
+          };
+          user-access = vm-test.rawInitramfsTest {
+            name = "user-access-${platform.wasmArch}";
+            init = "${programs}/user-access.wasm";
+          };
+        }
+        // lib.optionalAttrs (platform.addressBits == 32) {
+          user-access-upper32 = vm-test.rawInitramfsTest {
+            name = "user-access-upper-half-wasm32";
+            init = "${programs}/user-access-upper32.wasm";
+          };
         };
         nativeBuildInputs = [
           llvm-toolchain
@@ -198,6 +206,11 @@ let
         wasm-validate --enable-memory64 --enable-threads --enable-exceptions $out/user-access.wasm
         wasm-validate --enable-memory64 --enable-threads --enable-exceptions $out/smoke-cxx.wasm
         wasm-validate --enable-memory64 --enable-threads --enable-exceptions $out/runtime-cxx.wasm
+        ${lib.optionalString (platform.addressBits == 32) ''
+          clang ${compileFlags} -O2 -Wall -Wextra -Werror -DUSER_ACCESS_UPPER32 ${./user-access.c} -o $out/user-access-upper32.wasm
+          chmod 0755 $out/user-access-upper32.wasm
+          wasm-validate --enable-memory64 --enable-threads --enable-exceptions $out/user-access-upper32.wasm
+        ''}
       '';
 in
 programs

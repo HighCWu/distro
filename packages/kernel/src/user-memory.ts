@@ -1,7 +1,12 @@
 // SPDX-License-Identifier: MIT
 // Linux user-access residue: zero means success, otherwise bytes not copied.
 // A C NULL user pointer is not a mapping, even though Wasm memory contains byte 0.
-import { memory_bytes, wasm_address_to_number, type WasmAddress } from "./wasm.ts";
+import {
+  memory_bytes,
+  wasm_address_to_number,
+  wasm_pointer_to_number,
+  type WasmAddress,
+} from "./wasm.ts";
 
 function user_prefix(
   user: WebAssembly.Memory,
@@ -10,7 +15,7 @@ function user_prefix(
 ): Uint8Array | null {
   if (pointer === 0 || pointer === 0n) return null;
   try {
-    const offset = wasm_address_to_number(pointer);
+    const offset = wasm_pointer_to_number(pointer);
     const available = user.buffer.byteLength - offset;
     return available < 0 ? null : memory_bytes(user, offset, Math.min(count, available));
   } catch {
@@ -28,7 +33,12 @@ function copy(
 ): number {
   const count = wasm_address_to_number(length, "copy length");
   if (!count) return 0;
-  const kernelBytes = memory_bytes(kernel, kernelPointer, count);
+  let kernelBytes;
+  try {
+    kernelBytes = memory_bytes(kernel, wasm_pointer_to_number(kernelPointer), count);
+  } catch {
+    return count;
+  }
   const prefix = user_prefix(user, userPointer, count);
   if (!kernelBytes || !prefix) return count;
   try {
@@ -82,7 +92,7 @@ export function user_atomic_word(
   pointer: WasmAddress,
 ): Int32Array | null {
   try {
-    const address = wasm_address_to_number(pointer);
+    const address = wasm_pointer_to_number(pointer);
     if (!address || address % 4 !== 0) return null;
     const bytes = memory_bytes(user, address, 4);
     return bytes ? new Int32Array(bytes.buffer, bytes.byteOffset, 1) : null;

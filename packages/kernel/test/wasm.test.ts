@@ -17,6 +17,7 @@ import {
   user_module_imports_supported,
   wasm_address_from_number,
   wasm_address_to_number,
+  wasm_pointer_to_number,
   wasm_table_get,
   type WasmMemoryDescriptor,
 } from "../src/wasm.ts";
@@ -78,6 +79,59 @@ test("Wasm addresses cross the JavaScript boundary without truncation", () => {
   assert.equal(wasm_address_to_number(0x1_0000_0000n), 0x1_0000_0000);
   assert.equal(wasm_address_from_number(0x1_0000_0000, "i64"), 0x1_0000_0000n);
   assert.throws(() => wasm_address_to_number(1n << 54n), RangeError);
+});
+
+test("raw i32 pointer registers retain their unsigned bits without relaxing metadata checks", () => {
+  for (const [signed, unsigned] of [
+    [-0x80000000, 0x80000000],
+    [-1, 0xffffffff],
+    [0, 0],
+    [65534, 65534],
+  ] as const)
+    assert.equal(wasm_pointer_to_number(signed), unsigned);
+  assert.equal(wasm_pointer_to_number(0xffffffff), 0xffffffff);
+  assert.equal(wasm_pointer_to_number(0x100000007n), 0x100000007);
+  for (const invalid of [-0x80000001, 0x100000000, 0.5, NaN, Infinity, -1n, 1n << 54n])
+    assert.throws(() => wasm_pointer_to_number(invalid), RangeError);
+  assert.throws(() => wasm_address_to_number(-1), RangeError, "host metadata remains strict");
+});
+
+test("a real Wasm i32 import passes signed pointers that the user-access decoder recovers", () => {
+  const string = (value: string) => [value.length, ...new TextEncoder().encode(value)];
+  const section = (id: number, bytes: number[]) => [id, bytes.length, ...bytes];
+  const module = new WebAssembly.Module(
+    new Uint8Array([
+      0,
+      97,
+      115,
+      109,
+      1,
+      0,
+      0,
+      0,
+      ...section(1, [1, 0x60, 1, 0x7f, 1, 0x7f]),
+      ...section(2, [1, ...string("env"), ...string("pointer"), 0, 0]),
+      ...section(3, [1, 0]),
+      ...section(7, [1, ...string("pass"), 0, 1]),
+      ...section(10, [1, 6, 0, 0x20, 0, 0x10, 0, 0x0b]),
+    ]),
+  );
+  let seen = 0,
+    decoded = 0;
+  const instance = new WebAssembly.Instance(module, {
+    env: {
+      pointer: (value: number) => {
+        seen = value;
+        decoded = wasm_pointer_to_number(value);
+        return 1;
+      },
+    },
+  });
+  for (const unsigned of [0x80000000, 0x80000040, 0xffffffff]) {
+    assert.equal((instance.exports.pass as CallableFunction)(unsigned), 1);
+    assert.equal(seen, unsigned - 0x100000000);
+    assert.equal(decoded, unsigned);
+  }
 });
 
 test("table64 lookups preserve BigInt indices", () => {
