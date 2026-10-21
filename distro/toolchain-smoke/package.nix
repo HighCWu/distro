@@ -181,6 +181,10 @@ let
             name = "user-access-${platform.wasmArch}";
             init = "${programs}/user-access.wasm";
           };
+          mremap = vm-test.rawInitramfsTest {
+            name = "mremap-${platform.wasmArch}";
+            init = "${programs}/mremap.wasm";
+          };
         }
         // lib.optionalAttrs (platform.addressBits == 32) {
           user-access-upper32 = vm-test.rawInitramfsTest {
@@ -197,6 +201,9 @@ let
         mkdir -p $out
         clang ${compileFlags} ${cSource} -o $out/smoke-c.wasm
         clang ${compileFlags} -O2 -Wall -Wextra -Werror ${./user-access.c} -o $out/user-access.wasm
+        clang ${compileFlags} -O2 -Wall -Wextra -Werror ${./mremap.c} -o $out/mremap.wasm
+        chmod 0755 $out/mremap.wasm
+        wasm-validate --enable-memory64 --enable-threads --enable-exceptions $out/mremap.wasm
         clang++ ${compileFlags} ${cxxSource} -o $out/smoke-cxx.wasm
         clang++ ${compileFlags} -std=c++17 -O2 -pthread -Wl,--fatal-warnings ${./runtime-cxx.cc} -o $out/runtime-cxx.wasm
         chmod 0755 $out/smoke-c.wasm $out/smoke-cxx.wasm

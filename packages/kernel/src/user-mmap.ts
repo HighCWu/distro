@@ -2,6 +2,20 @@
 
 import type { WasmAddress, WasmAddressType } from "./wasm.ts";
 
+/** Standard mremap admission belongs to Linux; old allocators refuse explicitly. */
+export function user_mremap(
+  exports: WebAssembly.Exports,
+  addressType: WasmAddressType,
+  addr: WasmAddress,
+  oldLen: WasmAddress,
+  newLen: WasmAddress,
+  flags: WasmAddress,
+): WasmAddress {
+  const callback = exports.__wasm_mremap;
+  if (typeof callback !== "function") return addressType === "i64" ? -38n : -38;
+  return callback(addr, oldLen, newLen, flags) as WasmAddress;
+}
+
 /** Forward the versioned request, limiting length-only modules to their original subset. */
 export function user_mmap(
   exports: WebAssembly.Exports,

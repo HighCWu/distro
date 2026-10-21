@@ -269,6 +269,12 @@ export interface Imports {
     munmap(addr: WasmAddress, len: WasmAddress): WasmAddress;
   };
   user_v2: {
+    mremap(
+      addr: WasmAddress,
+      oldLen: WasmAddress,
+      newLen: WasmAddress,
+      flags: WasmAddress,
+    ): WasmAddress;
     mmap(
       addr: WasmAddress,
       len: WasmAddress,

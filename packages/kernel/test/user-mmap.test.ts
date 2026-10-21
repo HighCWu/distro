@@ -2,12 +2,34 @@
 
 import assert from "node:assert/strict";
 import test from "node:test";
-import { user_mmap } from "../src/user-mmap.ts";
+import { user_mmap, user_mremap } from "../src/user-mmap.ts";
 
 const anonymous_private = 0x22;
 
 for (const address_type of ["i32", "i64"] as const) {
   const address = (value: number) => (address_type === "i64" ? BigInt(value) : value);
+
+  test(`${address_type}: mremap preserves registers and old modules refuse without mmap fallback`, () => {
+    const raw = address_type === "i64" ? 0x100010000n : -2147418112;
+    const args = [raw, address(65536), address(131072), address(1)] as const;
+    const legacy: WebAssembly.Exports[] = [
+      {},
+      { __wasm_mmap: () => assert.fail("no allocation fallback") },
+    ];
+    for (const exports of legacy)
+      assert.equal(user_mremap(exports, address_type, ...args), address(-38));
+    let calls = 0;
+    const exports = {
+      __wasm_mremap: (...actual: unknown[]) => {
+        calls++;
+        assert.deepEqual(actual, args);
+        return calls === 1 ? raw : address(-12);
+      },
+    };
+    assert.equal(user_mremap(exports, address_type, ...args), raw);
+    assert.equal(user_mremap(exports, address_type, ...args), address(-12));
+    assert.equal(calls, 2);
+  });
 
   test(`${address_type}: legacy mmap accepts allocation and ignores non-fixed hints`, () => {
     const calls: unknown[][] = [];
