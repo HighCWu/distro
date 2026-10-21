@@ -30,10 +30,13 @@ int main(void)
 	_Static_assert(sizeof(void *) == 4, "dedicated wasm32 layout");
 	/* Private execution ABI inspection only; application fork still uses libc. */
 	extern uintptr_t __wasm_fork_descriptor(void);
-	require((uintptr_t)&local >= UINT32_C(0x80000000) &&
-		(uintptr_t)&tls >= UINT32_C(0x80000000) &&
-		(uintptr_t)&global >= UINT32_C(0x80000000) &&
-		__wasm_fork_descriptor() >= UINT32_C(0x80000000), "actual high stack, TLS, data and descriptor");
+	uintptr_t saved = __wasm_fork_descriptor();
+	printf("fork-high32: layout stack=%p tls=%p global=%p descriptor=%p\n",
+		(void *)&local, (void *)&tls, (void *)&global, (void *)saved);
+	require((uintptr_t)&local >= UINT32_C(0x80000000), "actual high stack");
+	require((uintptr_t)&tls >= UINT32_C(0x80000000), "actual high TLS");
+	require((uintptr_t)&global >= UINT32_C(0x80000000), "actual high data");
+	require(saved >= UINT32_C(0x80000000), "actual high descriptor");
 	puts("fork-high32: upper-half stack, TLS, globals and execution descriptor pass");
 #endif
 	pid_t parent = getpid();
