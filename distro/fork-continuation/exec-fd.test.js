@@ -8,15 +8,27 @@ import test from "node:test";
 import { assertProcessOutput } from "../../packages/browser-tests/process-contract.js";
 
 for (const cc of ["gcc", "clang"])
-  test(`${cc}: descriptor exec and CLOEXEC negative control`, (t) => {
+  test(`${cc}: descriptor exec, close_range and negative controls`, (t) => {
     const dir = mkdtempSync(join(tmpdir(), "exec-fd-contract-"));
     t.after(() => rmSync(dir, { recursive: true, force: true }));
     const original = readFileSync(new URL("exec-fd.c", import.meta.url), "utf8");
     const leaked = original.replace("open(path, O_RDONLY | O_CLOEXEC)", "open(path, O_RDONLY)");
+    const noop = original.replace(
+      "return syscall(SYS_close_range, (long)first, (long)last, (long)flags, 0L, 0L, 0L);",
+      "(void)first; (void)last; (void)flags; return 0;",
+    );
+    const lostCloexec = original.replace(
+      "(long)last, (long)flags, 0L",
+      "(long)last, (long)(flags & ~range_cloexec), 0L",
+    );
     assert.notEqual(leaked, original);
+    assert.notEqual(noop, original);
+    assert.notEqual(lostCloexec, original);
     for (const [name, source] of [
       ["normal", original],
       ["leaked-executable", leaked],
+      ["range-noop", noop],
+      ["range-lost-cloexec", lostCloexec],
     ]) {
       const input = join(dir, name + ".c"),
         binary = join(dir, name);
@@ -32,7 +44,12 @@ for (const cc of ["gcc", "clang"])
         assertProcessOutput(run.stdout, "execfd");
       } else {
         assert.notEqual(run.status, 0);
-        assert.match(run.stdout, /replacement identity, TLS, inherited fd and CLOEXEC/);
+        assert.match(
+          run.stdout,
+          name === "range-noop"
+            ? /range reversed bounds/
+            : /replacement identity, TLS, inherited fd and CLOEXEC/,
+        );
         assert.doesNotMatch(run.stdout, /::vm-test::pass/);
       }
     }

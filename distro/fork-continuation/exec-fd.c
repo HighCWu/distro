@@ -30,6 +30,47 @@ static int at_exec(int fd, const char *path, char *const argv[], char *const env
 	return syscall(SYS_execveat, (long)fd, (long)path, (long)argv,
 		(long)envp, (long)flags, 0L);
 }
+/* Linux UAPI flag values; test-local, not a new installed wrapper/API. */
+enum { range_unshare = 2, range_cloexec = 4 };
+static int range_close(unsigned first, unsigned last, unsigned flags)
+{
+	return syscall(SYS_close_range, (long)first, (long)last, (long)flags, 0L, 0L, 0L);
+}
+static void range_control(int data)
+{
+	int first = fcntl(data, F_DUPFD, 64);
+	int hole = fcntl(data, F_DUPFD, 64);
+	int last = fcntl(data, F_DUPFD, 64);
+	require(first >= 64 && hole == first + 1 && last == hole + 1, "range fixture descriptors");
+	require(close(hole) == 0, "range fixture hole");
+	errno = 0;
+	require(range_close(last, first, 0) == -1 && errno == EINVAL, "range reversed bounds");
+	errno = 0;
+	require(range_close(first, last, 1) == -1 && errno == EINVAL, "range invalid flags");
+	require(fcntl(first, F_GETFD) == 0 && fcntl(last, F_GETFD) == 0, "rejection preserves descriptors");
+	for (int mode = 0; mode < 2; mode++) {
+		pid_t child = fork();
+		require(child >= 0, "fork before range close");
+		if (!child) {
+			if (range_close(first, mode ? UINT_MAX : (unsigned)hole,
+				mode ? range_unshare : 0) != 0) _exit(111);
+			errno = 0;
+			if (fcntl(first, F_GETFD) != -1 || errno != EBADF) _exit(112);
+			errno = 0;
+			if (mode ? (fcntl(last, F_GETFD) != -1 || errno != EBADF) :
+				fcntl(last, F_GETFD) != 0) _exit(113);
+			if (fcntl(data, F_GETFD) != 0) _exit(114);
+			_exit(44);
+		}
+		int status;
+		require(waitpid(child, &status, 0) == child && WIFEXITED(status) && WEXITSTATUS(status) == 44,
+			"range inclusivity, holes, upper bound and child isolation");
+		require(fcntl(first, F_GETFD) == 0 && fcntl(last, F_GETFD) == 0,
+			"parent range remains open");
+	}
+	require(close(first) == 0 && close(last) == 0, "range fixture cleanup");
+	puts("exec-fd: close_range bounds, holes, UNSHARE and parent isolation pass");
+}
 static int replaced(int argc, char **argv)
 {
 	if (argc != 5 || !getenv("EXEC_FD_TEST") || strcmp(getenv("EXEC_FD_TEST"), "ready")) return 101;
@@ -70,6 +111,7 @@ int main(int argc, char **argv)
 	if (data >= 0) unlink(temporary);
 #endif
 	require(data >= 0 && write(data, "DATA", 4) == 4, "create inherited data");
+	range_control(data);
 	char parent[32], fdtext[32], datatext[32];
 	snprintf(parent, sizeof(parent), "%ld", (long)getpid());
 	snprintf(fdtext, sizeof(fdtext), "%d", executable);
@@ -77,13 +119,21 @@ int main(int argc, char **argv)
 	char *child_args[] = {"exec-fd", "exec-fd-child", parent, fdtext, datatext, NULL};
 	char *child_env[] = {"EXEC_FD_TEST=ready", NULL};
 	tls = 71;
-	for (int mode = 0; mode < 3; mode++) {
+	for (int mode = 0; mode < 5; mode++) {
 		require(lseek(data, 0, SEEK_SET) == 0, "reset shared data offset");
 		pid_t child = fork();
 		require(child >= 0, "fork before descriptor exec");
 		if (!child) {
 			tls = 99;
-			if (mode == 0) fexecve(executable, child_args, child_env);
+			if (mode >= 3) {
+				int marked = fcntl(executable, F_DUPFD, 64);
+				if (marked < 64 || fcntl(marked, F_GETFD) != 0 ||
+					range_close(marked, marked, range_cloexec | (mode == 4 ? range_unshare : 0)) != 0 ||
+					fcntl(marked, F_GETFD) != FD_CLOEXEC) _exit(106);
+				snprintf(fdtext, sizeof(fdtext), "%d", marked);
+				fexecve(marked, child_args, child_env);
+			}
+			else if (mode == 0) fexecve(executable, child_args, child_env);
 			else if (mode == 1) at_exec(executable, "", child_args, child_env, AT_EMPTY_PATH);
 			else at_exec(dirfd, relative, child_args, child_env, 0);
 			printf("exec-fd: mode=%d exec failed errno=%d\n", mode, errno);
@@ -102,6 +152,7 @@ int main(int argc, char **argv)
 	}
 	puts("exec-fd: fexecve, execveat empty path and directory-relative execution pass");
 	puts("exec-fd: replacement identity, TLS, CLOEXEC and inherited file offset pass");
+	puts("exec-fd: close_range CLOEXEC preserves fd until exec and closes on replacement pass");
 	errno = 0;
 	require(at_exec(-1, "", child_args, child_env, AT_EMPTY_PATH) == -1 && errno == EBADF,
 		"execveat invalid descriptor");

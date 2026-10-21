@@ -3,8 +3,10 @@ import assert from "node:assert/strict";
 
 export const processStages = {
   execfd: [
+    "exec-fd: close_range bounds, holes, UNSHARE and parent isolation pass",
     "exec-fd: fexecve, execveat empty path and directory-relative execution pass",
     "exec-fd: replacement identity, TLS, CLOEXEC and inherited file offset pass",
+    "exec-fd: close_range CLOEXEC preserves fd until exec and closes on replacement pass",
     "exec-fd: standard exec errors preserve original image and later fork pass",
   ],
   dash: [
