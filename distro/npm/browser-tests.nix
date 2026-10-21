@@ -4,6 +4,8 @@
   bytes,
   curl,
   curl-wasm64,
+  dash-fork,
+  dash-fork-wasm64,
   fork-continuation,
   fork-continuation-wasm64,
   git,
@@ -356,6 +358,26 @@ let
       // (lib.genAttrs erofsProjects erofsCheck)
       // (lib.genAttrs
         [
+          "process-dash-wasm64-chromium"
+          "process-dash-wasm64-firefox"
+          "process-pidfd-wasm64-chromium"
+          "process-pidfd-wasm64-firefox"
+        ]
+        (
+          name:
+          let
+            corpus = if lib.hasInfix "-dash-" name then "dash" else "pidfd";
+          in
+          playwright.mkCheck {
+            name = "browser-tests-${name}";
+            suite = processSuite 64 corpus;
+            project = lib.removePrefix "process-${corpus}-wasm64-" name;
+            script = "process-browser-check.mjs";
+          }
+        )
+      )
+      // (lib.genAttrs
+        [
           "fork-wasm32-chromium"
           "fork-wasm32-firefox"
           "fork-wasm64-chromium"
@@ -461,6 +483,39 @@ let
       expectedTests = runtimeTests;
       project = lib.removePrefix "memory64-" name;
     };
+
+  processSuite =
+    bits: corpus:
+    let
+      assets =
+        if corpus == "dash" then
+          (if bits == 64 then dash-fork-wasm64 else dash-fork).checks.runtime.runtimeAssets
+        else
+          (if bits == 64 then fork-continuation-wasm64 else fork-continuation)
+          .checks.process-control.runtimeAssets;
+      profile = pkgs.writeText "process-profile.json" (
+        builtins.toJSON {
+          addressBits = bits;
+          inherit corpus;
+        }
+      );
+    in
+    assert assets.disks == [ ] && assets.cpus == 2;
+    pkgs.runCommand "${corpus}-wasm${toString bits}-browser-suite" { } ''
+      mkdir -p $out/node_modules/@lowland/kernel $out/node_modules/@lowland/bytes
+      ${playwright.linkRuntime "$out"}
+      cp ${source}/process-app.js $out/app.js
+      cp ${source}/process-browser-check.mjs $out/process-browser-check.mjs
+      cp ${source}/process-contract.js $out/process-contract.js
+      cp ${source}/runtime-smoke.js $out/runtime-smoke.js
+      cp ${../vm-test/protocol.js} $out/protocol.js
+      cp ${source}/memory64-index.html $out/index.html
+      cp ${source}/server.js $out/server.js
+      cp ${profile} $out/profile.json
+      cp ${assets.initramfs} $out/runtime.cpio
+      cp -r ${bytes}/. $out/node_modules/@lowland/bytes/
+      cp -r ${(if bits == 64 then kernel-wasm64 else kernel)}/. $out/node_modules/@lowland/kernel/
+    '';
 
   forkSuite =
     bits:

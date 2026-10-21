@@ -170,6 +170,11 @@ let
           files."/fork-exec" = "${program}/exec-child.wasm";
           cpus = 2;
         };
+        passthru.checks.process-control = vm-test.rawInitramfsTest {
+          name = "process-control-${platform.wasmArch}";
+          init = "${program}/process-control.wasm";
+          cpus = 2;
+        };
         passthru.checks.faults =
           (vm-test.override {
             kernel = kernel.override { copyFaultTest = true; };
@@ -210,6 +215,9 @@ let
       ''
         mkdir -p $out
         clang --version
+        wasm-linux-fork-cc -O2 -Wall -Wextra -Werror ${./process-control.c} -o process-control-linked.wasm
+        wasm-linux-fork-finalize process-control-linked.wasm $out/process-control.wasm
+        chmod 0755 $out/process-control.wasm
         # Build as an external SDK consumer: separate compilation and final
         # link, followed by a single whole-executable continuation transform.
         wasm-linux-fork-cc -O2 -pthread -Wall -Wextra -Werror -c ${./runtime.c} -o runtime.o
