@@ -56,3 +56,12 @@ long __wasm_fork_clone(void)
 {
 	return fork_callback_syscall(SYS_clone, (long)fork_child, 0, SIGCHLD, 0, 0, 0);
 }
+
+/* Optional execution helper, not a libc function. Linux's callback clone
+ * already accepts CLONE_PIDFD (0x1000) using its parent_tid register. */
+__attribute__((export_name("__wasm_fork_clone_pidfd")))
+long __wasm_fork_clone_pidfd(uintptr_t pidfd)
+{
+	return fork_callback_syscall(SYS_clone, (long)fork_child, 0,
+		SIGCHLD | 0x1000, (long)pidfd, 0, 0);
+}

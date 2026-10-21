@@ -83,7 +83,7 @@ test("syscall-only modules opt in using the exported ABI, with no private checkp
   );
 });
 
-function fixture(address: WasmAddressType, syscall = false, syscallAbi = 1) {
+function fixture(address: WasmAddressType, syscall = false, syscallAbi = 1, pidfdSupported = true) {
   const pointer = (n: number): WasmAddress => (address === "i64" ? BigInt(n) : n);
   const memory = new WebAssembly.Memory({ initial: 1 });
   const view = new DataView(memory.buffer);
@@ -139,6 +139,8 @@ function fixture(address: WasmAddressType, syscall = false, syscallAbi = 1) {
     { exports } as unknown as WebAssembly.Instance,
     memory,
     address,
+    undefined,
+    pidfdSupported,
   );
   return { controller, exports, memory, pointer, descriptor, calls };
 }
@@ -286,6 +288,80 @@ for (const address of ["i32", "i64"] as const) {
     assert.equal(dispatch("flags-v2", 0, 0), p(123));
     assert.equal(f.calls.descriptors, 2);
     assert.equal(kernel, 0, "clone3 must never reach callback-based kernel clone directly");
+  });
+
+  test(`${address}: clone3 PIDFD captures its output pointer and clears options after every clone`, () => {
+    const oldKernel = fixture(address, true, 2, false),
+      oldView = new DataView(oldKernel.memory.buffer);
+    oldView.setBigUint64(4096, 0x1000n, true);
+    oldView.setBigUint64(4104, 8193n, true);
+    oldView.setBigUint64(4128, 17n, true);
+    Object.assign(oldKernel.exports, {
+      __wasm_fork_clone_pidfd: () => assert.fail("old kernel clone"),
+    });
+    assert.equal(
+      oldKernel.controller.clone3Checkpoint(oldKernel.pointer(4096), oldKernel.pointer(64), true),
+      -95,
+    );
+    assert.equal(oldKernel.calls.descriptors, 0);
+    for (const outcome of [1234, -11, "trap"] as const) {
+      const f = fixture(address, true, 2),
+        p = f.pointer;
+      const view = new DataView(f.memory.buffer);
+      view.setBigUint64(4096, 0x1000n, true);
+      view.setBigUint64(4104, 8193n, true);
+      view.setBigUint64(4128, 17n, true);
+      assert.equal(
+        f.controller.clone3Checkpoint(p(4096), p(64), true),
+        -95,
+        "older execution objects do not silently discard PIDFD",
+      );
+      assert.equal(f.calls.descriptors, 0);
+      const passed: WasmAddress[] = [];
+      Object.assign(f.exports, {
+        __wasm_fork_clone_pidfd: (pointer: WasmAddress) => {
+          passed.push(pointer);
+          if (outcome === "trap") throw Error("clone trap");
+          return p(outcome);
+        },
+      });
+      assert.equal(
+        f.controller.kernelCall(() => f.controller.clone3Checkpoint(p(4096), p(64), true)),
+        -95,
+      );
+      assert.equal(f.controller.clone3Checkpoint(p(4096), p(64), false), -95);
+      assert.equal(f.calls.descriptors, 0);
+      assert.equal(f.controller.clone3Checkpoint(p(4096), p(64), true), 0);
+      assert.equal(f.controller.clone3Checkpoint(p(0), p(0), true), -16);
+      // Only the admitted, copied arguments may select the kernel operation.
+      view.setBigUint64(4104, 1n << 55n, true);
+      f.controller.suspend();
+      if (outcome === "trap") assert.throws(() => f.controller.clone(), /clone trap/);
+      else assert.equal(f.controller.clone(), p(outcome));
+      assert.deepEqual(passed, [p(8193)]);
+      // A fresh child rewinds the original request without a PIDFD helper or
+      // valid argument memory, and never allocates another descriptor.
+      const child = fixture(address, true, 2);
+      // The saved descriptor remains valid in this fixture's default memory.
+      child.controller.resumeChild({
+        version: 1,
+        address,
+        descriptor: p(64),
+        stack: p(32768),
+        tls: p(1024),
+        entry: p(7),
+      });
+      assert.equal(child.controller.clone3Checkpoint(p(0), p(0), true), 0);
+      f.controller.resumeParent(p(outcome === "trap" ? -11 : outcome));
+      assert.equal(
+        f.controller.clone3Checkpoint(p(0), p(0), true),
+        outcome === "trap" ? -11 : outcome,
+      );
+      assert.equal(f.controller.syscallCheckpoint(true), 0);
+      f.controller.suspend();
+      assert.equal(f.controller.clone(), p(1234), "later plain fork uses its original helper");
+      assert.deepEqual(passed, [p(8193)]);
+    }
   });
 
   test(`${address}: child injection precedes rewind and stack/TLS restore at the deferred user boundary`, () => {

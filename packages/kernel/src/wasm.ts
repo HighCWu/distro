@@ -22,6 +22,8 @@ export interface Instance extends WebAssembly.Instance {
     clear_siginfo(): void;
     /** Private kernel scheduling point during copy_thread; absent on older kernels. */
     copy_worker_wait?(): void;
+    /** Capability 1 joins unpublished Workers after a post-copy fork failure. */
+    fork_worker_abort_abi?(): number;
   };
 }
 

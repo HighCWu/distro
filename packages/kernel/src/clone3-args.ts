@@ -8,7 +8,7 @@ export function clone3_fork_request(
   address: WasmAddressType,
   pointer: WasmAddress,
   size: WasmAddress,
-): number {
+): number | { pidfd: WasmAddress | null } {
   const unsigned = (value: WasmAddress) => {
     if (
       typeof value !== (address === "i64" ? "bigint" : "number") ||
@@ -54,6 +54,19 @@ export function clone3_fork_request(
   if ((stack === 0n) !== (stackSize === 0n)) return -22;
   if (tidCount > 32n || (tids === 0n) !== (tidCount === 0n)) return -22;
   if (signal !== 17n) return -95;
-  for (let index = 0; index < 11; index++) if (index !== 4 && field(index) !== 0n) return -95;
-  return 0;
+  if (flags !== 0n && flags !== 0x1000n) return -95; // CLONE_PIDFD only
+  for (let index = 1; index < 11; index++)
+    if (index !== 4 && !(index === 1 && flags === 0x1000n) && field(index) !== 0n) return -95;
+  if (!flags) return { pidfd: null };
+  const pidfd = field(1);
+  // Do not truncate a clone_args u64 pointer to the module's pointer width.
+  // Linux owns the actual write and fd allocation/rollback, not this parser.
+  if (
+    pidfd === 0n ||
+    pidfd > BigInt(Number.MAX_SAFE_INTEGER) ||
+    (address === "i32" && pidfd > 0xffffffffn) ||
+    !memory_bytes(memory, Number(pidfd), 4)
+  )
+    return -14;
+  return { pidfd: address === "i64" ? pidfd : Number(pidfd) };
 }

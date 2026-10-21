@@ -84,10 +84,12 @@ for (const width of [32, 64]) {
         .sort(),
       ["linux.syscall:function", "linux.syscall_v2:function"],
     );
+    const calls = [];
     const instance = new WebAssembly.Instance(module, {
       linux: {
-        syscall: () => {
-          throw Error("unexpected kernel call");
+        syscall: (...args) => {
+          calls.push(args);
+          return width === 64 ? -11n : -11;
         },
         syscall_v2: () => {
           throw Error("unexpected kernel call");
@@ -99,6 +101,13 @@ for (const width of [32, 64]) {
       2,
       "new objects must not advertise ABI 1 to old loaders",
     );
+    const pointer = width === 64 ? (1n << 40n) + 7n : 8193;
+    assert.equal(instance.exports.__wasm_fork_clone_pidfd(pointer), width === 64 ? -11n : -11);
+    const p = (n) => (width === 64 ? BigInt(n) : n);
+    assert.equal(calls.length, 1);
+    assert.equal(calls[0][0], p(220));
+    assert.ok(calls[0][1] > 0, "continuation child callback");
+    assert.deepEqual(calls[0].slice(2), [p(0), p(0x1011), pointer, p(0), p(0)]);
     const collision = join(dir, "collision.c");
     writeFileSync(
       collision,

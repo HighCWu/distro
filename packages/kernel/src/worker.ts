@@ -262,6 +262,7 @@ function user_imports({
           context.memory,
           context.address,
           profile ? () => profile.childRewound() : undefined,
+          get_kernel_instance().exports.fork_worker_abort_abi?.() === 1,
         )
       : null;
   }

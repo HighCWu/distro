@@ -5,10 +5,13 @@
 #include <poll.h>
 #include <sched.h>
 #include <signal.h>
+#include <stdint.h>
+#include <stddef.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
 #include <sys/syscall.h>
+#include <sys/resource.h>
 #include <sys/wait.h>
 #include <unistd.h>
 
@@ -33,6 +36,96 @@ static void require(int ok, const char *message)
 	exit(1);
 #endif
 }
+struct clone_pidfd_request {
+	uint64_t flags, pidfd, child_tid, parent_tid, exit_signal, stack, stack_size, tls;
+	uint64_t set_tid, set_tid_size, cgroup;
+};
+_Static_assert(sizeof(struct clone_pidfd_request) == 88, "clone_args u64 layout");
+_Static_assert(offsetof(struct clone_pidfd_request, exit_signal) == 32, "clone_args signal offset");
+
+static long clone_with_pidfd(struct clone_pidfd_request *request)
+{
+	return syscall(SYS_clone3, (long)request, (long)sizeof *request, 0L, 0L, 0L, 0L);
+}
+
+static void check_clone_pidfd(void)
+{
+	volatile int output = -7;
+	struct clone_pidfd_request request = {
+		.flags = CLONE_PIDFD, .pidfd = (uintptr_t)&output, .exit_signal = SIGCHLD,
+	};
+	request.pidfd = 0;
+	errno = 0;
+	require(clone_with_pidfd(&request) == -1 && errno == EFAULT, "clone3 null pidfd output");
+	request.pidfd = UINT64_MAX - 7;
+	errno = 0;
+	require(clone_with_pidfd(&request) == -1 && errno == EFAULT, "clone3 full-width bad pidfd output");
+	request.pidfd = (uintptr_t)&output;
+	struct rlimit original, limited;
+	require(getrlimit(RLIMIT_NOFILE, &original) == 0 && original.rlim_cur >= 32, "query fd limit for clone3");
+	limited = original;
+	limited.rlim_cur = 32;
+	require(setrlimit(RLIMIT_NOFILE, &limited) == 0, "limit clone3 descriptor allocation");
+	int anchor = open("/", O_RDONLY | O_DIRECTORY | O_CLOEXEC);
+	require(anchor >= 0, "clone3 fd anchor");
+	int filled[32], count = 0;
+	for (;;) {
+		int next = fcntl(anchor, F_DUPFD_CLOEXEC, 0);
+		if (next < 0) {
+			require(errno == EMFILE, "fill fd table before clone3");
+			break;
+		}
+		require(count < 32, "bounded fd fill");
+		filled[count++] = next;
+	}
+	for (int i = 0; i < 3; i++) {
+		errno = 0;
+		require(clone_with_pidfd(&request) == -1 && errno == EMFILE && output == -7,
+			"clone3 pidfd allocation failure rolls back");
+		int status;
+		errno = 0;
+		require(waitpid(-1, &status, WNOHANG) == -1 && errno == ECHILD,
+			"failed clone3 leaves no reapable child");
+	}
+	while (count) require(close(filled[--count]) == 0, "release filled descriptor");
+	require(close(anchor) == 0 && setrlimit(RLIMIT_NOFILE, &original) == 0, "restore fd capacity");
+	int ready[2], hold[2], status;
+	char byte;
+	require(!pipe(ready) && !pipe(hold), "clone3 synchronization pipes");
+	pid_t child = clone_with_pidfd(&request);
+	require(child >= 0, "clone3 with atomic pidfd");
+	if (!child) {
+		close(ready[0]); close(hold[1]);
+		int parent_fd;
+		if (read(hold[0], &parent_fd, sizeof parent_fd) != sizeof parent_fd) _exit(94);
+		errno = 0;
+		if (output != -7 || fcntl(parent_fd, F_GETFD) != -1 || errno != EBADF ||
+			write(ready[1], "R", 1) != 1) _exit(94);
+		close(ready[1]);
+		_exit(read(hold[0], &byte, 1) < 0 ? 95 : 96);
+	}
+	close(ready[1]); close(hold[0]);
+	int fd = output;
+	require(fd >= 0 && (fcntl(fd, F_GETFD) & FD_CLOEXEC), "clone3 pidfd close-on-exec");
+	require(write(hold[1], &fd, sizeof fd) == sizeof fd, "publish parent pidfd number to child");
+	require(read(ready[0], &byte, 1) == 1 && byte == 'R', "clone3 child output isolation and readiness");
+	close(ready[0]);
+	require(signal_pid(fd, 0, 0) == 0 && signal_pid(fd, SIGTERM, 0) == 0, "signal atomic pidfd");
+	struct pollfd pollfd = {.fd = fd, .events = POLLIN};
+	require(poll(&pollfd, 1, 5000) == 1 && (pollfd.revents & POLLIN), "atomic pidfd exit readiness");
+	siginfo_t info;
+	memset(&info, 0, sizeof info);
+	require(waitid(P_PIDFD, (id_t)fd, &info, WEXITED | WNOWAIT) == 0 &&
+		info.si_pid == child && info.si_code == CLD_KILLED && info.si_status == SIGTERM,
+		"atomic pidfd identifies clone3 child");
+	require(waitpid(child, &status, 0) == child && WIFSIGNALED(status) &&
+		WTERMSIG(status) == SIGTERM, "reap clone3 child");
+	errno = 0;
+	require(waitpid(child, &status, WNOHANG) == -1 && errno == ECHILD, "clone3 child reaped once");
+	require(close(fd) == 0 && close(hold[1]) == 0, "close atomic pidfd resources");
+	puts("process-control: clone3 CLONE_PIDFD, allocation rollback, child isolation and atomic identity pass");
+}
+
 int main(void)
 {
 	int ready[2], hold[2], status;
@@ -119,6 +212,7 @@ int main(void)
 	require(signal_pid(fd, 0, 0) == -1 && errno == ESRCH, "reaped pidfd returns ESRCH");
 	require(close(fd) == 0 && close(hold[1]) == 0, "close control descriptors");
 	puts("process-control: pidfd signal, poll, waitid WNOWAIT and single reap pass");
+	check_clone_pidfd();
 	child = fork();
 	require(child >= 0, "fork after process control");
 	if (!child) _exit(37);

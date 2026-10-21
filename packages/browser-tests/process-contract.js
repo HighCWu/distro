@@ -28,6 +28,7 @@ export const processStages = {
     "process-control: SIGSTOP, WSTOPPED WNOWAIT and single stop consumption pass",
     "process-control: SIGCONT, WCONTINUED WNOWAIT and single continuation consumption pass",
     "process-control: pidfd signal, poll, waitid WNOWAIT and single reap pass",
+    "process-control: clone3 CLONE_PIDFD, allocation rollback, child isolation and atomic identity pass",
     "process-control: later fork and wait recovery pass",
   ],
 };

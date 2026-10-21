@@ -16,7 +16,8 @@ for (const address of ["i32", "i64"] as const)
     const parse = (size: number, pointer = 256) =>
       clone3_fork_request(memory, address, p(pointer), p(size));
     reset();
-    for (const size of [64, 65, 72, 80, 88, 96, 65536]) assert.equal(parse(size), 0);
+    for (const size of [64, 65, 72, 80, 88, 96, 65536])
+      assert.deepEqual(parse(size), { pidfd: null });
     for (const size of [0, 1, 63]) assert.equal(parse(size), -22);
     for (const size of [65537, -1]) assert.equal(parse(size), -7);
     for (const pointer of [0, -1, 131072 - 63]) assert.equal(parse(64, pointer), -14);
@@ -44,7 +45,7 @@ for (const address of ["i32", "i64"] as const)
     }
     reset();
     view.setBigUint64(256 + 64, 1n, true);
-    assert.equal(parse(64), 0, "bytes outside the supplied size are not read");
+    assert.deepEqual(parse(64), { pidfd: null }, "bytes outside the supplied size are not read");
     reset();
     view.setBigUint64(256 + 40, 1024n, true);
     view.setBigUint64(256 + 48, 16n, true);
@@ -53,4 +54,16 @@ for (const address of ["i32", "i64"] as const)
       clone3_fork_request(memory, address, address === "i64" ? 1n << 55n : -8, p(88)),
       -14,
     );
+    reset();
+    view.setBigUint64(256, 0x1000n, true);
+    for (const pointer of [0n, 131069n, 1n << 32n, 1n << 55n]) {
+      view.setBigUint64(264, pointer, true);
+      assert.equal(parse(88), -14, "invalid full-width pidfd output pointer");
+    }
+    view.setBigUint64(264, 8193n, true);
+    view.setInt32(8193, -1, true);
+    assert.deepEqual(parse(64), { pidfd: p(8193) }, "unaligned user output is valid");
+    assert.equal(view.getInt32(8193, true), -1, "parser does not allocate/write a pidfd");
+    view.setBigUint64(256, 0x1000n | 0x100000n, true);
+    assert.equal(parse(88), -95, "parent-tid combination stays unsupported");
   });
