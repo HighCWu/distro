@@ -11,6 +11,39 @@ diff --git a/include/unistd.h b/include/unistd.h
  int execve(const char *, char *const [], char *const []);
  int execv(const char *, char *const []);
  int execle(const char *, const char *, ...);
+@@ -177,7 +175,5 @@
+ int setgroups(size_t, const gid_t *);
+ char *getpass(const char *);
+-#ifndef __wasm__
+ int daemon(int, int);
+-#endif
+ void setusershell(void);
+ void endusershell(void);
+diff --git a/include/pty.h b/include/pty.h
+--- a/include/pty.h
++++ b/include/pty.h
+@@ -11,5 +11,3 @@
+ int openpty(int *, int *, char *, const struct termios *, const struct winsize *);
+-#ifndef __wasm__
+ int forkpty(int *, char *, const struct termios *, const struct winsize *);
+-#endif
+ 
+diff --git a/src/legacy/daemon.c b/src/legacy/daemon.c
+--- a/src/legacy/daemon.c
++++ b/src/legacy/daemon.c
+@@ -5,3 +5,3 @@
+-#ifndef __wasm__
++#if !defined(__wasm__) || defined(WASM_FORK_CONTINUATION)
+ int daemon(int nochdir, int noclose)
+ {
+diff --git a/src/misc/forkpty.c b/src/misc/forkpty.c
+--- a/src/misc/forkpty.c
++++ b/src/misc/forkpty.c
+@@ -9,3 +9,3 @@
+-#ifndef __wasm__
++#if !defined(__wasm__) || defined(WASM_FORK_CONTINUATION)
+ int forkpty(int *pm, char *name, const struct termios *tio, const struct winsize *ws)
+ {
 diff --git a/src/process/fork.c b/src/process/fork.c
 --- a/src/process/fork.c
 +++ b/src/process/fork.c

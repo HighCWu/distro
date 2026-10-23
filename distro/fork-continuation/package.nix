@@ -56,6 +56,17 @@ let
     ++ platform.compilerFlags
     ++ map (flag: "-Wl,${flag}") platform.linkerFlags
   );
+  terminalProgram =
+    pkgs.runCommand "fork-terminal-process-${platform.wasmArch}"
+      {
+        nativeBuildInputs = [ sdk-fork-continuation ];
+      }
+      ''
+        mkdir -p $out
+        wasm-linux-fork-cc -O2 -Wall -Wextra -Werror ${./terminal-process.c} -o terminal-linked.wasm
+        wasm-linux-fork-finalize terminal-linked.wasm $out/terminal-process.wasm
+        chmod 0755 $out/terminal-process.wasm
+      '';
   program =
     pkgs.runCommand "fork-continuation-${platform.wasmArch}"
       {
@@ -168,6 +179,11 @@ let
           name = "fork-continuation-${platform.wasmArch}";
           init = "${program}/fork.wasm";
           files."/fork-exec" = "${program}/exec-child.wasm";
+          cpus = 2;
+        };
+        passthru.checks.terminal-process = vm-test.rawInitramfsTest {
+          name = "terminal-process-${platform.wasmArch}";
+          init = "${terminalProgram}/terminal-process.wasm";
           cpus = 2;
         };
         passthru.checks.futex-isolation = vm-test.rawInitramfsTest {
