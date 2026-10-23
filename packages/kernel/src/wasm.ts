@@ -231,6 +231,7 @@ export interface Imports {
     return_address(_level: number): WasmAddress;
     /** Unix time in nanoseconds, monotonically advancing during this session. */
     get_now_nsec(): bigint;
+    /** Writes a bounded C string, including a terminator when size is nonzero. */
     get_stacktrace(buf: WasmAddress, size: WasmAddress): void;
     spawn_worker(
       fn: WasmAddress,
@@ -395,17 +396,16 @@ export function kernel_imports({
     },
 
     get_stacktrace: (buf, size) => {
-      const offset = wasm_address_to_number(buf);
-      const capacity = wasm_address_to_number(size, "stack trace capacity");
+      const offset = wasm_pointer_to_number(buf);
+      const capacity = wasm_size_to_number(size);
+      if (!capacity) return;
+      const output = new Uint8Array(memory.buffer, offset, capacity);
       // 5 lines: strip Error, strip 4 common lines of stack
       const trace = new TextEncoder().encode(new Error().stack?.split("\n").slice(5).join("\n"));
-      if (trace.byteLength > capacity && capacity >= 3) {
-        /// 46 = "."
-        trace[capacity - 1] = 46;
-        trace[capacity - 2] = 46;
-        trace[capacity - 3] = 46;
-      }
-      new Uint8Array(memory.buffer).set(trace.subarray(0, capacity), offset);
+      const length = Math.min(trace.byteLength, capacity - 1);
+      output.set(trace.subarray(0, length));
+      if (trace.byteLength > length && length >= 3) output.fill(46, length - 3, length);
+      output[length] = 0;
     },
 
     spawn_worker: (fn, arg, comm, comm_len, user_memory) => {
