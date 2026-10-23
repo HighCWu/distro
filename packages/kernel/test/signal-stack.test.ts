@@ -6,7 +6,58 @@ import {
   read_signal_stack_pointer,
   call_on_signal_stack,
   call_kernel_entry,
+  call_signal_callback,
 } from "../src/signal-stack.ts";
+
+test("signal callback cleanup retires only its frame, preserves SjLj, and skips a dead task", () => {
+  const halt = Symbol("task handed CPU away");
+  const jump = new WebAssembly.Exception(new WebAssembly.Tag({ parameters: [] }), []);
+  const frames = ["outer"];
+  const cleanup = () => {
+    frames.pop();
+  };
+  call_signal_callback(
+    () => {
+      frames.push("inner");
+      assert.throws(
+        () =>
+          call_signal_callback(
+            () => {
+              throw jump;
+            },
+            cleanup,
+            halt,
+          ),
+        (error) => error === jump,
+      );
+      assert.deepEqual(frames, ["outer"]);
+    },
+    cleanup,
+    halt,
+  );
+  assert.deepEqual(frames, []);
+  assert.throws(
+    () =>
+      call_signal_callback(
+        () => {
+          throw halt;
+        },
+        () => assert.fail("must not enter C after task exit"),
+        halt,
+      ),
+    (error) => error === halt,
+  );
+  let calls = 0;
+  assert.equal(
+    call_signal_callback(
+      () => 17,
+      () => calls++,
+      halt,
+    ),
+    17,
+  );
+  assert.equal(calls, 1);
+});
 
 for (const address of ["i32", "i64"] as const) {
   const p = (n: number) => (address === "i64" ? BigInt(n) : n);

@@ -38,6 +38,7 @@ import { FileMmapCopy } from "./file-mmap-copy.ts";
 import {
   read_signal_stack_pointer,
   call_on_signal_stack,
+  call_signal_callback,
   call_kernel_entry,
 } from "./signal-stack.ts";
 import { write_exec_image } from "./exec-image.ts";
@@ -460,10 +461,13 @@ function user_imports({
 
         signal_depth++;
         try {
-          f(sig);
+          call_signal_callback(
+            () => f(sig),
+            () => get_kernel_instance().exports.clear_siginfo(),
+            HALT_KERNEL,
+          );
         } finally {
           signal_depth--;
-          get_kernel_instance().exports.clear_siginfo();
         }
       },
       call_siginfo_handler(trampoline, fn, sig) {
@@ -478,16 +482,17 @@ function user_imports({
         siginfo_copy_results.push(null);
         signal_depth++;
         try {
-          f(fn, sig);
-          return siginfo_copy_results.at(-1) ?? -22;
+          return call_signal_callback(
+            () => {
+              f(fn, sig);
+              return siginfo_copy_results.at(-1) ?? -22;
+            },
+            () => get_kernel_instance().exports.clear_siginfo(),
+            HALT_KERNEL,
+          );
         } finally {
           signal_depth--;
-          // Non-local exits can unwind the kernel callback before its C cleanup.
-          try {
-            get_kernel_instance().exports.clear_siginfo();
-          } finally {
-            siginfo_copy_results.pop();
-          }
+          siginfo_copy_results.pop();
         }
       },
 

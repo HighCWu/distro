@@ -220,6 +220,11 @@ let
             name = "signal-altstack-${platform.wasmArch}";
             init = "${programs}/signal-altstack.wasm";
           };
+          signal-nested-jump = vm-test.rawInitramfsTest {
+            name = "signal-nested-jump-${platform.wasmArch}";
+            init = "${programs}/signal-nested-jump.wasm";
+            cpus = 2;
+          };
           membarrier = vm-test.rawInitramfsTest {
             name = "membarrier-${platform.wasmArch}";
             init = "${programs}/membarrier.wasm";
@@ -309,6 +314,9 @@ let
         chmod 0755 $out/dnotify.wasm
         wasm-validate --enable-memory64 --enable-threads --enable-exceptions $out/dnotify.wasm
         clang ${compileFlags} -O2 -Wall -Wextra -Werror ${./signal-altstack.c} -o $out/signal-altstack.wasm
+        clang ${compileFlags} -O2 -Wall -Wextra -Werror ${./signal-nested-jump.c} -o $out/signal-nested-jump.wasm
+        chmod 0755 $out/signal-nested-jump.wasm
+        wasm-validate --enable-memory64 --enable-threads --enable-exceptions $out/signal-nested-jump.wasm
         clang ${compileFlags} -O2 -pthread -Wall -Wextra -Werror ${./membarrier.c} -o $out/membarrier.wasm
         clang ${compileFlags} -O2 -Wall -Wextra -Werror ${./brk.c} -o $out/brk.wasm
         chmod 0755 $out/brk.wasm

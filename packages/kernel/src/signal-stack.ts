@@ -113,6 +113,20 @@ export function call_kernel_entry<T>(
   }
 }
 
+/** Retire one signal frame before a non-local exception reaches its catchpad.
+ * A task which exited already handed its CPU away; it must not re-enter C. */
+export function call_signal_callback<T>(invoke: () => T, cleanup: () => void, halt: symbol): T {
+  let exited = false;
+  try {
+    return invoke();
+  } catch (error) {
+    exited = error === halt;
+    throw error;
+  } finally {
+    if (!exited) cleanup();
+  }
+}
+
 /** Version 1 flags: bit 0 selects siginfo (owned by the caller), bit 1 switches
  * the C linear stack. Never translate an engine exception into a Linux errno:
  * SjLj must unwind to the compiler's original catchpad. */
