@@ -197,6 +197,11 @@ let
             init = "${programs}/shared-user-growth.wasm";
             cpus = 2;
           };
+          cpuinfo = vm-test.rawInitramfsTest {
+            name = "cpuinfo-${platform.wasmArch}";
+            init = "${programs}/cpuinfo.wasm";
+            cpus = 2;
+          };
           vmsplice = vm-test.rawInitramfsTest {
             name = "vmsplice-${platform.wasmArch}";
             init = "${programs}/vmsplice.wasm";
@@ -295,6 +300,9 @@ let
       ''
         mkdir -p $out
         clang ${compileFlags} ${cSource} -o $out/smoke-c.wasm
+        clang ${compileFlags} -O2 -pthread -Wall -Wextra -Werror ${./cpuinfo.c} -o $out/cpuinfo.wasm
+        chmod 0755 $out/cpuinfo.wasm
+        wasm-validate --enable-memory64 --enable-threads --enable-exceptions $out/cpuinfo.wasm
         clang ${compileFlags} -O2 -Wall -Wextra -Werror ${./user-access.c} -o $out/user-access.wasm
         clang ${compileFlags} -O2 -Wall -Wextra -Werror ${./mremap.c} -o $out/mremap.wasm
         chmod 0755 $out/mremap.wasm
