@@ -195,6 +195,11 @@ let
           init = "${program}/ptrace.wasm";
           cpus = 2;
         };
+        passthru.checks.ptrace-entry = vm-test.rawInitramfsTest {
+          name = "ptrace-entry-${platform.wasmArch}";
+          init = "${program}/ptrace-entry.wasm";
+          cpus = 2;
+        };
         passthru.checks.exec-fd = vm-test.rawInitramfsTest {
           name = "exec-fd-${platform.wasmArch}";
           init = "${program}/exec-fd.wasm";
@@ -250,6 +255,9 @@ let
         wasm-linux-fork-cc -O2 -Wall -Wextra -Werror ${./ptrace.c} -o ptrace-linked.wasm
         wasm-linux-fork-finalize ptrace-linked.wasm $out/ptrace.wasm
         chmod 0755 $out/ptrace.wasm
+        wasm-linux-fork-cc -O2 -Wall -Wextra -Werror ${./ptrace-entry.c} -o ptrace-entry-linked.wasm
+        wasm-linux-fork-finalize ptrace-entry-linked.wasm $out/ptrace-entry.wasm
+        chmod 0755 $out/ptrace-entry.wasm
         wasm-linux-fork-finalize process-control-linked.wasm $out/process-control.wasm
         chmod 0755 $out/process-control.wasm
         # Build as an external SDK consumer: separate compilation and final
