@@ -89,9 +89,14 @@ export function user_mmap(
   // MAP_FIXED and MAP_FIXED_NOREPLACE cannot be implemented by ignoring addr.
   // Reject before invoking the allocator, so failure cannot allocate or replace memory.
   if (flags & (0x10 | 0x100000)) return error(12); // ENOMEM
-  // Only private anonymous read/write mappings can use the length-only ABI.
+  // NOMMU data mappings accept READ or READ|WRITE, with no write protection.
   // Non-fixed hints may legally be ignored.
-  if (flags !== (0x02 | 0x20) || prot !== 3 || fd !== -1 || (pgoff !== 0 && pgoff !== 0n))
+  if (
+    flags !== (0x02 | 0x20) ||
+    (prot !== 1 && prot !== 3) ||
+    fd !== -1 ||
+    (pgoff !== 0 && pgoff !== 0n)
+  )
     return error(22); // EINVAL
 
   const legacy_callback = exports.__wasm_mmap;

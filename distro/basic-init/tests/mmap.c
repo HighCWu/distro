@@ -136,6 +136,30 @@ static void stress_fragmentation(size_t page_size)
 	}
 }
 
+static void check_read_requests(size_t page_size)
+{
+	for (int raw = 0; raw < 2; raw++) {
+		size_t length = 2 * page_size + 17;
+		unsigned char *mapping = raw
+			? (void *)raw_mmap(0, length, PROT_READ, MAP_PRIVATE | MAP_ANONYMOUS, -1, 0)
+			: mmap(0, length, PROT_READ, MAP_PRIVATE | MAP_ANONYMOUS, -1, 0);
+		if (mapping == MAP_FAILED) test_perror("anonymous READ mmap");
+		if ((uintptr_t)mapping & (page_size - 1)) test_fail("READ mmap alignment");
+		for (size_t i = 0; i < length; i++)
+			if (mapping[i]) test_fail("READ mmap zero fill");
+		if (msync(mapping, length, MS_SYNC)) test_perror("READ mmap private msync");
+		if (madvise(mapping, length, MADV_DONTNEED)) test_perror("READ mmap discard");
+		mapping = mremap(mapping, length, 4 * page_size, MREMAP_MAYMOVE);
+		if (mapping == MAP_FAILED) test_perror("READ mmap resize");
+		for (size_t i = 0; i < 4 * page_size; i++)
+			if (mapping[i]) test_fail("READ mmap resize zero fill");
+		if (munmap(mapping + page_size, page_size) || munmap(mapping, page_size) ||
+		    munmap(mapping + 2 * page_size, 2 * page_size))
+			test_perror("READ mmap partial cleanup");
+	}
+	puts("mmap: anonymous READ libc/raw, zero fill, discard, resize and cleanup pass");
+}
+
 int main(void)
 {
 	size_t page_size = (size_t)sysconf(_SC_PAGESIZE);
@@ -168,6 +192,7 @@ int main(void)
 	mapping[page_size - 1] = 0xa5;
 	if (munmap(mapping, page_size))
 		test_perror("munmap");
+	check_read_requests(page_size);
 
 	raw = (void *)raw_mmap(0, length, PROT_READ | PROT_WRITE,
 			      MAP_PRIVATE | MAP_ANONYMOUS, -1, 0);
@@ -199,7 +224,7 @@ int main(void)
 			       -1, 0),
 		       ENOMEM, "MAP_FIXED_NOREPLACE did not fail with ENOMEM");
 	errno = 0;
-	expect_failure(raw_mmap(0, page_size, PROT_READ,
+	expect_failure(raw_mmap(0, page_size, PROT_NONE,
 			       MAP_PRIVATE | MAP_ANONYMOUS, -1, 0),
 		       EINVAL, "unsupported protection did not fail with EINVAL");
 	errno = 0;

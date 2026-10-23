@@ -170,6 +170,51 @@ for (const address_type of ["i32", "i64"] as const) {
     assert.equal(calls, 0);
   });
 
+  test(`${address_type}: anonymous READ is forwarded unchanged to v2 or the legacy data allocator`, () => {
+    let calls = 0;
+    const legacy = {
+      __wasm_mmap: (length: number | bigint) => {
+        calls++;
+        assert.equal(length, address(65536));
+        return address(0x20000);
+      },
+    };
+    assert.equal(
+      user_mmap(
+        legacy,
+        address_type,
+        address(0),
+        address(65536),
+        1,
+        anonymous_private,
+        -1,
+        address(0),
+      ),
+      address(0x20000),
+    );
+    assert.equal(calls, 1);
+    const versioned = {
+      __wasm_mmap_v2: (...args: (number | bigint)[]) => {
+        assert.deepEqual(args, [address(0), address(65536), 1, anonymous_private, -1, address(0)]);
+        return address(0x30000);
+      },
+      __wasm_mmap: () => assert.fail("v2 must take precedence"),
+    };
+    assert.equal(
+      user_mmap(
+        versioned,
+        address_type,
+        address(0),
+        address(65536),
+        1,
+        anonymous_private,
+        -1,
+        address(0),
+      ),
+      address(0x30000),
+    );
+  });
+
   test(`${address_type}: legacy mmap rejects unsupported semantics and absent callbacks`, () => {
     const exports = {
       __wasm_mmap: () => {
@@ -177,7 +222,10 @@ for (const address_type of ["i32", "i64"] as const) {
       },
     };
     for (const [prot, flags, fd, offset] of [
-      [1, anonymous_private, -1, 0],
+      [0, anonymous_private, -1, 0],
+      [2, anonymous_private, -1, 0],
+      [4, anonymous_private, -1, 0],
+      [5, anonymous_private, -1, 0],
       [3, 0x21, -1, 0],
       [3, 0x02, 0, 0],
       [3, anonymous_private | 0x4000, -1, 0],
