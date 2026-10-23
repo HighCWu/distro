@@ -14,8 +14,8 @@
     inherit pkgs;
     owner = "HighCWu";
     repo = "linux";
-    rev = "a0811a8e0b4f4102ede4e1a9ff3ec05cfdd24826";
-    hash = "sha256-TFuhCgeaDhN/VnUSnnlK8KTBHbnRduZC1Z05CRQmLsE=";
+    rev = "50abafbb5035c5a0dd29a155ad8e31d9fcc23dd3";
+    hash = "sha256-ixnP6L/g5AAZc1xKI1e01EZtRdME3QAWblb13+F2S34=";
   },
 }:
 
@@ -81,7 +81,7 @@ pkgs.stdenvNoCC.mkDerivation (finalAttrs: {
   buildPhase = ''
     runHook preBuild
 
-    ${lib.optionalString fileMmapCandidate ''
+    ${lib.optionalString (fileMmapCandidate || mmapCopyTest) ''
       CC=${pkgs.llvmPackages_22.clang}/bin/clang python3 -B arch/wasm/tests/run-mmap-file-host.py
     ''}
 

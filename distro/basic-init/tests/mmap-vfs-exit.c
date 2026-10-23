@@ -64,7 +64,7 @@ int main(void)
 	const size_t stack_size = 64 * 1024;
 	size_t page = (size_t)sysconf(_SC_PAGESIZE);
 	char *stack = malloc(stack_size);
-	struct request requests[16] = {0};
+	struct request requests[24] = {0};
 	if (!stack) test_perror("allocate exit child stack");
 	if (page != 65536) test_fail("unexpected exit fixture page size");
 	unsigned char *sentinel = mmap(0, page, PROT_READ | PROT_WRITE,
@@ -72,10 +72,10 @@ int main(void)
 	if (sentinel == MAP_FAILED) test_perror("exit sentinel mmap");
 	for (size_t i = 0; i < page; i++) sentinel[i] = (unsigned char)(i * 19 + 7);
 	for (int round = 0; round < 8; round++) {
-		for (unsigned int mode = 4; mode <= 5; mode++) {
+		for (unsigned int mode = 4; mode <= 6; mode++) {
 			int fd = create(mode);
 			if (lseek(fd, 23, SEEK_SET) != 23) test_perror("set exit fixture position");
-			struct request *request = &requests[round * 2 + mode - 4];
+			struct request *request = &requests[round * 3 + mode - 4];
 			request->fd = fd;
 			request->page = page;
 			/* Shared mm, separate thread group and fd table: SIGKILL must
@@ -85,22 +85,40 @@ int main(void)
 			if (pid == -1) test_perror("clone doomed reader");
 			if (ioctl(fd, WAIT_ENTERED, 0UL)) test_perror("wait exit read barrier");
 			mmap_stats_expect(1, 1, 1);
+			long callbacks = syscall(MMAP_STATS_TEST_NR, (unsigned long)0x100);
+			if (callbacks < 0) test_perror("query initialization callback counter");
 			if (kill(pid, SIGKILL)) test_perror("kill blocked reader");
-			/* No PROCEED before waitpid: only fatal signal delivery can end
-			 * the pending read. The runner's watchdog bounds stuck exits. */
 			int status;
+			if (mode == 6) {
+				/* The uninterruptible producer still owns its output after
+				 * SIGKILL. Only explicit completion may release resources. */
+				if (waitpid(pid, &status, WNOHANG) != 0)
+					test_fail("fatal reader left before producer completion");
+				mmap_stats_expect(1, 1, 1);
+				if (syscall(MMAP_STATS_TEST_NR, (unsigned long)0x100) != callbacks)
+					test_fail("initialization started before producer completion");
+				if (!round) {
+					puts("mmap fatal-read: queued SIGKILL retains producer staging and budget");
+					fflush(stdout);
+				}
+				if (ioctl(fd, PROCEED, 0UL)) test_perror("complete fatal reader producer");
+			}
+			/* Modes4/5 receive no PROCEED: the signal itself must interrupt
+			 * their read. Mode6 completes successfully with SIGKILL pending. */
 			if (waitpid(pid, &status, 0) != pid) test_perror("reap killed reader");
 			mmap_stats_wait(0, 0, 1);
 			if (!WIFSIGNALED(status) || WTERMSIG(status) != SIGKILL)
 				test_fail("blocked reader did not exit through SIGKILL");
 			if (atomic_load(&request->returned)) test_fail("killed read returned to user callback");
+			if (syscall(MMAP_STATS_TEST_NR, (unsigned long)0x100) != callbacks)
+				test_fail("fatal read entered initialization callback");
 			if (lseek(fd, 0, SEEK_CUR) != 23) test_fail("killed read changed shared file position");
 			if (ioctl(fd, PROCEED, 0UL) || ioctl(fd, PROCEED, 0UL))
 				test_perror("post-exit barrier release");
 			for (size_t i = 0; i < page; i++)
 				if (sentinel[i] != (unsigned char)(i * 19 + 7))
 					test_fail("fatal read exit damaged surviving mapping");
-			if (mode == 4) check_mapping(fd, page);
+			if (mode != 5) check_mapping(fd, page);
 			else {
 				errno = 0;
 				if (read_mapping(fd, page) != -1 || errno != EIO)
@@ -112,11 +130,16 @@ int main(void)
 			check_mapping(recovery, page);
 			if (close(recovery)) test_perror("close exit recovery fixture");
 			mmap_stats_wait(0, 0, 0);
+			if (mode == 6) {
+				printf("mmap fatal-read: completed producer cancellation round %d\n", round + 1);
+				fflush(stdout);
+			}
 		}
 	}
 	for (size_t i = 0; i < sizeof(requests) / sizeof(requests[0]); i++)
 		if (atomic_load(&requests[i].returned)) test_fail("old killed request resumed late");
 	if (munmap(sentinel, page)) test_perror("exit sentinel cleanup");
 	free(stack);
+	puts("mmap fatal-read: producer ownership, no initialization callback and recovery pass");
 	test_pass();
 }
