@@ -31,6 +31,8 @@ net=$(readlink /proc/"$holder"/ns/net) || fail 'holder network identity'
 [ "$ipc" != "$(readlink /proc/self/ns/ipc)" ] || fail 'distinct IPC'
 [ "$net" != "$(readlink /proc/self/ns/net)" ] || fail 'distinct network'
 
+# Expansion deliberately belongs to the shell after setns, not this parent.
+# shellcheck disable=SC2016
 /bin/busybox nsenter -t "$holder" -u -i -n /bin/busybox sh -c '
   [ "$(hostname)" = "$1" ] &&
   [ "$(readlink /proc/self/ns/uts)" = "$2" ] &&
@@ -43,6 +45,7 @@ echo 'busybox namespaces: standard unshare holder, nsenter UTS/IPC/network ident
 # The PID option selects nsenter's existing child/wait path. The target PID
 # namespace here is still the original one; creation of a new PID namespace
 # is covered separately by the C fixture, not claimed by this workload.
+# shellcheck disable=SC2016
 /bin/busybox nsenter -t "$holder" -u -p /bin/busybox sh -c '
   [ "$(hostname)" = "$1" ] || exit 105
   exit 42
