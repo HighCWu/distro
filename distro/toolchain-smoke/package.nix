@@ -248,6 +248,10 @@ let
             name = "brk-${platform.wasmArch}";
             init = "${programs}/brk.wasm";
           };
+          lite-oom = vm-test.rawInitramfsTest {
+            name = "lite-oom-${platform.wasmArch}";
+            init = "${programs}/lite-oom.wasm";
+          };
           stacktrace = vm-test.rawInitramfsTest {
             name = "stacktrace-${platform.wasmArch}";
             init = "${programs}/stacktrace.wasm";
@@ -300,6 +304,15 @@ let
       ''
         mkdir -p $out
         clang ${compileFlags} ${cSource} -o $out/smoke-c.wasm
+        clang ${compileFlags} -O2 -Wall -Wextra -Werror -Wl,--wrap=sbrk -Wl,-Map,lite-oom.map ${./lite-oom.c} -o $out/lite-oom.wasm
+        # Exercise the actual lite allocator, not mallocng with a similar error.
+        grep -F 'libc.a(lite_malloc.o)' lite-oom.map
+        if grep -F 'libc.a(malloc.o)' lite-oom.map; then
+          echo "lite OOM workload unexpectedly selected the full allocator" >&2
+          exit 1
+        fi
+        chmod 0755 $out/lite-oom.wasm
+        wasm-validate --enable-memory64 --enable-threads --enable-exceptions $out/lite-oom.wasm
         clang ${compileFlags} -O2 -pthread -Wall -Wextra -Werror ${./cpuinfo.c} -o $out/cpuinfo.wasm
         chmod 0755 $out/cpuinfo.wasm
         wasm-validate --enable-memory64 --enable-threads --enable-exceptions $out/cpuinfo.wasm
