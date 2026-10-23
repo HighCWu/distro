@@ -14,8 +14,8 @@
     inherit pkgs;
     owner = "HighCWu";
     repo = "linux";
-    rev = "22cdbc317b8b581b605db320ab6f698d3a285cce";
-    hash = "sha256-phkRJlEBJEQa9+ZoFJiDlGndjQ4U032g8W+oc1E4VkQ=";
+    rev = "57b4cb94f55bd05b93866396d85b8460b1a7cdf4";
+    hash = "sha256-sgBMvc8ToYbcAQFI5yLKNw6kEn10bEJeLYNphNdzq90=";
   },
 }:
 
@@ -114,6 +114,11 @@ pkgs.stdenvNoCC.mkDerivation (finalAttrs: {
     grep -qx 'CONFIG_DNOTIFY=y' .config
     grep -qx 'CONFIG_MEMBARRIER=y' .config
     grep -qx 'CONFIG_CROSS_MEMORY_ATTACH=y' .config
+    for namespace in NAMESPACES UTS_NS IPC_NS PID_NS NET_NS TIME_NS; do
+      grep -qx "CONFIG_$namespace=y" .config
+    done
+    grep -qx '# CONFIG_USER_NS is not set' .config
+    ! grep -qx 'CONFIG_MMU=y' .config
 
     make vmlinux.wasm
 
