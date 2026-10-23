@@ -178,17 +178,18 @@ static void network(void)
 	puts("namespaces: network endpoint isolation, same-address bind and fd ownership pass");
 }
 
-static int64_t clock_difference(void)
+static int64_t clock_difference(clockid_t selected)
 {
-	struct timespec mono, raw;
-	require(clock_gettime(CLOCK_MONOTONIC, &mono) == 0 && clock_gettime(CLOCK_MONOTONIC_RAW, &raw) == 0,
+	struct timespec adjusted, real;
+	require(clock_gettime(selected, &adjusted) == 0 && clock_gettime(CLOCK_REALTIME, &real) == 0,
 	        "time namespace clocks");
-	return ((int64_t)mono.tv_sec - raw.tv_sec) * 1000000000 + mono.tv_nsec - raw.tv_nsec;
+	return ((int64_t)adjusted.tv_sec - real.tv_sec) * 1000000000 + adjusted.tv_nsec - real.tv_nsec;
 }
 static void time_namespace(void)
 {
 	int original = namespace_fd("time");
-	int64_t baseline = clock_difference();
+	int64_t baseline = clock_difference(CLOCK_MONOTONIC);
+	int64_t raw_baseline = clock_difference(CLOCK_MONOTONIC_RAW);
 	require(unshare(CLONE_NEWTIME) == 0, "unshare time-for-children namespace");
 	int fresh = namespace_fd("time_for_children"); distinct(original, fresh);
 	int fd = open("/proc/self/timens_offsets", O_WRONLY | O_CLOEXEC);
@@ -199,14 +200,18 @@ static void time_namespace(void)
 	fd = open("/proc/self/timens_offsets", O_WRONLY | O_CLOEXEC);
 	require(fd >= 0 && write(fd, offset, sizeof offset - 1) == -1 && errno == EACCES && close(fd) == 0,
 	        "offsets freeze when first task joins without a vDSO");
-	int64_t shifted = clock_difference() - baseline;
-	require(shifted >= INT64_C(2000000000) && shifted <= INT64_C(4000000000),
-	        "monotonic clock gains namespace offset while raw clock does not");
+	int64_t shifted = clock_difference(CLOCK_MONOTONIC) - baseline;
+	int64_t raw_shifted = clock_difference(CLOCK_MONOTONIC_RAW) - raw_baseline;
+	require(shifted >= INT64_C(2000000000) && shifted <= INT64_C(4000000000) &&
+	        raw_shifted >= INT64_C(2000000000) && raw_shifted <= INT64_C(4000000000),
+	        "both monotonic clocks gain namespace offset while realtime does not");
 	require(setns(original, CLONE_NEWTIME) == 0, "restore original time namespace");
-	shifted = clock_difference() - baseline;
+	shifted = clock_difference(CLOCK_MONOTONIC) - baseline;
+	raw_shifted = clock_difference(CLOCK_MONOTONIC_RAW) - raw_baseline;
 	require(shifted > -INT64_C(1000000000) && shifted < INT64_C(1000000000) &&
+	        raw_shifted > -INT64_C(1000000000) && raw_shifted < INT64_C(1000000000) &&
 	        close(original) == 0 && close(fresh) == 0, "time namespace restoration and cleanup");
-	puts("namespaces: time offset, frozen offsets, raw clock independence and restoration pass");
+	puts("namespaces: monotonic/raw offsets, frozen offsets, realtime independence and restoration pass");
 }
 
 static void pid_namespace(void)
