@@ -15,6 +15,10 @@
 #include <sys/wait.h>
 #include <unistd.h>
 
+#ifndef PTRACE_SET_SYSCALL_INFO
+#define PTRACE_SET_SYSCALL_INFO 0x4212
+#endif
+
 static volatile int allocator_active;
 static volatile unsigned long nested_calls;
 static pid_t tracee;
@@ -65,15 +69,17 @@ static int wait_tracee(void)
 	require(waited == tracee, "wait exact tracee");
 	return status;
 }
-/* Standard Linux PTRACE_GET_SYSCALL_INFO wire shape, private to this test.
+/* Standard Linux syscall-info wire shape, private to this test.
  * EXIT has no syscall number/arguments; /proc/PID/syscall supplies those. */
 struct syscall_info {
-	uint8_t operation, pad[3];
+	uint8_t operation, reserved;
+	uint16_t flags;
 	uint32_t arch;
 	uint64_t ip, sp;
 	union {
 		struct { uint64_t number, args[6]; } entry;
 		struct { int64_t value; uint8_t error; } exit;
+		struct { uint64_t number, args[6]; uint32_t ret_data, reserved; } seccomp;
 	} data;
 };
 struct frame {
@@ -88,6 +94,12 @@ static void check_proc(const struct frame *frame)
 	require(file != NULL, "open stopped syscall metadata");
 	long number;
 	unsigned long args[6], sp;
+	if (frame->number == UINT64_MAX) {
+		count = fscanf(file, "%ld %lx", &number, &sp);
+		require(fclose(file) == 0 && count == 2 && number == -1 && (uint64_t)sp == frame->sp,
+		        "skipped syscall uses standard no-syscall proc record");
+		return;
+	}
 	count = fscanf(file, "%ld %lx %lx %lx %lx %lx %lx %lx", &number,
 	               &args[0], &args[1], &args[2], &args[3], &args[4], &args[5], &sp);
 	require(fclose(file) == 0 && count == 8 && number >= 0 &&
@@ -100,6 +112,12 @@ static _Noreturn void child(void)
 {
 	if (request(PTRACE_TRACEME, 0, 0, 0) ||
 	    syscall(SYS_tkill, (long)getpid(), (long)SIGSTOP, 0L, 0L, 0L, 0L)) _exit(112);
+#ifdef __wasm__
+	/* The tracer redirects getpgid to getpid, then skips getsid and
+	 * supplies 42 at the exit stop. Neither result is guessed by the child. */
+	if (syscall(SYS_getpgid, 0L, 0L, 0L, 0L, 0L, 0L) != getpid()) _exit(116);
+	if (syscall(SYS_getsid, 0L, 0L, 0L, 0L, 0L, 0L) != 42) _exit(117);
+#endif
 	allocator_active = 1;
 	unsigned char *mapping = mmap(NULL, 65536, PROT_READ | PROT_WRITE,
 	                              MAP_PRIVATE | MAP_ANONYMOUS, -1, 0);
@@ -132,6 +150,9 @@ int main(void)
 	        "initial stop and syscall tracing options");
 	struct frame frames[8];
 	size_t depth = 0, nested = 0, exits = 0;
+#ifdef __wasm__
+	unsigned redirected = 0, skipped = 0, replaced = 0;
+#endif
 	for (unsigned stops = 0;; stops++) {
 		require(stops < 512 && request(PTRACE_SYSCALL, tracee, 0, 0) == 0, "resume bounded syscall tracing");
 		status = wait_tracee();
@@ -146,6 +167,22 @@ int main(void)
 			frame->number = info.data.entry.number;
 			frame->sp = info.sp;
 			for (int i = 0; i < 6; i++) frame->args[i] = info.data.entry.args[i];
+#ifdef __wasm__
+			if (depth == 1 && frame->number == SYS_getpgid) {
+				info.data.entry.number = SYS_getpid;
+				for (int i = 0; i < 6; i++) info.data.entry.args[i] = frame->args[i] = 0;
+				require(request(PTRACE_SET_SYSCALL_INFO, tracee, sizeof info, (unsigned long)&info) == 0,
+				        "set syscall entry number and arguments");
+				frame->number = SYS_getpid;
+				redirected++;
+			} else if (depth == 1 && frame->number == SYS_getsid) {
+				info.data.entry.number = UINT64_MAX;
+				require(request(PTRACE_SET_SYSCALL_INFO, tracee, sizeof info, (unsigned long)&info) == 0,
+				        "skip syscall through standard entry edit");
+				frame->number = UINT64_MAX;
+				skipped++;
+			}
+#endif
 			if (depth > 1) {
 				require(frame->number == SYS_getpid, "nested call belongs to allocator wrapper");
 				nested++;
@@ -153,6 +190,17 @@ int main(void)
 		} else {
 			require(info.operation == 2 && length >= 33 && depth > 0, "paired syscall exit");
 			check_proc(&frames[--depth]);
+#ifdef __wasm__
+			if (!depth && frames[0].number == UINT64_MAX) {
+				require(info.data.exit.value == -ENOSYS && info.data.exit.error == 1,
+				        "skipped entry defaults to ENOSYS");
+				info.data.exit.value = 42;
+				info.data.exit.error = 0;
+				require(request(PTRACE_SET_SYSCALL_INFO, tracee, sizeof info, (unsigned long)&info) == 0,
+				        "replace skipped syscall result at exit stop");
+				replaced++;
+			}
+#endif
 			exits++;
 		}
 	}
@@ -162,7 +210,9 @@ int main(void)
 	tracee = 0;
 #ifdef __wasm__
 	require(nested >= 2, "real allocator callback syscalls were observed, not skipped");
+	require(redirected == 1 && skipped == 1 && replaced == 1, "entry edits and exit result reached application");
 	require(umount("/proc") == 0, "proc cleanup");
+	puts("syscall-reentry: standard syscall-info entry redirect, skip and exit result edit pass");
 #else
 	require(nested == 0, "native reference has ordinary flat kernel mmap");
 #endif
