@@ -95,6 +95,7 @@ lib.makeScope (scope: lib.callPackageWith ({ inherit lib pkgs; } // scope)) (
     toolchain-smoke-runtime = self.toolchain-smoke.checks.c-runtime;
     toolchain-smoke-wasm64 = callPackage ./toolchain-smoke/package.nix {
       platform = self.platform-wasm64;
+      musl = self.musl-wasm64;
       llvm-toolchain = self.llvm-toolchain-wasm64;
       sysroot = self.sysroot-wasm64;
       vm-test = vmTestWasm64;
