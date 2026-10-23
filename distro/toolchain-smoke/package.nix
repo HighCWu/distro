@@ -197,6 +197,10 @@ let
             init = "${programs}/shared-user-growth.wasm";
             cpus = 2;
           };
+          vmsplice = vm-test.rawInitramfsTest {
+            name = "vmsplice-${platform.wasmArch}";
+            init = "${programs}/vmsplice.wasm";
+          };
           mremap = vm-test.rawInitramfsTest {
             name = "mremap-${platform.wasmArch}";
             init = "${programs}/mremap.wasm";
@@ -321,6 +325,9 @@ let
         clang ${compileFlags} -O2 -Wall -Wextra -Werror ${./signal-altstack.c} -o $out/signal-altstack.wasm
         clang ${compileFlags} -O2 -Wall -Wextra -Werror ${./signal-nested-jump.c} -o $out/signal-nested-jump.wasm
         clang ${compileFlags} -I${../basic-init/tests} -pthread -O2 -Wall -Wextra -Werror ${../basic-init/tests/shared-user-growth.c} -o $out/shared-user-growth.wasm
+        clang ${compileFlags} -O2 -Wall -Wextra -Werror ${./vmsplice.c} -o $out/vmsplice.wasm
+        chmod 0755 $out/vmsplice.wasm
+        wasm-validate --enable-memory64 --enable-threads --enable-exceptions $out/vmsplice.wasm
         chmod 0755 $out/shared-user-growth.wasm
         wasm-validate --enable-memory64 --enable-threads --enable-exceptions $out/shared-user-growth.wasm
         chmod 0755 $out/signal-nested-jump.wasm
