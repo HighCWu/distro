@@ -43,6 +43,7 @@ vim -es \
   fail "unexpected VIMRUNTIME: $(cat /tmp/vimruntime)"
 [ -f /usr/share/vim/vim91/defaults.vim ] ||
   fail "vim fragment is missing defaults.vim"
+echo "Vim: normal startup, installed runtime and expected features pass"
 
 # --- non-interactive editing: substitution + multi-line edit + write --------
 printf 'foo one\nfoo two\nfoo three\n' >edit.txt
@@ -58,6 +59,7 @@ vim -u NONE -N -es \
 printf 'bar one\nbar two EDITED\nbar three LAST\n' >edit.expect
 cmp -s edit.txt edit.expect ||
   fail "edited file mismatch: got [$(cat edit.txt)]"
+echo "Vim: multiline editing, substitution and saved file bytes pass"
 
 # --- shell-out proves the system()/posix_spawn path -------------------------
 # (1) :r! pulls a child process's stdout into the buffer.
@@ -91,6 +93,7 @@ xxd x.bin >x.hex || fail "xxd encode failed"
 grep -q 'RoundTrip' x.hex || fail "xxd output has no ascii column"
 xxd -r x.hex >x.out || fail "xxd -r decode failed"
 cmp -s x.bin x.out || fail "xxd round-trip mismatch"
+echo "Vim: shell-out capture, filters, spawned commands and xxd roundtrip pass"
 
 echo "::vm-test::pass"
 while :; do :; done

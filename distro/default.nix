@@ -325,6 +325,13 @@ lib.makeScope (scope: lib.callPackageWith ({ inherit lib pkgs; } // scope)) (
     tar = callPackage ./tar/package.nix { };
     util-linux = callPackage ./util-linux/package.nix { };
     vim = callPackage ./vim/package.nix { };
+    vim-wasm64 = self.vim.override {
+      stdenv = self.stdenv-wasm64;
+      platform = self.platform-wasm64;
+      ncurses = self.ncurses-wasm64;
+      busybox = self.busybox-wasm64;
+      vm-test = vmTestWasm64;
+    };
     xz = callPackage ./xz/package.nix { };
     xz-wasm64 = self.xz.override {
       stdenv = self.stdenv-wasm64;

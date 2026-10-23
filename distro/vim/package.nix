@@ -1,5 +1,6 @@
 {
   pkgs,
+  platform,
   stdenv,
   src ? pkgs.fetchFromGitHub {
     owner = "vim";
@@ -24,6 +25,7 @@ stdenv.mkDerivation (finalAttrs: {
   # -lncurses. The terminfo database ships at /share/terminfo (ncurses port),
   # which the runtime environment finds with no TERMINFO set.
   buildInputs = [ ncurses ];
+  nativeBuildInputs = [ pkgs.nodejs ];
 
   patches = [ ./wasm-sys-wait.patch ];
 
@@ -126,6 +128,17 @@ stdenv.mkDerivation (finalAttrs: {
   '';
 
   enableParallelBuilding = true;
+
+  postConfigure = ''
+    # Upstream's ordinary probe must enable the original signal-stack path;
+    # do not force a successful cache answer or patch Vim's signal handling.
+    grep -qx '#define HAVE_SIGALTSTACK 1' src/auto/config.h
+  '';
+
+  postBuild = ''
+    node ${../busybox/check-binary.mjs} ${../../packages/kernel/src/wasm_binary.ts} \
+      src/vim ${toString platform.addressBits} ${toString platform.maximumMemoryBytes}
+  '';
 
   # The package is overlaid into an FHS guest, so the compiled runtime path must
   # name that guest path rather than this derivation's Nix store prefix.
