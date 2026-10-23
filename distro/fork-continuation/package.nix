@@ -170,6 +170,11 @@ let
           files."/fork-exec" = "${program}/exec-child.wasm";
           cpus = 2;
         };
+        passthru.checks.futex-isolation = vm-test.rawInitramfsTest {
+          name = "futex-isolation-${platform.wasmArch}";
+          init = "${program}/futex-isolation.wasm";
+          cpus = 2;
+        };
         passthru.checks.process-control = vm-test.rawInitramfsTest {
           name = "process-control-${platform.wasmArch}";
           init = "${program}/process-control.wasm";
@@ -251,6 +256,9 @@ let
         # that exec discards the inherited continuation and initializes new TLS.
         clang ${helperFlags} -O2 -Wall -Wextra -Werror ${./exec-child.c} ${./raw-clone.c} -o $out/exec-child.wasm
         wasm-linux-fork-finalize raw.wasm $out/fork.wasm
+        wasm-linux-fork-cc -O2 -pthread -Wall -Wextra -Werror ${./futex-isolation.c} -o futex-isolation-linked.wasm
+        wasm-linux-fork-finalize futex-isolation-linked.wasm $out/futex-isolation.wasm
+        chmod 0755 $out/futex-isolation.wasm
         chmod 0755 $out/fork.wasm
         chmod 0755 $out/exec-child.wasm
         wasm-linux-fork-cc -O2 -pthread -Wall -Wextra -Werror -c ${./fault-runtime.c} -o fault.o
