@@ -20,8 +20,8 @@
 #endif
 #endif
 
-/* This is a rejection preflight, not proof of successful file mapping or
- * offset normalization. Keep libc byte offsets distinct from raw ABI units. */
+/* File mappings remain disabled in this default-kernel workload. Anonymous
+ * offsets retain the entry alignment rule but are not file-source offsets. */
 static void rejected(long result, const char *operation)
 {
 	if (result != -1 || errno != EINVAL)
@@ -33,6 +33,22 @@ static long raw_mmap(size_t length, int flags, int fd, uintptr_t offset)
 	return syscall(SYS_mmap, 0L, (long)length,
 		       (long)(PROT_READ | PROT_WRITE), (long)flags,
 		       (long)fd, (long)offset);
+}
+
+static void anonymous_result(void *result, int allowed, size_t page)
+{
+	if (!allowed) {
+		rejected((long)(intptr_t)result, "misaligned/unrepresentable anonymous offset was not rejected");
+		return;
+	}
+	if (result == MAP_FAILED)
+		test_perror("aligned anonymous offset should be ignored");
+	unsigned char *bytes = result;
+	for (size_t i = 0; i < page; i++)
+		if (bytes[i]) test_fail("anonymous offset changed zero initialization");
+	bytes[0] = 0x57;
+	bytes[page - 1] = 0x75;
+	if (munmap(bytes, page)) test_perror("anonymous offset mapping cleanup");
 }
 
 static off_t raw_lseek(int fd, off_t offset, int whence)
@@ -59,6 +75,7 @@ int main(void)
 	uintptr_t raw_offsets[] = {
 		0, 1, page_size / syscall_unit, UINTPTR_MAX,
 		(uintptr_t)((UINT64_C(1) << 32) / syscall_unit),
+		UINTPTR_MAX & -(page_size / syscall_unit),
 	};
 	unsigned char *sentinel;
 	int fd;
@@ -96,11 +113,13 @@ int main(void)
 		if (!byte_offsets[i])
 			continue;
 		errno = 0;
-		rejected((long)(intptr_t)mmap(0, page_size, PROT_READ | PROT_WRITE,
-					      MAP_PRIVATE | MAP_ANONYMOUS, -1,
-					      byte_offsets[i]),
-			 "libc anonymous nonzero offset was not rejected");
+		int allowed = byte_offsets[i] >= 0 &&
+			!((uint64_t)byte_offsets[i] & (page_size - 1)) &&
+			(sizeof(uintptr_t) == 8 || (uint64_t)byte_offsets[i] / 4096 <= UINTPTR_MAX);
+		anonymous_result(mmap(0, page_size, PROT_READ | PROT_WRITE,
+			MAP_PRIVATE | MAP_ANONYMOUS, fd, byte_offsets[i]), allowed, page_size);
 	}
+	puts("mmap-offsets: libc aligned anonymous offsets ignore file descriptor/source, invalid offsets reject pass");
 	for (size_t i = 0; i < sizeof(raw_offsets) / sizeof(raw_offsets[0]); i++) {
 		errno = 0;
 		rejected(raw_mmap(page_size, MAP_PRIVATE, fd, raw_offsets[i]),
@@ -108,17 +127,19 @@ int main(void)
 		if (!raw_offsets[i])
 			continue;
 		errno = 0;
-		rejected(raw_mmap(page_size, MAP_PRIVATE | MAP_ANONYMOUS, -1,
-				  raw_offsets[i]),
-			 "raw anonymous nonzero offset was not rejected");
+		anonymous_result((void *)(uintptr_t)raw_mmap(page_size,
+			MAP_PRIVATE | MAP_ANONYMOUS, 12345, raw_offsets[i]),
+			!(raw_offsets[i] & (page_size / syscall_unit - 1)), page_size);
 	}
+	puts("mmap-offsets: raw mmap/mmap2 units, aligned high offsets and independent zero backing pass");
 	if (lseek(fd, 0, SEEK_CUR) != 7)
 		test_fail("rejected mmap changed file position");
 	if (sentinel[0] != 0x3c || sentinel[page_size - 1] != 0xc3)
 		test_fail("rejected mmap damaged live anonymous mapping");
 	if (close(fd) || munmap(sentinel, page_size))
 		test_perror("offset preflight cleanup");
-	printf("mmap-offset-preflight: pointer_bits=%zu page=%zu raw_unit=%zu\n",
+	puts("mmap-offsets: file rejection preserves file position, live mapping and cleanup pass");
+	printf("mmap-offsets: pointer_bits=%zu page=%zu raw_unit=%zu\n",
 	       sizeof(uintptr_t) * 8, page_size, (size_t)syscall_unit);
 	test_pass();
 }
