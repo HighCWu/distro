@@ -220,6 +220,11 @@ let
             name = "signal-altstack-${platform.wasmArch}";
             init = "${programs}/signal-altstack.wasm";
           };
+          membarrier = vm-test.rawInitramfsTest {
+            name = "membarrier-${platform.wasmArch}";
+            init = "${programs}/membarrier.wasm";
+            cpus = 2;
+          };
           signal-stack-legacy = vm-test.rawInitramfsTest {
             name = "signal-stack-legacy-${platform.wasmArch}";
             init = "${programs}/signal-stack-legacy.wasm";
@@ -295,6 +300,9 @@ let
         chmod 0755 $out/dnotify.wasm
         wasm-validate --enable-memory64 --enable-threads --enable-exceptions $out/dnotify.wasm
         clang ${compileFlags} -O2 -Wall -Wextra -Werror ${./signal-altstack.c} -o $out/signal-altstack.wasm
+        clang ${compileFlags} -O2 -pthread -Wall -Wextra -Werror ${./membarrier.c} -o $out/membarrier.wasm
+        chmod 0755 $out/membarrier.wasm
+        wasm-validate --enable-memory64 --enable-threads --enable-exceptions $out/membarrier.wasm
         chmod 0755 $out/signal-altstack.wasm
         wasm-validate --enable-memory64 --enable-threads --enable-exceptions $out/signal-altstack.wasm
         wasm-objdump -x $out/signal-altstack.wasm > signal-altstack.dump

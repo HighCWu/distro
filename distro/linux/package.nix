@@ -14,8 +14,8 @@
     inherit pkgs;
     owner = "HighCWu";
     repo = "linux";
-    rev = "ba9894d9634dda5a0df0808c47348a2046831ca7";
-    hash = "sha256-z0GN0vAGZAy9CN87fzyV94Ro1fn2BmImc4jTrDlOr5Y=";
+    rev = "2b572a9a00f99546eb9ba66cd7f44d2edf3be9d3";
+    hash = "sha256-c8cXZi/5q88BxJXGKxL1C8VOeySAVuvG0AtnqH7X/Sw=";
   },
 }:
 
@@ -111,6 +111,7 @@ pkgs.stdenvNoCC.mkDerivation (finalAttrs: {
     grep -qx 'CONFIG_FHANDLE=y' .config
     grep -qx 'CONFIG_EXPORTFS=y' .config
     grep -qx 'CONFIG_DNOTIFY=y' .config
+    grep -qx 'CONFIG_MEMBARRIER=y' .config
 
     make vmlinux.wasm
 
