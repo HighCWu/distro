@@ -9,6 +9,8 @@
 #include <unistd.h>
 
 static int refuse_growth, failures;
+/* Test-only namespaced build of the pinned lite_malloc.c, not an SDK API. */
+void *__lite_test_malloc(size_t);
 void *__real_sbrk(intptr_t);
 void *__wrap_sbrk(intptr_t increment)
 {
@@ -40,9 +42,9 @@ static void require(int condition, const char *message)
 }
 int main(void)
 {
-	/* Do not reference free/realloc/stdio: retain musl's lite link path.
-	 * The build additionally checks which archive members were selected. */
-	void *(*volatile allocate)(size_t) = malloc;
+	/* The default program selected mallocng in CI. Exercise the actual lite
+	 * source separately rather than silently accepting that other backend. */
+	void *(*volatile allocate)(size_t) = __lite_test_malloc;
 	refuse_growth = 1;
 	errno = 0;
 	require(allocate(4 * 65536) == NULL && errno == ENOMEM && failures > 0,

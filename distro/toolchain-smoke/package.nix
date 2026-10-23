@@ -4,6 +4,7 @@
   platform,
   llvm-toolchain,
   sysroot,
+  musl,
   vm-test,
   busybox,
 }:
@@ -175,6 +176,38 @@ let
       lib.filter (flag: flag != "--export=__stack_pointer") platform.linkerFlags
     )
   );
+  liteOomProgram =
+    pkgs.runCommand "lite-oom-program-${platform.wasmArch}"
+      {
+        nativeBuildInputs = [
+          llvm-toolchain
+          pkgs.wabt
+        ];
+      }
+      ''
+        set -euo pipefail
+          mkdir -p $out
+          # Compile the pinned implementation under private test-only names. The
+          # ordinary SDK allocator and its public symbol resolution stay unchanged.
+          clang ${compileFlags} -Wno-unused-command-line-argument -Os -std=c99 -ffreestanding -D_XOPEN_SOURCE=700 \
+            -I${musl.src}/arch/wasm32 -I${musl.src}/arch/generic \
+            -I${musl.src}/src/include -I${musl.src}/src/internal \
+            -D__libc_malloc_impl=__lite_test_impl -D__libc_malloc=__lite_test_malloc \
+            -Dmalloc=__lite_test_public_malloc -D__bump_lockptr=__lite_test_lockptr \
+            -c ${musl.src}/src/malloc/lite_malloc.c -o lite-test.o
+        llvm-nm --defined-only lite-test.o > lite-defined.txt
+        llvm-nm --undefined-only lite-test.o > lite-undefined.txt
+        grep -E ' [Ww] __lite_test_impl$' lite-defined.txt
+        if grep -E ' (__libc_malloc_impl|__libc_malloc|malloc|calloc|realloc|free)$' lite-undefined.txt; then
+            echo "private lite test still references another allocation backend" >&2
+            exit 1
+          fi
+          clang ${compileFlags} -O2 -Wall -Wextra -Werror -Wl,--wrap=sbrk -Wl,-Map,lite-oom.map \
+            ${./lite-oom.c} lite-test.o -o $out/lite-oom.wasm
+          grep -F 'lite-test.o' lite-oom.map | grep -F '(__lite_test_malloc)'
+          chmod 0755 $out/lite-oom.wasm
+          wasm-validate --enable-memory64 --enable-threads --enable-exceptions $out/lite-oom.wasm
+      '';
   programs =
     pkgs.runCommand "toolchain-smoke-${platform.wasmArch}"
       {
@@ -250,7 +283,7 @@ let
           };
           lite-oom = vm-test.rawInitramfsTest {
             name = "lite-oom-${platform.wasmArch}";
-            init = "${programs}/lite-oom.wasm";
+            init = "${liteOomProgram}/lite-oom.wasm";
           };
           stacktrace = vm-test.rawInitramfsTest {
             name = "stacktrace-${platform.wasmArch}";
@@ -304,15 +337,6 @@ let
       ''
         mkdir -p $out
         clang ${compileFlags} ${cSource} -o $out/smoke-c.wasm
-        clang ${compileFlags} -O2 -Wall -Wextra -Werror -Wl,--wrap=sbrk -Wl,-Map,lite-oom.map ${./lite-oom.c} -o $out/lite-oom.wasm
-        # Exercise the actual lite allocator, not mallocng with a similar error.
-        grep -F 'libc.a(lite_malloc.o)' lite-oom.map
-        if grep -F 'libc.a(malloc.o)' lite-oom.map; then
-          echo "lite OOM workload unexpectedly selected the full allocator" >&2
-          exit 1
-        fi
-        chmod 0755 $out/lite-oom.wasm
-        wasm-validate --enable-memory64 --enable-threads --enable-exceptions $out/lite-oom.wasm
         clang ${compileFlags} -O2 -pthread -Wall -Wextra -Werror ${./cpuinfo.c} -o $out/cpuinfo.wasm
         chmod 0755 $out/cpuinfo.wasm
         wasm-validate --enable-memory64 --enable-threads --enable-exceptions $out/cpuinfo.wasm
