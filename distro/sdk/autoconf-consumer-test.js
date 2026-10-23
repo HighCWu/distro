@@ -105,7 +105,7 @@ AC_OUTPUT
     const policyResult = run(wrapper, [join(capabilities, "configure")], capabilities);
     assert.match(
       policyResult.stdout,
-      /SDK_CAPABILITIES mmap=no fork=no vfork=no dlopen=no sigaltstack=no/,
+      /SDK_CAPABILITIES mmap=no fork=no vfork=no dlopen=no sigaltstack=yes/,
     );
     mkdirSync(join(root, "capability-bypass"));
     const bypass = run(

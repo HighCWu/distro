@@ -12,5 +12,5 @@ ac_cv_func_mmap_fixed_mapped=no
 ac_cv_func_dlopen=no
 ac_cv_search_dlopen=no
 ac_cv_lib_dl_dlopen=no
-# The syscall reports ENOSYS; alternate signal stacks are not implemented.
-ac_cv_func_sigaltstack=no
+# Standard sigaltstack is implemented. Leave its ordinary compile/link probe
+# untouched, just like other supported interfaces; do not prefill success.

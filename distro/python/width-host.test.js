@@ -55,7 +55,7 @@ test("full wasm64 Python closure selects only matching target dependencies", () 
   }
 });
 
-test("both Python runtime checks require actual pointer ABI and the full interpreter suite remains intact", () => {
+test("all Python runtime checks require actual pointer ABI and the full interpreter suite remains intact", () => {
   const recipe = readFileSync(new URL("./package.nix", import.meta.url), "utf8");
   assert.ok(
     recipe.includes(
@@ -64,9 +64,9 @@ test("both Python runtime checks require actual pointer ABI and the full interpr
   );
   assert.equal(
     [...recipe.matchAll(/files\."\/python-abi-test\.py" = \.\/abi-test\.py;/g)].length,
-    2,
+    3,
   );
-  assert.equal([...recipe.matchAll(/toString platform\.addressBits \+ "\\n"/g)].length, 2);
+  assert.equal([...recipe.matchAll(/toString platform\.addressBits \+ "\\n"/g)].length, 3);
   assert.ok(recipe.includes("init = ./python-test.sh;"));
   const full = readFileSync(new URL("./python-test.sh", import.meta.url), "utf8");
   assert.match(full, /python3 \/python-abi-test\.py "\$\(cat \/python-address-bits\)"/);
@@ -110,11 +110,11 @@ test("installed layout fixture rejects build prefixes and operational flag leaks
   assert.match(result.stderr, /\bOK\b/);
 });
 
-test("both installed Python systems include OpenSSL's certificate package dependency", () => {
+test("all installed Python systems include OpenSSL's certificate package dependency", () => {
   const recipe = readFileSync(new URL("./package.nix", import.meta.url), "utf8");
   const checks = recipe.slice(recipe.indexOf("passthru.checks = {"));
   const systems = [...checks.matchAll(/contents = \[([\s\S]*?)\];/g)];
-  assert.equal(systems.length, 2);
+  assert.equal(systems.length, 3);
   for (const [, contents] of systems) {
     const packages = contents.trim().split(/\s+/);
     for (const name of [

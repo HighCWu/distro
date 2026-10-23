@@ -199,6 +199,9 @@ let
     installFlags = [ "DESTDIR=$(out)" ];
 
     postBuild = ''
+      # A real upstream configure probe, not a forced cache answer. With this
+      # macro CPython's unmodified faulthandler uses sigaltstack and SA_ONSTACK.
+      grep -qx '#define HAVE_SIGALTSTACK 1' pyconfig.h
       node ${../busybox/check-binary.mjs} ${../../packages/kernel/src/wasm_binary.ts} \
         python ${toString platform.addressBits} ${toString platform.maximumMemoryBytes}
     '';
@@ -355,6 +358,22 @@ let
           finalAttrs.finalPackage
         ];
         files."/mmap-test.py" = ./mmap-test.py;
+        files."/python-abi-test.py" = ./abi-test.py;
+        files."/python-address-bits" = builtins.toFile "python-address-bits" (
+          toString platform.addressBits + "\n"
+        );
+      };
+      faulthandler = vm-test.installedTest {
+        name = "python-standard-signal-altstack";
+        init = ./faulthandler-test.sh;
+        contents = [
+          busybox
+          ca-certificates
+          ncurses
+          openssl
+          finalAttrs.finalPackage
+        ];
+        files."/faulthandler-test.py" = ./faulthandler-test.py;
         files."/python-abi-test.py" = ./abi-test.py;
         files."/python-address-bits" = builtins.toFile "python-address-bits" (
           toString platform.addressBits + "\n"

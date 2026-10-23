@@ -16,7 +16,6 @@ test("shared target site policy only supplies established negative capability an
     "ac_cv_func_dlopen",
     "ac_cv_search_dlopen",
     "ac_cv_lib_dl_dlopen",
-    "ac_cv_func_sigaltstack",
   ];
   const script =
     'source "$1"; shift; for field in "$@"; do printf "%s=%s\\n" "$field" "${!field}"; done';
@@ -32,6 +31,7 @@ test("shared target site policy only supplies established negative capability an
       "ac_cv_func_unverified_feature",
       "ac_cv_func_mmap",
       "ac_cv_func_msync",
+      "ac_cv_func_sigaltstack",
     ],
     {
       encoding: "utf8",
@@ -40,6 +40,7 @@ test("shared target site policy only supplies established negative capability an
         ac_cv_func_unverified_feature: "untouched",
         ac_cv_func_mmap: "probe",
         ac_cv_func_msync: "probe",
+        ac_cv_func_sigaltstack: "probe",
       },
     },
   );
@@ -47,7 +48,7 @@ test("shared target site policy only supplies established negative capability an
   assert.equal(
     result.stdout,
     fields.map((name) => `${name}=no\n`).join("") +
-      "ac_cv_func_unverified_feature=untouched\nac_cv_func_mmap=probe\nac_cv_func_msync=probe\n",
+      "ac_cv_func_unverified_feature=untouched\nac_cv_func_mmap=probe\nac_cv_func_msync=probe\nac_cv_func_sigaltstack=probe\n",
   );
   const policy = readFileSync(path, "utf8");
   assert.deepEqual(

@@ -69,13 +69,9 @@ stdenv.mkDerivation (finalAttrs: {
   #   configure cache still records the platform truth. Vim's mapping timeouts
   #   and timer_start() use poll() deadlines in the main input loop. The only
   #   alarm()/SIGALRM call sites are X11 and cscope, both off.
-  # sigaltstack() returns ENOSYS on this platform. vim would call it once,
-  #   unconditionally at startup (mch_early_init -> init_signal_stack), to
-  #   install an alternate stack so a stack-overflow SIGSEGV can still be
-  #   reported. The stdenv CONFIG_SITE answers
-  #   ac_cv_func_sigaltstack=no, so configure leaves HAVE_SIGALTSTACK undefined;
-  #   with HAVE_SIGSTACK also absent, the alternate-signal-stack block is
-  #   compiled out. The cost is only a less graceful stack-overflow message.
+  # Standard sigaltstack is available to normal configure probes. This lets
+  #   upstream init_signal_stack register its C signal stack at startup;
+  #   engine stack-overflow traps are still not translated to SIGSEGV.
   configureFlags = [
     "--with-features=normal"
     "--with-tlib=ncurses"
