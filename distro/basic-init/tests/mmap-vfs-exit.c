@@ -95,6 +95,8 @@ int main(void)
 				if (waitpid(pid, &status, WNOHANG) != 0)
 					test_fail("fatal reader left before producer completion");
 				mmap_stats_expect(1, 1, 1);
+				if (syscall(MMAP_STATS_TEST_NR, (unsigned long)3) != (long)(2 * page))
+					test_fail("fatal reader released reservation before producer completion");
 				if (syscall(MMAP_STATS_TEST_NR, (unsigned long)0x100) != callbacks)
 					test_fail("initialization started before producer completion");
 				if (!round) {
