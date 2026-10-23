@@ -28,7 +28,7 @@ for (const corpus of Object.keys(processStages))
     assert.throws(() => assertProcessOutput(output + "\n" + foreign, corpus));
   });
 
-for (const corpus of ["dash", "bash", "useraccess", "upper32"])
+for (const corpus of ["dash", "bash", "useraccess", "upper32", "altstack", "stacklegacy"])
   test(`${corpus}: browser controller requires two boots, closed browser and no late page error`, (t) => {
     const dir = mkdtempSync(join(tmpdir(), "process-browser-host-"));
     t.after(() => rmSync(dir, { recursive: true, force: true }));
@@ -38,7 +38,7 @@ for (const corpus of ["dash", "bash", "useraccess", "upper32"])
     const profile = {
       addressBits: corpus === "upper32" ? 32 : 64,
       corpus,
-      cpus: corpus === "upper32" || corpus === "useraccess" ? 1 : 2,
+      cpus: ["upper32", "useraccess", "altstack", "stacklegacy"].includes(corpus) ? 1 : 2,
     };
     writeFileSync(join(dir, "profile.json"), JSON.stringify(profile));
     writeFileSync(
@@ -102,6 +102,25 @@ for (const corpus of ["dash", "bash", "useraccess", "upper32"])
     assert.match(app, /runRuntimeSmoke/);
     assert.match(app, /crossOriginIsolated/);
   });
+
+test("signal stack browser suites reuse both-width standard and missing-export workloads", () => {
+  const recipe = readFileSync(
+    new URL("../../distro/npm/browser-tests.nix", import.meta.url),
+    "utf8",
+  );
+  for (const corpus of ["altstack", "stacklegacy"])
+    for (const bits of [32, 64])
+      for (const engine of ["chromium", "firefox"])
+        assert.ok(recipe.includes(`"process-${corpus}-wasm${bits}-${engine}"`));
+  assert.match(
+    recipe,
+    /if corpus == "altstack" then\s+\(if bits == 64 then toolchain-smoke-wasm64 else toolchain-smoke\)\s*\.checks\.signal-altstack\.runtimeAssets/,
+  );
+  assert.match(
+    recipe,
+    /else if corpus == "stacklegacy" then\s+\(if bits == 64 then toolchain-smoke-wasm64 else toolchain-smoke\)\s*\.checks\.signal-stack-legacy\.runtimeAssets/,
+  );
+});
 
 test("Bash browser suite uses the ordinary-fork candidate and exact shell stages", () => {
   const recipe = readFileSync(

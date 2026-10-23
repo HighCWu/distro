@@ -7,6 +7,16 @@ const prefixStage =
   "user-access: partial boundary copies preserve file positions, suffixes and pipe accounting pass";
 const recoveryStage = "user-access: zero lengths, valid retries and descriptor recovery pass";
 export const processStages = {
+  altstack: [
+    "signal-altstack: standard registration, query and kernel error paths pass",
+    "signal-altstack: siginfo context, nested on-stack delivery and normal return pass",
+    "signal-altstack: autodisarm visibility, nested delivery and registration restoration pass",
+    "signal-altstack: repeated SjLj escape, mask and original-frame recovery pass",
+    "signal-altstack: context stack/mask edits, SIGKILL protection, disable and cleanup pass",
+  ],
+  stacklegacy: [
+    "signal-stack-legacy: missing stack export refused and ordinary callbacks preserved pass",
+  ],
   useraccess: [nullStage, prefixStage, recoveryStage],
   upper32: [
     nullStage,

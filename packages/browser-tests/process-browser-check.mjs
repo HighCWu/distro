@@ -12,7 +12,11 @@ assert.ok(Object.hasOwn(engines, project), "unknown browser engine");
 const { addressBits, corpus, cpus = 2 } = JSON.parse(await readFile("profile.json", "utf8"));
 assert.ok(addressBits === 32 || addressBits === 64, "invalid address width");
 assert.ok(Object.hasOwn(processStages, corpus), "unknown process corpus");
-assert.equal(cpus, corpus === "useraccess" || corpus === "upper32" ? 1 : 2, "CPU profile mismatch");
+assert.equal(
+  cpus,
+  ["useraccess", "upper32", "altstack", "stacklegacy"].includes(corpus) ? 1 : 2,
+  "CPU profile mismatch",
+);
 if (corpus === "upper32") assert.equal(addressBits, 32, "upper-half profile requires wasm32");
 const server = spawn(process.execPath, ["server.js"], { stdio: ["ignore", "pipe", "inherit"] });
 const lines = createInterface({ input: server.stdout });

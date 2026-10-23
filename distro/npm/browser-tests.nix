@@ -359,6 +359,14 @@ let
       // (lib.genAttrs erofsProjects erofsCheck)
       // (lib.genAttrs
         [
+          "process-altstack-wasm32-chromium"
+          "process-altstack-wasm32-firefox"
+          "process-altstack-wasm64-chromium"
+          "process-altstack-wasm64-firefox"
+          "process-stacklegacy-wasm32-chromium"
+          "process-stacklegacy-wasm32-firefox"
+          "process-stacklegacy-wasm64-chromium"
+          "process-stacklegacy-wasm64-firefox"
           "process-useraccess-wasm64-chromium"
           "process-useraccess-wasm64-firefox"
           "process-upper32-wasm32-chromium"
@@ -376,7 +384,11 @@ let
           name:
           let
             corpus =
-              if lib.hasInfix "-upper32-" name then
+              if lib.hasInfix "-altstack-" name then
+                "altstack"
+              else if lib.hasInfix "-stacklegacy-" name then
+                "stacklegacy"
+              else if lib.hasInfix "-upper32-" name then
                 "upper32"
               else if lib.hasInfix "-useraccess-" name then
                 "useraccess"
@@ -510,7 +522,13 @@ let
     bits: corpus:
     let
       assets =
-        if corpus == "upper32" then
+        if corpus == "altstack" then
+          (if bits == 64 then toolchain-smoke-wasm64 else toolchain-smoke)
+          .checks.signal-altstack.runtimeAssets
+        else if corpus == "stacklegacy" then
+          (if bits == 64 then toolchain-smoke-wasm64 else toolchain-smoke)
+          .checks.signal-stack-legacy.runtimeAssets
+        else if corpus == "upper32" then
           assert bits == 32;
           toolchain-smoke.checks.user-access-upper32.runtimeAssets
         else if corpus == "useraccess" then
@@ -537,7 +555,20 @@ let
     in
     assert
       assets.disks == [ ]
-      && assets.cpus == (if corpus == "upper32" || corpus == "useraccess" then 1 else 2);
+      &&
+        assets.cpus == (
+          if
+            builtins.elem corpus [
+              "upper32"
+              "useraccess"
+              "altstack"
+              "stacklegacy"
+            ]
+          then
+            1
+          else
+            2
+        );
     pkgs.runCommand "${corpus}-wasm${toString bits}-browser-suite" { } ''
       mkdir -p $out/node_modules/@lowland/kernel $out/node_modules/@lowland/bytes
       ${playwright.linkRuntime "$out"}
