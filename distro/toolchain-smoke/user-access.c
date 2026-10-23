@@ -12,9 +12,8 @@
 #include <sys/mman.h>
 #include <unistd.h>
 
-static void require(int ok, const char *message)
+static _Noreturn void fail(const char *message)
 {
-	if (ok) return;
 	printf("::vm-test::fail: user-access: %s errno=%d\n", message, errno);
 	fflush(stdout);
 #ifdef __wasm__
@@ -22,6 +21,10 @@ static void require(int ok, const char *message)
 #else
 	exit(1);
 #endif
+}
+static void require(int ok, const char *message)
+{
+	if (!ok) fail(message);
 }
 /* Raw standard syscalls keep the NULL arguments opaque to compiler builtin
  * assumptions about libc read/write's nonnull access annotations. */
@@ -139,7 +142,41 @@ int main(void)
 	errno = 0;
 	require(call(SYS_futex, (long)&word, 5 | 128, 0, 0, 0, (1L << 28) | (1L << 12)) == -1 &&
 		errno == EFAULT && word == 0, "NULL futex atomic target");
+	/* Unlike WAKE_OP, the PI fault retry path enters fault_in_user_writeable
+	 * even on NOMMU. An invalid offset must never attempt page-table repair. */
+	uintptr_t invalid_pi[2] = {0};
+	size_t invalid_pi_count = 1;
+#ifdef __wasm__
+	size_t present_pages = __builtin_wasm_memory_size(0);
+	if (present_pages < UINTPTR_MAX / 65536) {
+		invalid_pi[invalid_pi_count++] = present_pages * 65536 + 4;
+	}
+#endif
+	for (int mode = 0; mode <= 128; mode += 128) {
+		for (size_t target = 0; target < invalid_pi_count; target++) {
+			for (int command = 6; command <= 13; command++) {
+				if (command != 6 && command != 8 && command != 13) continue;
+				errno = 0;
+				require(call(SYS_futex, (long)invalid_pi[target], command | mode, 0, 0, 0, 0) == -1 && errno == EFAULT,
+				        "invalid PI futex returns EFAULT without NOMMU fault repair");
+			}
+		}
+		word = 0;
+		require(call(SYS_futex, (long)&word, 6 | mode, 0, 0, 0, 0) == 0 &&
+		        ((unsigned)word & 0x3fffffffU) == (unsigned)syscall(SYS_gettid, 0L, 0L, 0L, 0L, 0L, 0L),
+		        "valid PI futex acquires and records owner after invalid access");
+		errno = 0;
+		require(call(SYS_futex, (long)&word, 6 | mode, 0, 0, 0, 0) == -1 && errno == EDEADLK,
+		        "PI self-deadlock reports EDEADLK");
+		require(call(SYS_futex, (long)&word, 7 | mode, 0, 0, 0, 0) == 0 && word == 0 &&
+		        call(SYS_futex, (long)&word, 8 | mode, 0, 0, 0, 0) == 0 &&
+		        call(SYS_futex, (long)&word, 7 | mode, 0, 0, 0, 0) == 0 && word == 0 &&
+		        call(SYS_futex, (long)&word, 13 | mode, 0, 0, 0, 0) == 0 &&
+		        call(SYS_futex, (long)&word, 7 | mode, 0, 0, 0, 0) == 0 && word == 0,
+		        "PI unlock, trylock and final release recover");
+	}
 	puts("user-access: NULL data, pathname, structure and atomic targets reject without side effects pass");
+	puts("user-access: PI futex invalid offsets, owner identity, deadlock and recovery pass");
 	check_partial_copy(fds);
 #ifdef USER_ACCESS_UPPER32
 	check_upper_half(fds);
