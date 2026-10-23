@@ -377,6 +377,16 @@ export function kernel_imports({
   /** Reports that this worker's kernel thread halted and the worker is closing. */
   worker_exit: () => void;
 }): Imports["kernel"] {
+  // These are trusted kernel pointers, not application virtual addresses.
+  // A malformed range remains a kernel/host failure, never a fake errno.
+  const kernel_bytes = (pointer: WasmAddress, length: WasmAddress) => {
+    const offset = wasm_pointer_to_number(pointer);
+    const count = wasm_size_to_number(length);
+    refresh_memory_range(memory, pointer, count);
+    const bytes = memory_bytes(memory, offset, count);
+    if (!bytes) throw new RangeError("Kernel import memory range is unavailable");
+    return bytes;
+  };
   return {
     breakpoint: () => {
       debugger;
@@ -397,9 +407,7 @@ export function kernel_imports({
     },
 
     boot_console_write: (msg, len) => {
-      const offset = wasm_address_to_number(msg);
-      const length = wasm_address_to_number(len, "console message length");
-      boot_console_write(new Uint8Array(memory.buffer, offset, length).slice().buffer);
+      boot_console_write(kernel_bytes(msg, len).slice().buffer);
     },
     boot_console_close,
 
@@ -421,10 +429,9 @@ export function kernel_imports({
     },
 
     get_stacktrace: (buf, size) => {
-      const offset = wasm_pointer_to_number(buf);
       const capacity = wasm_size_to_number(size);
       if (!capacity) return;
-      const output = new Uint8Array(memory.buffer, offset, capacity);
+      const output = kernel_bytes(buf, size);
       // 5 lines: strip Error, strip 4 common lines of stack
       const trace = new TextEncoder().encode(new Error().stack?.split("\n").slice(5).join("\n"));
       const length = Math.min(trace.byteLength, capacity - 1);
@@ -434,10 +441,8 @@ export function kernel_imports({
     },
 
     spawn_worker: (fn, arg, comm, comm_len, user_memory) => {
-      const comm_address = wasm_address_to_number(comm);
-      const comm_length = wasm_address_to_number(comm_len, "worker name length");
       const name = new TextDecoder().decode(
-        new Uint8Array(memory.buffer, comm_address, comm_length).slice(), // copy to transfer to non-shared backing
+        kernel_bytes(comm, comm_len).slice(), // copy before the C caller can reuse its name buffer
       );
       let user: UserContext | null = null;
       let copy_user_memory = false;
