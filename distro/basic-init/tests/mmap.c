@@ -138,15 +138,22 @@ static void stress_fragmentation(size_t page_size)
 
 static void check_read_requests(size_t page_size)
 {
+	for (int prot = PROT_READ; prot <= PROT_WRITE; prot++)
 	for (int raw = 0; raw < 2; raw++) {
 		size_t length = 2 * page_size + 17;
 		unsigned char *mapping = raw
-			? (void *)raw_mmap(0, length, PROT_READ, MAP_PRIVATE | MAP_ANONYMOUS, -1, 0)
-			: mmap(0, length, PROT_READ, MAP_PRIVATE | MAP_ANONYMOUS, -1, 0);
+			? (void *)raw_mmap(0, length, prot, MAP_PRIVATE | MAP_ANONYMOUS, -1, 0)
+			: mmap(0, length, prot, MAP_PRIVATE | MAP_ANONYMOUS, -1, 0);
 		if (mapping == MAP_FAILED) test_perror("anonymous READ mmap");
 		if ((uintptr_t)mapping & (page_size - 1)) test_fail("READ mmap alignment");
 		for (size_t i = 0; i < length; i++)
 			if (mapping[i]) test_fail("READ mmap zero fill");
+		if (prot == PROT_WRITE) {
+			mapping[0] = 0x58;
+			mapping[length - 1] = 0x85;
+			if (mapping[0] != 0x58 || mapping[length - 1] != 0x85)
+				test_fail("WRITE mmap data access");
+		}
 		if (msync(mapping, length, MS_SYNC)) test_perror("READ mmap private msync");
 		if (madvise(mapping, length, MADV_DONTNEED)) test_perror("READ mmap discard");
 		mapping = mremap(mapping, length, 4 * page_size, MREMAP_MAYMOVE);
@@ -158,6 +165,7 @@ static void check_read_requests(size_t page_size)
 			test_perror("READ mmap partial cleanup");
 	}
 	puts("mmap: anonymous READ libc/raw, zero fill, discard, resize and cleanup pass");
+	puts("mmap: anonymous WRITE libc/raw, data access, discard, resize and cleanup pass");
 }
 
 int main(void)
