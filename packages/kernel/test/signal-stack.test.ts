@@ -7,7 +7,50 @@ import {
   call_on_signal_stack,
   call_kernel_entry,
   call_signal_callback,
+  call_plain_signal_handler,
 } from "../src/signal-stack.ts";
+
+test("plain signal trampoline preserves pointer width, exceptions and old modules", () => {
+  for (const fn of [123, 0x100000000n]) {
+    let calls = 0;
+    const exports = {
+      __wasm_signal_handler_v2: (entry: number | bigint, sig: number) => {
+        assert.equal(entry, fn);
+        assert.equal(sig, 10);
+        calls++;
+        return 7;
+      },
+    };
+    assert.equal(
+      call_plain_signal_handler(exports, fn, 10, () => assert.fail("new trampoline required")),
+      7,
+    );
+    assert.equal(calls, 1);
+    assert.equal(
+      call_plain_signal_handler({}, fn, 10, () => 9),
+      9,
+    );
+  }
+  const jump = new Error("non-local exit must propagate");
+  assert.throws(
+    () =>
+      call_plain_signal_handler(
+        {
+          __wasm_signal_handler_v2: (_fn: number, _sig: number) => {
+            throw jump;
+          },
+        },
+        1,
+        10,
+        () => {},
+      ),
+    (e) => e === jump,
+  );
+  assert.throws(
+    () => call_plain_signal_handler({ __wasm_signal_handler_v2: () => {} }, 1, 10, () => {}),
+    /Invalid plain/,
+  );
+});
 
 test("signal callback cleanup retires only its frame, preserves SjLj, and skips a dead task", () => {
   const halt = Symbol("task handed CPU away");

@@ -40,6 +40,7 @@ import {
   call_on_signal_stack,
   call_signal_callback,
   call_kernel_entry,
+  call_plain_signal_handler,
 } from "./signal-stack.ts";
 import { write_exec_image } from "./exec-image.ts";
 import {
@@ -267,6 +268,7 @@ function user_imports({
           return result;
         },
       },
+      linux_signal_cancel_v1: { abi: () => 1 },
     });
   }
 
@@ -464,7 +466,7 @@ function user_imports({
         signal_depth++;
         try {
           call_signal_callback(
-            () => f(sig),
+            () => call_plain_signal_handler(instance!.exports, fn, sig, () => f(sig)),
             () => get_kernel_instance().exports.clear_siginfo(),
             HALT_KERNEL,
           );

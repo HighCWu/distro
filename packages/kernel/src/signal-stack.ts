@@ -11,6 +11,21 @@ import {
 
 const kernel_depth = new WeakMap<WebAssembly.Exports, number>();
 
+/** New libc brackets a plain handler outside an interrupted cancellation point.
+ * Older modules retain their direct callback. Never narrow table64 pointers. */
+export function call_plain_signal_handler(
+  exports: WebAssembly.Exports,
+  fn: WasmAddress,
+  sig: number,
+  legacy: () => unknown,
+): unknown {
+  const trampoline = exports.__wasm_signal_handler_v2;
+  if (trampoline === undefined) return legacy();
+  if (typeof trampoline !== "function" || trampoline.length !== 2)
+    throw new Error("Invalid plain signal trampoline");
+  return trampoline(fn, sig);
+}
+
 // Engine import matching validates both mutability and the exact integer type;
 // typeof(global.value) alone cannot distinguish an i32 stack from an f64 global.
 const probes = Object.fromEntries(

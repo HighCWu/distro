@@ -145,13 +145,22 @@ const supported_user_module_imports = new Set([
   "linux\0copy_siginfo\0function",
   "linux_signal_v1\0frame\0function",
   "linux_signal_v1\0finish\0function",
+  "linux_signal_cancel_v1\0abi\0function",
   "linux_mmap_init_v1\0copy\0function",
   "linux_fork_v1\0checkpoint\0function",
 ]);
 
 /** Whether every import can be supplied when a userspace module is instantiated. */
 export function user_module_imports_supported(module: WebAssembly.Module): boolean {
-  return WebAssembly.Module.imports(module).every(({ module, name, kind }) =>
+  const imports = WebAssembly.Module.imports(module);
+  if (
+    imports.some((entry) => entry.module === "linux_signal_cancel_v1") &&
+    !WebAssembly.Module.exports(module).some(
+      (entry) => entry.name === "__wasm_signal_handler_v2" && entry.kind === "function",
+    )
+  )
+    return false;
+  return imports.every(({ module, name, kind }) =>
     supported_user_module_imports.has(`${module}\0${name}\0${kind}`),
   );
 }

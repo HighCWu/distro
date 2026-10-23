@@ -29,6 +29,36 @@ function wasm_module(hex: string) {
   );
 }
 
+test("cancellation execution import requires the corresponding plain-handler trampoline", () => {
+  const string = (s: string) => [s.length, ...new TextEncoder().encode(s)];
+  const section = (id: number, bytes: number[]) => [id, bytes.length, ...bytes];
+  const module = (version: string, kind?: number) =>
+    new WebAssembly.Module(
+      new Uint8Array([
+        0,
+        97,
+        115,
+        109,
+        1,
+        0,
+        0,
+        0,
+        ...section(1, [2, 0x60, 0, 1, 0x7f, 0x60, 2, 0x7f, 0x7f, 0]),
+        ...section(2, [1, ...string(version), ...string("abi"), 0, 0]),
+        ...section(3, [1, 1]),
+        ...section(5, [1, 0, 0]),
+        ...(kind === undefined
+          ? []
+          : section(7, [1, ...string("__wasm_signal_handler_v2"), kind, kind === 0 ? 1 : 0])),
+        ...section(10, [1, 2, 0, 0x0b]),
+      ]),
+    );
+  assert.equal(user_module_imports_supported(module("linux_signal_cancel_v1")), false);
+  assert.equal(user_module_imports_supported(module("linux_signal_cancel_v1", 2)), false);
+  assert.equal(user_module_imports_supported(module("linux_signal_cancel_v1", 0)), true);
+  assert.equal(user_module_imports_supported(module("linux_signal_cancel_v2", 0)), false);
+});
+
 const memory = new WebAssembly.Memory({
   initial: 1,
   maximum: 1,

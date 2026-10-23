@@ -208,6 +208,20 @@ let
           chmod 0755 $out/lite-oom.wasm
           wasm-validate --enable-memory64 --enable-threads --enable-exceptions $out/lite-oom.wasm
       '';
+  cancellationProgram =
+    pkgs.runCommand "deferred-cancel-${platform.wasmArch}"
+      {
+        nativeBuildInputs = [
+          llvm-toolchain
+          pkgs.wabt
+        ];
+      }
+      ''
+        mkdir -p $out
+        clang ${compileFlags} -O2 -pthread -Wall -Wextra -Werror ${./deferred-cancel.c} -o $out/deferred-cancel.wasm
+        chmod 0755 $out/deferred-cancel.wasm
+        wasm-validate --enable-memory64 --enable-threads --enable-exceptions $out/deferred-cancel.wasm
+      '';
   programs =
     pkgs.runCommand "toolchain-smoke-${platform.wasmArch}"
       {
@@ -220,6 +234,11 @@ let
           c-runtime = vm-test.rawInitramfsTest {
             name = "toolchain-c-runtime-${platform.wasmArch}";
             init = "${programs}/smoke-c.wasm";
+          };
+          deferred-cancel = vm-test.rawInitramfsTest {
+            name = "deferred-cancel-${platform.wasmArch}";
+            init = "${cancellationProgram}/deferred-cancel.wasm";
+            cpus = 2;
           };
           user-access = vm-test.rawInitramfsTest {
             name = "user-access-${platform.wasmArch}";
