@@ -34,7 +34,9 @@ int main(void)
 	require(log != NULL, "diagnostic read buffer");
 	for (int iteration = 0; iteration < 2; ++iteration) {
 		require(write(trigger, "t", 1) == 1, "task-state dump returns without a kernel trap");
-		long length = syscall(SYS_syslog, 3L, (long)log, 128L * 1024 - 1, 0L, 0L, 0L);
+		/* READ_CLEAR affects only this isolated test kernel. Each iteration
+		 * must observe fresh diagnostics, not the previous dump's markers. */
+		long length = syscall(SYS_syslog, 4L, (long)log, 128L * 1024 - 1, 0L, 0L, 0L);
 		require(length > 0 && length < 128 * 1024, "bounded kernel log read");
 		log[length] = 0;
 		require(strstr(log, "Stack from stacktrace-test (1):") != NULL,
