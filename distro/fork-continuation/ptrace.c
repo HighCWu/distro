@@ -7,12 +7,21 @@
 #include <stdint.h>
 #include <stdio.h>
 #include <stdlib.h>
+#include <string.h>
 #include <sys/ptrace.h>
 #include <sys/syscall.h>
 #include <sys/wait.h>
 #include <unistd.h>
 
 static volatile unsigned long word = ULONG_MAX;
+static _Alignas(65536) unsigned char crossing[2 * 65536];
+#define CROSS_OFFSET (65536 - 1)
+static unsigned long crossing_word(void)
+{
+	unsigned long value;
+	memcpy(&value, crossing + CROSS_OFFSET, sizeof value);
+	return value;
+}
 static pid_t active_child;
 static unsigned long replacement(void)
 {
@@ -58,7 +67,10 @@ static pid_t trace_child(int exit_code)
 		     * that saved mask afterwards. Stop at the standard syscall itself
 		     * so the tracer can inspect/edit the intended persistent mask. */
 		    syscall(SYS_tkill, (long)getpid(), (long)SIGSTOP, 0L, 0L, 0L, 0L)) _exit(111);
-		if (word != replacement() || sigprocmask(SIG_SETMASK, NULL, &observed) ||
+		if (word != replacement() || crossing_word() != replacement() ||
+		    crossing[CROSS_OFFSET - 1] != 0xa6 ||
+		    crossing[CROSS_OFFSET + sizeof(long)] != 0xa6 ||
+		    sigprocmask(SIG_SETMASK, NULL, &observed) ||
 		    sigismember(&observed, SIGUSR1) != 0 || sigismember(&observed, SIGUSR2) != 1 ||
 		    sigismember(&observed, SIGKILL) != 0 || sigismember(&observed, SIGSTOP) != 0)
 			_exit(112);
@@ -82,6 +94,15 @@ static void patch_child(pid_t child)
 	unsigned long value = (unsigned long)request(PTRACE_PEEKDATA, child, (uintptr_t)&word, 0);
 	require(value == replacement() && !errno && word == ULONG_MAX,
 	        "read back full-width remote data without modifying parent's independent memory");
+	errno = 0;
+	require((unsigned long)request(PTRACE_PEEKDATA, child, (uintptr_t)(crossing + CROSS_OFFSET), 0) ==
+	        ULONG_MAX && !errno, "peek unaligned complete word across a page boundary");
+	require(request(PTRACE_POKEDATA, child, (uintptr_t)(crossing + CROSS_OFFSET), replacement()) == 0,
+	        "poke unaligned complete word across a page boundary");
+	errno = 0;
+	require((unsigned long)request(PTRACE_PEEKDATA, child, (uintptr_t)(crossing + CROSS_OFFSET), 0) ==
+	        replacement() && !errno && crossing_word() == ULONG_MAX,
+	        "cross-page edit and parent memory isolation");
 }
 static void reap(pid_t child, int exit_code)
 {
@@ -93,6 +114,8 @@ static void reap(pid_t child, int exit_code)
 }
 int main(void)
 {
+	memset(crossing, 0xa6, sizeof crossing);
+	memset(crossing + CROSS_OFFSET, 0xff, sizeof(long));
 	sigset_t original, after;
 	require(sigprocmask(SIG_SETMASK, NULL, &original) == 0, "save parent signal mask");
 	pid_t child = trace_child(37);
@@ -120,6 +143,7 @@ int main(void)
 	require(request(PTRACE_CONT, child, 0, 0) == 0, "generic continue");
 	reap(child, 37);
 	puts("ptrace: continued child observes edits, parent memory isolation and single reap pass");
+	puts("ptrace: unaligned cross-page word read/write, neighbor bytes and child observation pass");
 
 	child = trace_child(38);
 	patch_child(child);
