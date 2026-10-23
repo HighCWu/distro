@@ -20,6 +20,7 @@
 }:
 
 let
+  copyHostChecks = fileMmapCandidate || mmapCopyTest;
   identity =
     value:
     let
@@ -76,12 +77,12 @@ pkgs.stdenvNoCC.mkDerivation (finalAttrs: {
     pkgs.rsync
     pkgs.wabt
   ]
-  ++ lib.optional fileMmapCandidate pkgs.python3;
+  ++ lib.optional copyHostChecks pkgs.python3;
 
   buildPhase = ''
     runHook preBuild
 
-    ${lib.optionalString (fileMmapCandidate || mmapCopyTest) ''
+    ${lib.optionalString copyHostChecks ''
       CC=${pkgs.llvmPackages_22.clang}/bin/clang python3 -B arch/wasm/tests/run-mmap-file-host.py
     ''}
 
