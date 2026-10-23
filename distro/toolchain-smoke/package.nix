@@ -225,6 +225,10 @@ let
             init = "${programs}/membarrier.wasm";
             cpus = 2;
           };
+          brk = vm-test.rawInitramfsTest {
+            name = "brk-${platform.wasmArch}";
+            init = "${programs}/brk.wasm";
+          };
           stacktrace = vm-test.rawInitramfsTest {
             name = "stacktrace-${platform.wasmArch}";
             init = "${programs}/stacktrace.wasm";
@@ -306,6 +310,9 @@ let
         wasm-validate --enable-memory64 --enable-threads --enable-exceptions $out/dnotify.wasm
         clang ${compileFlags} -O2 -Wall -Wextra -Werror ${./signal-altstack.c} -o $out/signal-altstack.wasm
         clang ${compileFlags} -O2 -pthread -Wall -Wextra -Werror ${./membarrier.c} -o $out/membarrier.wasm
+        clang ${compileFlags} -O2 -Wall -Wextra -Werror ${./brk.c} -o $out/brk.wasm
+        chmod 0755 $out/brk.wasm
+        wasm-validate --enable-memory64 --enable-threads --enable-exceptions $out/brk.wasm
         clang ${compileFlags} -O2 -Wall -Wextra -Werror ${./stacktrace.c} -o $out/stacktrace.wasm
         chmod 0755 $out/stacktrace.wasm
         wasm-validate --enable-memory64 --enable-threads --enable-exceptions $out/stacktrace.wasm
