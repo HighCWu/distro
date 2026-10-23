@@ -108,7 +108,15 @@ static int round_trip(int mode)
 		return 0;
 	}
 
-	/* Positive control in the parent's own mm, after the child is gone. */
+	return 1;
+}
+
+static int local_threads(int mode)
+{
+	/* Run only after ALL forks: join's clear-child-tid wake can precede the
+	 * departing task's final mm reference release. Do not turn that window
+	 * into a request for fork while another task still shares the mm. */
+	private_flag = mode;
 	pthread_t thread;
 	if (pthread_create(&thread, NULL, waiter, NULL)) return 0;
 	int moved = queued();
@@ -123,7 +131,7 @@ int main(void)
 {
 	int ok = round_trip(128 /* FUTEX_PRIVATE_FLAG */);
 	if (ok) puts("futex-isolation: private queued wait and wake stay within each process pass");
-	if (ok) ok = round_trip(0);
+	if (ok) ok = round_trip(0) && local_threads(128) && local_threads(0);
 	if (ok) puts("futex-isolation: ordinary futex same-mm wake and cross-process isolation pass");
 	puts(ok ? "::vm-test::pass" : "::vm-test::fail: futex-isolation: process identity or thread recovery");
 	fflush(stdout);
