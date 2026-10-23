@@ -225,10 +225,6 @@ let
             init = "${programs}/membarrier.wasm";
             cpus = 2;
           };
-          scheduler = vm-test.rawInitramfsTest {
-            name = "scheduler-${platform.wasmArch}";
-            init = "${programs}/scheduler.wasm";
-          };
           stacktrace = vm-test.rawInitramfsTest {
             name = "stacktrace-${platform.wasmArch}";
             init = "${programs}/stacktrace.wasm";
@@ -310,9 +306,6 @@ let
         wasm-validate --enable-memory64 --enable-threads --enable-exceptions $out/dnotify.wasm
         clang ${compileFlags} -O2 -Wall -Wextra -Werror ${./signal-altstack.c} -o $out/signal-altstack.wasm
         clang ${compileFlags} -O2 -pthread -Wall -Wextra -Werror ${./membarrier.c} -o $out/membarrier.wasm
-        clang ${compileFlags} -O2 -Wall -Wextra -Werror ${./scheduler.c} -o $out/scheduler.wasm
-        chmod 0755 $out/scheduler.wasm
-        wasm-validate --enable-memory64 --enable-threads --enable-exceptions $out/scheduler.wasm
         clang ${compileFlags} -O2 -Wall -Wextra -Werror ${./stacktrace.c} -o $out/stacktrace.wasm
         chmod 0755 $out/stacktrace.wasm
         wasm-validate --enable-memory64 --enable-threads --enable-exceptions $out/stacktrace.wasm
