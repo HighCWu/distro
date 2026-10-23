@@ -175,6 +175,11 @@ let
           init = "${program}/futex-isolation.wasm";
           cpus = 2;
         };
+        passthru.checks.namespaces = vm-test.rawInitramfsTest {
+          name = "namespaces-${platform.wasmArch}";
+          init = "${program}/namespaces.wasm";
+          cpus = 2;
+        };
         passthru.checks.process-control = vm-test.rawInitramfsTest {
           name = "process-control-${platform.wasmArch}";
           init = "${program}/process-control.wasm";
@@ -259,6 +264,9 @@ let
         wasm-linux-fork-cc -O2 -pthread -Wall -Wextra -Werror ${./futex-isolation.c} -o futex-isolation-linked.wasm
         wasm-linux-fork-finalize futex-isolation-linked.wasm $out/futex-isolation.wasm
         chmod 0755 $out/futex-isolation.wasm
+        wasm-linux-fork-cc -O2 -Wall -Wextra -Werror ${./namespaces.c} -o namespaces-linked.wasm
+        wasm-linux-fork-finalize namespaces-linked.wasm $out/namespaces.wasm
+        chmod 0755 $out/namespaces.wasm
         chmod 0755 $out/fork.wasm
         chmod 0755 $out/exec-child.wasm
         wasm-linux-fork-cc -O2 -pthread -Wall -Wextra -Werror -c ${./fault-runtime.c} -o fault.o
