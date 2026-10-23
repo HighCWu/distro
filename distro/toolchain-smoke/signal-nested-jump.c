@@ -1,5 +1,6 @@
 /* SPDX-License-Identifier: MIT */
 #define _GNU_SOURCE
+#include <errno.h>
 #include <sched.h>
 #include <setjmp.h>
 #include <signal.h>
@@ -12,10 +13,16 @@
 
 static sigjmp_buf landing;
 static volatile sig_atomic_t mode, errors, outer_count, inner_count;
+static long controller_tid;
+static long actual_tid(void)
+{
+	return syscall(SYS_gettid, 0UL, 0UL, 0UL, 0UL, 0UL, 0UL);
+}
 static void inner_plain(int sig)
 {
 	if (sig != SIGUSR2) errors = 1;
 	if (mode == 2) {
+		if (actual_tid() == controller_tid) { errors = 8; return; }
 		syscall(SYS_exit, 80UL, 0UL, 0UL, 0UL, 0UL, 0UL);
 		__builtin_trap();
 	}
@@ -32,6 +39,7 @@ static void outer(int sig, siginfo_t *info, void *raw)
 	ucontext_t *context = raw;
 	if (sig != SIGUSR1 || !info || info->si_signo != sig || !context) errors = 3;
 	if (mode == 2) {
+		if (actual_tid() == controller_tid) { errors = 8; return; }
 		syscall(SYS_exit, 79UL, 0UL, 0UL, 0UL, 0UL, 0UL);
 		__builtin_trap();
 	}
@@ -58,11 +66,17 @@ static void require(int ok, const char *message)
 }
 static int child(void *argument)
 {
-	(void)raise((int)(uintptr_t)argument);
+	/* CLONE_VM without a new TLS area shares the parent's libc TID cache.
+	 * Use the kernel identity, not raise()/pthread_self(), to target self. */
+	long tid = actual_tid();
+	if (tid <= 0 || syscall(SYS_tkill, (unsigned long)tid,
+	    (unsigned long)(uintptr_t)argument, 0UL, 0UL, 0UL, 0UL)) return 93;
 	return 92;
 }
 int main(void)
 {
+	controller_tid = actual_tid();
+	require(controller_tid > 0, "controller kernel TID");
 	struct sigaction action = {.sa_sigaction = outer, .sa_flags = SA_SIGINFO};
 	require(!sigemptyset(&action.sa_mask) && !sigaction(SIGUSR1, &action, NULL), "outer action");
 	sigset_t before, observed;
@@ -96,7 +110,9 @@ int main(void)
 		pid_t pid = clone(child, stack + stack_size, CLONE_VM | SIGCHLD, (void *)(uintptr_t)sig);
 		require(pid > 0, "clone handler-exit child");
 		int status;
-		require(waitpid(pid, &status, 0) == pid && WIFEXITED(status) &&
+		pid_t waited;
+		do { waited = waitpid(pid, &status, 0); } while (waited < 0 && errno == EINTR);
+		require(waited == pid && WIFEXITED(status) &&
 		        WEXITSTATUS(status) == (sig == SIGUSR1 ? 79 : 80), "handler exit preserves status");
 	}
 	mode = 0;
