@@ -2,9 +2,19 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import { write_exec_image } from "../src/exec-image.ts";
+import { grown_memory } from "./fixtures/grown-memory.ts";
 
 for (const address of ["i32", "i64"] as const) {
   const pointer = (value: number) => (address === "i64" ? BigInt(value) : value);
+  test(`${address}: exec chunks refresh a stale shared kernel view without growing it`, () => {
+    const kernel = grown_memory(address);
+    new Uint8Array(kernel.live()).set([1, 2, 3, 4], 90000);
+    const pending = new Uint8Array(4);
+    assert.equal(write_exec_image(pending, kernel.memory, pointer(90000), 0, 4), 0);
+    assert.deepEqual([...pending], [1, 2, 3, 4]);
+    assert.equal(kernel.calls.length, 1);
+    assert.equal(kernel.live().byteLength, 131072);
+  });
   test(`${address}: exec chunks are all-or-nothing and remain usable after refusal`, () => {
     const kernel = new WebAssembly.Memory({ initial: 1, maximum: 2 });
     const pending = new Uint8Array(8).fill(23);

@@ -2,6 +2,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import { allocate_shared_memory } from "../src/wasm.ts";
+import { grown_memory } from "./fixtures/grown-memory.ts";
 import {
   read_user_memory,
   write_user_memory,
@@ -60,6 +61,37 @@ test("real i32 size_t imports return residue without allocating or copying a hug
 
 for (const address of ["i32", "i64"] as const) {
   const p = (value: number) => (address === "i64" ? BigInt(value) : value);
+  test(`${address}: stale shared user/kernel wrappers refresh before choosing a copy prefix`, () => {
+    const user = grown_memory(address),
+      kernel = grown_memory(address);
+    const liveUser = new Uint8Array(user.live()),
+      liveKernel = new Uint8Array(kernel.live());
+    liveUser.set([11, 22, 33, 44], 65534);
+    assert.equal(read_user_memory(kernel.memory, p(8), user.memory, p(65534), p(4)), 0);
+    assert.deepEqual([...liveKernel.slice(8, 12)], [11, 22, 33, 44]);
+    assert.equal(user.calls.length, 1);
+    assert.equal(kernel.calls.length, 0, "in-range wrappers need no refresh");
+    user.stale();
+    liveKernel.set([51, 52, 53, 54], 90000);
+    assert.equal(write_user_memory(user.memory, p(90000), kernel.memory, p(90000), p(4)), 0);
+    assert.deepEqual([...liveUser.slice(90000, 90004)], [51, 52, 53, 54]);
+    user.stale();
+    assert.equal(clear_user_memory(user.memory, p(90000), p(4)), 0);
+    assert.deepEqual([...liveUser.slice(90000, 90004)], [0, 0, 0, 0]);
+    user.stale();
+    const word = user_atomic_word(user.memory, p(90000));
+    assert.ok(word);
+    assert.equal(Atomics.exchange(word, 0, 73), 0);
+    assert.equal(new DataView(user.live()).getInt32(90000, true), 73);
+    assert.equal(user.live().byteLength, 131072);
+    assert.equal(kernel.live().byteLength, 131072);
+    user.stale();
+    user.disable();
+    liveKernel.fill(99, 8, 12);
+    assert.equal(read_user_memory(kernel.memory, p(8), user.memory, p(65534), p(4)), 2);
+    assert.deepEqual([...liveKernel.slice(8, 12)], [11, 22, 99, 99]);
+    assert.equal(user_atomic_word(user.memory, p(90000)), null);
+  });
   test(`${address}: NULL user copy is rejected without mutating either memory`, () => {
     const kernel = new WebAssembly.Memory({ initial: 1 });
     const user = new WebAssembly.Memory({ initial: 1 });

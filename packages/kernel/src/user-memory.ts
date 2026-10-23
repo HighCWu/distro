@@ -5,6 +5,7 @@ import {
   memory_bytes,
   wasm_size_to_number,
   wasm_pointer_to_number,
+  refresh_memory_range,
   type WasmAddress,
 } from "./wasm.ts";
 
@@ -16,6 +17,7 @@ function user_prefix(
   if (pointer === 0 || pointer === 0n) return null;
   try {
     const offset = wasm_pointer_to_number(pointer);
+    refresh_memory_range(user, pointer, count);
     const available = user.buffer.byteLength - offset;
     return available < 0 ? null : memory_bytes(user, offset, Math.min(count, available));
   } catch {
@@ -35,6 +37,7 @@ function copy(
   if (!count) return 0;
   let kernelBytes;
   try {
+    refresh_memory_range(kernel, kernelPointer, count);
     kernelBytes = memory_bytes(kernel, wasm_pointer_to_number(kernelPointer), count);
   } catch {
     return count;
@@ -94,6 +97,7 @@ export function user_atomic_word(
   try {
     const address = wasm_pointer_to_number(pointer);
     if (!address || address % 4 !== 0) return null;
+    refresh_memory_range(user, pointer, 4);
     const bytes = memory_bytes(user, address, 4);
     return bytes ? new Int32Array(bytes.buffer, bytes.byteOffset, 1) : null;
   } catch {

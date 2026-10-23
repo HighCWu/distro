@@ -76,6 +76,7 @@ import {
   type MachineTerminationReason,
   memory_bytes,
   refresh_memory,
+  refresh_memory_range,
   user_module_imports_supported,
   type WasmAddress,
   type WasmAddressType,
@@ -169,6 +170,7 @@ function user_imports({
   function write_kernel_u32(addr: WasmAddress, value: number): boolean {
     let bytes;
     try {
+      refresh_memory_range(kernel_memory, addr, Uint32Array.BYTES_PER_ELEMENT);
       bytes = memory_bytes(
         kernel_memory,
         wasm_pointer_to_number(addr),

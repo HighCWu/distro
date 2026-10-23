@@ -3,6 +3,7 @@ import {
   memory_bytes,
   wasm_pointer_to_number,
   wasm_size_to_number,
+  refresh_memory_range,
   type WasmAddress,
 } from "./wasm.ts";
 
@@ -22,6 +23,7 @@ export function write_exec_image(
     const destination = wasm_size_to_number(offset);
     const count = wasm_size_to_number(length);
     if (destination > pending.byteLength - count) return -22;
+    refresh_memory_range(kernel, source, count);
     const bytes = memory_bytes(kernel, wasm_pointer_to_number(source), count);
     if (!bytes) return -22;
     pending.set(bytes, destination);

@@ -112,6 +112,29 @@ export function refresh_memory(memory: WebAssembly.Memory, address: WasmAddressT
   grow.call(memory, address === "i64" ? 0n : 0);
 }
 
+/** Refresh an insufficient fixed-length shared wrapper, never its actual size.
+ * Keep the raw pointer's width: memory64 grow takes a BigInt zero. Callers
+ * still validate bounds and retain their existing error/partial-copy policy. */
+export function refresh_memory_range(
+  memory: WebAssembly.Memory,
+  pointer: WasmAddress,
+  count: number,
+): void {
+  const offset = wasm_pointer_to_number(pointer);
+  const buffer = memory.buffer as ArrayBufferLike;
+  if (
+    typeof SharedArrayBuffer !== "undefined" &&
+    buffer instanceof SharedArrayBuffer &&
+    count > buffer.byteLength - offset
+  ) {
+    try {
+      refresh_memory(memory, typeof pointer === "bigint" ? "i64" : "i32");
+    } catch {
+      // An unavailable refresh is not permission to grow or to trap in uaccess.
+    }
+  }
+}
+
 const supported_user_module_imports = new Set([
   "env\0memory\0memory",
   "linux\0syscall\0function",
