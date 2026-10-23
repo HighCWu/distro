@@ -222,6 +222,21 @@ let
         chmod 0755 $out/deferred-cancel.wasm
         wasm-validate --enable-memory64 --enable-threads --enable-exceptions $out/deferred-cancel.wasm
       '';
+  threadReclaimProgram =
+    pkgs.runCommand "thread-reclaim-${platform.wasmArch}"
+      {
+        nativeBuildInputs = [
+          llvm-toolchain
+          pkgs.wabt
+        ];
+      }
+      ''
+        mkdir -p $out
+        clang ${compileFlags} -O2 -pthread -fno-stack-protector -Wall -Wextra -Werror \
+          -Wl,--wrap=__unmapself -Wl,--wrap=__libc_free ${./thread-reclaim.c} -o $out/thread-reclaim.wasm
+        chmod 0755 $out/thread-reclaim.wasm
+        wasm-validate --enable-memory64 --enable-threads --enable-exceptions $out/thread-reclaim.wasm
+      '';
   programs =
     pkgs.runCommand "toolchain-smoke-${platform.wasmArch}"
       {
@@ -238,6 +253,11 @@ let
           deferred-cancel = vm-test.rawInitramfsTest {
             name = "deferred-cancel-${platform.wasmArch}";
             init = "${cancellationProgram}/deferred-cancel.wasm";
+            cpus = 2;
+          };
+          thread-reclaim = vm-test.rawInitramfsTest {
+            name = "thread-reclaim-${platform.wasmArch}";
+            init = "${threadReclaimProgram}/thread-reclaim.wasm";
             cpus = 2;
           };
           user-access = vm-test.rawInitramfsTest {
