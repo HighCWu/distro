@@ -53,7 +53,11 @@ static pid_t trace_child(int exit_code)
 		sigset_t blocked, observed;
 		if (sigemptyset(&blocked) || sigaddset(&blocked, SIGUSR1) ||
 		    sigprocmask(SIG_SETMASK, &blocked, NULL) ||
-		    request(PTRACE_TRACEME, 0, 0, 0) || raise(SIGSTOP)) _exit(111);
+		    request(PTRACE_TRACEME, 0, 0, 0) ||
+		    /* musl raise temporarily blocks application signals and restores
+		     * that saved mask afterwards. Stop at the standard syscall itself
+		     * so the tracer can inspect/edit the intended persistent mask. */
+		    syscall(SYS_tkill, (long)getpid(), (long)SIGSTOP, 0L, 0L, 0L, 0L)) _exit(111);
 		if (word != replacement() || sigprocmask(SIG_SETMASK, NULL, &observed) ||
 		    sigismember(&observed, SIGUSR1) != 0 || sigismember(&observed, SIGUSR2) != 1 ||
 		    sigismember(&observed, SIGKILL) != 0 || sigismember(&observed, SIGSTOP) != 0)
@@ -98,9 +102,10 @@ int main(void)
 	require(request(PTRACE_GETSIGINFO, child, 0, (uintptr_t)&info) == 0 &&
 	        info.si_signo == SIGSTOP && info.si_pid == child && info.si_code == SI_TKILL,
 	        "generic signal information and sender identity");
-	require(request(PTRACE_GETEVENTMSG, child, 0, (uintptr_t)&event) == 0 && !event &&
-	        request(PTRACE_GETSIGMASK, child, sizeof mask, (uintptr_t)&mask) == 0 &&
-	        mask == bit(SIGUSR1), "generic event and original blocked mask");
+	require(request(PTRACE_GETEVENTMSG, child, 0, (uintptr_t)&event) == 0 && !event,
+	        "generic event message");
+	require(request(PTRACE_GETSIGMASK, child, sizeof mask, (uintptr_t)&mask) == 0 &&
+	        mask == bit(SIGUSR1), "original stopped mask");
 	errno = 0;
 	require((unsigned long)request(PTRACE_PEEKDATA, child, (uintptr_t)&word, 0) == ULONG_MAX && !errno,
 	        "all-ones peek is data, not an errno failure");
