@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: MIT
 import assert from "node:assert/strict";
 import test from "node:test";
-import { allocate_shared_memory } from "../src/wasm.ts";
+import { allocate_shared_memory, HALT_KERNEL } from "../src/wasm.ts";
 import {
   read_signal_stack_pointer,
   call_on_signal_stack,
@@ -189,6 +189,101 @@ for (const address of ["i32", "i64"] as const) {
     assert.equal(
       call_kernel_entry({}, address, () => 12),
       12,
+    );
+  });
+  test(`${address}: nested kernel calls restore live callback IRQs, not a dead task`, () => {
+    const stack = new WebAssembly.Global({ value: address, mutable: true }, p(60000));
+    let irq = 0,
+      saves = 0,
+      restores = 0;
+    const exports = {
+      __stack_pointer: stack,
+      callback_irq_save_v1() {
+        saves++;
+        return irq;
+      },
+      callback_irq_restore_v1(flags: number) {
+        assert.equal(stack.value, p(60000));
+        restores++;
+        irq = flags;
+      },
+    };
+    const jump = new WebAssembly.Exception(new WebAssembly.Tag({ parameters: [] }), []);
+    for (const enabled of [0, 1])
+      for (const failure of [undefined, jump, HALT_KERNEL]) {
+        saves = restores = 0;
+        stack.value = p(60000);
+        call_kernel_entry(exports, address, () => {
+          irq = enabled;
+          const inner = () =>
+            call_kernel_entry(exports, address, () => {
+              stack.value = p(58000);
+              irq = 1 - enabled;
+              if (failure) throw failure;
+              stack.value = p(60000); // Normal C return restores its own stack.
+              return 17;
+            });
+          if (failure) assert.throws(inner, (error) => error === failure);
+          else assert.equal(inner(), 17);
+          assert.equal(saves, 1);
+          assert.equal(restores, failure === HALT_KERNEL ? 0 : 1);
+          assert.equal(irq, failure === HALT_KERNEL ? 1 - enabled : enabled);
+          if (failure) assert.equal(stack.value, p(60000));
+        });
+      }
+    // A top-level invocation after an exception must not inherit stale depth.
+    const before = saves;
+    call_kernel_entry(exports, address, () => 21);
+    assert.equal(saves, before);
+  });
+  test(`${address}: incomplete and invalid callback IRQ ABI does not partially invoke`, () => {
+    const legacy: WebAssembly.Exports[] = [
+      { callback_irq_save_v1: () => assert.fail("must not invoke half an IRQ ABI") },
+      { callback_irq_restore_v1: () => assert.fail() },
+    ];
+    for (const exports of legacy) {
+      assert.equal(
+        call_kernel_entry(exports, address, () => call_kernel_entry(exports, address, () => 7)),
+        7,
+      );
+    }
+    let called = 0;
+    const exports = { callback_irq_save_v1: () => 2, callback_irq_restore_v1: () => assert.fail() };
+    call_kernel_entry(exports, address, () => {
+      assert.throws(
+        () => call_kernel_entry(exports, address, () => called++),
+        /invalid callback IRQ/,
+      );
+    });
+    assert.equal(called, 0);
+    assert.equal(
+      call_kernel_entry(exports, address, () => 19),
+      19,
+    );
+  });
+  test(`${address}: a trapping IRQ restoration cannot strand a live caller's C stack`, () => {
+    const stack = new WebAssembly.Global({ value: address, mutable: true }, p(60000));
+    const failure = new Error("kernel IRQ restoration failed");
+    const exports = {
+      __stack_pointer: stack,
+      callback_irq_save_v1: () => 1,
+      callback_irq_restore_v1() {
+        stack.value = p(58000);
+        throw failure;
+      },
+    };
+    call_kernel_entry(exports, address, () => {
+      stack.value = p(59000);
+      assert.throws(
+        () => call_kernel_entry(exports, address, () => 17),
+        (error) => error === failure,
+      );
+      assert.equal(stack.value, p(59000));
+      stack.value = p(60000);
+    });
+    assert.equal(
+      call_kernel_entry(exports, address, () => 19),
+      19,
     );
   });
   test(`${address}: refresh a stale shared-memory wrapper before rejecting a remotely grown stack`, () => {

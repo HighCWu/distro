@@ -7,6 +7,8 @@ export interface Instance extends WebAssembly.Instance {
   exports: {
     /** New kernels expose their C stack for non-local callback unwinding. */
     __stack_pointer?: WebAssembly.Global;
+    callback_irq_save_v1?(): number;
+    callback_irq_restore_v1?(flags: number): void;
     __indirect_function_table: WebAssembly.Table;
     boot(): void;
     trigger_irq(irq: number): void;

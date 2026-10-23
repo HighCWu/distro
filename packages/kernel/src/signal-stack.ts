@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: MIT
 import {
+  HALT_KERNEL,
   wasm_address_from_number,
   wasm_pointer_to_number,
   wasm_size_to_number,
@@ -7,6 +8,8 @@ import {
   type WasmAddress,
   type WasmAddressType,
 } from "./wasm.ts";
+
+const kernel_depth = new WeakMap<WebAssembly.Exports, number>();
 
 // Engine import matching validates both mutability and the exact integer type;
 // typeof(global.value) alone cannot distinguish an i32 stack from an f64 global.
@@ -103,13 +106,37 @@ export function call_kernel_entry<T>(
   invoke: () => T,
 ): T {
   const global = stack_global(exports, address);
-  if (!global) return invoke(); // Older kernel blobs retain their existing ABI.
-  const saved = global.value;
+  const saved = global?.value;
+  const depth = kernel_depth.get(exports) ?? 0;
+  const save_irq = exports.callback_irq_save_v1;
+  const restore_irq = exports.callback_irq_restore_v1;
+  let irq: number | undefined;
+  if (depth && typeof save_irq === "function" && typeof restore_irq === "function") {
+    const flags: unknown = save_irq();
+    if (flags !== 0 && flags !== 1) throw new Error("invalid callback IRQ execution ABI");
+    irq = flags;
+  }
+  let exited = false;
+  kernel_depth.set(exports, depth + 1);
   try {
     return invoke();
   } catch (error) {
-    global.value = saved;
+    exited = error === HALT_KERNEL;
+    if (global) global.value = saved;
     throw error;
+  } finally {
+    if (depth) kernel_depth.set(exports, depth);
+    else kernel_depth.delete(exports);
+    // A non-local user jump may resume inside the allocator. Restore its
+    // live kernel caller, but never enter C after do_exit handed the CPU away.
+    if (irq !== undefined && !exited && typeof restore_irq === "function") {
+      try {
+        restore_irq(irq);
+      } catch (error) {
+        if (global) global.value = saved;
+        throw error;
+      }
+    }
   }
 }
 
