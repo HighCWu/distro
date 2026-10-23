@@ -256,6 +256,10 @@ let
             name = "ipv6-${platform.wasmArch}";
             init = "${programs}/ipv6.wasm";
           };
+          socket-zerocopy = vm-test.rawInitramfsTest {
+            name = "socket-zerocopy-${platform.wasmArch}";
+            init = "${programs}/socket-zerocopy.wasm";
+          };
           fchmodat = vm-test.rawInitramfsTest {
             name = "fchmodat-${platform.wasmArch}";
             init = "${programs}/fchmodat.wasm";
@@ -326,6 +330,9 @@ let
         clang ${compileFlags} -O2 -Wall -Wextra -Werror ${./signal-nested-jump.c} -o $out/signal-nested-jump.wasm
         clang ${compileFlags} -I${../basic-init/tests} -pthread -O2 -Wall -Wextra -Werror ${../basic-init/tests/shared-user-growth.c} -o $out/shared-user-growth.wasm
         clang ${compileFlags} -O2 -Wall -Wextra -Werror ${./vmsplice.c} -o $out/vmsplice.wasm
+        clang ${compileFlags} -O2 -Wall -Wextra -Werror ${./socket-zerocopy.c} -o $out/socket-zerocopy.wasm
+        chmod 0755 $out/socket-zerocopy.wasm
+        wasm-validate --enable-memory64 --enable-threads --enable-exceptions $out/socket-zerocopy.wasm
         chmod 0755 $out/vmsplice.wasm
         wasm-validate --enable-memory64 --enable-threads --enable-exceptions $out/vmsplice.wasm
         chmod 0755 $out/shared-user-growth.wasm
