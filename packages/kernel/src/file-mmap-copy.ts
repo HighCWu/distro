@@ -48,6 +48,7 @@ export class FileMmapCopy {
     rounded: WasmAddress,
     source: WasmAddress,
     length: WasmAddress,
+    abort?: (error: unknown) => void,
   ): WasmAddress {
     if (this.active) return this.error(16); // EBUSY: no nested lease replacement
     const size = this.scalar(rounded);
@@ -62,6 +63,10 @@ export class FileMmapCopy {
     this.active = { source: start, length: count, used: false };
     try {
       return callback(rounded, length) as WasmAddress;
+    } catch (error) {
+      this.active = null;
+      abort?.(error);
+      throw error;
     } finally {
       this.active = null;
     }

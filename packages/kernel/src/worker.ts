@@ -627,7 +627,11 @@ function user_imports({
       },
       map(rounded, source, length) {
         assert(instance);
-        return mmap_copy.map(instance.exports, rounded, source, length);
+        return mmap_copy.map(instance.exports, rounded, source, length, (error) => {
+          // exit_thread already released callback resources before handing
+          // its CPU away. Never re-enter a dead task's kernel instance.
+          if (error !== HALT_KERNEL) get_kernel_instance().exports.abort_file_mmap_v1?.();
+        });
       },
     },
   };

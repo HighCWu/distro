@@ -210,6 +210,48 @@ for (const width of ["i32", "i64"] as const) {
       scalar(4096),
     );
   });
+
+  test(`${width}: callback abort revokes lease before cleanup and preserves the exact exception`, () => {
+    const { bridge, user } = setup();
+    const tag = new WebAssembly.Tag({ parameters: [] });
+    for (const error of [
+      new WebAssembly.RuntimeError("user trap"),
+      new WebAssembly.Exception(tag, []),
+      Symbol("non-local exec"),
+    ]) {
+      let calls = 0;
+      assert.throws(
+        () =>
+          bridge.map(
+            {
+              __wasm_mmap_init_v1: () => {
+                throw error;
+              },
+            },
+            scalar(4096),
+            scalar(0),
+            scalar(3),
+            (caught) => {
+              calls++;
+              assert.equal(caught, error);
+              assert.equal(bridge.copy(user, scalar(100), scalar(3)), -1);
+            },
+          ),
+        (caught) => caught === error,
+      );
+      assert.equal(calls, 1);
+    }
+    assert.equal(
+      bridge.map(
+        { __wasm_mmap_init_v1: () => scalar(-12) },
+        scalar(4096),
+        scalar(0),
+        scalar(3),
+        () => assert.fail("ordinary errno is not a non-local exit"),
+      ),
+      scalar(-12),
+    );
+  });
 }
 
 test("new user copy import is allowlisted without opening arbitrary kernel imports", () => {

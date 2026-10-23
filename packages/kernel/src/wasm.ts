@@ -28,6 +28,8 @@ export interface Instance extends WebAssembly.Instance {
     copy_worker_wait?(): void;
     /** Capability 1 joins unpublished Workers after a post-copy fork failure. */
     fork_worker_abort_abi?(): number;
+    /** Release the quiescent file copy before rethrowing a user callback exception. */
+    abort_file_mmap_v1?(): void;
   };
 }
 
