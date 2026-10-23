@@ -175,6 +175,11 @@ let
           init = "${program}/process-control.wasm";
           cpus = 2;
         };
+        passthru.checks.process-vm = vm-test.rawInitramfsTest {
+          name = "process-vm-${platform.wasmArch}";
+          init = "${program}/process-vm.wasm";
+          cpus = 2;
+        };
         passthru.checks.ptrace = vm-test.rawInitramfsTest {
           name = "ptrace-${platform.wasmArch}";
           init = "${program}/ptrace.wasm";
@@ -229,6 +234,9 @@ let
         wasm-linux-fork-finalize exec-fd-linked.wasm $out/exec-fd.wasm
         chmod 0755 $out/exec-fd.wasm
         wasm-linux-fork-cc -O2 -Wall -Wextra -Werror ${./process-control.c} -o process-control-linked.wasm
+        wasm-linux-fork-cc -O2 -Wall -Wextra -Werror ${./process-vm.c} -o process-vm-linked.wasm
+        wasm-linux-fork-finalize process-vm-linked.wasm $out/process-vm.wasm
+        chmod 0755 $out/process-vm.wasm
         wasm-linux-fork-cc -O2 -Wall -Wextra -Werror ${./ptrace.c} -o ptrace-linked.wasm
         wasm-linux-fork-finalize ptrace-linked.wasm $out/ptrace.wasm
         chmod 0755 $out/ptrace.wasm
