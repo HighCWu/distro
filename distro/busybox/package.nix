@@ -17,6 +17,17 @@
 }:
 
 let
+  namespaceHolder = stdenv.mkDerivation {
+    name = "busybox-namespace-holder-${platform.wasmArch}";
+    dontUnpack = true;
+    buildPhase = ''
+      $CC -O2 -Wall -Wextra -Werror ${./namespace-holder.c} -o namespace-holder
+    '';
+    installPhase = ''
+      mkdir -p $out/bin
+      cp namespace-holder $out/bin/
+    '';
+  };
   identity = value: builtins.baseNameOf "${value}";
   buildMetadata = pkgs.writeText "busybox-build.json" (
     builtins.toJSON {
@@ -97,7 +108,7 @@ stdenv.mkDerivation (finalAttrs: {
     config IFUP y
     config INETD n
     config NC y
-    config NSENTER n
+    config NSENTER y
     config SCRIPT y
     config START_STOP_DAEMON y
     config SWAPOFF n
@@ -130,6 +141,7 @@ stdenv.mkDerivation (finalAttrs: {
     config RTCWAKE n
 
     make -j$NIX_BUILD_CORES oldconfig
+    grep -qx 'CONFIG_NSENTER=y' .config
 
     runHook postConfigure
   '';
@@ -205,5 +217,14 @@ stdenv.mkDerivation (finalAttrs: {
       networking = check "networking" ./network-test.sh;
       inotify = check "inotify" ./inotify-test.sh;
       ipv6 = check "ipv6" ./ipv6-test.sh;
+      namespaces = vm-test.installedTest {
+        name = "busybox-namespaces";
+        init = ./namespace-test.sh;
+        contents = [ finalAttrs.finalPackage ];
+        files."/namespace-holder" = {
+          source = "${namespaceHolder}/bin/namespace-holder";
+          mode = "0755";
+        };
+      };
     };
 })
