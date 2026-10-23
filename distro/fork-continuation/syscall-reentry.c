@@ -38,8 +38,13 @@ static _Noreturn void fail(const char *what)
 	for (;;) sched_yield();
 #else
 	if (tracee > 0) {
-		kill(tracee, SIGKILL);
-		while (waitpid(tracee, NULL, 0) < 0 && errno == EINTR) {}
+		int status;
+		pid_t owned;
+		do owned = waitpid(tracee, &status, WNOHANG); while (owned < 0 && errno == EINTR);
+		if (!owned || (owned == tracee && WIFSTOPPED(status))) {
+			kill(tracee, SIGKILL);
+			while (waitpid(tracee, NULL, 0) < 0 && errno == EINTR) {}
+		}
 	}
 	exit(1);
 #endif

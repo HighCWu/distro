@@ -13,6 +13,20 @@
 static volatile unsigned long entry_started;
 static pid_t tracee, newborn;
 
+#ifndef __wasm__
+static void stop_owned_tracee(pid_t pid)
+{
+	if (pid <= 0) return;
+	int status;
+	pid_t owned;
+	do owned = waitpid(pid, &status, __WALL | WNOHANG); while (owned < 0 && errno == EINTR);
+	if (!owned || (owned == pid && WIFSTOPPED(status))) {
+		kill(pid, SIGKILL);
+		while (waitpid(pid, NULL, __WALL) < 0 && errno == EINTR) {}
+	}
+}
+#endif
+
 static _Noreturn void fail(const char *what)
 {
 	printf("::vm-test::fail: ptrace-entry: %s errno=%d\n", what, errno);
@@ -21,9 +35,8 @@ static _Noreturn void fail(const char *what)
 	for (;;) sched_yield();
 #else
 	/* Only the positive identities returned for this fixture's children. */
-	if (newborn > 0) kill(newborn, SIGKILL);
-	if (tracee > 0) kill(tracee, SIGKILL);
-	while (waitpid(-1, NULL, __WALL) > 0 || errno == EINTR) {}
+	stop_owned_tracee(newborn);
+	stop_owned_tracee(tracee);
 	exit(1);
 #endif
 }
