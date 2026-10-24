@@ -29,7 +29,7 @@ mount -t devtmpfs devtmpfs /dev || fail "mount devtmpfs"
 mount -t proc proc /proc || fail "mount proc"
 [ -r /proc/sysvipc/msg ] && [ -r /proc/sysvipc/sem ] || fail "kernel IPC proc interfaces"
 for program in ipcmk ipcrm ipcs lsipc; do
-  version=$($program --version) || fail "$program version"
+  version=$("$program" --version) || fail "$program version"
   contains "$version" 'util-linux' || fail "$program must be the upstream util-linux program"
 done
 
@@ -42,12 +42,16 @@ identifier "$semaphores"
 report=$(ipcs -q -i "$queue") || fail "query message queue"
 contains "$report" "msqid=$queue" || fail "message queue identity"
 report=$(ipcs -s -i "$semaphores") || fail "query semaphore set"
-contains "$report" "semid=$semaphores" && contains "$report" 'nsems = 2' || fail "semaphore identity/count"
+if ! contains "$report" "semid=$semaphores" || ! contains "$report" 'nsems = 2'; then
+  fail "semaphore identity/count"
+fi
 echo 'util-linux IPC: upstream creation, object identities and semaphore metadata pass'
 
 report=$(lsipc -q -i "$queue" --raw --noheadings -o ID) || fail "lsipc message queue"
 [ "$report" = "$queue" ] || fail "lsipc exact queue ID"
 report=$(lsipc -s -i "$semaphores" --raw --noheadings -o ID,NSEMS) || fail "lsipc semaphore set"
+# Raw numeric columns are deliberately split; globbing is disabled above.
+# shellcheck disable=SC2086
 set -- $report
 [ "$#" -eq 2 ] && [ "$1" = "$semaphores" ] && [ "$2" = 2 ] || fail "lsipc exact semaphore ID/count"
 echo 'util-linux IPC: smartcols-backed lsipc reports live objects pass'
