@@ -6,6 +6,7 @@
   llvm-toolchain,
   sysroot,
   vm-test,
+  extraChecks ? { },
 }:
 
 let
@@ -24,11 +25,14 @@ let
           llvm-toolchain
           pkgs.wabt
         ];
-        passthru.checks.runtime = vm-test.rawInitramfsTest {
-          name = "cpu-accounting-${platform.wasmArch}";
-          init = "${program}/cpu-accounting.wasm";
-          cpus = 2;
-        };
+        passthru.checks = {
+          runtime = vm-test.rawInitramfsTest {
+            name = "cpu-accounting-${platform.wasmArch}";
+            init = "${program}/cpu-accounting.wasm";
+            cpus = 2;
+          };
+        }
+        // extraChecks;
       }
       ''
         mkdir -p $out
