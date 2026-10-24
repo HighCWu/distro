@@ -116,6 +116,13 @@ lib.makeScope (scope: lib.callPackageWith ({ inherit lib pkgs; } // scope)) (
     };
     toolchain-smoke-runtime-wasm64 = self.toolchain-smoke-wasm64.checks.c-runtime;
     public-syscall = callPackage ./public-syscall/package.nix { };
+    clone-arguments = callPackage ./clone-arguments/package.nix { };
+    clone-arguments-wasm64 = callPackage ./clone-arguments/package.nix {
+      platform = self.platform-wasm64;
+      llvm-toolchain = self.llvm-toolchain-wasm64;
+      sysroot = self.sysroot-wasm64;
+      vm-test = vmTestWasm64;
+    };
     seccomp-strict = callPackage ./seccomp-strict/package.nix { };
     seccomp-strict-wasm64 = callPackage ./seccomp-strict/package.nix {
       sdk-fork-continuation = self.sdk-fork-continuation-wasm64;

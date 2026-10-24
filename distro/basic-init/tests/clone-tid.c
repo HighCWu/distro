@@ -36,7 +36,7 @@ int main(void)
 	pid = clone(child, stack + stack_size,
 		    CLONE_VM | CLONE_VFORK | CLONE_PARENT_SETTID |
 			    CLONE_CHILD_SETTID | SIGCHLD,
-		    &args, &parent_tid, &child_tid);
+		    &args, &parent_tid, NULL, &child_tid);
 	if (pid == -1)
 		test_perror("clone");
 	if (waitpid(pid, &status, 0) == -1)
