@@ -15,8 +15,8 @@
     inherit pkgs;
     owner = "HighCWu";
     repo = "linux";
-    rev = "e7e5a27fa4cfa28f9a3faae482b8770730c8bfaf";
-    hash = "sha256-u14S/G0GJ2ro3uQ8FVtyaurU2Fhlud/ky/V2AnPrnDY=";
+    rev = "5cb7904c5505cdbacc9b4702a8bc258ba2dc92cc";
+    hash = "sha256-NEZpP2PZeRKEgpLTd9bbnVwFfeCxXRIF37OKEOxt3IU=";
   },
 }:
 
@@ -127,12 +127,21 @@ pkgs.stdenvNoCC.mkDerivation (finalAttrs: {
 
     # Verify the resolved Kconfig, not merely the input defconfig intent.
     grep -qx 'CONFIG_INOTIFY_USER=y' .config
+    for option in FANOTIFY FANOTIFY_ACCESS_PERMISSIONS; do
+      if ! grep -qx "CONFIG_$option=y" .config; then
+        echo "Missing required kernel config: CONFIG_$option=y" >&2
+        exit 1
+      fi
+    done
     grep -qx 'CONFIG_FSNOTIFY=y' .config
     grep -qx 'CONFIG_IPV6=y' .config
     grep -qx 'CONFIG_SYSVIPC=y' .config
     grep -qx 'CONFIG_FHANDLE=y' .config
     for option in EROFS_FS_XATTR EROFS_FS_POSIX_ACL EROFS_FS_SECURITY EROFS_FS_BACKED_BY_FILE; do
-      grep -qx "CONFIG_$option=y" .config
+      if ! grep -qx "CONFIG_$option=y" .config; then
+        echo "Missing required kernel config: CONFIG_$option=y" >&2
+        exit 1
+      fi
     done
     grep -qx 'CONFIG_EXPORTFS=y' .config
     grep -qx 'CONFIG_DNOTIFY=y' .config
