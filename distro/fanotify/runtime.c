@@ -115,7 +115,8 @@ static void permission_events(const char *path, const struct stat *original)
                 "reply and close permission descriptor");
         void *returned;
         int joined = pthread_join(thread, &returned);
-        int controlled = joined == 0 && returned == NULL &&
+        require(joined == 0, "join permission opener before reading its result");
+        int controlled = returned == NULL &&
                 (allow ? request.result == 0 : request.result == -1 && request.error == EPERM);
         if (!controlled)
             fprintf(stderr, "fanotify: allow=%d join=%d open-result=%d open-errno=%d\n",
