@@ -324,6 +324,12 @@ lib.makeScope (scope: lib.callPackageWith ({ inherit lib pkgs; } // scope)) (
     dropbear = callPackage ./dropbear/package.nix { };
     e2fsprogs = callPackage ./e2fsprogs/package.nix { };
     file = callPackage ./file/package.nix { };
+    file-wasm64 = self.file.override {
+      stdenv = self.stdenv-wasm64;
+      zlib = self.zlib-wasm64;
+      busybox = self.busybox-wasm64;
+      vm-test = vmTestWasm64;
+    };
     findutils = callPackage ./findutils/package.nix { };
     gawk = callPackage ./gawk/package.nix { };
     git = callPackage ./git/package.nix { };
@@ -407,6 +413,19 @@ lib.makeScope (scope: lib.callPackageWith ({ inherit lib pkgs; } // scope)) (
     };
     tar = callPackage ./tar/package.nix { };
     util-linux = callPackage ./util-linux/package.nix { };
+    util-linux-wasm64 = self.util-linux.override {
+      platform = self.platform-wasm64;
+      stdenv = self.stdenv-wasm64;
+      file = self.file-wasm64;
+      zlib = self.zlib-wasm64;
+      ncurses = self.ncurses-wasm64;
+      readline = self.readline-wasm64;
+      # Consume the installed target archive and relocatable pkg-config data,
+      # not the SQLite CLI output or a library from the default wasm32 scope.
+      sqlite3 = self.sqlite3-wasm64.dev;
+      busybox = self.busybox-wasm64;
+      vm-test = vmTestWasm64;
+    };
     vim = callPackage ./vim/package.nix { };
     vim-wasm64 = self.vim.override {
       stdenv = self.stdenv-wasm64;

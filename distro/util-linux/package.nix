@@ -1,5 +1,7 @@
 {
   pkgs,
+  platform,
+  llvm-toolchain-unwrapped,
   stdenv,
   src ? pkgs.fetchzip {
     url = "mirror://kernel/linux/utils/util-linux/v2.42/util-linux-2.42.2.tar.xz";
@@ -32,6 +34,7 @@ stdenv.mkDerivation (finalAttrs: {
     pkgs.autoconf
     pkgs.automake
     pkgs.pkg-config
+    pkgs.nodejs
   ];
   buildInputs = [
     ncurses
@@ -63,6 +66,18 @@ stdenv.mkDerivation (finalAttrs: {
     cp test_fileutils test_pager test_switch_root test_ttymsg test_sulogin \
       test_mount_context_mount test_fd_events \
       "$testSupport/libexec/util-linux-tests/"
+  '';
+
+  # Validate the final modules, including private test helpers and the two
+  # executable dependencies installed in the same root. Never infer pointer
+  # width from an attribute name or from cross-compiler selection alone.
+  postFixup = ''
+    LLVM_READOBJ=${llvm-toolchain-unwrapped}/bin/llvm-readobj \
+      bash ${./check-install.sh} "$out" "$testSupport" \
+      ${file}/bin/file ${busybox}/bin/busybox \
+      ${toString platform.addressBits} ${toString platform.maximumMemoryBytes} \
+      ${../../packages/kernel/src/wasm_binary.ts} ${../busybox/check-binary.mjs} \
+      ${file} ${zlib} ${ncurses} ${readline} ${sqlite3}
   '';
 
   # Upstream's default suite is the baseline. BusyBox overlap is deliberately
