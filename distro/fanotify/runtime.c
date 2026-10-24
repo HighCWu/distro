@@ -114,9 +114,13 @@ static void permission_events(const char *path, const struct stat *original)
         require(write(group, &response, sizeof response) == sizeof response && close(event.fd) == 0,
                 "reply and close permission descriptor");
         void *returned;
-        require(pthread_join(thread, &returned) == 0 && returned == NULL &&
-                (allow ? request.result == 0 : request.result == -1 && request.error == EACCES),
-                "permission reply controls actual open result");
+        int joined = pthread_join(thread, &returned);
+        int controlled = joined == 0 && returned == NULL &&
+                (allow ? request.result == 0 : request.result == -1 && request.error == EPERM);
+        if (!controlled)
+            fprintf(stderr, "fanotify: allow=%d join=%d open-result=%d open-errno=%d\n",
+                    allow, joined, request.result, request.error);
+        require(controlled, "permission reply controls actual open result");
     }
     require(!ready(group, 0) && close(group) == 0, "permission group drained and closed");
 }
