@@ -115,6 +115,14 @@ lib.makeScope (scope: lib.callPackageWith ({ inherit lib pkgs; } // scope)) (
       busybox = self.busybox-wasm64;
     };
     toolchain-smoke-runtime-wasm64 = self.toolchain-smoke-wasm64.checks.c-runtime;
+    user-fault-group = callPackage ./user-fault-group/package.nix { };
+    user-fault-group-wasm64 = callPackage ./user-fault-group/package.nix {
+      platform = self.platform-wasm64;
+      llvm-toolchain = self.llvm-toolchain-wasm64;
+      sysroot = self.sysroot-wasm64;
+      sdk-fork-continuation = self.sdk-fork-continuation-wasm64;
+      vm-test = vmTestWasm64;
+    };
     keyrings = callPackage ./keyrings/package.nix { };
     keyrings-wasm64 = callPackage ./keyrings/package.nix {
       platform = self.platform-wasm64;
