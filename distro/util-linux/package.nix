@@ -72,6 +72,14 @@ stdenv.mkDerivation (finalAttrs: {
   # executable dependencies installed in the same root. Never infer pointer
   # width from an attribute name or from cross-compiler selection alone.
   postFixup = ''
+    # SQLite's relocatable SDK .pc describes its Nix build-stage location
+    # when libtool records dependency_libs. Installed metadata describes the
+    # FHS target instead. Keep lastlog2 and its static archive; rewrite only
+    # this known dependency root, then retain the normal payload rejection.
+    substituteInPlace "$out/lib/liblastlog2.la" \
+      --replace-quiet "${sqlite3}/lib/pkgconfig/../../lib" /lib \
+      --replace-quiet "${sqlite3}/lib" /lib
+    bash ${../apk/check-store-references.sh} "$out"
     LLVM_READOBJ=${llvm-toolchain-unwrapped}/bin/llvm-readobj \
       bash ${./check-install.sh} "$out" "$testSupport" \
       ${file}/bin/file ${busybox}/bin/busybox \
