@@ -18,6 +18,7 @@ import {
   type Imports,
   type Instance,
   kernel_imports,
+  user_context_imports,
   MachineTerminationReason,
   type WasmAddress,
   wasm_address_from_number,
@@ -509,6 +510,7 @@ export async function bootMachine(options: BootMachineOptions): Promise<Machine>
         stack_pointer: unavailable,
         call_handler: unavailable,
       },
+      user_context_v1: user_context_imports(),
       user_v2: {
         mremap_fixed: unavailable,
         mmap_fixed: unavailable,

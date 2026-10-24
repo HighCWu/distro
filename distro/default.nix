@@ -30,6 +30,14 @@ lib.makeScope (scope: lib.callPackageWith ({ inherit lib pkgs; } // scope)) (
       apk = self.apk-wasm64;
       image = self.image-wasm64;
     };
+    vtimeVm32 = self.vm-test.override {
+      kernel = self.kernel.override { linux = self.linux.override { vtimeCandidate = true; }; };
+    };
+    vtimeVm64 = vmTestWasm64.override {
+      kernel = self.kernel-wasm64.override {
+        linux = self.linux-wasm64.override { vtimeCandidate = true; };
+      };
+    };
     stdenvReleaseWasm64 = import ./stdenv.nix {
       inherit pkgs;
       platform = self.platform-wasm64;
@@ -102,6 +110,13 @@ lib.makeScope (scope: lib.callPackageWith ({ inherit lib pkgs; } // scope)) (
       busybox = self.busybox-wasm64;
     };
     toolchain-smoke-runtime-wasm64 = self.toolchain-smoke-wasm64.checks.c-runtime;
+    cpu-accounting = callPackage ./cpu-accounting/package.nix { vm-test = vtimeVm32; };
+    cpu-accounting-wasm64 = callPackage ./cpu-accounting/package.nix {
+      platform = self.platform-wasm64;
+      llvm-toolchain = self.llvm-toolchain-wasm64;
+      sysroot = self.sysroot-wasm64;
+      vm-test = vtimeVm64;
+    };
     sdk-fork-continuation = callPackage ./fork-continuation/sdk.nix { };
     sdk-fork-continuation-wasm64 = callPackage ./fork-continuation/sdk.nix {
       platform = self.platform-wasm64;

@@ -9,6 +9,7 @@
   wasmBits ? 32,
   mmapCopyTest ? false,
   fileMmapCandidate ? false,
+  vtimeCandidate ? false,
   llvm-toolchain-unwrapped,
   src ? import ./fetch-source.nix {
     inherit pkgs;
@@ -41,6 +42,7 @@ let
         debug
         mmapCopyTest
         fileMmapCandidate
+        vtimeCandidate
         ;
       sourceIdentity = identity src;
       llvmToolchainIdentity = identity llvm-toolchain-unwrapped;
@@ -100,9 +102,28 @@ pkgs.stdenvNoCC.mkDerivation (finalAttrs: {
     ${lib.optionalString fileMmapCandidate ''
       scripts/config --enable WASM_FILE_MMAP
     ''}
-    ${lib.optionalString (mmapCopyTest || fileMmapCandidate) ''
+    ${lib.optionalString vtimeCandidate ''
+      scripts/config --enable WASM_VTIME --disable TICK_CPU_ACCOUNTING \
+        --enable VIRT_CPU_ACCOUNTING_GEN --enable CONTEXT_TRACKING_USER_FORCE
+    ''}
+    ${lib.optionalString (mmapCopyTest || fileMmapCandidate || vtimeCandidate) ''
       make olddefconfig
     ''}
+
+    ${
+      if vtimeCandidate then
+        ''
+          for option in WASM_VTIME VIRT_CPU_ACCOUNTING_GEN CONTEXT_TRACKING_USER CONTEXT_TRACKING_USER_FORCE; do
+            grep -qx "CONFIG_$option=y" .config
+          done
+          ! grep -qx 'CONFIG_TICK_CPU_ACCOUNTING=y' .config
+        ''
+      else
+        ''
+          ! grep -qx 'CONFIG_WASM_VTIME=y' .config
+          ! grep -qx 'CONFIG_VIRT_CPU_ACCOUNTING_GEN=y' .config
+        ''
+    }
 
     # Verify the resolved Kconfig, not merely the input defconfig intent.
     grep -qx 'CONFIG_INOTIFY_USER=y' .config
@@ -153,7 +174,7 @@ pkgs.stdenvNoCC.mkDerivation (finalAttrs: {
       ''
             cd ${finalAttrs.finalPackage}
             sha256sum --check linux-build/SHA256SUMS
-        jq --exit-status '.schemaVersion == 1 and .wasmBits == ${toString wasmBits} and .debug == ${builtins.toJSON debug} and .mmapCopyTest == ${builtins.toJSON mmapCopyTest} and .fileMmapCandidate == ${builtins.toJSON fileMmapCandidate}' linux-build/build.json
+        jq --exit-status '.schemaVersion == 1 and .wasmBits == ${toString wasmBits} and .debug == ${builtins.toJSON debug} and .mmapCopyTest == ${builtins.toJSON mmapCopyTest} and .fileMmapCandidate == ${builtins.toJSON fileMmapCandidate} and .vtimeCandidate == ${builtins.toJSON vtimeCandidate}' linux-build/build.json
             test -s linux-build/kernel.config
             test -s linux-build/LICENSES/preferred/GPL-2.0
             touch $out

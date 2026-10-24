@@ -303,6 +303,9 @@ export interface Imports {
     mmap(len: WasmAddress): WasmAddress;
     munmap(addr: WasmAddress, len: WasmAddress): WasmAddress;
   };
+  user_context_v1: {
+    abi(): number;
+  };
   user_signal_v1: {
     stack_pointer(to: WasmAddress): number;
     call_handler(
@@ -359,6 +362,11 @@ export interface Imports {
 }
 
 export const HALT_KERNEL = Symbol("halt kernel");
+
+/** Kernel/host-only version. Applications do not import this namespace. */
+export function user_context_imports(): Imports["user_context_v1"] {
+  return { abi: () => 1 };
+}
 
 export function kernel_imports({
   address,
