@@ -115,6 +115,13 @@ lib.makeScope (scope: lib.callPackageWith ({ inherit lib pkgs; } // scope)) (
       busybox = self.busybox-wasm64;
     };
     toolchain-smoke-runtime-wasm64 = self.toolchain-smoke-wasm64.checks.c-runtime;
+    erofs-metadata = callPackage ./erofs-metadata/package.nix { };
+    erofs-metadata-wasm64 = callPackage ./erofs-metadata/package.nix {
+      platform = self.platform-wasm64;
+      llvm-toolchain = self.llvm-toolchain-wasm64;
+      sysroot = self.sysroot-wasm64;
+      vm-test = vmTestWasm64;
+    };
     cpu-accounting = callPackage ./cpu-accounting/package.nix {
       vm-test = vtimeVm32;
       extraChecks = vtimeChecks vtimeVm32 self.toolchain-smoke self.fork-continuation;
