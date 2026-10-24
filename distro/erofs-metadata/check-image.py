@@ -21,10 +21,31 @@ assert xattr_count > 0, "fixture root must contain its directory attribute"
 inode_size = 64 if format_ & 1 else 32
 shared_count = data[inode + inode_size + 4]
 assert bool(shared_count) == shared, "root xattr storage does not match selected fixture"
+attributes = {}
+
+
+def entry_at(offset, limit):
+    name_size, index, value_size = struct.unpack_from("<BBH", data, offset)
+    end = offset + 4 + name_size + value_size
+    assert index == 1 and end <= limit, "expected bounded user-namespace fixture attribute"
+    name = data[offset + 4:offset + 4 + name_size].decode("ascii")
+    assert name not in attributes, "duplicate fixture attribute"
+    attributes[name] = data[offset + 4 + name_size:end]
+    return (end + 3) & ~3
+
+
 if shared:
     # A small image can place shared entries in filesystem block zero too.
     for i in range(shared_count):
         index = struct.unpack_from("<I", data, inode + inode_size + 12 + i * 4)[0]
         entry = (xattr_block << block_bits) + index * 4
         assert entry + 4 <= len(data), "shared xattr entry outside fixture"
+        entry_at(entry, len(data))
+offset = inode + inode_size + 12 + shared_count * 4
+limit = inode + inode_size + 12 + (xattr_count - 1) * 4
+while offset < limit:
+    offset = entry_at(offset, limit)
+assert offset == limit
+assert attributes == {"binary": bytes([0, 1, 2, 0, 255, 127, 128]), "empty": b"", "directory": b"dir"}, \
+    "root binary/empty/directory metadata differs from fixture source"
 print("EROFS fixture confirmed: " + sys.argv[2] + " xattr storage")

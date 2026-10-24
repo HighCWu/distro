@@ -21,23 +21,24 @@ let
     pkgs.runCommand "erofs-metadata-${toString tolerance}.erofs"
       {
         nativeBuildInputs = [
-          pkgs.attr
           pkgs.erofs-utils
           pkgs.python3
         ];
       }
       ''
-          mkdir root
-          install -m 0644 ${pkgs.writeText "metadata-file" "contents\n"} root/file
-          ln -s file root/link
-          setfattr -n user.binary -v 0x00010200ff7f80 root/file
-          setfattr -n user.empty -v "" root/file
-          setfattr -n user.directory -v dir root
-        setfattr -n user.binary -v 0x00010200ff7f80 root
-        setfattr -n user.empty -v "" root
-          mkfs.erofs --all-root -T 0 -U 00000000-0000-0000-0000-000000000000 \
-            -x${toString tolerance} "$out" root
-          fsck.erofs "$out"
+        ${
+          if tolerance == 0 then
+            ''
+              python3 ${./shared-image.py} "$out"
+            ''
+          else
+            ''
+              python3 ${./make-fixture.py} --tar root.tar
+              mkfs.erofs --all-root -T 0 -U 00000000-0000-0000-0000-000000000000 \
+                --tar=f -x${toString tolerance} "$out" < root.tar
+            ''
+        }
+        fsck.erofs "$out"
         python3 ${./check-image.py} "$out" ${if tolerance == 0 then "shared" else "inline"}
       '';
   program =
@@ -54,6 +55,11 @@ let
             (image 99)
             (image 0)
           ];
+          files = {
+            "/inline.erofs" = image 99;
+            "/shared.erofs" = image 0;
+            "/invalid.erofs" = pkgs.writeText "invalid-erofs" "not an EROFS image\n";
+          };
           readOnlyDisks = true;
         };
       }

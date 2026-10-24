@@ -22,6 +22,31 @@ static void require(int ok, const char *what)
     _Exit(1);
 }
 
+static void payload(const char *root)
+{
+    char path[512];
+    int n = snprintf(path, sizeof path, "%s/payload", root);
+    require(n > 0 && (size_t)n < sizeof path, "payload path");
+    int fd = open(path, O_RDONLY | O_CLOEXEC);
+    require(fd >= 0, "open multi-page payload");
+    struct stat st;
+    require(fstat(fd, &st) == 0 && st.st_size == 131089, "payload size");
+    unsigned char buffer[4093];
+    size_t offset = 0;
+    while (offset < 131089) {
+        ssize_t got = pread(fd, buffer, sizeof buffer, (off_t)offset);
+        if (got == -1 && errno == EINTR) continue;
+        require(got > 0 && (size_t)got <= 131089 - offset, "bounded payload read");
+        for (ssize_t i = 0; i < got; ++i) {
+            size_t index = offset + (size_t)i;
+            require(buffer[i] == (unsigned char)(index * 37 + (index >> 8)), "payload byte at page boundary");
+        }
+        offset += (size_t)got;
+    }
+    require(pread(fd, buffer, sizeof buffer, (off_t)offset) == 0 && close(fd) == 0,
+            "payload EOF and descriptor cleanup");
+}
+
 static void attributes(const char *root)
 {
     char path[512], link[512];
@@ -42,6 +67,10 @@ static void attributes(const char *root)
             "empty attribute differs from missing attribute");
     require(getxattr(root, "user.directory", value, sizeof value) == 3 &&
             !memcmp(value, "dir", 3), "directory attribute");
+    require(getxattr(root, "user.binary", value, sizeof value) == sizeof binary &&
+            !memcmp(value, binary, sizeof binary) &&
+            getxattr(root, "user.empty", value, sizeof value) == 0,
+            "root inline/shared binary and empty attribute values");
 
     ssize_t count = listxattr(path, NULL, 0);
     require(count > 0 && count <= 4096, "discover bounded attribute names");
@@ -99,15 +128,37 @@ int main(int argc, char **argv)
         require(statfs("/metadata", &fs) == 0 && fs.f_type == 0xe0f5e1e2UL,
                 "actual EROFS filesystem");
         attributes("/metadata");
+        payload("/metadata");
         puts(i ? "erofs-metadata: shared binary/empty/directory attributes, lists and errors pass" :
                  "erofs-metadata: inline binary/empty/directory attributes, lists and errors pass");
         require(umount("/metadata") == 0, "unmount without retained file references");
     }
+    const char *images[] = {"/inline.erofs", "/shared.erofs"};
+    errno = 0;
+    require(mount("/invalid.erofs", "/metadata", "erofs", MS_RDONLY, NULL) == -1 && errno == EINVAL,
+            "invalid regular image rejected before later valid mount");
+    for (unsigned i = 0; i < 2; ++i) {
+        require(mount(images[i], "/metadata", "erofs", MS_RDONLY, NULL) == 0,
+                "mount regular image without a loop device");
+        if (i == 0)
+            require(rename(images[i], "/renamed.erofs") == 0 && unlink("/renamed.erofs") == 0,
+                    "mounted file retains backing after source rename and unlink");
+        attributes("/metadata");
+        payload("/metadata");
+        int held = open("/metadata/payload", O_RDONLY | O_CLOEXEC);
+        require(held >= 0, "hold reference across busy unmount");
+        errno = 0;
+        require(umount("/metadata") == -1 && errno == EBUSY, "busy file-backed mount rejected");
+        require(close(held) == 0, "release mount reference");
+        require(umount("/metadata") == 0, "file-backed mount cleanup");
+    }
+    puts("erofs-metadata: regular-file image mounts, attributes and multi-page data pass");
     require(rmdir("/metadata") == 0 && umount("/dev") == 0, "mount cleanup");
     puts("erofs-metadata: read-only preservation and mount cleanup pass");
 #else
     require(argc == 2, "native fixture directory argument");
     attributes(argv[1]);
+    payload(argv[1]);
     puts("erofs-metadata: native attribute workload pass (not EROFS mount evidence)");
 #endif
     puts("::vm-test::pass");

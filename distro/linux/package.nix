@@ -15,8 +15,8 @@
     inherit pkgs;
     owner = "HighCWu";
     repo = "linux";
-    rev = "0ace1779107cd575dced87315b66edf782d21056";
-    hash = "sha256-QcD0PcWcZXnooENnIIg0Ky/Q+n6GlhZjiHHfFo9H8HQ=";
+    rev = "e7e5a27fa4cfa28f9a3faae482b8770730c8bfaf";
+    hash = "sha256-u14S/G0GJ2ro3uQ8FVtyaurU2Fhlud/ky/V2AnPrnDY=";
   },
 }:
 
@@ -131,7 +131,7 @@ pkgs.stdenvNoCC.mkDerivation (finalAttrs: {
     grep -qx 'CONFIG_IPV6=y' .config
     grep -qx 'CONFIG_SYSVIPC=y' .config
     grep -qx 'CONFIG_FHANDLE=y' .config
-    for option in EROFS_FS_XATTR EROFS_FS_POSIX_ACL EROFS_FS_SECURITY; do
+    for option in EROFS_FS_XATTR EROFS_FS_POSIX_ACL EROFS_FS_SECURITY EROFS_FS_BACKED_BY_FILE; do
       grep -qx "CONFIG_$option=y" .config
     done
     grep -qx 'CONFIG_EXPORTFS=y' .config
