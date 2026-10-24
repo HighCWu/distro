@@ -47,6 +47,7 @@ import { write_exec_image } from "./exec-image.ts";
 import {
   ForkContinuation,
   dispatch_fork_syscall,
+  dispatch_fork_checkpoint,
   type CloneSyscallLayout,
   fork_continuation_exports_supported,
   uses_fork_continuation,
@@ -231,6 +232,7 @@ function user_imports({
           signal_depth === 0 && call_entry === call_start,
           invoke,
           layout,
+          kernel_instance.exports.seccomp_strict_v1?.() === 1,
         );
         if (instance !== original_instance) {
           call_entry = call_start;
@@ -241,8 +243,27 @@ function user_imports({
     return new WebAssembly.Instance(context.module, {
       env: { memory: context.memory },
       linux_fork_v1: {
-        checkpoint: (descriptor: WasmAddress) =>
-          fork?.checkpoint(descriptor, signal_depth === 0 && call_entry === call_start) ?? -38,
+        checkpoint: (descriptor: WasmAddress) => {
+          const word = (n: number): WasmAddress => (kernel_address === "i64" ? BigInt(n) : n);
+          return dispatch_fork_checkpoint(
+            fork,
+            descriptor,
+            signal_depth === 0 && call_entry === call_start,
+            () =>
+              call_kernel_entry(kernel_instance.exports, kernel_address, () =>
+                kernel_instance.exports.syscall(
+                  word(220),
+                  word(0),
+                  word(0),
+                  word(17),
+                  word(0),
+                  word(0),
+                  word(0),
+                ),
+              ),
+            kernel_instance.exports.seccomp_strict_v1?.() === 1,
+          );
+        },
       },
       linux_mmap_init_v1: {
         copy: (to: WasmAddress, length: WasmAddress) => mmap_copy.copy(context.memory, to, length),

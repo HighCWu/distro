@@ -101,7 +101,11 @@ export function dispatch_fork_syscall(
   allowed: boolean,
   invoke: () => WasmAddress,
   layout: CloneSyscallLayout = "callback-v1",
+  strict = false,
 ): WasmAddress {
+  // No local validation, descriptor lookup or user-memory read may precede
+  // kernel policy. Let the real entry kill/trace/skip the original syscall.
+  if (strict) return fork ? fork.kernelCall(invoke) : invoke();
   const zero = (value: WasmAddress | undefined) => value === 0 || value === 0n;
   if (nr === 435 || nr === 435n) {
     // clone3 has no legacy callback layout. Never let it reach copy_thread
@@ -139,6 +143,17 @@ export function dispatch_fork_syscall(
     return typeof nr === "bigint" ? BigInt(result) : result;
   }
   return fork ? fork.kernelCall(invoke) : invoke();
+}
+
+export function dispatch_fork_checkpoint(
+  fork: ForkContinuation | null,
+  descriptor: WasmAddress,
+  allowed: boolean,
+  invoke: () => WasmAddress,
+  strict = false,
+): number {
+  if (strict) return Number(fork ? fork.kernelCall(invoke) : invoke());
+  return fork?.checkpoint(descriptor, allowed) ?? -38;
 }
 
 export class ForkContinuation {

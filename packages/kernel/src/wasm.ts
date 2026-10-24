@@ -9,6 +9,8 @@ export interface Instance extends WebAssembly.Instance {
     __stack_pointer?: WebAssembly.Global;
     callback_irq_save_v1?(): number;
     callback_irq_restore_v1?(flags: number): void;
+    /** Strict policy requires kernel entry before host-side syscall adapters. */
+    seccomp_strict_v1?(): number;
     /** Private execution phase: 0 kernel, 1 user, 2 query; returns old phase. */
     user_context_v1?(mode: number): number;
     __indirect_function_table: WebAssembly.Table;

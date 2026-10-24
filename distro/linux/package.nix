@@ -15,8 +15,8 @@
     inherit pkgs;
     owner = "HighCWu";
     repo = "linux";
-    rev = "2e93dea45212407587c989c4567021efcee90f8b";
-    hash = "sha256-RxjJoelROJI++wa3Dzm7VWBzGkOdwPWC9FodoSg1ddA=";
+    rev = "97d6ca9eadb53fdabb2e27b44e8ec90225e81415";
+    hash = "sha256-YkyeLleqv4/Qd9COdzyatXkYtCbIqqRurqVa8Nx6/wk=";
   },
 }:
 
@@ -137,6 +137,10 @@ pkgs.stdenvNoCC.mkDerivation (finalAttrs: {
     grep -qx 'CONFIG_IPV6=y' .config
     grep -qx 'CONFIG_SYSVIPC=y' .config
     grep -qx 'CONFIG_FHANDLE=y' .config
+    grep -qx 'CONFIG_HAVE_ARCH_SECCOMP=y' .config
+    grep -qx 'CONFIG_SECCOMP=y' .config
+    ! grep -qx 'CONFIG_HAVE_ARCH_SECCOMP_FILTER=y' .config
+    ! grep -qx 'CONFIG_SECCOMP_FILTER=y' .config
     for option in EROFS_FS_XATTR EROFS_FS_POSIX_ACL EROFS_FS_SECURITY EROFS_FS_BACKED_BY_FILE; do
       if ! grep -qx "CONFIG_$option=y" .config; then
         echo "Missing required kernel config: CONFIG_$option=y" >&2

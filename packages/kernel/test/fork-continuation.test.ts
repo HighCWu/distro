@@ -4,6 +4,7 @@ import test from "node:test";
 import {
   ForkContinuation,
   dispatch_fork_syscall,
+  dispatch_fork_checkpoint,
   fork_continuation_exports_supported,
   uses_fork_continuation,
   resume_fork_parent,
@@ -182,6 +183,42 @@ test("syscall import versions are explicit; an unknown version is not admitted",
 });
 
 for (const address of ["i32", "i64"] as const) {
+  test(`${address}: strict policy enters the kernel before any fork adapter work`, () => {
+    const f = fixture(address, true);
+    const p = f.pointer;
+    const trap = new Error("kernel policy killed task");
+    let entered = 0;
+    const invoke = () => {
+      entered++;
+      throw trap;
+    };
+    for (const controller of [f.controller, null]) {
+      for (const layout of ["callback-v1", "flags-v2"] as const) {
+        for (const nr of [220, 435, 172]) {
+          assert.throws(
+            () => dispatch_fork_syscall(controller, p(nr), [], false, invoke, layout, true),
+            (error) => error === trap,
+          );
+          assert.equal(f.exports.asyncify_get_state(), 0);
+        }
+      }
+      assert.throws(
+        () => dispatch_fork_checkpoint(controller, p(0), false, invoke, true),
+        (error) => error === trap,
+      );
+      assert.equal(
+        dispatch_fork_checkpoint(controller, p(0), false, () => p(-38), true),
+        -38,
+      );
+      assert.equal(
+        dispatch_fork_syscall(controller, p(435), [], false, () => p(-17), "flags-v2", true),
+        p(-17),
+      );
+    }
+    assert.equal(entered, 14);
+    // The guard must be left balanced even when the real entry never returns.
+    assert.equal(f.controller.syscallCheckpoint(true), 0);
+  });
   test(`${address}: raw high stack and TLS registers survive parent and child restore`, () => {
     const registers = {
       stack: address === "i32" ? 0x80000040 : 0x100000040,
