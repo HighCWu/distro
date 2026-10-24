@@ -5,7 +5,7 @@
 # util-linux owns its overlapping paths rather than BusyBox.
 
 fail() {
-  printf 'vm test guest failure: %s\n' "$*"
+  printf 'util-linux programs test failure: %s\n' "$*"
   echo "::vm-test::fail: $*"
   while :; do :; done
 }
@@ -26,17 +26,17 @@ mount -t sysfs sysfs /sys || fail "mount sysfs"
 
 [ ! -e /libexec/util-linux-tests ] ||
   fail "private util-linux test helpers leaked into the production output"
-[ ! -d /proc/sysvipc ] ||
-  fail "System V IPC proc interface unexpectedly exists"
+[ -r /proc/sysvipc/msg ] && [ -r /proc/sysvipc/sem ] ||
+  fail "System V message/semaphore proc interfaces are missing"
 
 programs='
 addpart agetty bits blkdiscard blkid blkpr blkzone blockdev cal cfdisk
 choom chrt colcrt colrm column copyfilerange
 ctrlaltdel delpart dmesg exch fadvise fallocate fdisk fincore findfs
 findmnt flock fsck fsck.cramfs fsck.minix fsfreeze fstrim getino getopt hardlink
-hexdump ionice irqtop isosize kill last lastb
+hexdump ionice ipcmk ipcrm ipcs irqtop isosize kill last lastb
 lastlog2 linux32 linux64 logger look losetup lsblk lsclocks lscpu
-lsfd lsirq lslocks lslogins lsmem lsns mcookie mesg mkfs mkfs.bfs
+lsfd lsipc lsirq lslocks lslogins lsmem lsns mcookie mesg mkfs mkfs.bfs
 mkfs.cramfs mkfs.minix mkswap more mount mountpoint namei nologin nsenter partx pipesz
 pivot_root prlimit readprofile rename renice resizepart rev
 script scriptlive scriptreplay setarch setpgid setsid setterm sfdisk sulogin
@@ -52,7 +52,7 @@ for program in $programs; do
   [ -n "$path" ] || fail "$program is missing"
 done
 
-for program in swapon swapoff eject ldattach ipcmk ipcrm ipcs lsipc \
+for program in swapon swapoff eject ldattach \
   coresched uclampset zramctl rfkill wdctl hwclock rtcwake chmem chcpu; do
   [ ! -e "/bin/$program" ] && [ ! -e "/sbin/$program" ] ||
     fail "$program should be disabled for the target kernel/device configuration"

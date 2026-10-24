@@ -70,9 +70,9 @@ stdenv.mkDerivation (finalAttrs: {
   # Optional target libraries are enabled when the package scope has them, and
   # ordinary heap-buffer mmap uses and fork+exec sites are ported below.
   #
-  # Current target omissions:
-  #   * ipcmk/ipcrm/ipcs/lsipc require System V IPC; CONFIG_SYSVIPC is disabled
-  #     in the shipped wasm kernel configuration.
+  # System V message queues and semaphore sets use the generic kernel IPC
+  # implementation. Keep the upstream IPC tools available; System V shared
+  # memory calls still report the architecture's explicit unsupported result.
   # Callback clone is used only on wasm where child-only setup cannot be
   # expressed as posix_spawn actions. Without CLONE_VM the kernel snapshots
   # the address space and waits synchronously for the copy; it returns
@@ -112,8 +112,8 @@ stdenv.mkDerivation (finalAttrs: {
     ./pty-session-drain.patch
     # more's command child uses callback clone; signalfd stays upstream.
     ./more-callback-clone.patch
-    # wasm has no mmap: look mapped its dictionary file read-only for a binary
-    # search; read it into a heap buffer instead (same [front, back) range).
+    # Default Wasm builds do not enable general file-backed mmap. look mapped
+    # its dictionary read-only; read it into a heap buffer (same search range).
     ./look-no-mmap.patch
     # dmesg and libblkid use mappings as ordinary read/heap buffers. Preserve
     # their behavior with explicit allocation and reads.
@@ -153,7 +153,7 @@ stdenv.mkDerivation (finalAttrs: {
     "--without-econf"
     "--without-user"
 
-    # These interfaces have no usable backing in the shipped guest: the wasm
+    # These interfaces have no usable backing in the shipped Wasm kernel: the
     # architecture selects ARCH_NO_SWAP, and none of ldattach's attachable
     # protocol line disciplines is configured. Keep the independently useful
     # mkswap utility enabled.
@@ -161,13 +161,13 @@ stdenv.mkDerivation (finalAttrs: {
     "--disable-eject"
     "--disable-ldattach"
 
-    # The fixed guest kernel omits CONFIG_SCHED_CORE, CONFIG_UCLAMP_TASK,
+    # The selected kernel omits CONFIG_SCHED_CORE, CONFIG_UCLAMP_TASK,
     # CONFIG_ZRAM, CONFIG_RFKILL, CONFIG_WATCHDOG, CONFIG_RTC_CLASS,
     # CONFIG_MEMORY_HOTPLUG, and CONFIG_HOTPLUG_CPU. Disable the utilities whose
     # primary device/scheduler operations require those interfaces; related
     # offline and scheduler tools remain enabled. hwclock's isolated --predict
     # and --systz modes avoid an RTC read, but do not justify shipping the
-    # otherwise RTC-specific utility in a guest with no RTC class or device.
+    # otherwise RTC-specific utility without an RTC class or device.
     "--disable-coresched"
     "--disable-uclampset"
     "--disable-zramctl"
@@ -177,12 +177,6 @@ stdenv.mkDerivation (finalAttrs: {
     "--disable-rtcwake"
     "--disable-chmem"
     "--disable-chcpu"
-
-    # System V IPC is absent from the shipped kernel configuration.
-    "--disable-ipcmk"
-    "--disable-ipcrm"
-    "--disable-ipcs"
-    "--disable-lsipc"
 
     # Libraries used throughout the suite, static only.
     "--enable-libuuid"
@@ -195,7 +189,7 @@ stdenv.mkDerivation (finalAttrs: {
       "file"
       "ncurses"
     ];
-    # util-linux intentionally owns kill when installed alongside coreutils.
+    # util-linux owns kill and its full IPC tools alongside overlapping applets.
     replaces = [
       "busybox"
       "coreutils"
@@ -252,5 +246,6 @@ stdenv.mkDerivation (finalAttrs: {
       spawn = check "spawn" ./spawn-test.sh;
       pty = check "pty" ./pty-test.sh;
       programs = check "programs" ./programs-test.sh;
+      ipc = check "ipc" ./ipc-test.sh;
     };
 })
