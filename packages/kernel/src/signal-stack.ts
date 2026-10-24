@@ -11,6 +11,34 @@ import {
 
 const kernel_depth = new WeakMap<WebAssembly.Exports, number>();
 
+function context_bridge(exports: WebAssembly.Exports) {
+  const bridge = exports.user_context_v1;
+  if (bridge === undefined) return null; // Old kernels retain their old contract.
+  if (typeof bridge !== "function" || bridge.length !== 1)
+    throw new Error("invalid user context execution ABI");
+  return (mode: number): number => {
+    const previous: unknown = bridge(mode);
+    if (previous !== 0 && previous !== 1) throw new Error("invalid user context execution ABI");
+    return previous;
+  };
+}
+
+/** A direct allocator runs user C while its caller's kernel frame is live.
+ * Restore the caller's phase on normal returns and SjLj, never after task exit.
+ * No pending return work is run by this private phase-only contract. */
+export function call_user_callback<T>(
+  exports: WebAssembly.Exports,
+  address: WasmAddressType,
+  invoke: () => T,
+): T {
+  const bridge = context_bridge(exports);
+  if (!bridge) return invoke();
+  return call_kernel_entry(exports, address, () => {
+    bridge(1);
+    return invoke();
+  });
+}
+
 /** New libc brackets a plain handler outside an interrupted cancellation point.
  * Older modules retain their direct callback. Never narrow table64 pointers. */
 export function call_plain_signal_handler(
@@ -119,10 +147,15 @@ export function call_kernel_entry<T>(
   exports: WebAssembly.Exports,
   address: WasmAddressType,
   invoke: () => T,
+  leaf = false,
 ): T {
   const global = stack_global(exports, address);
   const saved = global?.value;
   const depth = kernel_depth.get(exports) ?? 0;
+  const bridge = context_bridge(exports);
+  // The syscall entry performs its own generic transition; leaf execution
+  // exports do not. Both need exception restoration to the live caller.
+  const phase = bridge?.(2);
   const save_irq = exports.callback_irq_save_v1;
   const restore_irq = exports.callback_irq_restore_v1;
   let irq: number | undefined;
@@ -134,6 +167,7 @@ export function call_kernel_entry<T>(
   let exited = false;
   kernel_depth.set(exports, depth + 1);
   try {
+    if (leaf) bridge?.(0);
     return invoke();
   } catch (error) {
     exited = error === HALT_KERNEL;
@@ -144,9 +178,10 @@ export function call_kernel_entry<T>(
     else kernel_depth.delete(exports);
     // A non-local user jump may resume inside the allocator. Restore its
     // live kernel caller, but never enter C after do_exit handed the CPU away.
-    if (irq !== undefined && !exited && typeof restore_irq === "function") {
+    if (!exited) {
       try {
-        restore_irq(irq);
+        if (phase !== undefined) bridge!(phase);
+        if (irq !== undefined && typeof restore_irq === "function") restore_irq(irq);
       } catch (error) {
         if (global) global.value = saved;
         throw error;

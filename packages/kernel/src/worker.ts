@@ -41,6 +41,7 @@ import {
   call_signal_callback,
   call_kernel_entry,
   call_plain_signal_handler,
+  call_user_callback,
 } from "./signal-stack.ts";
 import { write_exec_image } from "./exec-image.ts";
 import {
@@ -196,6 +197,14 @@ function user_imports({
   }
   let call_entry = call_start;
 
+  function kernel_leaf<T>(invoke: () => T): T {
+    return call_kernel_entry(get_kernel_instance().exports, kernel_address, invoke, true);
+  }
+
+  function user_callback<T>(invoke: () => T): T {
+    return call_user_callback(get_kernel_instance().exports, kernel_address, invoke);
+  }
+
   function create_instance(context: UserContext): WebAssembly.Instance {
     const kernel_instance = get_kernel_instance();
     const syscall =
@@ -241,11 +250,11 @@ function user_imports({
         syscall: syscall("callback-v1"),
         syscall_v2: syscall("flags-v2"),
         get_thread_area: () => {
-          const invoke = () => kernel_instance.exports.get_thread_area();
+          const invoke = () => kernel_leaf(() => kernel_instance.exports.get_thread_area());
           return fork ? fork.kernelCall(invoke) : invoke();
         },
         copy_siginfo: (to: WasmAddress) => {
-          const invoke = () => kernel_instance.exports.copy_siginfo(to);
+          const invoke = () => kernel_leaf(() => kernel_instance.exports.copy_siginfo(to));
           const result = fork ? fork.kernelCall(invoke) : invoke();
           const current = siginfo_copy_results.length - 1;
           if (current >= 0) siginfo_copy_results[current] = result;
@@ -254,14 +263,16 @@ function user_imports({
       },
       linux_signal_v1: {
         finish(stack: WasmAddress, mask: WasmAddress) {
-          const invoke = () => kernel_instance.exports.finish_signal_frame?.(stack, mask) ?? -95;
+          const invoke = () =>
+            kernel_leaf(() => kernel_instance.exports.finish_signal_frame?.(stack, mask) ?? -95);
           const result = fork ? fork.kernelCall(invoke) : invoke();
           const current = siginfo_copy_results.length - 1;
           if (current >= 0 && result < 0 && result !== -95) siginfo_copy_results[current] = result;
           return result;
         },
         frame(stack: WasmAddress, mask: WasmAddress) {
-          const invoke = () => kernel_instance.exports.copy_signal_frame?.(stack, mask) ?? -95;
+          const invoke = () =>
+            kernel_leaf(() => kernel_instance.exports.copy_signal_frame?.(stack, mask) ?? -95);
           const result = fork ? fork.kernelCall(invoke) : invoke();
           const current = siginfo_copy_results.length - 1;
           if (current >= 0 && result < 0 && result !== -95) siginfo_copy_results[current] = result;
@@ -360,7 +371,7 @@ function user_imports({
         pending = null;
       },
       instantiate(fresh_memory) {
-        instantiate(Boolean(fresh_memory));
+        user_callback(() => instantiate(Boolean(fresh_memory)));
       },
       call() {
         for (;;) {
@@ -401,56 +412,61 @@ function user_imports({
         }
       },
       switch_entry(fn, arg) {
-        // This is called if this thread was created by a clone call,
-        // so its entrypoint is a user-specified function.
-        // The worker prepares an instance sharing the parent's user context
-        // before the kernel enters this callback.
+        return user_callback(() => {
+          // This is called if this thread was created by a clone call,
+          // so its entrypoint is a user-specified function.
+          // The worker prepares an instance sharing the parent's user context
+          // before the kernel enters this callback.
 
-        assert(parent);
+          assert(parent);
 
-        if (context?.fork_continuation) {
-          const snapshot = context.fork_continuation;
-          assert(
-            fork && snapshot.entry === fn && (arg === 0 || arg === 0n),
-            "invalid fork child entry",
-          );
-          if (fork_child_signal_test) {
-            const continuation = fork;
-            // switch_entry is still a kernel startup callback. Defer all test
-            // syscalls until the regular user.call boundary, before rewinding.
-            call_entry = () => {
-              assert(context && context.fork_continuation === snapshot);
-              resume_fork_child(context, continuation, () =>
-                continuation.kernelCall(() =>
-                  inject_child_fork_signal(get_kernel_instance().exports.syscall, kernel_address),
-                ),
-              );
-              call_entry = call_start;
-              call_start();
-            };
+          if (context?.fork_continuation) {
+            const snapshot = context.fork_continuation;
+            assert(
+              fork && snapshot.entry === fn && (arg === 0 || arg === 0n),
+              "invalid fork child entry",
+            );
+            if (fork_child_signal_test) {
+              const continuation = fork;
+              // switch_entry is still a kernel startup callback. Defer all test
+              // syscalls until the regular user.call boundary, before rewinding.
+              call_entry = () => {
+                assert(context && context.fork_continuation === snapshot);
+                resume_fork_child(context, continuation, () =>
+                  continuation.kernelCall(() =>
+                    inject_child_fork_signal(get_kernel_instance().exports.syscall, kernel_address),
+                  ),
+                );
+                call_entry = call_start;
+                call_start();
+              };
+              return;
+            }
+            if (profile) profile.prepareChild(() => fork!.resumeChild(snapshot));
+            else fork.resumeChild(snapshot);
+            delete context.fork_continuation;
+            call_entry = call_start;
             return;
           }
-          if (profile) profile.prepareChild(() => fork!.resumeChild(snapshot));
-          else fork.resumeChild(snapshot);
-          delete context.fork_continuation;
-          call_entry = call_start;
-          return;
-        }
 
-        call_entry = () => {
-          assert(instance);
+          call_entry = () => {
+            assert(instance);
 
-          const { __indirect_function_table } = instance.exports;
-          assert(__indirect_function_table instanceof WebAssembly.Table, "Invalid function table");
+            const { __indirect_function_table } = instance.exports;
+            assert(
+              __indirect_function_table instanceof WebAssembly.Table,
+              "Invalid function table",
+            );
 
-          const f = wasm_table_get(__indirect_function_table, fn);
-          assert(typeof f === "function" && f.length === 1, "Invalid function signature");
+            const f = wasm_table_get(__indirect_function_table, fn);
+            assert(typeof f === "function" && f.length === 1, "Invalid function signature");
 
-          f(arg);
+            f(arg);
 
-          // throw new Error("thread entrypoint reached the end without exiting");
-          console.warn("thread entrypoint reached the end without exiting");
-        };
+            // throw new Error("thread entrypoint reached the end without exiting");
+            console.warn("thread entrypoint reached the end without exiting");
+          };
+        });
       },
 
       // signal handling:
@@ -467,7 +483,7 @@ function user_imports({
         try {
           call_signal_callback(
             () => call_plain_signal_handler(instance!.exports, fn, sig, () => f(sig)),
-            () => get_kernel_instance().exports.clear_siginfo(),
+            () => kernel_leaf(() => get_kernel_instance().exports.clear_siginfo()),
             HALT_KERNEL,
           );
         } finally {
@@ -491,7 +507,7 @@ function user_imports({
               f(fn, sig);
               return siginfo_copy_results.at(-1) ?? -22;
             },
-            () => get_kernel_instance().exports.clear_siginfo(),
+            () => kernel_leaf(() => get_kernel_instance().exports.clear_siginfo()),
             HALT_KERNEL,
           );
         } finally {
@@ -554,13 +570,13 @@ function user_imports({
         assert(instance);
         const callback = instance.exports.__wasm_mmap;
         if (typeof callback !== "function") return kernel_address === "i64" ? -38n : -38;
-        return callback(len) as WasmAddress;
+        return user_callback(() => callback(len) as WasmAddress);
       },
       munmap(addr, len) {
         assert(instance);
         const callback = instance.exports.__wasm_munmap;
         if (typeof callback !== "function") return kernel_address === "i64" ? -38n : -38;
-        return callback(addr, len) as WasmAddress;
+        return user_callback(() => callback(addr, len) as WasmAddress);
       },
     },
     imports_signal_v1: {
@@ -606,27 +622,35 @@ function user_imports({
     imports_v2: {
       mremap_fixed(addr, oldLen, newLen, newAddr) {
         assert(instance);
-        return user_mremap_fixed(instance.exports, kernel_address, addr, oldLen, newLen, newAddr);
+        return user_callback(() =>
+          user_mremap_fixed(instance!.exports, kernel_address, addr, oldLen, newLen, newAddr),
+        );
       },
       mmap_fixed(addr, len) {
         assert(instance);
-        return user_mmap_fixed(instance.exports, kernel_address, addr, len);
+        return user_callback(() => user_mmap_fixed(instance!.exports, kernel_address, addr, len));
       },
       madvise(addr, len, advice) {
         assert(instance);
-        return user_madvise(instance.exports, kernel_address, addr, len, advice);
+        return user_callback(() =>
+          user_madvise(instance!.exports, kernel_address, addr, len, advice),
+        );
       },
       msync(addr, len, flags) {
         assert(instance);
-        return user_msync(instance.exports, kernel_address, addr, len, flags);
+        return user_callback(() => user_msync(instance!.exports, kernel_address, addr, len, flags));
       },
       mremap(addr, oldLen, newLen, flags) {
         assert(instance);
-        return user_mremap(instance.exports, kernel_address, addr, oldLen, newLen, flags);
+        return user_callback(() =>
+          user_mremap(instance!.exports, kernel_address, addr, oldLen, newLen, flags),
+        );
       },
       mmap(addr, len, prot, flags, fd, pgoff) {
         assert(instance);
-        return user_mmap(instance.exports, kernel_address, addr, len, prot, flags, fd, pgoff);
+        return user_callback(() =>
+          user_mmap(instance!.exports, kernel_address, addr, len, prot, flags, fd, pgoff),
+        );
       },
     },
     imports_mmap_init_v1: {
@@ -636,11 +660,14 @@ function user_imports({
       },
       map(rounded, source, length) {
         assert(instance);
-        return mmap_copy.map(instance.exports, rounded, source, length, (error) => {
-          // exit_thread already released callback resources before handing
-          // its CPU away. Never re-enter a dead task's kernel instance.
-          if (error !== HALT_KERNEL) get_kernel_instance().exports.abort_file_mmap_v1?.();
-        });
+        return user_callback(() =>
+          mmap_copy.map(instance!.exports, rounded, source, length, (error) => {
+            // exit_thread already released callback resources before handing
+            // its CPU away. Never re-enter a dead task's kernel instance.
+            if (error !== HALT_KERNEL)
+              kernel_leaf(() => get_kernel_instance().exports.abort_file_mmap_v1?.());
+          }),
+        );
       },
     },
   };

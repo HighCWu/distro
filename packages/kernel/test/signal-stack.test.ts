@@ -8,6 +8,7 @@ import {
   call_kernel_entry,
   call_signal_callback,
   call_plain_signal_handler,
+  call_user_callback,
 } from "../src/signal-stack.ts";
 
 test("plain signal trampoline preserves pointer width, exceptions and old modules", () => {
@@ -104,6 +105,89 @@ test("signal callback cleanup retires only its frame, preserves SjLj, and skips 
 
 for (const address of ["i32", "i64"] as const) {
   const p = (n: number) => (address === "i64" ? BigInt(n) : n);
+  test(`${address}: callbacks, leaf imports and non-local syscalls restore their caller phase`, () => {
+    const stack = new WebAssembly.Global({ value: address, mutable: true }, p(60000));
+    let phase = 1;
+    const transitions: number[] = [];
+    const irqCallers: number[] = [];
+    const exports = {
+      __stack_pointer: stack,
+      callback_irq_save_v1() {
+        irqCallers.push(phase);
+        return 1;
+      },
+      callback_irq_restore_v1(_flags: number) {
+        assert.equal(phase, irqCallers.pop(), "restore phase before a live caller's IRQ state");
+      },
+      user_context_v1(mode: number) {
+        const previous = phase;
+        if (mode !== 2) {
+          phase = mode;
+          transitions.push(mode);
+        }
+        return previous;
+      },
+    };
+    const jump = new WebAssembly.Exception(new WebAssembly.Tag({ parameters: [] }), []);
+    const exec = Symbol("replace user image, not a dead task");
+    for (const error of [undefined, jump, exec, HALT_KERNEL]) {
+      phase = 1;
+      transitions.length = 0;
+      irqCallers.length = 0;
+      const invoke = () =>
+        call_kernel_entry(exports, address, () => {
+          phase = 0; // ordinary syscall's generic entry
+          stack.value = p(59000);
+          return call_user_callback(exports, address, () => {
+            assert.equal(phase, 1);
+            call_kernel_entry(
+              exports,
+              address,
+              () => {
+                assert.equal(phase, 0, "leaf imports must enter kernel context");
+              },
+              true,
+            );
+            assert.equal(phase, 1);
+            return call_kernel_entry(exports, address, () => {
+              phase = 0;
+              stack.value = p(58000);
+              if (error !== undefined) throw error;
+              stack.value = p(59000);
+              phase = 1; // nested syscall's generic exit
+              return 7;
+            });
+          });
+        });
+      if (error === undefined) assert.equal(invoke(), 7);
+      else assert.throws(invoke, (value) => value === error);
+      if (error === HALT_KERNEL) {
+        assert.equal(phase, 0);
+        assert.deepEqual(transitions, [1, 0, 1], "no C entry after task hands its CPU away");
+      } else {
+        assert.equal(phase, 1);
+        assert.equal(irqCallers.length, 0);
+        assert.ok(transitions.includes(0), "the allocator's kernel caller must be restored");
+      }
+      if (error !== undefined) assert.equal(stack.value, p(60000));
+      stack.value = p(60000);
+    }
+    assert.equal(
+      call_user_callback({}, address, () => 19),
+      19,
+      "old kernels remain compatible",
+    );
+    for (const bad of [
+      new WebAssembly.Global({ value: "i32" }, 7),
+      () => 0,
+      (_mode: number) => 2,
+    ]) {
+      assert.throws(
+        () => call_user_callback({ user_context_v1: bad }, address, () => assert.fail()),
+        /invalid user context/,
+      );
+    }
+  });
   test(`${address}: real mutable integer stack, nested switching and exception unwind`, () => {
     const memory = new WebAssembly.Memory({ initial: 1 });
     const global = new WebAssembly.Global({ value: address, mutable: true }, p(60000));
