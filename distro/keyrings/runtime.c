@@ -47,8 +47,12 @@ int main(void)
             "add, search and request existing user key");
     unsigned char bytes[32];
     memset(bytes, 0x5a, sizeof bytes);
-    require(read_key(key, NULL, 0) == sizeof original && read_key(key, bytes, 2) == sizeof original &&
-            !memcmp(bytes, original, 2) && bytes[2] == 0x5a, "sizing and bounded short read");
+    /* An undersized read reports the required length; the contents inside
+     * that short buffer are not specified by the kernel key service contract. */
+    require(read_key(key, NULL, 0) == sizeof original && read_key(key, bytes, 2) == sizeof original,
+            "sizing and short-read required length");
+    for (size_t i = 2; i < sizeof bytes; ++i)
+        require(bytes[i] == 0x5a, "short read never writes beyond supplied capacity");
     require(read_key(key, bytes, sizeof bytes) == sizeof original &&
             !memcmp(bytes, original, sizeof original), "full binary payload");
     puts("keyrings: session creation, add/request/search and bounded binary reads pass");
