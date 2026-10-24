@@ -115,6 +115,13 @@ lib.makeScope (scope: lib.callPackageWith ({ inherit lib pkgs; } // scope)) (
       busybox = self.busybox-wasm64;
     };
     toolchain-smoke-runtime-wasm64 = self.toolchain-smoke-wasm64.checks.c-runtime;
+    public-syscall = callPackage ./public-syscall/package.nix { };
+    public-syscall-wasm64 = callPackage ./public-syscall/package.nix {
+      platform = self.platform-wasm64;
+      llvm-toolchain = self.llvm-toolchain-wasm64;
+      sysroot = self.sysroot-wasm64;
+      vm-test = vmTestWasm64;
+    };
     user-fault-group = callPackage ./user-fault-group/package.nix { };
     user-fault-group-wasm64 = callPackage ./user-fault-group/package.nix {
       platform = self.platform-wasm64;
