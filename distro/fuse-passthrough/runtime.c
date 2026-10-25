@@ -76,6 +76,7 @@ static void *serve(void *argument)
 				.minor = 40, .flags = FUSE_INIT_EXT, .flags2 = FUSE_PASSTHROUGH >> 32,
 				.max_write = 4096, .time_gran = 1, .max_stack_depth = 1 };
 			reply(state->fd, input.unique, 0, &response, sizeof(response));
+			CHECK(write(state->released[1], "I", 1) == 1, "init reply acknowledgement");
 			break;
 		}
 		case FUSE_LOOKUP: {
@@ -150,7 +151,10 @@ int main(void)
 	CHECK(!pipe(state.released), "release completion pipe");
 	pthread_t thread;
 	CHECK(!pthread_create(&thread, NULL, serve, &state), "server thread");
-	/* A successful lookup also waits for the kernel's INIT completion. */
+	/* Do not let a failed INIT read be hidden by the parent's later
+	 * ECONNREFUSED lookup. The server must complete its actual reply first. */
+	char initialized;
+	CHECK(read(state.released[0], &initialized, 1) == 1 && initialized == 'I', "completed FUSE init reply");
 	struct stat st;
 	CHECK(!stat("/fusefs/file", &st) && S_ISREG(st.st_mode), "initialized file lookup");
 	struct fuse_backing_map registration = { .fd = source, .flags = 1 };
