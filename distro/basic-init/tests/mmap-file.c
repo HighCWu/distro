@@ -1,5 +1,6 @@
 /* SPDX-License-Identifier: MIT */
 #define _GNU_SOURCE
+#define _LARGEFILE64_SOURCE
 #include "test.h"
 #include <fcntl.h>
 #include <limits.h>
@@ -42,9 +43,9 @@ static void content(const unsigned char *bytes, size_t length, size_t offset,
 	}
 }
 
-static void zero_mapping(int fd, size_t length, off_t offset)
+static void zero_mapping(int fd, size_t length, off64_t offset)
 {
-	unsigned char *bytes = mmap(NULL, length, PROT_READ, MAP_PRIVATE, fd, offset);
+	unsigned char *bytes = mmap64(NULL, length, PROT_READ, MAP_PRIVATE, fd, offset);
 	if (bytes == MAP_FAILED) test_perror("NOMMU EOF mapping");
 	for (size_t i = 0; i < length; i++)
 		if (bytes[i]) test_fail("NOMMU EOF tail is not zero");
