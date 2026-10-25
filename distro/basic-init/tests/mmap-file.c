@@ -59,6 +59,7 @@ static void mutable_mapping(size_t page)
 	int write_only = open("/mutable", O_WRONLY);
 	if (write_only < 0) test_perror("open write-only mapping source");
 	rejected(write_only, page, PROT_READ, MAP_PRIVATE, 0, EACCES);
+	rejected(write_only, page, PROT_WRITE, MAP_PRIVATE, 0, EACCES);
 	if (close(write_only)) test_perror("close write-only source");
 	unsigned char *buffer = malloc(page);
 	if (!buffer) test_perror("mutable source buffer");
@@ -124,6 +125,7 @@ int main(void)
 		int error = FILE_MMAP_MODE == 0 ? EINVAL : EOPNOTSUPP;
 		rejected(fd, page, PROT_READ, MAP_PRIVATE, 0, error);
 		rejected(fd, page, PROT_READ | PROT_WRITE, MAP_PRIVATE, 0, error);
+		rejected(fd, page, PROT_WRITE, MAP_PRIVATE, 0, error);
 	}
 	puts(FILE_MMAP_MODE == 0 ? "file mmap: default kernel remains closed" :
 		"file mmap: old module refused without initialized-copy export");
@@ -154,6 +156,21 @@ int main(void)
 	if (munmap(ordinary_copy, page)) test_perror("ordinary mapping cleanup");
 	mutable_mapping(page);
 	if (lseek(fd, 23, SEEK_SET) != 23) test_perror("set standard mmap fd position");
+	/* NOMMU cannot isolate reads from writes. Accept WRITE without requiring
+	 * READ in the request, but still require a readable source descriptor. */
+	for (int i = 0; i < 2; i++) {
+		int flags = MAP_PRIVATE | (i ? MAP_POPULATE | MAP_NONBLOCK : 0);
+		unsigned char *writable = mmap(NULL, page, PROT_WRITE, flags, fd, page);
+		if (writable == MAP_FAILED) test_perror("write-only requested file mapping");
+		content(writable, page, page, 2 * page + 7);
+		memset(writable, 0xa5, page);
+		unsigned char original;
+		if (pread(fd, &original, 1, page) != 1 || original != 11 ||
+		    lseek(fd, 0, SEEK_CUR) != 23)
+			test_fail("WRITE-only copy changed source or descriptor position");
+		if (munmap(writable, page)) test_perror("WRITE-only file unmap");
+	}
+	puts("file mmap: WRITE-only requests preserve private content, source and cleanup");
 	const int hints[] = { MAP_POPULATE, MAP_NONBLOCK, MAP_NORESERVE,
 		MAP_STACK, MAP_DENYWRITE, MAP_EXECUTABLE,
 		MAP_POPULATE | MAP_NONBLOCK | MAP_NORESERVE | MAP_STACK |

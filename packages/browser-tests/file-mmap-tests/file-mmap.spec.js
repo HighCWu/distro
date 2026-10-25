@@ -21,6 +21,9 @@ for (const [scenario, title] of [
     expect(result.output).not.toContain("::vm-test::fail");
     if (scenario === "standard") {
       expect(result.output).toContain(
+        "file mmap: WRITE-only requests preserve private content, source and cleanup",
+      );
+      expect(result.output).toContain(
         "file mmap: mutable file writes, truncate, EOF, unlink and private lifetime verified",
       );
       expect(result.output).toContain(
