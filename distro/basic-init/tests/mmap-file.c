@@ -86,12 +86,30 @@ int main(void)
 	rejected(fd, page, PROT_NONE, MAP_PRIVATE, 0, EINVAL);
 	rejected(fd, page, PROT_READ | PROT_EXEC, MAP_PRIVATE, 0, EINVAL);
 	rejected(fd, page, PROT_READ, MAP_SHARED, 0, EINVAL);
+	rejected(fd, page, PROT_READ, MAP_PRIVATE | MAP_LOCKED, 0, EINVAL);
 	rejected(fd, page, PROT_READ, MAP_PRIVATE | MAP_FIXED, 0, ENOMEM);
 	rejected(fd, page, PROT_READ, MAP_PRIVATE | MAP_FIXED_NOREPLACE, 0, ENOMEM);
 	rejected(fd, page, PROT_READ, MAP_PRIVATE, 4096, EINVAL);
 	rejected(fd, 2 * page, PROT_READ, MAP_PRIVATE, 2 * page, EINVAL);
 	rejected(fd, page, PROT_READ, MAP_PRIVATE, (off_t)UINT64_C(0x100000000), EINVAL);
 	if (lseek(fd, 23, SEEK_SET) != 23) test_perror("set standard mmap fd position");
+	const int hints[] = { MAP_POPULATE, MAP_NONBLOCK, MAP_NORESERVE,
+		MAP_STACK, MAP_DENYWRITE, MAP_EXECUTABLE,
+		MAP_POPULATE | MAP_NONBLOCK | MAP_NORESERVE | MAP_STACK |
+		MAP_DENYWRITE | MAP_EXECUTABLE };
+	for (size_t i = 0; i < sizeof(hints) / sizeof(hints[0]); i++) {
+		unsigned char *hinted = mmap(NULL, page, PROT_READ | PROT_WRITE,
+			MAP_PRIVATE | hints[i], fd, page);
+		if (hinted == MAP_FAILED) test_perror("standard file mmap hints");
+		content(hinted, page, page, 2 * page + 7);
+		hinted[0] ^= 0xff;
+		unsigned char original;
+		if (pread(fd, &original, 1, page) != 1 || original != 11 ||
+		    lseek(fd, 0, SEEK_CUR) != 23)
+			test_fail("hinted mapping changed source or descriptor position");
+		if (munmap(hinted, page)) test_perror("hinted mapping cleanup");
+	}
+	puts("file mmap: advisory flags preserve private content, position and cleanup");
 	unsigned char *ro = mmap(NULL, 2 * page, PROT_READ, MAP_PRIVATE, fd, page);
 	unsigned char *rw = mmap(NULL, 2 * page, PROT_READ | PROT_WRITE, MAP_PRIVATE, fd, page);
 	unsigned char *tail = mmap(NULL, 1, PROT_READ, MAP_PRIVATE, fd, 2 * page);
