@@ -61,6 +61,9 @@ rec {
     "--undefined=__wasm_mmap"
     "--export=__wasm_mmap"
     "--export=__wasm_mmap_v2"
+    # Private initialized-copy execution capability, not a public C API or
+    # permission to map files. The kernel still decides file admission.
+    "--export=__wasm_mmap_init_v1"
     "--export=__wasm_mmap_fixed"
     "--export=__wasm_munmap"
     "--export=__wasm_mremap"

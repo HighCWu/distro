@@ -19,7 +19,13 @@ for (const width of ["i32", "i64"] as const) {
     };
     const kernel = new WebAssembly.Memory(descriptor as WebAssembly.MemoryDescriptor);
     const user = new WebAssembly.Memory(descriptor as WebAssembly.MemoryDescriptor);
-    return { kernel, user, bridge: new FileMmapCopy(kernel, width) };
+    const kernelExports: WebAssembly.Exports = { abort_file_mmap_v1: () => {} };
+    return {
+      kernel,
+      user,
+      kernelExports,
+      bridge: new FileMmapCopy(kernel, width, () => kernelExports),
+    };
   };
 
   test(`${width}: real Wasm export/import crosses the scoped bridge`, () => {
@@ -80,6 +86,26 @@ for (const width of ["i32", "i64"] as const) {
     assert.equal(invoked, false);
     assert.equal(bridge.copy(user, scalar(0), scalar(0)), -1);
     assert.equal(bridge.capabilities({}), 0); // No cached grant after exec/module change.
+  });
+
+  test(`${width}: pre-cleanup kernels refuse before allocator or copy lease`, () => {
+    const { bridge, user, kernelExports } = setup();
+    const exports = {
+      __wasm_mmap_init_v1: () => assert.fail("old kernel must not enter allocator"),
+    };
+    delete kernelExports.abort_file_mmap_v1;
+    assert.equal(bridge.capabilities(exports), 0);
+    assert.equal(bridge.map(exports, scalar(4096), scalar(0), scalar(0)), scalar(-95));
+    assert.equal(bridge.copy(user, scalar(0), scalar(0)), -1);
+    kernelExports.abort_file_mmap_v1 = new WebAssembly.Global({ value: "i32" }, 1);
+    assert.equal(bridge.capabilities(exports), 0);
+    assert.equal(bridge.map(exports, scalar(4096), scalar(0), scalar(0)), scalar(-95));
+    kernelExports.abort_file_mmap_v1 = () => assert.fail("query must not call cleanup");
+    assert.equal(bridge.capabilities(exports), 1);
+    assert.equal(
+      bridge.map({ __wasm_mmap_init_v1: () => scalar(7) }, scalar(4096), scalar(0), scalar(0)),
+      scalar(7),
+    );
   });
 
   test(`${width}: scoped copy preserves data, zero tail and old-module refusal`, () => {

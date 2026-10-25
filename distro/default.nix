@@ -301,6 +301,7 @@ lib.makeScope (scope: lib.callPackageWith ({ inherit lib pkgs; } // scope)) (
         llvm-toolchain = self.llvm-toolchain-wasm64;
         sysroot = self.sysroot-wasm64;
         vm-test = vmTestWasm64;
+        sdk = self.sdk-wasm64;
         vm-test-copy = vmTestWasm64.override {
           kernel = self.kernel-wasm64.override {
             linux = self.linux-wasm64.override { mmapCopyTest = true; };

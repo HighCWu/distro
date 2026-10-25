@@ -9,10 +9,16 @@ export class FileMmapCopy {
   private active: { source: number; length: number; used: boolean } | null = null;
   private kernel_memory: WebAssembly.Memory;
   private address: WasmAddressType;
+  private kernel_exports: () => WebAssembly.Exports;
 
-  constructor(kernel_memory: WebAssembly.Memory, address: WasmAddressType) {
+  constructor(
+    kernel_memory: WebAssembly.Memory,
+    address: WasmAddressType,
+    kernel_exports: () => WebAssembly.Exports,
+  ) {
     this.kernel_memory = kernel_memory;
     this.address = address;
+    this.kernel_exports = kernel_exports;
   }
 
   private scalar(value: WasmAddress): number | null {
@@ -35,11 +41,15 @@ export class FileMmapCopy {
     return this.address === "i64" ? BigInt(-errno) : -errno;
   }
 
-  /** Version 1 bit 0: a private initialized-copy allocator is present.
-   * Querying does not call user code, allocate backing or authorize file mmap.
-   * Old modules (including length-only/v2 allocators) report no capability. */
+  kernel_supported(): boolean {
+    return typeof this.kernel_exports().abort_file_mmap_v1 === "function";
+  }
+
+  /** Version 1 bit 0: user allocator and kernel cleanup contract are present.
+   * Querying does not call user/cleanup code, allocate or authorize file mmap.
+   * Old modules and pre-cleanup experimental kernels report no capability. */
   capabilities(exports: WebAssembly.Exports): number {
-    return typeof exports.__wasm_mmap_init_v1 === "function" ? 1 : 0;
+    return this.kernel_supported() && typeof exports.__wasm_mmap_init_v1 === "function" ? 1 : 0;
   }
 
   /** Called only by the new kernel import, never by a user syscall argument. */
@@ -51,6 +61,9 @@ export class FileMmapCopy {
     abort?: (error: unknown) => void,
   ): WasmAddress {
     if (this.active) return this.error(16); // EBUSY: no nested lease replacement
+    // Pre-cleanup experimental kernels cannot own a non-local callback exit.
+    // Refuse normally, allowing their original C return path to release data.
+    if (!this.kernel_supported()) return this.error(95);
     const size = this.scalar(rounded);
     const start = this.scalar(source);
     const count = this.scalar(length);

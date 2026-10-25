@@ -141,6 +141,16 @@ let
       linearMemory = {
         maximumBytes = platform.maximumMemoryBytes;
       };
+      execution = {
+        initializedPrivateCopy = {
+          version = 1;
+          exportName = "__wasm_mmap_init_v1";
+          importModule = "linux_mmap_init_v1";
+          importName = "copy";
+          requiresKernelExport = "abort_file_mmap_v1";
+          admission = "kernel";
+        };
+      };
       paths = {
         licenseTexts = "${licenseTexts}/share/linux-wasm-sdk/licenses";
         toolchain = "${llvm-toolchain}";
@@ -322,6 +332,12 @@ let
           assert.ok(fs.statSync(p.paths.licenseTexts + "/SHA256SUMS").isFile());
           assert.deepEqual(p.compilerFlags, ${builtins.toJSON platform.compilerFlags});
           assert.deepEqual(p.linkerFlags, ${builtins.toJSON platform.linkerFlags});
+          assert.deepEqual(p.execution.initializedPrivateCopy, {
+            version: 1, exportName: "__wasm_mmap_init_v1",
+            importModule: "linux_mmap_init_v1", importName: "copy", admission: "kernel",
+            requiresKernelExport: "abort_file_mmap_v1"
+          });
+          assert.ok(p.linkerFlags.includes("--export=__wasm_mmap_init_v1"));
           assert.equal(p.cxxConfiguration, fs.readFileSync(p.paths.toolchain + "/bin/clang++.cfg", "utf8"));
           assert.ok(fs.statSync(p.paths.sysroot).isDirectory());
           assert.ok(fs.statSync(p.paths.meson + "/bin/meson").isFile());

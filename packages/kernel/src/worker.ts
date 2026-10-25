@@ -169,7 +169,11 @@ function user_imports({
   // One slot per nested SA_SIGINFO callback; null means its trampoline has
   // not requested the active signal payload yet.
   const siginfo_copy_results: (number | null)[] = [];
-  const mmap_copy = new FileMmapCopy(kernel_memory, kernel_address);
+  const mmap_copy = new FileMmapCopy(
+    kernel_memory,
+    kernel_address,
+    () => get_kernel_instance().exports,
+  );
 
   function write_kernel_u32(addr: WasmAddress, value: number): boolean {
     let bytes;
@@ -682,6 +686,9 @@ function user_imports({
       },
       map(rounded, source, length) {
         assert(instance);
+        // Refuse pre-cleanup kernels before transitioning into user callback
+        // context. Their original normal return path can release staging.
+        if (!mmap_copy.kernel_supported()) return kernel_address === "i64" ? -95n : -95;
         return user_callback(() =>
           mmap_copy.map(instance!.exports, rounded, source, length, (error) => {
             // exit_thread already released callback resources before handing

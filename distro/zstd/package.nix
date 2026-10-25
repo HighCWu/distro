@@ -66,9 +66,9 @@ stdenv.mkDerivation (finalAttrs: {
     file =
       let
         # finalPackage has overrideAttrs, not callPackage's outer override.
-        # Keep the export test-local and omit recursive checks on the variant.
+        # Use the ordinary platform's private execution export, not special
+        # application link flags. Omit recursive checks on the variant.
         candidate = finalAttrs.finalPackage.overrideAttrs (previous: {
-          NIX_CFLAGS_LINK = (previous.NIX_CFLAGS_LINK or "") + " -Wl,--export=__wasm_mmap_init_v1";
           passthru = builtins.removeAttrs (previous.passthru or { }) [ "checks" ];
         });
         dictionaries =

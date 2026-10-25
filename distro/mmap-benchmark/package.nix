@@ -5,6 +5,7 @@
   platform,
   llvm-toolchain,
   sysroot,
+  sdk,
   image,
   vm-test,
   vm-test-copy,
@@ -24,9 +25,30 @@ let
     ++ platform.compilerFlags
     ++ map (flag: "-Wl,${flag}") platform.linkerFlags
   );
+  # Genuine old-module controls: the ordinary SDK now supplies the private
+  # copy capability. These two fixtures intentionally predate it.
+  legacyCompileFlags = lib.escapeShellArgs (
+    [
+      "--target=${platform.targetTriple}"
+      "--sysroot=${sysroot}"
+      "-O2"
+      "-I${../basic-init/tests}"
+      "-Wl,--fatal-warnings"
+    ]
+    ++ platform.compilerFlags
+    ++ map (flag: "-Wl,${flag}") (
+      lib.filter (flag: flag != "--export=__wasm_mmap_init_v1") platform.linkerFlags
+    )
+  );
   executables =
     pkgs.runCommand "mmap-benchmark-programs-${platform.wasmArch}"
-      { nativeBuildInputs = [ llvm-toolchain ]; }
+      {
+        nativeBuildInputs = [
+          llvm-toolchain
+          sdk
+          pkgs.nodejs
+        ];
+      }
       ''
         mkdir -p $out
         clang ${compileFlags} ${../basic-init/tests/mmap.c} -o $out/correctness.wasm
@@ -37,12 +59,14 @@ let
         clang ${compileFlags} ${../basic-init/tests/mmap-initialized.c} -o $out/initialized.wasm
         clang ${compileFlags} -Wl,--export=__wasm_mmap_init_v1 ${../basic-init/tests/mmap-copy.c} -o $out/copy.wasm
         clang ${compileFlags} -Wl,--export=__wasm_mmap_init_v1 ${../basic-init/tests/mmap-staging.c} -o $out/staging.wasm
-        clang ${compileFlags} ${../basic-init/tests/mmap-staging-legacy.c} -o $out/staging-legacy.wasm
-        clang ${compileFlags} -Wl,--export=__wasm_mmap_init_v1 ${../basic-init/tests/mmap-file.c} -o $out/file.wasm
+        clang ${legacyCompileFlags} ${../basic-init/tests/mmap-staging-legacy.c} -o $out/staging-legacy.wasm
+        # Compile the actual standard consumer with the installed ordinary
+        # SDK. No caller-supplied private export or candidate compiler flag.
+        wasm-linux-cc -O2 -I${../basic-init/tests} -Wl,--fatal-warnings ${../basic-init/tests/mmap-file.c} -o $out/file.wasm
         clang ${compileFlags} -pthread -Wl,--export=__wasm_mmap_init_v1 ${../basic-init/tests/mmap-file-lifetime.c} -o $out/file-lifetime.wasm
         clang ${compileFlags} -Wl,--export=__wasm_mmap_init_v1 ${../basic-init/tests/mmap-file-benchmark.c} -o $out/file-benchmark.wasm
         clang ${compileFlags} -Wl,--export=__wasm_mmap_init_v1 ${../basic-init/tests/mmap-file-components.c} -o $out/file-components.wasm
-        clang ${compileFlags} -DFILE_MMAP_MODE=2 ${../basic-init/tests/mmap-file.c} -o $out/file-legacy.wasm
+        clang ${legacyCompileFlags} -DFILE_MMAP_MODE=2 ${../basic-init/tests/mmap-file.c} -o $out/file-legacy.wasm
         clang ${compileFlags} -DFILE_MMAP_MODE=0 -Wl,--export=__wasm_mmap_init_v1 ${../basic-init/tests/mmap-file.c} -o $out/file-default.wasm
         clang ${compileFlags} -Wl,--export=__wasm_mmap_init_v1 ${../basic-init/tests/mmap-vfs.c} -o $out/vfs.wasm
         clang ${compileFlags} -Wl,--export=__wasm_mmap_init_v1 ${../basic-init/tests/mmap-vfs-lifetime.c} -o $out/vfs-lifetime.wasm
@@ -57,6 +81,12 @@ let
         clang ${compileFlags} -Wl,--export=__wasm_mmap_init_v1 ${../basic-init/tests/mmap-erofs-errors.c} -o $out/erofs-errors.wasm
         clang ${compileFlags} ${../basic-init/tests/mmap-benchmark.c} -o $out/benchmark.wasm
         chmod 0755 $out/*.wasm
+        wasm-linux-sdk-info > sdk-profile.json
+        node ${../sdk/check-mmap-capability.mjs} $out/file.wasm present sdk-profile.json
+        node ${../sdk/check-mmap-capability.mjs} $out/file-legacy.wasm absent
+        node ${../sdk/check-mmap-capability.mjs} $out/staging-legacy.wasm absent
+        node ${../busybox/check-binary.mjs} ${../../packages/kernel/src/wasm_binary.ts} \
+          $out/file.wasm ${toString platform.addressBits} ${toString platform.maximumMemoryBytes}
       '';
   correctness = image.mkInitramfs {
     name = "mmap-correctness-${platform.wasmArch}";
