@@ -2,8 +2,8 @@
 import { expect, test } from "@playwright/test";
 
 for (const [scenario, title] of [
-  ["standard", "standard immutable file mmap preserves content, offsets and refusal semantics"],
-  ["zstd", "Zstandard forces immutable dictionary mmap and rejects unsupported sources"],
+  ["standard", "standard private file mmap preserves content, EOF and lifetimes"],
+  ["zstd", "Zstandard forces snapshot and ordinary dictionary mmap within capacity"],
 ]) {
   test(title, async ({ page, browser }) => {
     test.setTimeout(300_000);
@@ -21,6 +21,9 @@ for (const [scenario, title] of [
     expect(result.output).not.toContain("::vm-test::fail");
     if (scenario === "standard") {
       expect(result.output).toContain(
+        "file mmap: mutable file writes, truncate, EOF, unlink and private lifetime verified",
+      );
+      expect(result.output).toContain(
         "file mmap: immutable RO/RW copies, offset, EOF tail and independence verified",
       );
     } else {
@@ -28,9 +31,14 @@ for (const [scenario, title] of [
         ...result.output.matchAll(/immutable forced mapping boundary (\d+) verified/g),
       ].map((match) => Number(match[1]));
       expect(sizes).toEqual([65535, 65536, 65537, 131071, 131072]);
+      expect(
+        [...result.output.matchAll(/regular forced mapping boundary (\d+) verified/g)].map(
+          (match) => Number(match[1]),
+        ),
+      ).toEqual([65535, 65536, 65537, 131071, 131072]);
       expect(result.output).toContain("zstd: immutable mapping ceiling 131073 rejected");
       expect(result.output).toContain(
-        "zstd: immutable mapping and mutable/ordinary source refusals verified",
+        "zstd: snapshot ordinary and mutable private copies verified",
       );
     }
     expect(result.machineClosed).toBe(true);

@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: MIT
 // Workload checks, NOT Linux/Wasm ABI evidence. The native CLI performs the
-// positive mmap operations; source authentication and the ceiling are mocked.
+// positive mmap operations; the target's capacity ceiling is mocked.
 import assert from "node:assert/strict";
 import { spawnSync } from "node:child_process";
 import { mkdtempSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
@@ -39,9 +39,6 @@ function run(fault = "", refusal = 'echo "$diagnostic" >&2; return 34', mountSta
             if "$need_path"; then dictionary_path=$argument; break; fi
             test "$argument" != -D || need_path=true
           done
-          case "$*" in
-            *'/ordinary/'*|*'/tmp/dictionary'*) diagnostic='Not supported' ;;
-          esac
           test "$(wc -c <"$dictionary_path")" -le 131072 || diagnostic='Out of memory'
           if test -n "$diagnostic"; then ${refusal}; fi
           ${fault}
@@ -67,6 +64,13 @@ test("native forced dictionaries cross-roundtrip all five admitted boundaries", 
     [65535, 65536, 65537, 131071, 131072],
   );
   assert.match(result.stdout, /immutable mapping ceiling 131073 rejected/);
+  assert.deepEqual(
+    [...result.stdout.matchAll(/regular forced mapping boundary (\d+) verified/g)].map((m) =>
+      Number(m[1]),
+    ),
+    [65535, 65536, 65537, 131071, 131072],
+  );
+  assert.match(result.stdout, /snapshot ordinary and mutable private copies verified/);
   assert.match(result.stdout, /::vm-test::pass/);
 });
 
@@ -77,11 +81,21 @@ test("device setup failure prevents workload success", () => {
 });
 
 for (const [name, fault, failure] of [
-  ["compression refusal", "return 34", /forced immutable dictionary compression failed/],
+  ["compression refusal", "return 34", /forced dictionary compression failed/],
+  [
+    "ordinary source refusal",
+    'case "$dictionary_path" in */ordinary/*) return 34 ;; esac',
+    /forced dictionary compression failed/,
+  ],
+  [
+    "mutable source refusal",
+    'case "$dictionary_path" in */tmp/dictionary) return 34 ;; esac',
+    /forced dictionary compression failed/,
+  ],
   [
     "decompression refusal",
     'case " $* " in *" -d "*) return 34 ;; esac',
-    /forced immutable dictionary decompression failed/,
+    /forced dictionary decompression failed/,
   ],
   [
     "corrupt compression",

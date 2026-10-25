@@ -4,6 +4,7 @@
 #include <fcntl.h>
 #include <limits.h>
 #include <stdint.h>
+#include <stdlib.h>
 #include <sys/mman.h>
 #include <sys/mount.h>
 #include <sys/stat.h>
@@ -40,6 +41,63 @@ static void content(const unsigned char *bytes, size_t length, size_t offset,
 		if (bytes[i] != expected) test_fail("standard file copy content/tail mismatch");
 	}
 }
+
+static void zero_mapping(int fd, size_t length, off_t offset)
+{
+	unsigned char *bytes = mmap(NULL, length, PROT_READ, MAP_PRIVATE, fd, offset);
+	if (bytes == MAP_FAILED) test_perror("NOMMU EOF mapping");
+	for (size_t i = 0; i < length; i++)
+		if (bytes[i]) test_fail("NOMMU EOF tail is not zero");
+	if (munmap(bytes, length)) test_perror("NOMMU EOF unmap");
+}
+
+static void mutable_mapping(size_t page)
+{
+	int fd = open("/mutable", O_CREAT | O_EXCL | O_RDWR, 0600);
+	if (fd < 0) test_perror("create mutable mapping source");
+	int write_only = open("/mutable", O_WRONLY);
+	if (write_only < 0) test_perror("open write-only mapping source");
+	rejected(write_only, page, PROT_READ, MAP_PRIVATE, 0, EACCES);
+	if (close(write_only)) test_perror("close write-only source");
+	unsigned char *buffer = malloc(page);
+	if (!buffer) test_perror("mutable source buffer");
+	for (size_t i = 0; i < page; i++) buffer[i] = (unsigned char)(i * 37 + 11);
+	for (size_t offset = 0; offset < 2 * page + 7;) {
+		size_t size = 2 * page + 7 - offset;
+		if (size > page) size = page;
+		ssize_t written = write(fd, buffer, size);
+		if (written <= 0) test_perror("write mutable source");
+		/* Fill from the absolute file offset even after a short write. */
+		offset += (size_t)written;
+		for (size_t i = 0; i < page; i++) buffer[i] = (unsigned char)((offset + i) * 37 + 11);
+	}
+	free(buffer);
+	if (lseek(fd, 23, SEEK_SET) != 23) test_perror("mutable source position");
+	unsigned char *before = mmap(NULL, 2 * page, PROT_READ | PROT_WRITE, MAP_PRIVATE, fd, 0);
+	if (before == MAP_FAILED) test_perror("mutable source mapping");
+	content(before, 2 * page, 0, 2 * page + 7);
+	unsigned char changed = 0xa5;
+	if (pwrite(fd, &changed, 1, 0) != 1) test_perror("change mapped source");
+	content(before, 2 * page, 0, 2 * page + 7);
+	unsigned char *after = mmap(NULL, page, PROT_READ | PROT_WRITE, MAP_PRIVATE, fd, 0);
+	if (after == MAP_FAILED || after[0] != changed) test_fail("fresh NOMMU copy missed file write");
+	after[0] = 0x5a;
+	unsigned char disk;
+	if (pread(fd, &disk, 1, 0) != 1 || disk != changed)
+		test_fail("private copy wrote back to source");
+	if (ftruncate(fd, 7)) test_perror("truncate mapped source");
+	unsigned char *shorter = mmap(NULL, 2 * page, PROT_READ, MAP_PRIVATE, fd, 0);
+	if (shorter == MAP_FAILED || shorter[0] != changed) test_fail("truncated NOMMU prefix missing");
+	content(shorter + 1, 2 * page - 1, 1, 7);
+	zero_mapping(fd, page, page);
+	if (lseek(fd, 0, SEEK_CUR) != 23) test_fail("mutable mapping changed fd position");
+	if (unlink("/mutable") || close(fd)) test_perror("unlink mapped source");
+	content(before, 2 * page, 0, 2 * page + 7);
+	if (shorter[0] != changed || after[0] != 0x5a) test_fail("private copies lost identity");
+	if (munmap(before, 2 * page) || munmap(after, page) || munmap(shorter, 2 * page))
+		test_perror("mutable mapping cleanup");
+	puts("file mmap: mutable file writes, truncate, EOF, unlink and private lifetime verified");
+}
 #endif
 
 int main(void)
@@ -75,12 +133,10 @@ int main(void)
 	int init = open("/init", O_RDONLY);
 	if (empty < 0 || directory < 0 || path < 0 || init < 0) test_perror("open refusal sources");
 	rejected(-1, page, PROT_READ, MAP_PRIVATE, 0, EBADF);
-	rejected(ordinary, page, PROT_READ, MAP_PRIVATE, 0, EOPNOTSUPP);
-	rejected(init, page, PROT_READ, MAP_PRIVATE, 0, EOPNOTSUPP);
 	rejected(directory, page, PROT_READ, MAP_PRIVATE, 0, EOPNOTSUPP);
 	/* fget() excludes O_PATH descriptors before the FMODE_READ check. */
 	rejected(path, page, PROT_READ, MAP_PRIVATE, 0, EBADF);
-	rejected(empty, page, PROT_READ, MAP_PRIVATE, 0, EINVAL);
+	zero_mapping(empty, page, 0);
 	rejected(fd, 0, PROT_READ, MAP_PRIVATE, 0, EINVAL);
 	rejected(fd, 2 * page + 1, PROT_READ, MAP_PRIVATE, 0, ENOMEM);
 	rejected(fd, page, PROT_NONE, MAP_PRIVATE, 0, EINVAL);
@@ -90,8 +146,12 @@ int main(void)
 	rejected(fd, page, PROT_READ, MAP_PRIVATE | MAP_FIXED, 0, ENOMEM);
 	rejected(fd, page, PROT_READ, MAP_PRIVATE | MAP_FIXED_NOREPLACE, 0, ENOMEM);
 	rejected(fd, page, PROT_READ, MAP_PRIVATE, 4096, EINVAL);
-	rejected(fd, 2 * page, PROT_READ, MAP_PRIVATE, 2 * page, EINVAL);
-	rejected(fd, page, PROT_READ, MAP_PRIVATE, (off_t)UINT64_C(0x100000000), EINVAL);
+	zero_mapping(fd, page, (off_t)UINT64_C(0x100000000));
+	unsigned char *ordinary_copy = mmap(NULL, page, PROT_READ, MAP_PRIVATE, ordinary, page);
+	if (ordinary_copy == MAP_FAILED) test_perror("ordinary disk file mapping");
+	content(ordinary_copy, page, page, 2 * page + 7);
+	if (munmap(ordinary_copy, page)) test_perror("ordinary mapping cleanup");
+	mutable_mapping(page);
 	if (lseek(fd, 23, SEEK_SET) != 23) test_perror("set standard mmap fd position");
 	const int hints[] = { MAP_POPULATE, MAP_NONBLOCK, MAP_NORESERVE,
 		MAP_STACK, MAP_DENYWRITE, MAP_EXECUTABLE,

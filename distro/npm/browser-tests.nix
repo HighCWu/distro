@@ -969,8 +969,8 @@ let
       suite = fileMmapSuite (if lib.hasInfix "wasm64" name then 64 else 32);
       project = if lib.hasSuffix "chromium" name then "chromium" else "firefox";
       expectedTests = [
-        "standard immutable file mmap preserves content, offsets and refusal semantics"
-        "Zstandard forces immutable dictionary mmap and rejects unsupported sources"
+        "standard private file mmap preserves content, EOF and lifetimes"
+        "Zstandard forces snapshot and ordinary dictionary mmap within capacity"
       ];
     };
 
