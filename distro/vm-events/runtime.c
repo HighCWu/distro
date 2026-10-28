@@ -60,6 +60,16 @@ static struct vm_events snapshot(void)
 
 int main(void)
 {
+	/* The upstream procps configure probes cannot execute during a cross
+	 * build. Verify their exact zero-size assumptions with the target libc,
+	 * without compiler folding realloc(NULL, 0) into a malloc call. */
+	void *(*volatile alloc)(size_t) = malloc;
+	void *(*volatile resize)(void *, size_t) = realloc;
+	void *zero_alloc = alloc(0);
+	void *zero_resize = resize(NULL, 0);
+	CHECK(zero_alloc && zero_resize, "procps zero-size allocator configure assumptions");
+	free(zero_alloc);
+	free(zero_resize);
 	/* This allocation is user linear memory, NOT a kernel VM page event.
 	 * The ramfs file below forces actual kernel-managed page allocations. */
 	unsigned char *buffer = malloc(65536);

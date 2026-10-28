@@ -16,6 +16,12 @@ stdenv.mkDerivation (finalAttrs: {
   version = "4.0.7";
   inherit src;
   dontDisableStatic = true;
+  # AC_FUNC_MALLOC/REALLOC cannot execute their zero-size probes while
+  # cross compiling. musl mallocng allocates size class zero; realloc(NULL, 0)
+  # delegates to malloc(0). The installed VM-events consumer checks both on
+  # the target; these are behavior answers, not added replacement functions.
+  env.ac_cv_func_malloc_0_nonnull = "yes";
+  env.ac_cv_func_realloc_0_nonnull = "yes";
   meta = {
     license = [
       lib.licenses.lgpl21Plus
