@@ -8,7 +8,7 @@ fail() {
 }
 mount -t proc proc /proc || fail 'mount proc'
 vm-events || fail 'real kernel page event consumer'
-(cd / && sha256sum --check /vm-events-vmstat.sha256) || fail 'installed vmstat binary identity'
+(cd / && sha256sum -c /vm-events-vmstat.sha256) || fail 'installed vmstat binary identity'
 version=$(vmstat -V) || fail 'procps-ng vmstat version'
 case "$version" in
 *'procps-ng 4.0.7'*) ;;
