@@ -39,5 +39,12 @@ stdenv.mkDerivation (finalAttrs: {
       finalAttrs.finalPackage
     ];
     cpus = 2;
+    # A new, unformatted disposable disk. The runner copies it writable and
+    # appends it after the installed root; the consumer refuses the root dev.
+    disks = [
+      (pkgs.runCommand "direct-io-blank-disk" { } ''
+        truncate -s 8388608 "$out"
+      '')
+    ];
   };
 })
