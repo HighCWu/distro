@@ -96,7 +96,6 @@ stdenv.mkDerivation (finalAttrs: {
     config CONSPY n
     config CROND y
     config INOTIFYD y
-    config VMSTAT y
     config CRONTAB y
     config DEVMEM n
     config FBSPLASH n
@@ -143,7 +142,6 @@ stdenv.mkDerivation (finalAttrs: {
 
     make -j$NIX_BUILD_CORES oldconfig
     grep -qx 'CONFIG_NSENTER=y' .config
-    grep -qx 'CONFIG_VMSTAT=y' .config
 
     runHook postConfigure
   '';

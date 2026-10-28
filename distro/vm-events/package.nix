@@ -6,6 +6,7 @@
   musl,
   llvm-runtimes,
   busybox,
+  procps-vmstat,
   platform,
   vm-test,
 }:
@@ -36,8 +37,13 @@ stdenv.mkDerivation (finalAttrs: {
     init = ./runtime-test.sh;
     contents = [
       busybox
+      procps-vmstat
       finalAttrs.finalPackage
     ];
+    files."/vm-events-vmstat.sha256" = {
+      source = "${procps-vmstat.sourceBundle}/BINARY_SHA256SUMS";
+      mode = "0444";
+    };
     cpus = 2;
   };
 })

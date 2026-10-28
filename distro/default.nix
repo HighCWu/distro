@@ -117,6 +117,13 @@ lib.makeScope (scope: lib.callPackageWith ({ inherit lib pkgs; } // scope)) (
     toolchain-smoke-runtime-wasm64 = self.toolchain-smoke-wasm64.checks.c-runtime;
     public-syscall = callPackage ./public-syscall/package.nix { };
     fuse-passthrough = callPackage ./fuse-passthrough/package.nix { };
+    procps-vmstat = callPackage ./procps-vmstat/package.nix { };
+    procps-vmstat-wasm64 = callPackage ./procps-vmstat/package.nix {
+      stdenv = self.stdenv-wasm64;
+      platform = self.platform-wasm64;
+      musl = self.musl-wasm64;
+      llvm-runtimes = self.llvm-runtimes-wasm64;
+    };
     vm-events = callPackage ./vm-events/package.nix { };
     vm-events-wasm64 = callPackage ./vm-events/package.nix {
       stdenv = self.stdenv-wasm64;
@@ -124,6 +131,7 @@ lib.makeScope (scope: lib.callPackageWith ({ inherit lib pkgs; } // scope)) (
       musl = self.musl-wasm64;
       llvm-runtimes = self.llvm-runtimes-wasm64;
       busybox = self.busybox-wasm64;
+      procps-vmstat = self.procps-vmstat-wasm64;
       vm-test = vmTestWasm64;
     };
     fuse-passthrough-wasm64 = callPackage ./fuse-passthrough/package.nix {
