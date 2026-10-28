@@ -7,6 +7,7 @@
 #include <stdlib.h>
 #include <string.h>
 #include <sys/stat.h>
+#include <sys/resource.h>
 #include <sys/statfs.h>
 #include <sys/uio.h>
 #include <unistd.h>
@@ -19,6 +20,51 @@ static void fail(const char *what)
 	exit(1);
 }
 #define CHECK(ok, what) do { if (!(ok)) fail(what); } while (0)
+
+static void check_file_limit(int fd, unsigned char *destination)
+{
+#ifdef __wasm__
+	struct rlimit original;
+	CHECK(!getrlimit(RLIMIT_FSIZE, &original), "read original file-size limit");
+	int flags = fcntl(fd, F_GETFL);
+	CHECK(flags >= 0, "read direct file flags");
+	/* Own one fresh page at the real linear-memory boundary. The next byte
+	 * is invalid; VFS access_ok still admits this low, bounded address.
+	 * Clear the page before any later allocation can reuse the free arena. */
+	size_t pages = __builtin_wasm_memory_grow(0, 1);
+	CHECK(pages != SIZE_MAX && pages > 0 && pages < UINTPTR_MAX / PAGE - 2,
+	      "grow bounded memory for valid-prefix fault fixture");
+	unsigned char *fresh = (void *)((uintptr_t)pages * PAGE);
+	for (unsigned append = 0; append < 2; append++) {
+		struct rlimit limited = original;
+		limited.rlim_cur = append ? 3 * PAGE : PAGE;
+		CHECK(!setrlimit(RLIMIT_FSIZE, &limited), "install temporary file-size limit");
+		if (append) {
+			CHECK(lseek(fd, 0, SEEK_SET) == 0 && !fcntl(fd, F_SETFL, flags | O_APPEND),
+			      "append uses inode size rather than original position");
+		}
+		memset(fresh, 0x5a + append, PAGE);
+		errno = 0;
+		ssize_t result = append ? write(fd, fresh, CHUNK + 1) :
+					 pwrite(fd, fresh, CHUNK + 1, 0);
+		int error = errno;
+		for (size_t i = 0; i < PAGE; i++) ((volatile unsigned char *)fresh)[i] = 0;
+		CHECK(!setrlimit(RLIMIT_FSIZE, &original) && !fcntl(fd, F_SETFL, flags),
+		      "restore file-size limit and append flag");
+		errno = error;
+		CHECK(result == PAGE, "limit clips before reading invalid user tail");
+		CHECK(lseek(fd, 0, SEEK_CUR) == (append ? 3 * PAGE : CHUNK), "limited write position");
+		CHECK(pread(fd, destination, PAGE, append ? 2 * PAGE : 0) == PAGE,
+		      "read actual limited-write contents");
+		for (size_t i = 0; i < PAGE; i++)
+			CHECK(destination[i] == 0x5a + append, "limited prefix bytes retained");
+	}
+	puts("direct I/O: file-size limits and append clip before invalid linear-memory tails pass");
+#else
+	(void)fd;
+	(void)destination;
+#endif
+}
 
 static void check_block_device(unsigned char *source, unsigned char *destination)
 {
@@ -115,6 +161,7 @@ int main(void)
 	CHECK(lseek(fd, 0, SEEK_CUR) == CHUNK, "failed positional calls preserve fd position");
 	CHECK(pread(fd, destination, PAGE, 0) == PAGE &&
 	      !memcmp(destination, source + 2 * PAGE, PAGE), "recovery and no failed-write mutation");
+	check_file_limit(fd, destination);
 	CHECK(!close(fd) && !unlink("/direct-io-data"), "close and remove file");
 	puts("direct I/O: alignment, address errors, recovery and cleanup pass");
 	check_block_device(source, destination);
