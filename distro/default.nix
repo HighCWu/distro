@@ -125,6 +125,15 @@ lib.makeScope (scope: lib.callPackageWith ({ inherit lib pkgs; } // scope)) (
       llvm-runtimes = self.llvm-runtimes-wasm64;
     };
     vm-events = callPackage ./vm-events/package.nix { };
+    direct-io = callPackage ./direct-io/package.nix { };
+    direct-io-wasm64 = callPackage ./direct-io/package.nix {
+      stdenv = self.stdenv-wasm64;
+      platform = self.platform-wasm64;
+      musl = self.musl-wasm64;
+      llvm-runtimes = self.llvm-runtimes-wasm64;
+      busybox = self.busybox-wasm64;
+      vm-test = vmTestWasm64;
+    };
     vm-events-wasm64 = callPackage ./vm-events/package.nix {
       stdenv = self.stdenv-wasm64;
       platform = self.platform-wasm64;
