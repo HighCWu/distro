@@ -15,8 +15,8 @@
     inherit pkgs;
     owner = "HighCWu";
     repo = "linux";
-    rev = "54e4b1f97972500e84ecdaf98b0890ad66725707";
-    hash = "sha256-PVOGBr18PSWUZe7is8WY71Z0YAnKqY42GKmyPFQPFK0=";
+    rev = "b2130397a84a5370f11f823c7076c799f2be6f5f";
+    hash = "sha256-nmkTTuddeyVlJC3KU/5mCtWMtyHmvW57APZtRYlJRLE=";
   },
 }:
 
@@ -139,6 +139,7 @@ pkgs.stdenvNoCC.mkDerivation (finalAttrs: {
     grep -qx 'CONFIG_FUSE_PASSTHROUGH=y' .config
     grep -qx 'CONFIG_FS_STACK=y' .config
     grep -qx 'CONFIG_VM_EVENT_COUNTERS=y' .config
+    grep -qx 'CONFIG_PACKET=y' .config
     grep -qx 'CONFIG_FHANDLE=y' .config
     grep -qx 'CONFIG_HAVE_ARCH_SECCOMP=y' .config
     grep -qx 'CONFIG_SECCOMP=y' .config
