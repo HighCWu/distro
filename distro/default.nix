@@ -136,6 +136,15 @@ lib.makeScope (scope: lib.callPackageWith ({ inherit lib pkgs; } // scope)) (
       llvm-runtimes = self.llvm-runtimes-wasm64;
       sdk-fork-continuation = self.sdk-fork-continuation-wasm64;
     };
+    bpf-syscall = callPackage ./bpf-syscall/package.nix { };
+    bpf-syscall-wasm64 = callPackage ./bpf-syscall/package.nix {
+      stdenv = self.stdenv-wasm64;
+      platform = self.platform-wasm64;
+      musl = self.musl-wasm64;
+      llvm-runtimes = self.llvm-runtimes-wasm64;
+      busybox = self.busybox-wasm64;
+      vm-test = vmTestWasm64;
+    };
     socket-diag = callPackage ./socket-diag/package.nix { };
     socket-diag-wasm64 = callPackage ./socket-diag/package.nix {
       stdenv = self.stdenv-wasm64;

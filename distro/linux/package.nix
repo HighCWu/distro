@@ -15,8 +15,8 @@
     inherit pkgs;
     owner = "HighCWu";
     repo = "linux";
-    rev = "6c4cb40dabafc588f2b2cba01929d4b8ca185f35";
-    hash = "sha256-FTSBUiNGIBgPig3MJf4jipovWamTguHtC+HPnf5CLH4=";
+    rev = "d79048f56263e88d585c86a38b6a1b0022fac53e";
+    hash = "sha256-aHhvbJnFRb5YA0hOGNn8+llMHUs0Gk5cFdrK1oXccUQ=";
   },
 }:
 
@@ -140,6 +140,11 @@ pkgs.stdenvNoCC.mkDerivation (finalAttrs: {
     grep -qx 'CONFIG_FS_STACK=y' .config
     grep -qx 'CONFIG_VM_EVENT_COUNTERS=y' .config
     grep -qx 'CONFIG_PACKET=y' .config
+    grep -qx 'CONFIG_BPF=y' .config
+    grep -qx 'CONFIG_BPF_SYSCALL=y' .config
+    grep -qx 'CONFIG_BPF_UNPRIV_DEFAULT_OFF=y' .config
+    ! grep -qx 'CONFIG_BPF_JIT=y' .config
+    ! grep -qx 'CONFIG_BPF_JIT_ALWAYS_ON=y' .config
     for option in UNIX_DIAG INET_DIAG INET_TCP_DIAG INET_UDP_DIAG NETLINK_DIAG; do
       grep -qx "CONFIG_$option=y" .config
     done
