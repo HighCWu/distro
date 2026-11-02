@@ -145,6 +145,12 @@ int main(int argc, char **argv)
     check(argc == 1 || argc == 3, "optional tool/self paths");
     const char *tool = argc == 3 ? argv[1] : "/bin/setsid";
     const char *self = argc == 3 ? argv[2] : "/libexec/setsid-fork/verify";
+    /* The early boot init tree can inherit group 0. Passing that value to
+     * POSIX_SPAWN_SETPGROUP requests the child's own group, rather than the
+     * non-leader control required by our direct-exec case. Establish the
+     * controller group through the normal syscall before building attributes. */
+    if (getpgrp() == 0)
+        check(setpgid(0, 0) == 0, "initialize controller process group");
     run(tool, self, 1, 0, 0, 0);
     run(tool, self, 0, 1, 0, 0);
     run(tool, self, 0, 0, 0, 0);
