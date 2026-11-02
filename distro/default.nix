@@ -128,6 +128,24 @@ lib.makeScope (scope: lib.callPackageWith ({ inherit lib pkgs; } // scope)) (
     direct-io = callPackage ./direct-io/package.nix { };
     packet-sockets = callPackage ./packet-sockets/package.nix { };
     alg-hash = callPackage ./alg-hash/package.nix { };
+    iproute2-ss = callPackage ./iproute2-ss/package.nix { };
+    iproute2-ss-wasm64 = callPackage ./iproute2-ss/package.nix {
+      platform = self.platform-wasm64;
+      llvm-toolchain = self.llvm-toolchain-wasm64;
+      musl = self.musl-wasm64;
+      llvm-runtimes = self.llvm-runtimes-wasm64;
+      sdk-fork-continuation = self.sdk-fork-continuation-wasm64;
+    };
+    socket-diag = callPackage ./socket-diag/package.nix { };
+    socket-diag-wasm64 = callPackage ./socket-diag/package.nix {
+      stdenv = self.stdenv-wasm64;
+      platform = self.platform-wasm64;
+      musl = self.musl-wasm64;
+      llvm-runtimes = self.llvm-runtimes-wasm64;
+      busybox = self.busybox-wasm64;
+      iproute2-ss = self.iproute2-ss-wasm64;
+      vm-test = vmTestWasm64;
+    };
     alg-rng = callPackage ./alg-rng/package.nix { };
     alg-rng-wasm64 = callPackage ./alg-rng/package.nix {
       stdenv = self.stdenv-wasm64;
