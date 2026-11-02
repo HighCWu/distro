@@ -122,7 +122,9 @@ export class ProcessDylink {
     const view = new Uint8Array(buffer, start, Math.min(4096, buffer.byteLength - start));
     const end = view.indexOf(0);
     if (end < 0) throw new Error("unterminated dynamic string");
-    return new TextDecoder("utf-8", { fatal: true }).decode(view.subarray(0, end));
+    // Browser decoders can reject SharedArrayBuffer views even in isolated
+    // pages. Decode an owned snapshot, as for other kernel bridge strings.
+    return new TextDecoder("utf-8", { fatal: true }).decode(view.slice(0, end));
   }
   #failure(error: unknown): WasmAddress {
     if (this.#options.isControlFlow(error)) throw error;

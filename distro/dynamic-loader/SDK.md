@@ -57,6 +57,8 @@ reentrant dlopen during constructors, RTLD_NEXT, reference-value
 function signatures, dynamic symbol versions, cross-module setjmp/longjmp and C++ exceptions
 and cross-Worker publication still need implementation and acceptance.
 Names/paths currently use UTF-8; strings are bounded to 4096 bytes. Individual
+UTF-8 decoding uses an owned byte snapshot, since browser TextDecoder
+implementations can reject views over shared Wasm memory even when isolated.
 files and new graph input are bounded to 64 MiB, with at most 1024 cached
 objects. These are profile capacities, not Linux syscall limits.
 
