@@ -52,8 +52,17 @@ follow dependency DFS postorder, skipping already visited edges. A cycle has
 no universal dependency-before-dependent order; its members must tolerate peers
 whose constructors have not run yet. Reopening a resident cycle does not rerun
 constructors. It refuses clone/clone3 rather than creating Workers with
-missing modules. It cannot combine with the fork-continuation SDK. TLS,
-reentrant dlopen during constructors, RTLD_NEXT, reference-value
+missing modules. It cannot combine with the fork-continuation SDK.
+
+The initial-thread TLS candidate admits defined hidden/local TLS objects in
+LLD's module data image. All GOT bindings and ordinary/TLS pointer relocations
+precede constructors; resident reuse preserves this thread's values. Runtime
+checks keep the TLS image within its module allocation. TLS globals and init
+helpers are not published as ordinary data/function symbols. This path still
+needs the new seven-stage Linux process acceptance; it does not add Worker
+creation, imported/public TLS bindings or general dynamic TLS support.
+
+Reentrant dlopen during constructors, RTLD_NEXT, reference-value
 function signatures, dynamic symbol versions, cross-module setjmp/longjmp and C++ exceptions
 and cross-Worker publication still need implementation and acceptance.
 Names/paths currently use UTF-8; strings are bounded to 4096 bytes.

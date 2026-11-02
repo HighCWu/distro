@@ -13,6 +13,7 @@ export const processStages = {
     "dynamic loader: aliases, local/global scope, dependency reuse and close pass",
     "dynamic loader: cyclic dependencies, peer constructors and canonical relocations pass",
     "dynamic loader: cross-module SIMD signatures and typed forward calls pass",
+    "dynamic loader: first-thread private TLS initialization, isolation and resident reuse pass",
     "dynamic loader: missing/malformed rejection, descriptor recovery and cleanup pass",
   ],
   resolver: [

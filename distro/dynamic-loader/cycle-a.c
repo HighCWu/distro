@@ -4,6 +4,15 @@ extern int cycle_b_step(int);
 int cycle_a_value = 3;
 int cycle_a_count;
 int cycle_a_observed;
+_Thread_local int cycle_a_tls = 21;
+_Thread_local int *volatile cycle_a_tls_saved = &cycle_b_value;
+int cycle_a_tls_reference_observed;
+static _Thread_local int cycle_a_tls_zero;
+int cycle_a_tls_observed;
+extern int cycle_b_tls_step(int);
+int cycle_a_tls_step(int n) { cycle_a_tls += n; return cycle_a_tls + cycle_a_tls_zero++; }
+int *cycle_a_tls_data(void) { return &cycle_a_tls; }
+int *cycle_a_tls_relocated(void) { return cycle_a_tls_saved; }
 int *cycle_a_saved = &cycle_b_value;
 int (*cycle_a_function)(int) = cycle_b_step;
 typedef int vector4 __attribute__((vector_size(16)));
@@ -26,4 +35,6 @@ __attribute__((constructor)) static void initialize(void)
     cycle_a_count++;
     cycle_a_observed = cycle_b_step(0);
     cycle_a_value += *cycle_a_saved;
+    cycle_a_tls_observed = cycle_b_tls_step(2);
+    cycle_a_tls_reference_observed = cycle_a_tls_saved == &cycle_b_value;
 }

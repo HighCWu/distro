@@ -152,6 +152,90 @@ test("forwarded imports cannot hide incompatible Wasm function signatures", () =
   assert.throws(() => link_dylink_graph(setup(new Map([["root", reexport]]))), /re-exports/);
 });
 
+test("first-thread TLS requires explicit ownership, stays private and validates the initialized image", () => {
+  // Layout-only fixture; actual C compiler TLS initialization is checked by
+  // the small Clang module corpus and the booted process workload.
+  const image = (base = 128, size = 4, alignment = 4, offset = 0, flags = 260) => {
+    const signed = (value: number) => {
+      const bytes: number[] = [];
+      for (;;) {
+        let byte = value & 127;
+        value >>= 7;
+        if ((value === 0 && !(byte & 64)) || (value === -1 && byte & 64)) {
+          bytes.push(byte);
+          return bytes;
+        }
+        bytes.push(byte | 128);
+      }
+    };
+    return new Uint8Array([
+      0,
+      97,
+      115,
+      109,
+      1,
+      0,
+      0,
+      0,
+      ...section(0, [
+        ...text("dylink.0"),
+        ...section(1, [16, 2, 0, 0]),
+        ...section(3, [1, ...text("private_tls"), (flags & 127) | 128, flags >> 7]),
+      ]),
+      ...section(6, [
+        4,
+        ...[base, size, alignment, offset].flatMap((value, index) => [
+          0x7f,
+          index === 0 ? 1 : 0,
+          0x41,
+          ...signed(value),
+          0x0b,
+        ]),
+      ]),
+      ...section(7, [
+        4,
+        ...["__tls_base", "__tls_size", "__tls_align", "private_tls"].flatMap((name, index) => [
+          ...text(name),
+          3,
+          index,
+        ]),
+      ]),
+    ]);
+  };
+  const ordinary = setup(new Map([["root", image()]]));
+  const before = new Uint8Array(ordinary.memory.buffer).slice();
+  assert.throws(() => link_dylink_graph(ordinary), /TLS/);
+  assert.deepEqual(new Uint8Array(ordinary.memory.buffer), before);
+  const local = { ...ordinary, initialThreadLocalTls: true };
+  const linked = link_dylink_graph(local);
+  linked.initialize();
+  for (const name of ["private_tls", "__tls_base", "__tls_size", "__wasm_init_tls"])
+    assert.equal(
+      linked.lookup(name),
+      undefined,
+      "TLS implementation details stay out of data scope",
+    );
+  const publicTls = setup(new Map([["root", image(128, 4, 4, 0, 256)]]));
+  assert.throws(() => link_dylink_graph({ ...publicTls, initialThreadLocalTls: true }), /TLS/);
+  const importedTls = binary({ extra: section(4, [1, ...text("env"), ...text("tls"), 0x84, 2]) });
+  assert.throws(
+    () =>
+      link_dylink_graph({
+        ...setup(new Map([["root", importedTls]])),
+        initialThreadLocalTls: true,
+      }),
+    /TLS/,
+  );
+  for (const bytes of [image(0), image(128, 32), image(128, 4, 3), image(128, 4, 4, 5)]) {
+    assert.throws(
+      () =>
+        link_dylink_graph({ ...setup(new Map([["root", bytes]])), initialThreadLocalTls: true }),
+      DylinkInitializationError,
+      "a bad post-start TLS layout cannot masquerade as a recoverable dlopen error",
+    );
+  }
+});
+
 test("later starts can use a forward edge as soon as its provider is instantiated", () => {
   const imports = (name: string) => [1, ...text("env"), ...text(name), 0, 0];
   const linked = link_dylink_graph(

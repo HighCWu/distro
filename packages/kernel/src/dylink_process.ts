@@ -387,6 +387,7 @@ export class ProcessDylink {
           tableArena: { cursor: tableStart, limit: tableEnd, address: tableAddress },
           externalSymbols: this.#symbols,
           functionPointers: this.#pointers,
+          initialThreadLocalTls: true,
           reuse: this.#reuse,
           resolveDependency: (name, parent) => local.get(parent)!.dependencies.get(name)!,
           isControlFlow: this.#options.isControlFlow,

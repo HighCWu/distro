@@ -38,6 +38,7 @@ let
         "--max-memory=${toString platform.maximumMemoryBytes}"
         "--export-all"
         "--export=__wasm_call_ctors"
+        "--export=__tls_base"
         "--soname=${name}"
       ]
       ++ lib.optional (runpath != null) "--rpath=${runpath}";

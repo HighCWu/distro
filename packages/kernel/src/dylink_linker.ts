@@ -50,6 +50,9 @@ export function link_dylink_graph(options: {
   externalSymbols?: ReadonlyMap<string, DylinkExternalSymbol>;
   reuse?: ReadonlyMap<string, { instance: WebAssembly.Instance; base: bigint; tableBase: bigint }>;
   functionPointers?: Map<CallableFunction, bigint>;
+  /** Only the process profile which refuses Worker creation may use LLD's
+   * first-thread TLS image. No imported/public TLS binding is provided. */
+  initialThreadLocalTls?: boolean;
   resolveDependency?(name: string, parent: string): string;
   /** Execution control transfers (exit/exec) must escape initialization intact. */
   isControlFlow?(error: unknown): boolean;
@@ -87,7 +90,22 @@ export function link_dylink_graph(options: {
     const metadata = read_wasm_dylink(module);
     if (!metadata) throw new Error(`missing dylink.0: ${name}`);
     if (metadata.unknownSubsections.length) throw new Error("unsupported dylink extension");
-    if ([...metadata.exports, ...metadata.imports].some((symbol) => symbol.flags & ~0xff))
+    const exports = WebAssembly.Module.exports(module);
+    const localTls = metadata.exports.filter((symbol) => symbol.flags & 0x100);
+    if (
+      metadata.imports.some((symbol) => symbol.flags & ~0xff) ||
+      metadata.exports.some((symbol) => symbol.flags & ~0x1ff) ||
+      (localTls.length &&
+        (!options.initialThreadLocalTls ||
+          localTls.some(
+            (symbol) =>
+              !(symbol.flags & 6) ||
+              !exports.some((entry) => entry.name === symbol.name && entry.kind === "global"),
+          ) ||
+          ["__tls_base", "__tls_size", "__tls_align"].some(
+            (name) => !exports.some((entry) => entry.name === name && entry.kind === "global"),
+          )))
+    )
       throw new Error("dynamic TLS, absolute or unknown symbol flags are not supported yet");
     for (const group of [metadata.exports, metadata.imports]) {
       const flags = new Map<string, number>();
@@ -105,7 +123,7 @@ export function link_dylink_graph(options: {
       metadata,
       imports: read_wasm_dynamic_imports(bytes),
       signatures: read_wasm_dynamic_signatures(bytes),
-      exports: WebAssembly.Module.exports(module),
+      exports,
       base: 0n,
       tableBase: 0n,
       dependencies: metadata.needed.map(
@@ -156,6 +174,12 @@ export function link_dylink_graph(options: {
     "__heap_end",
     "__global_base",
     "__data_end",
+    "__tls_base",
+    "__tls_size",
+    "__tls_align",
+    "__wasm_init_tls",
+    "__wasm_apply_tls_relocs",
+    "__wasm_apply_global_tls_relocs",
   ]);
   for (const name of scope) {
     const record = modules.get(name)!;
@@ -405,9 +429,43 @@ export function link_dylink_graph(options: {
         throw new RangeError("dynamic symbol address exceeds pointer width");
       global.value = word(address, memoryArena.address);
     }
+    // LLD initializes the first thread's private TLS image in the module's
+    // allocated data region. Never re-run __wasm_init_tls on resident reuse or
+    // publish these globals as ordinary process-wide data addresses.
     for (const record of fresh) {
-      const relocate = record.instance!.exports.__wasm_apply_data_relocs;
-      if (typeof relocate === "function") relocate();
+      const localTls = record.metadata.exports.filter((symbol) => symbol.flags & 0x100);
+      if (!localTls.length) continue;
+      const value = (name: string) => {
+        const global = record.instance!.exports[name];
+        if (
+          !(global instanceof WebAssembly.Global) ||
+          typeof global.value !== (memoryArena.address === "i64" ? "bigint" : "number")
+        )
+          throw new Error("incompatible initial TLS layout");
+        return BigInt.asUintN(memoryArena.address === "i64" ? 64 : 32, BigInt(global.value));
+      };
+      const base = value("__tls_base"),
+        size = value("__tls_size"),
+        align = value("__tls_align");
+      if (
+        size <= 0n ||
+        align <= 0n ||
+        align & (align - 1n) ||
+        base % align ||
+        base < record.base ||
+        base + size > record.base + BigInt(record.metadata.memorySize) ||
+        localTls.some((symbol) => value(symbol.name) < 0n || value(symbol.name) > size)
+      )
+        throw new Error("initial TLS image is outside its module data");
+    }
+    for (const record of fresh) {
+      const relocations = ["__wasm_apply_data_relocs"];
+      if (options.initialThreadLocalTls)
+        relocations.push("__wasm_apply_tls_relocs", "__wasm_apply_global_tls_relocs");
+      for (const name of relocations) {
+        const relocate = record.instance!.exports[name];
+        if (typeof relocate === "function") relocate();
+      }
     }
   } catch (error) {
     if (options.isControlFlow?.(error)) throw error;

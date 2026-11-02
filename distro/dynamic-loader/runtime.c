@@ -16,6 +16,7 @@
 #include <unistd.h>
 
 int main_value = 5;
+static _Thread_local int main_tls_guard = 501;
 int main_add(int value) { return main_value += value; }
 static void require(int condition, const char *message)
 {
@@ -126,6 +127,29 @@ int main(void)
             "cyclic resident close and descriptor cleanup");
     puts("dynamic loader: cyclic dependencies, peer constructors and canonical relocations pass");
     puts("dynamic loader: cross-module SIMD signatures and typed forward calls pass");
+
+    int (*a_tls_step)(int) = symbol(cycle, "cycle_a_tls_step");
+    int (*b_tls_step)(int) = symbol(cycle, "cycle_b_tls_step");
+    int *(*a_tls_data)(void) = symbol(cycle, "cycle_a_tls_data");
+    int *(*b_tls_data)(void) = symbol(cycle, "cycle_b_tls_data");
+    require(*(int *)symbol(cycle, "cycle_a_tls_observed") == 42 &&
+            *(int *)symbol(cycle, "cycle_b_tls_observed") == 22,
+            "peer constructors observe initialized first-thread TLS and zero tails");
+    int *(*a_tls_relocated)(void) = symbol(cycle, "cycle_a_tls_relocated");
+    int *(*b_tls_relocated)(void) = symbol(cycle, "cycle_b_tls_relocated");
+    require(a_tls_relocated() == b_value && b_tls_relocated() == a_value,
+            "TLS pointer initializers bind relocated peer data");
+    require(*(int *)symbol(cycle, "cycle_a_tls_reference_observed") == 1 &&
+            *(int *)symbol(cycle, "cycle_b_tls_reference_observed") == 1,
+            "TLS pointer relocations precede peer constructors");
+    require(a_tls_step(2) == 25 && b_tls_step(3) == 46 &&
+            *a_tls_data() == 24 && *b_tls_data() == 45 && a_tls_data() != b_tls_data() &&
+            main_tls_guard++ == 501, "module TLS blocks and main thread state stay independent");
+    require(!dlsym(cycle, "cycle_a_tls") && dlerror(), "hidden TLS has no ordinary data binding");
+    require(dlopen("cycle-a.so", RTLD_NOW | RTLD_NOLOAD) == cycle &&
+            a_tls_step(1) == 27 && *a_tls_data() == 25 && main_tls_guard == 502,
+            "resident lookup does not initialize TLS again");
+    puts("dynamic loader: first-thread private TLS initialization, isolation and resident reuse pass");
 
     require(!dlopen("missing.so", RTLD_NOW) && dlerror(), "missing library failure");
     int fd = open("/plugins/bad.so", O_CREAT | O_TRUNC | O_WRONLY, 0600);
