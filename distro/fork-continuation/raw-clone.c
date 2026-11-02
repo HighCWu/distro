@@ -53,6 +53,12 @@ int raw_clone3_continuation_probe(void)
 	const long sizes[] = {64, 80, 88, 96};
 	for (unsigned attempt = 0; attempt < sizeof sizes / sizeof sizes[0]; attempt++) {
 		volatile int local = 53 + attempt;
+		volatile int unused = -73;
+		if (attempt) {
+			uint64_t value = attempt == 2 ? (uintptr_t)&unused : UINT64_MAX;
+			request.pidfd = request.parent_tid = request.child_tid = request.tls = value;
+			request.cgroup = UINT64_MAX;
+		}
 		// Linux ignores the registers after clone3's pointer and size.
 		long child = raw_linux_syscall(SYS_clone3, (long)&request, sizes[attempt], 777, 0, 0, 0);
 		if (child < 0) return 0;
@@ -60,14 +66,14 @@ int raw_clone3_continuation_probe(void)
 			long pid = raw_linux_syscall(SYS_getpid, 0, 0, 0, 0, 0, 0);
 			long ppid = raw_linux_syscall(SYS_getppid, 0, 0, 0, 0, 0, 0);
 			int valid = pid > 0 && pid != parent && ppid == parent &&
-				local == (int)(53 + attempt) && raw_global == 61;
+				local == (int)(53 + attempt) && raw_global == 61 && unused == -73;
 			local = 99; raw_global = 101;
 			raw_linux_syscall(SYS_exit_group, valid ? 42 : 119, 0, 0, 0, 0, 0);
 			__builtin_trap();
 		}
 		int status = 0;
 		if (raw_linux_syscall(SYS_wait4, child, (long)&status, 0, 0, 0, 0) != child ||
-			status != (42 << 8) || local != (int)(53 + attempt) || raw_global != 61) return 0;
+			status != (42 << 8) || local != (int)(53 + attempt) || raw_global != 61 || unused != -73) return 0;
 		if (raw_linux_syscall(SYS_wait4, child, (long)&status, 0, 0, 0, 0) != -10) return 0;
 	}
 	return 1;

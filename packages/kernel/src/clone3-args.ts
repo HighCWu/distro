@@ -142,16 +142,10 @@ export function clone3_fork_request(
   // require native transport: NEWTIME aliases a legacy CSIGNAL bit.
   if (flags & ~(namespaceMask | tidMask | clearSighand | newTime | intoCgroup | 0x1000n))
     return -95;
-  for (let index = 1; index < 11; index++)
-    if (
-      index !== 4 &&
-      index !== 10 &&
-      !(index === 1 && flags & 0x1000n) &&
-      !(index === 2 && flags & 0x1200000n) &&
-      !(index === 3 && flags & 0x100000n) &&
-      field(index) !== 0n
-    )
-      return -95;
+  if (stack !== 0n || stackSize !== 0n || tids !== 0n || tidCount !== 0n) return -95;
+  // Linux consults PIDFD/TID/TLS fields only when their flags request them.
+  // In particular an unused u64 may not fit a wasm32 pointer, and must not be
+  // validated, truncated into a different target, or written by the adapter.
   // Do not truncate a clone_args u64 pointer to the module's pointer width.
   // Linux owns the actual write and fd allocation/rollback, not this parser.
   const request = fork_options(

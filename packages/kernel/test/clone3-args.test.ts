@@ -85,15 +85,11 @@ for (const address of ["i32", "i64"] as const)
       [0, 17n, -22],
       [0, 0x100n, -95],
       [0, 0x100000800n, -22],
-      [1, 0x100000000n, -95],
-      [2, 1n, -95],
-      [3, 1n, -95],
       [4, 0n, -95],
       [4, 65n, -22],
       [4, 0x100000011n, -22],
       [5, 1n, -22],
       [6, 1n, -22],
-      [7, 1n, -95],
       [8, 1n, -22],
       [9, 1n, -22],
       [11, 1n, -7],
@@ -102,6 +98,24 @@ for (const address of ["i32", "i64"] as const)
       view.setBigUint64(256 + index * 8, value, true);
       assert.equal(parse(96), error, `field ${index}`);
     }
+    reset();
+    for (const index of [1, 2, 3, 7, 10])
+      view.setBigUint64(256 + index * 8, 0xffffffffffffffffn, true);
+    for (const size of [64, 80, 88, 96])
+      assert.deepEqual(
+        parse(size),
+        { pidfd: null },
+        "unrequested output and TLS fields are ignored",
+      );
+    view.setBigUint64(256, 0x100000n, true);
+    view.setBigUint64(256 + 24, 8193n, true);
+    assert.deepEqual(
+      parse(88),
+      { pidfd: null, tids: { flags: p(0x100000), parent: p(8193), child: p(0) } },
+      "only the requested parent TID is captured",
+    );
+    view.setBigUint64(256 + 24, 0xffffffffffffffffn, true);
+    if (address === "i32") assert.equal(parse(88), -14, "requested pointer still cannot narrow");
     reset();
     view.setBigUint64(256 + 80, 0xffffffffffffffffn, true);
     assert.deepEqual(parse(88), { pidfd: null }, "unrequested cgroup fd is ignored by Linux");

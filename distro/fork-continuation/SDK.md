@@ -46,7 +46,9 @@ ABI-1-only loaders reject these objects, and new loaders still accept ABI 1 for
 the old clone subset. Only ABI 2 enables `clone3` through the v2 import.
 The v2 import adapts Linux `clone3` (435) for the same limited fork shape:
 zero flags or capability-gated options below, SIGCHLD exit signal, no alternate
-stack, TLS or CLONE_INTO_CGROUP options.
+stack or CLONE_SETTLS flag. Nonzero set_tid selections remain unsupported.
+Unrequested PIDFD/TID/TLS/cgroup fields are ignored as on Linux, including
+values that would not be representable or accessible as pointers on wasm32.
 The u64 `clone_args` layout is identical on both pointer widths. Sizes from 64
 through 65536 bytes are bounded and read-checked; unknown tail bytes must be zero.
 Malformed sizes/addresses/tails return EINVAL/EFAULT/E2BIG; other unsupported
