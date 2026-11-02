@@ -87,7 +87,16 @@ let
       cloneNamespaceTransport = true;
       nativeClone3Transport = true;
       clone3WideFlags = [ "CLONE_CLEAR_SIGHAND" ];
-      clone3NativeOnlyFlags = [ "CLONE_NEWTIME" ];
+      clone3NativeOnlyFlags = [
+        "CLONE_NEWTIME"
+        "CLONE_INTO_CGROUP"
+      ];
+      clone3PidSelection = {
+        maximumCount = 32;
+        elementBits = 32;
+        signed = true;
+        requiresNativeTransport = true;
+      };
       binaryenVersion = pkgs.binaryen.version;
       continuationBufferBytes = 262144;
       overflowBehavior = "trap";
