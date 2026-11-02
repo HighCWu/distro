@@ -271,3 +271,93 @@ export function read_wasm_memories(module: Uint8Array): WasmMemories {
 
   return memories;
 }
+
+export interface WasmDylink {
+  memorySize: number;
+  memoryAlignment: number;
+  tableSize: number;
+  tableAlignment: number;
+  needed: string[];
+  runtimePaths: string[];
+  exports: { name: string; flags: number }[];
+  imports: { module: string; name: string; flags: number }[];
+  target?: "wasm32" | "wasm64";
+  /** A loader must decide whether it can honor extensions before publishing a DSO. */
+  unknownSubsections: number[];
+}
+
+/** Read tool-conventions dylink.0, not ELF and not an authorization to instantiate.
+ * All names and vectors are bounded by their subsection; custom sections are not
+ * validated by the engine. Preserve symbol flags (including weak and TLS) for
+ * the loader's capability checks rather than silently discarding them. */
+export function read_wasm_dylink(module: WebAssembly.Module): WasmDylink | null {
+  const sections = WebAssembly.Module.customSections(module, "dylink.0");
+  if (!sections.length) return null;
+  if (sections.length !== 1) throw new WasmParseError("duplicate dylink.0 section", 0);
+  const bytes = new Cursor(new Uint8Array(sections[0]!));
+  const result: WasmDylink = {
+    memorySize: 0,
+    memoryAlignment: 0,
+    tableSize: 0,
+    tableAlignment: 0,
+    needed: [],
+    runtimePaths: [],
+    exports: [],
+    imports: [],
+    unknownSubsections: [],
+  };
+  let memory_info = false;
+  const name = (part: Cursor, empty = false) => {
+    const value = part.span().text();
+    if ((!empty && !value.length) || value.includes("\0")) part.fail("invalid dylink name");
+    return value;
+  };
+  const vector = (part: Cursor, entry: () => void) => {
+    const count = part.u32();
+    // Even an empty string entry needs a length byte. Do not iterate a hostile
+    // u32 count before discovering that its payload cannot contain the entries.
+    if (count > part.view().length) part.fail("impossible dylink vector count");
+    for (let i = 0; i < count; i++) entry();
+  };
+  while (!bytes.done) {
+    const id = bytes.byte();
+    const part = bytes.span();
+    switch (id) {
+      case 1:
+        if (memory_info) part.fail("duplicate dylink memory info");
+        memory_info = true;
+        result.memorySize = part.u32();
+        result.memoryAlignment = part.u32();
+        result.tableSize = part.u32();
+        result.tableAlignment = part.u32();
+        break;
+      case 2:
+        vector(part, () => result.needed.push(name(part)));
+        break;
+      case 3:
+        vector(part, () => result.exports.push({ name: name(part), flags: part.u32() }));
+        break;
+      case 4:
+        vector(part, () =>
+          result.imports.push({ module: name(part), name: name(part), flags: part.u32() }),
+        );
+        break;
+      case 5:
+        vector(part, () => result.runtimePaths.push(name(part, true)));
+        break;
+      case 6: {
+        if (result.target !== undefined) part.fail("duplicate dylink target");
+        const target = name(part);
+        if (target === "wasm32" || target === "wasm64") result.target = target;
+        else part.fail("unknown dylink target");
+        break;
+      }
+      default:
+        result.unknownSubsections.push(id);
+        continue;
+    }
+    part.expect_done("dylink subsection");
+  }
+  if (!memory_info) bytes.fail("missing dylink memory info");
+  return result;
+}
