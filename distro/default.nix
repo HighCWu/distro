@@ -70,6 +70,10 @@ lib.makeScope (scope: lib.callPackageWith ({ inherit lib pkgs; } // scope)) (
     symbolVersionToolchain = self.llvm-toolchain-unwrapped.override {
       src = import ./symbol-versions/source.nix { inherit pkgs; };
     };
+    sharedDriverToolchain = self.llvm-toolchain-unwrapped.override {
+      includeHostBackend = false;
+      patches = [ ./dynamic-loader/linux-shared.patch ];
+    };
     symbolVersionSdk32 = self.sdk.override {
       llvm-toolchain = self.llvm-toolchain.override {
         llvm-toolchain-unwrapped = symbolVersionToolchain;
@@ -141,10 +145,13 @@ lib.makeScope (scope: lib.callPackageWith ({ inherit lib pkgs; } // scope)) (
     };
     dynamic-loader = callPackage ./dynamic-loader/package.nix { };
     dynamic-driver = callPackage ./dynamic-loader/driver.nix {
-      compiler = self.llvm-toolchain-unwrapped.override {
-        includeHostBackend = false;
-        patches = [ ./dynamic-loader/linux-shared.patch ];
-      };
+      compiler = sharedDriverToolchain;
+    };
+    dynamic-loader-driver = self.dynamic-loader.override {
+      sharedCompiler = sharedDriverToolchain;
+    };
+    dynamic-loader-driver-wasm64 = self.dynamic-loader-wasm64.override {
+      sharedCompiler = sharedDriverToolchain;
     };
     dynamic-loader-wasm64 = callPackage ./dynamic-loader/package.nix {
       platform = self.platform-wasm64;
