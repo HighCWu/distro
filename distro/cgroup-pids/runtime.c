@@ -17,7 +17,7 @@
 static void require(int ok, const char *what)
 {
     if (!ok) {
-        fprintf(stderr, "::vm-test::fail cgroup pids: %s (errno=%d)\n", what, errno);
+        fprintf(stderr, "::vm-test::fail: cgroup pids: %s (errno=%d)\n", what, errno);
         exit(1);
     }
 }
