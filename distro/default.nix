@@ -288,6 +288,24 @@ lib.makeScope (scope: lib.callPackageWith ({ inherit lib pkgs; } // scope)) (
         };
       };
     };
+    file-mmap-inflight = callPackage ./file-mmap-inflight/package.nix {
+      vm-test = self.vm-test.override {
+        kernel = self.kernel.override {
+          linux = self.linux.override { fileMmapStreamCandidate = true; };
+        };
+      };
+    };
+    file-mmap-inflight-wasm64 = callPackage ./file-mmap-inflight/package.nix {
+      platform = self.platform-wasm64;
+      sdk-fork-continuation = self.sdk-fork-continuation-wasm64;
+      musl = self.musl-wasm64;
+      llvm-runtimes = self.llvm-runtimes-wasm64;
+      vm-test = vmTestWasm64.override {
+        kernel = self.kernel-wasm64.override {
+          linux = self.linux-wasm64.override { fileMmapStreamCandidate = true; };
+        };
+      };
+    };
     file-mmap-stream-wasm64 = callPackage ./file-mmap-stream/package.nix {
       platform = self.platform-wasm64;
       sdk = self.sdk-wasm64;
