@@ -279,6 +279,14 @@ lib.makeScope (scope: lib.callPackageWith ({ inherit lib pkgs; } // scope)) (
     };
     clone-namespaces = callPackage ./clone-namespaces/package.nix { };
     clone-flags64 = callPackage ./clone-flags64/package.nix { };
+    clone-timens = callPackage ./clone-timens/package.nix { };
+    clone-timens-wasm64 = callPackage ./clone-timens/package.nix {
+      platform = self.platform-wasm64;
+      sdk-fork-continuation = self.sdk-fork-continuation-wasm64;
+      musl = self.musl-wasm64;
+      llvm-runtimes = self.llvm-runtimes-wasm64;
+      vm-test = vmTestWasm64;
+    };
     clone-flags64-wasm64 = callPackage ./clone-flags64/package.nix {
       platform = self.platform-wasm64;
       sdk-fork-continuation = self.sdk-fork-continuation-wasm64;

@@ -84,7 +84,6 @@ for (const address of ["i32", "i64"] as const)
     for (const [index, value, error] of [
       [0, 17n, -22],
       [0, 0x100n, -95],
-      [0, 0x80n, -95],
       [0, 0x200000000n, -95],
       [0, 0x100000800n, -22],
       [1, 0x100000000n, -95],
@@ -105,6 +104,11 @@ for (const address of ["i32", "i64"] as const)
       view.setBigUint64(256 + index * 8, value, true);
       assert.equal(parse(96), error, `field ${index}`);
     }
+    reset();
+    view.setBigUint64(256, 0x80n, true);
+    assert.deepEqual(parse(88), { pidfd: null, flags64: 0x80n }, "NEWTIME is clone3-only");
+    view.setBigUint64(256, 0x100000080n, true);
+    assert.deepEqual(parse(88), { pidfd: null, flags64: 0x100000080n });
     reset();
     view.setBigUint64(256 + 64, 1n, true);
     assert.deepEqual(parse(64), { pidfd: null }, "bytes outside the supplied size are not read");

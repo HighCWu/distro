@@ -324,6 +324,16 @@ export class ForkContinuation {
       this.nativeClone3Supported &&
       (wide || typeof this.e.__wasm_fork_clone3_native === "function");
     if (request.flags64 && (!native || !wide)) return -95;
+    // Older wide helpers know CLEAR_SIGHAND but must not silently omit
+    // NEWTIME or encode it in legacy clone's exit signal. Check before unwind.
+    if ((request.flags64 ?? 0n) & 0x80n) {
+      const features =
+        typeof this.e.__wasm_fork_clone3_features === "function"
+          ? this.call("__wasm_fork_clone3_features")
+          : 0;
+      if (typeof features !== "number" || !Number.isInteger(features) || !(features & 1))
+        return -95;
+    }
     const legacy = !clone3 && typeof this.e.__wasm_fork_clone_options === "function";
     if (request.tids && !native && !legacy) return -95;
     if (

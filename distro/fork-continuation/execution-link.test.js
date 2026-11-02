@@ -149,6 +149,24 @@ for (const width of [32, 64]) {
       p(-95),
     );
     assert.equal(calls.length, 4, "unknown high flags never reach Linux");
+    assert.equal(instance.exports.__wasm_fork_clone3_features(), 1);
+    assert.equal(
+      instance.exports.__wasm_fork_clone3_flags64(0x100000080n, pointer, parent, child),
+      p(-11),
+    );
+    assert.equal(calls.length, 5);
+    assert.equal(calls[4][0], p(435));
+    assert.equal(
+      new DataView(instance.exports.memory.buffer, Number(calls[4][1]), 88).getBigUint64(0, true),
+      0x100001080n,
+      "NEWTIME remains a clone3 flag alongside CLEAR_SIGHAND and PIDFD",
+    );
+    assert.equal(
+      instance.exports.__wasm_fork_clone3_native(p(0x80), pointer, parent, child),
+      p(-95),
+    );
+    assert.equal(instance.exports.__wasm_fork_clone_options(p(0x80), pointer, child), p(-95));
+    assert.equal(calls.length, 5, "old helpers still refuse the conflicting signal bit");
     const collision = join(dir, "collision.c");
     writeFileSync(
       collision,

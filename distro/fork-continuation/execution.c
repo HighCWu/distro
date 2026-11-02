@@ -104,7 +104,7 @@ static long clone3_native(uint64_t flags, uintptr_t pidfd,
 		uint64_t stack, stack_size, tls, set_tid, set_tid_size, cgroup;
 	} args __attribute__((aligned(8)));
 	_Static_assert(sizeof args == 88, "Linux clone_args aligned u64 ABI");
-	const uint64_t allowed = UINT64_C(0x17f320000);
+	const uint64_t allowed = UINT64_C(0x17f320080);
 	if (flags & ~allowed)
 		return -EOPNOTSUPP;
 	args.flags = flags | (pidfd ? 0x1000 : 0);
@@ -131,4 +131,12 @@ long __wasm_fork_clone3_flags64(uint64_t flags, uintptr_t pidfd,
 	uintptr_t parent_tid, uintptr_t child_tid)
 {
 	return clone3_native(flags, pidfd, parent_tid, child_tid);
+}
+
+/* Private object capability, not a libc/application API. Bit 0 admits
+ * CLONE_NEWTIME only through the canonical clone3 structure above. */
+__attribute__((export_name("__wasm_fork_clone3_features")))
+int __wasm_fork_clone3_features(void)
+{
+	return 1;
 }
