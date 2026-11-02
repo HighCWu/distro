@@ -13,6 +13,19 @@ let
   dynamicMusl = musl.override { enableDynamicLoader = true; };
   dynamicBase = sysroot-base.override { musl = dynamicMusl; };
   dynamicRoot = sysroot.override { sysroot-base = dynamicBase; };
+  exportedLibc =
+    pkgs.runCommand "dynamic-libc-${platform.wasmArch}"
+      {
+        nativeBuildInputs = [ llvm-toolchain ];
+      }
+      ''
+        mkdir $out
+        cp ${dynamicRoot}/lib/libc.a $out/libc-exports.a
+        chmod u+w $out/libc-exports.a
+        # These weak startup adapters form a lazy chain selected by main's signature.
+        # Keep them in the normal libc archive, outside the forced export set.
+        llvm-ar d $out/libc-exports.a __main_void.o __main_argc_argv.o
+      '';
   execution =
     pkgs.runCommand "dynamic-execution-${platform.wasmArch}" { nativeBuildInputs = [ llvm-toolchain ]; }
       ''
@@ -38,7 +51,7 @@ let
       ++ [
         ("$" + "${execution}/dynamic-execution.o")
         "$-Wl,--whole-archive"
-        "$-lc"
+        ("$" + "${exportedLibc}/libc-exports.a")
         "$-Wl,--no-whole-archive"
       ]
       ++ map (flag: "$-Wl,${flag}") (
