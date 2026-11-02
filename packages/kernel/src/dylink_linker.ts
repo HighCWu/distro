@@ -41,12 +41,15 @@ export function link_dylink_graph(options: {
   table: WebAssembly.Table;
   /** Actual creation limits, which the JS reflection API does not expose. */
   memoryMaximumPages: bigint;
-  tableMaximumElements: bigint;
+  tableMaximumElements?: bigint;
   stack: WebAssembly.Global;
   memoryArena: Readonly<DylinkArena>;
   tableArena: Readonly<DylinkArena>;
   hostFunctions?: ReadonlyMap<string, ReadonlyMap<string, CallableFunction>>;
   externalSymbols?: ReadonlyMap<string, DylinkExternalSymbol>;
+  reuse?: ReadonlyMap<string, { instance: WebAssembly.Instance; base: bigint; tableBase: bigint }>;
+  functionPointers?: Map<CallableFunction, bigint>;
+  resolveDependency?(name: string, parent: string): string;
   /** Execution control transfers (exit/exec) must escape initialization intact. */
   isControlFlow?(error: unknown): boolean;
 }) {
@@ -62,6 +65,7 @@ export function link_dylink_graph(options: {
       instance?: WebAssembly.Instance;
       base: bigint;
       tableBase: bigint;
+      dependencies: string[];
     }
   >();
   // An iterative DFS bounds traversal by fetched files, not the JavaScript stack.
@@ -104,13 +108,18 @@ export function link_dylink_graph(options: {
       exports: WebAssembly.Module.exports(module),
       base: 0n,
       tableBase: 0n,
+      dependencies: metadata.needed.map(
+        (dependency) => options.resolveDependency?.(dependency, name) ?? dependency,
+      ),
+      ...options.reuse?.get(name),
     });
     active.add(name);
     pending.push({ name, finish: true });
-    for (const dependency of metadata.needed.toReversed())
+    for (const dependency of modules.get(name)!.dependencies.toReversed())
       pending.push({ name: dependency, finish: false });
   }
   const records = order.map((name) => modules.get(name)!);
+  const fresh = records.filter((record) => !record.instance);
   type Record = (typeof records)[number];
   type Symbol = { owner?: Record; external?: DylinkExternalSymbol; kind: "function" | "global" };
   const symbols = new Map<string, Symbol>();
@@ -129,7 +138,7 @@ export function link_dylink_graph(options: {
   const scope = [options.root];
   const scoped = new Set(scope);
   for (let index = 0; index < scope.length; index++) {
-    for (const name of modules.get(scope[index]!)!.metadata.needed)
+    for (const name of modules.get(scope[index]!)!.dependencies)
       if (!scoped.has(name)) {
         scoped.add(name);
         scope.push(name);
@@ -163,7 +172,7 @@ export function link_dylink_graph(options: {
     }
   }
   const functionGOT = new Set<string>();
-  for (const record of records)
+  for (const record of fresh)
     for (const entry of record.imports) {
       const symbol = symbols.get(entry.name);
       // LLD describes the symbol in env even when its only actual import is a
@@ -198,7 +207,9 @@ export function link_dylink_graph(options: {
             entry.name !== "__indirect_function_table" ||
             entry.address !== tableArena.address ||
             entry.minimum > BigInt(table.length) ||
-            (entry.maximum !== undefined && options.tableMaximumElements > entry.maximum)
+            (entry.maximum !== undefined &&
+              (options.tableMaximumElements === undefined ||
+                options.tableMaximumElements > entry.maximum))
           )
             throw new Error("incompatible dynamic table import");
           break;
@@ -259,13 +270,14 @@ export function link_dylink_graph(options: {
     memoryArena.cursor < 1n ||
     tableArena.cursor < 1n ||
     options.memoryMaximumPages * 65536n < BigInt(memory.buffer.byteLength) ||
-    options.tableMaximumElements < BigInt(table.length) ||
+    (options.tableMaximumElements !== undefined &&
+      options.tableMaximumElements < BigInt(table.length)) ||
     memoryArena.limit > BigInt(memory.buffer.byteLength) ||
     tableArena.limit > BigInt(table.length)
   )
     throw new RangeError("dynamic arenas must already belong to committed process resources");
   const layout = plan_dylink_layout(
-    records.map((item) => item.metadata),
+    fresh.map((item) => item.metadata),
     memoryArena,
     tableArena,
   );
@@ -286,11 +298,11 @@ export function link_dylink_graph(options: {
     { ...memoryArena, cursor: layout.memoryEnd },
     { ...tableArena, cursor: layout.tableEnd },
   );
-  for (const [index, record] of records.entries()) Object.assign(record, layout.items[index]);
+  for (const [index, record] of fresh.entries()) Object.assign(record, layout.items[index]);
   const word = (value: bigint, type: "i32" | "i64") => (type === "i64" ? value : Number(value));
   const got: { entry: { module: string; name: string }; global: WebAssembly.Global }[] = [];
   let nextSlot = layout.tableEnd;
-  const functionPointers = new Map<CallableFunction, bigint>();
+  const functionPointers = options.functionPointers ?? new Map<CallableFunction, bigint>();
   function functionPointer(fn: CallableFunction): bigint {
     const old = functionPointers.get(fn);
     if (old !== undefined) return old;
@@ -316,7 +328,7 @@ export function link_dylink_graph(options: {
     const set = table.set as unknown as (index: number | bigint, value: null) => void;
     for (let index = tableArena.cursor; index < extra.tableEnd; index++)
       set.call(table, word(index, tableArena.address), null);
-    for (const record of records) {
+    for (const record of fresh) {
       new Uint8Array(memory.buffer, Number(record.base), record.metadata.memorySize).fill(0);
       const imports: WebAssembly.Imports = Object.create(null);
       for (const entry of record.imports) {
@@ -377,7 +389,7 @@ export function link_dylink_graph(options: {
         throw new RangeError("dynamic symbol address exceeds pointer width");
       global.value = word(address, memoryArena.address);
     }
-    for (const record of records) {
+    for (const record of fresh) {
       const relocate = record.instance!.exports.__wasm_apply_data_relocs;
       if (typeof relocate === "function") relocate();
     }
@@ -390,6 +402,16 @@ export function link_dylink_graph(options: {
     order,
     layout: { ...layout, tableEnd: extra.tableEnd },
     instances: new Map(order.map((name) => [name, modules.get(name)!.instance!])),
+    records: new Map(
+      order.map((name) => {
+        const record = modules.get(name)!;
+        return [
+          name,
+          { instance: record.instance!, base: record.base, tableBase: record.tableBase },
+        ];
+      }),
+    ),
+    names: [...ownSymbols.keys()],
     /** Handle-local lookup excludes main/global preemption. Imports above still
      * honor that scope; explicit dlsym(handle, name) uses the object's own group. */
     lookup(name: string): DylinkExternalSymbol | undefined {
@@ -406,7 +428,7 @@ export function link_dylink_graph(options: {
       if (initialized) throw new Error("dynamic constructors cannot be retried");
       initialized = true;
       try {
-        for (const record of records) {
+        for (const record of fresh) {
           const ctor = record.instance!.exports.__wasm_call_ctors;
           if (typeof ctor === "function") ctor();
         }

@@ -2,6 +2,7 @@
 
 import { platform } from "./platform.ts";
 import type { ForkSnapshot } from "./fork-continuation.ts";
+import type { WasmTableType } from "./wasm_binary.ts";
 
 export interface Instance extends WebAssembly.Instance {
   exports: {
@@ -37,6 +38,9 @@ export interface Instance extends WebAssembly.Instance {
     native_clone3_fork_abi?(): number;
     current_remote_memory_id?(): number;
     remote_memory_ready?(id: number): number;
+    dynamic_file_pin_abi_v1?(): number;
+    dynamic_file_pin_v1?(fd: number, device: bigint, inode: bigint): number;
+    dynamic_file_unpin_v1?(id: number): number;
     /** Release the quiescent file copy before rethrowing a user callback exception. */
     abort_file_mmap_v1?(): void;
     populate_file_mmap_v1?(destination: WasmAddress, length: WasmAddress): number;
@@ -51,6 +55,7 @@ export interface UserContext {
   maximum_pages: number;
   /** Present only while a suspended fork is creating its private-memory child. */
   fork_continuation?: ForkSnapshot;
+  dynamic?: { table: WasmTableType; signatures: Map<string, string> };
 }
 
 export type WasmAddressType = "i32" | "i64";
@@ -156,11 +161,36 @@ const supported_user_module_imports = new Set([
   "linux_signal_cancel_v1\0abi\0function",
   "linux_mmap_init_v1\0copy\0function",
   "linux_fork_v1\0checkpoint\0function",
+  "linux_dlopen_v1\0abi\0function",
+  "linux_dlopen_v1\0open\0function",
+  "linux_dlopen_v1\0symbol\0function",
+  "linux_dlopen_v1\0valid\0function",
+  "linux_dlopen_v1\0error\0function",
 ]);
 
 /** Whether every import can be supplied when a userspace module is instantiated. */
 export function user_module_imports_supported(module: WebAssembly.Module): boolean {
   const imports = WebAssembly.Module.imports(module);
+  if (imports.some((entry) => entry.module === "linux_dlopen_v1")) {
+    const exports = WebAssembly.Module.exports(module);
+    if (
+      ![
+        "io_v1",
+        "read",
+        "read_release",
+        "origin",
+        "fd",
+        "allocate",
+        "deallocate",
+        "library_path",
+      ].every((name) =>
+        exports.some(
+          (entry) => entry.name === `__wasm_dlopen_${name}` && entry.kind === "function",
+        ),
+      )
+    )
+      return false;
+  }
   if (
     imports.some((entry) => entry.module === "linux_signal_cancel_v1") &&
     !WebAssembly.Module.exports(module).some(

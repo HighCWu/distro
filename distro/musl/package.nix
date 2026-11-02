@@ -5,6 +5,7 @@
   wasmBits ? 32,
   deduplicateMmapSearch ? true,
   enableForkContinuation ? false,
+  enableDynamicLoader ? false,
   llvm-toolchain-unwrapped,
   src ? pkgs.fetchFromGitHub {
     owner = "HighCWu";
@@ -18,6 +19,7 @@ assert builtins.elem wasmBits [
   32
   64
 ];
+assert !(enableForkContinuation && enableDynamicLoader);
 
 pkgs.stdenvNoCC.mkDerivation (
   {
@@ -38,7 +40,7 @@ pkgs.stdenvNoCC.mkDerivation (
       syslibdir=$out
       CFLAGS=${lib.optionalString debug "-g"}${
         lib.optionalString (!deduplicateMmapSearch) " -DWASM_MMAP_DEDUP_SEARCH=0"
-      }${lib.optionalString enableForkContinuation " -DWASM_FORK_CONTINUATION=1"}
+      }${lib.optionalString enableForkContinuation " -DWASM_FORK_CONTINUATION=1"}${lib.optionalString enableDynamicLoader " -DWASM_DYNAMIC_LOADER=1"}
       EOF
 
       runHook postConfigure
@@ -58,7 +60,9 @@ pkgs.stdenvNoCC.mkDerivation (
       runHook postInstall
     '';
   }
-  // lib.optionalAttrs enableForkContinuation {
-    patches = [ ./fork-continuation.patch ];
+  // lib.optionalAttrs (enableForkContinuation || enableDynamicLoader) {
+    patches =
+      lib.optional enableForkContinuation ./fork-continuation.patch
+      ++ lib.optional enableDynamicLoader ./dynamic-loader.patch;
   }
 )

@@ -1,0 +1,51 @@
+diff --git a/src/ldso/dlopen.c b/src/ldso/dlopen.c
+--- a/src/ldso/dlopen.c
++++ b/src/ldso/dlopen.c
+@@ -3,8 +3,13 @@
+ 
+ static void *stub_dlopen(const char *file, int mode)
+ {
++#if defined(__wasm__) && defined(WASM_DYNAMIC_LOADER)
++	extern hidden void *__wasm_dynamic_open(const char *, int);
++	return __wasm_dynamic_open(file, mode);
++#else
+ 	__dl_seterr("Dynamic loading not supported");
+ 	return 0;
++#endif
+ }
+ 
+ weak_alias(stub_dlopen, dlopen);
+diff --git a/src/ldso/__dlsym.c b/src/ldso/__dlsym.c
+--- a/src/ldso/__dlsym.c
++++ b/src/ldso/__dlsym.c
+@@ -3,8 +3,13 @@
+ 
+ static void *stub_dlsym(void *restrict p, const char *restrict s, void *restrict ra)
+ {
++#if defined(__wasm__) && defined(WASM_DYNAMIC_LOADER)
++	extern hidden void *__wasm_dynamic_symbol(void *, const char *);
++	return __wasm_dynamic_symbol(p, s);
++#else
+ 	__dl_seterr("Symbol not found: %s", s);
+ 	return 0;
++#endif
+ }
+ 
+ weak_alias(stub_dlsym, __dlsym);
+diff --git a/src/ldso/dlerror.c b/src/ldso/dlerror.c
+--- a/src/ldso/dlerror.c
++++ b/src/ldso/dlerror.c
+@@ -82,8 +82,13 @@
+ 
+ static int stub_invalid_handle(void *h)
+ {
++#if defined(__wasm__) && defined(WASM_DYNAMIC_LOADER)
++	extern hidden int __wasm_dynamic_invalid(void *);
++	return __wasm_dynamic_invalid(h);
++#else
+ 	__dl_seterr("Invalid library handle %p", (void *)h);
+ 	return 1;
++#endif
+ }
+ 
+ weak_alias(stub_invalid_handle, __dl_invalid_handle);

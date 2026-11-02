@@ -3,6 +3,7 @@
 #define _GNU_SOURCE
 #include <errno.h>
 #include <fcntl.h>
+#include <limits.h>
 #include <stdint.h>
 #include <stdlib.h>
 #include <sys/auxv.h>
@@ -21,6 +22,8 @@
  * Only one read may be outstanding; reentrant loading is a process-loader job.
  */
 static uint64_t file[5]; /* data, size, device, inode, positive errno */
+static char origin[PATH_MAX];
+static int current_fd = -1;
 
 EXPORT("__wasm_dlopen_io_v1")
 int __wasm_dlopen_io_v1(void)
@@ -31,12 +34,14 @@ int __wasm_dlopen_io_v1(void)
 EXPORT("__wasm_dlopen_read")
 uintptr_t __wasm_dlopen_read(const char *path)
 {
-	if (file[0]) {
+	if (file[0] || current_fd >= 0) {
 		file[4] = EBUSY;
 		return (uintptr_t)file;
 	}
 	for (unsigned i = 0; i < 5; i++) file[i] = 0;
+	origin[0] = 0;
 	int fd = open(path, O_RDONLY | O_CLOEXEC);
+	current_fd = fd;
 	if (fd < 0) {
 		file[4] = errno;
 		return (uintptr_t)file;
@@ -45,7 +50,13 @@ uintptr_t __wasm_dlopen_read(const char *path)
 	struct statvfs filesystem;
 	unsigned char *data = 0;
 	int error = 0;
-	if (fstat(fd, &status) || fstatvfs(fd, &filesystem)) {
+	if (fstat(fd, &status)) {
+		error = errno;
+		goto done;
+	}
+	file[2] = status.st_dev;
+	file[3] = status.st_ino;
+	if (fstatvfs(fd, &filesystem)) {
 		error = errno;
 		goto done;
 	}
@@ -60,6 +71,10 @@ uintptr_t __wasm_dlopen_read(const char *path)
 	/* Per-file loader admission, not a Linux file-size or mmap limit. */
 	if (status.st_size <= 0 || (uint64_t)status.st_size > 64 * 1024 * 1024) {
 		error = EFBIG;
+		goto done;
+	}
+	if (!realpath(path, origin)) {
+		error = errno;
 		goto done;
 	}
 	size_t size = status.st_size;
@@ -78,8 +93,7 @@ uintptr_t __wasm_dlopen_read(const char *path)
 		offset += count;
 	}
 done:
-	/* Linux close is never retried after EINTR: the descriptor may be reused. */
-	if (close(fd) && !error) error = errno;
+	/* Keep the fd only until the host acquires the mm-owned kernel reference. */
 	if (error) {
 		free(data);
 		file[4] = error;
@@ -95,9 +109,19 @@ done:
 EXPORT("__wasm_dlopen_read_release")
 void __wasm_dlopen_read_release(void)
 {
+	/* Linux close releases the descriptor even on EINTR; never retry it. */
+	if (current_fd >= 0) (void)close(current_fd);
+	current_fd = -1;
 	free((void *)(uintptr_t)file[0]);
 	for (unsigned i = 0; i < 5; i++) file[i] = 0;
+	origin[0] = 0;
 }
+
+EXPORT("__wasm_dlopen_origin")
+uintptr_t __wasm_dlopen_origin(void) { return (uintptr_t)origin; }
+
+EXPORT("__wasm_dlopen_fd")
+int __wasm_dlopen_fd(void) { return current_fd; }
 
 EXPORT("__wasm_dlopen_allocate")
 uintptr_t __wasm_dlopen_allocate(size_t size, size_t alignment)
@@ -124,3 +148,48 @@ uintptr_t __wasm_dlopen_library_path(void)
 		return 0;
 	return (uintptr_t)getenv("LD_LIBRARY_PATH");
 }
+
+#ifdef __wasm__
+__attribute__((import_module("linux_dlopen_v1"), import_name("abi")))
+extern int dynamic_abi(void);
+__attribute__((import_module("linux_dlopen_v1"), import_name("open")))
+extern uintptr_t dynamic_open(const char *, int);
+__attribute__((import_module("linux_dlopen_v1"), import_name("symbol")))
+extern uintptr_t dynamic_symbol(uintptr_t, const char *);
+__attribute__((import_module("linux_dlopen_v1"), import_name("valid")))
+extern int dynamic_valid(uintptr_t);
+__attribute__((import_module("linux_dlopen_v1"), import_name("error")))
+extern int dynamic_error(char *, size_t);
+__attribute__((visibility("hidden"))) extern void __dl_seterr(const char *, ...);
+static void report_error(void)
+{
+	char message[256] = "Wasm dynamic loader failure";
+	(void)dynamic_error(message, sizeof message);
+	__dl_seterr("%s", message);
+}
+__attribute__((visibility("hidden")))
+void *__wasm_dynamic_open(const char *path, int flags)
+{
+	if (dynamic_abi() != 1) {
+		__dl_seterr("Unsupported Wasm dynamic execution ABI");
+		return 0;
+	}
+	uintptr_t handle = dynamic_open(path, flags);
+	if (!handle) report_error();
+	return (void *)handle;
+}
+__attribute__((visibility("hidden")))
+void *__wasm_dynamic_symbol(void *handle, const char *name)
+{
+	uintptr_t address = dynamic_symbol((uintptr_t)handle, name);
+	if (!address) report_error();
+	return (void *)address;
+}
+__attribute__((visibility("hidden")))
+int __wasm_dynamic_invalid(void *handle)
+{
+	if (dynamic_valid((uintptr_t)handle)) return 0;
+	report_error();
+	return 1;
+}
+#endif

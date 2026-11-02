@@ -131,6 +131,24 @@ lib.makeScope (scope: lib.callPackageWith ({ inherit lib pkgs; } // scope)) (
     };
     toolchain-smoke = callPackage ./toolchain-smoke/package.nix { };
     sdk = callPackage ./sdk/package.nix { };
+    sdk-dynamic-loader = callPackage ./dynamic-loader/sdk.nix { };
+    sdk-dynamic-loader-wasm64 = callPackage ./dynamic-loader/sdk.nix {
+      platform = self.platform-wasm64;
+      musl = self.musl-wasm64;
+      sysroot-base = self.sysroot-base-wasm64;
+      sysroot = self.sysroot-wasm64;
+      llvm-toolchain = self.llvm-toolchain-wasm64;
+      sdk = self.sdk-wasm64;
+    };
+    dynamic-loader = callPackage ./dynamic-loader/package.nix { };
+    dynamic-loader-wasm64 = callPackage ./dynamic-loader/package.nix {
+      platform = self.platform-wasm64;
+      sdk-dynamic-loader = self.sdk-dynamic-loader-wasm64;
+      llvm-toolchain = self.llvm-toolchain-wasm64;
+      musl = self.musl-wasm64;
+      llvm-runtimes = self.llvm-runtimes-wasm64;
+      vm-test = vmTestWasm64;
+    };
     sdk-wasm64 = callPackage ./sdk/package.nix {
       platform = self.platform-wasm64;
       llvm-toolchain = self.llvm-toolchain-wasm64;

@@ -18,8 +18,8 @@
     inherit pkgs;
     owner = "HighCWu";
     repo = "linux";
-    rev = "59937da2c13854108f39ccf1a7f29535dc51b12f";
-    hash = "sha256-Ki1YF+Jk7YHX/WXdfs10KzTs4je+hR7GvLDwll5OOhY=";
+    rev = "356fb863fc217b662d8da08bfa4e289ff969b159";
+    hash = "sha256-aNrKArZmnXmPgI73OShgnUTLjWlRK22LLL2Pz+8Xkrw=";
   },
 }:
 

@@ -272,6 +272,33 @@ export function read_wasm_memories(module: Uint8Array): WasmMemories {
   return memories;
 }
 
+export interface WasmTableType {
+  address: "i32" | "i64";
+  minimum: bigint;
+  maximum?: bigint;
+}
+
+/** A static main owns one exported table; side modules import that resource. */
+export function read_wasm_main_table(module: Uint8Array): WasmTableType {
+  const bytes = new Cursor(module, 8);
+  while (!bytes.done) {
+    const id = bytes.byte();
+    const part = bytes.span();
+    if (id !== 4) continue;
+    if (part.u32() !== 1 || part.byte() !== 0x70)
+      part.fail("dynamic main requires one funcref table");
+    const flags = part.byte();
+    if (flags & ~5) part.fail("unsupported main table type");
+    const address = flags & 4 ? "i64" : "i32";
+    const limit = () => (address === "i64" ? part.u64() : BigInt(part.u32()));
+    const minimum = limit();
+    const maximum = flags & 1 ? limit() : undefined;
+    part.expect_done("main table section");
+    return { address, minimum, maximum };
+  }
+  return bytes.fail("dynamic main table is missing");
+}
+
 export interface WasmDylink {
   memorySize: number;
   memoryAlignment: number;
@@ -299,7 +326,10 @@ export type WasmDynamicImport = {
 /** The current native-code dynamic profile accepts integer GOT/base globals and
  * a funcref table. Reject other import kinds before allocating process resources.
  * Engine validation is still required for the complete module and signatures. */
-export function read_wasm_dynamic_imports(module: Uint8Array): WasmDynamicImport[] {
+export function read_wasm_dynamic_imports(
+  module: Uint8Array,
+  allowDefinedTable = false,
+): WasmDynamicImport[] {
   const bytes = new Cursor(module);
   for (const expected of [0, 97, 115, 109, 1, 0, 0, 0])
     if (bytes.byte() !== expected) bytes.fail("invalid WebAssembly header");
@@ -308,7 +338,8 @@ export function read_wasm_dynamic_imports(module: Uint8Array): WasmDynamicImport
   while (!bytes.done) {
     const id = bytes.byte();
     const part = bytes.span();
-    if (id === 4 && part.u32() !== 0) part.fail("dynamic module must not define a private table");
+    if (id === 4 && !allowDefinedTable && part.u32() !== 0)
+      part.fail("dynamic module must not define a private table");
     if (id !== 2) continue;
     if (seen) part.fail("duplicate import section");
     seen = true;
@@ -360,8 +391,10 @@ export function read_wasm_dynamic_imports(module: Uint8Array): WasmDynamicImport
 /** Function ABI identities for the scalar C dynamic profile. Do not let a JS
  * forwarding function erase a producer/consumer signature mismatch. Imported
  * function re-exports need scope/alias handling and are rejected by this profile. */
-export function read_wasm_dynamic_signatures(module: Uint8Array) {
-  const imports = read_wasm_dynamic_imports(module).filter((entry) => entry.kind === "function");
+export function read_wasm_dynamic_signatures(module: Uint8Array, allowDefinedTable = false) {
+  const imports = read_wasm_dynamic_imports(module, allowDefinedTable).filter(
+    (entry) => entry.kind === "function",
+  );
   const functions = imports.map((entry) => entry.typeIndex);
   const types: string[] = [];
   const exports = new Map<string, string>();

@@ -70,7 +70,13 @@ import {
   clear_user_memory,
   user_atomic_word,
 } from "./user-memory.ts";
-import { read_wasm_memories, user_memory_import } from "./wasm_binary.ts";
+import {
+  read_wasm_memories,
+  user_memory_import,
+  read_wasm_main_table,
+  read_wasm_dynamic_signatures,
+} from "./wasm_binary.ts";
+import { ProcessDylink } from "./dylink_process.ts";
 import {
   allocate_shared_memory,
   HALT_KERNEL,
@@ -236,6 +242,56 @@ function user_imports({
 
   function create_instance(context: UserContext): WebAssembly.Instance {
     const kernel_instance = get_kernel_instance();
+    let created: WebAssembly.Instance;
+    let dynamic: ProcessDylink | undefined;
+    const control = (error: unknown) => error === HALT_KERNEL || error === HALT_USER;
+    const file_kernel = (invoke: () => number): number => {
+      try {
+        return kernel_leaf(invoke);
+      } catch (error) {
+        if (control(error)) throw error;
+        console.error("kernel dynamic file-reference failure:", error);
+        postMessage({ type: "terminate_machine", reason: MachineTerminationReason.Panic });
+        throw HALT_KERNEL;
+      }
+    };
+    const fatal = (error: unknown): never => {
+      console.error("unrecoverable dynamic initialization:", error);
+      const word = (value: number) => wasm_address_from_number(value, kernel_address);
+      kernel_leaf(() =>
+        kernel_instance.exports.syscall(
+          word(93),
+          word(127),
+          word(0),
+          word(0),
+          word(0),
+          word(0),
+          word(0),
+        ),
+      );
+      throw new Error("dynamic process exit returned");
+    };
+    const loader = () => {
+      try {
+        if (!context.dynamic || !created) throw new Error("dynamic main is not ready");
+        return (dynamic ??= new ProcessDylink({
+          main: created,
+          memory: context.memory,
+          address: context.address,
+          maximumPages: context.maximum_pages,
+          tableType: context.dynamic.table,
+          signatures: context.dynamic.signatures,
+          isControlFlow: control,
+          pinFile: (fd, device, inode) =>
+            file_kernel(() => kernel_instance.exports.dynamic_file_pin_v1!(fd, device, inode)),
+          unpinFile: (id) => file_kernel(() => kernel_instance.exports.dynamic_file_unpin_v1!(id)),
+          fatal,
+        }));
+      } catch (error) {
+        if (control(error)) throw error;
+        return fatal(error);
+      }
+    };
     const syscall =
       (layout: CloneSyscallLayout) =>
       (
@@ -247,6 +303,14 @@ function user_imports({
         arg4: WasmAddress,
         arg5: WasmAddress,
       ) => {
+        // No dynamic Worker publication/fork snapshot protocol exists yet.
+        // Refuse creation in this opt-in profile instead of losing loaded tables.
+        if (
+          context.dynamic &&
+          kernel_instance.exports.seccomp_strict_v1?.() !== 1 &&
+          (nr === 220 || nr === 220n || nr === 435 || nr === 435n)
+        )
+          return kernel_address === "i64" ? -95n : -95;
         const original_instance = instance;
         const invoke = () =>
           call_kernel_entry(kernel_instance.exports, kernel_address, () =>
@@ -267,7 +331,14 @@ function user_imports({
         }
         return ret;
       };
-    return new WebAssembly.Instance(context.module, {
+    created = new WebAssembly.Instance(context.module, {
+      linux_dlopen_v1: {
+        abi: () => 1,
+        open: (path: WasmAddress, flags: number) => loader().open(path, flags),
+        symbol: (handle: WasmAddress, name: WasmAddress) => loader().symbol(handle, name),
+        valid: (handle: WasmAddress) => loader().valid(handle),
+        error: (pointer: WasmAddress, size: WasmAddress) => loader().error(pointer, size),
+      },
       env: { memory: context.memory },
       linux_fork_v1: {
         checkpoint: (descriptor: WasmAddress) => {
@@ -330,6 +401,7 @@ function user_imports({
       },
       linux_signal_cancel_v1: { abi: () => 1 },
     });
+    return created;
   }
 
   function instantiate(fresh_memory: boolean): void {
@@ -397,12 +469,23 @@ function user_imports({
         let module: WebAssembly.Module;
         let minimum: number;
         let maximum: number;
+        let dynamic: UserContext["dynamic"];
         try {
           const memories = read_wasm_memories(bytes);
           const memory_import = user_memory_import(memories, kernel_address);
           if (!memory_import) return -8; // exec format error
 
           module = new WebAssembly.Module(bytes);
+          if (
+            WebAssembly.Module.imports(module).some((entry) => entry.module === "linux_dlopen_v1")
+          ) {
+            if (uses_fork_continuation(module)) return -8;
+            if (get_kernel_instance().exports.dynamic_file_pin_abi_v1?.() !== 1) return -8;
+            dynamic = {
+              table: read_wasm_main_table(bytes),
+              signatures: read_wasm_dynamic_signatures(bytes, true).exports,
+            };
+          }
           if (
             !user_module_imports_supported(module) ||
             !fork_continuation_exports_supported(module)
@@ -425,7 +508,7 @@ function user_imports({
           return -12; // out of memory
         }
 
-        const next_context = { module, ...allocated };
+        const next_context = { module, ...allocated, ...(dynamic ? { dynamic } : {}) };
         pending = next_context;
         return 0;
       },

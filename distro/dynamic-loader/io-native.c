@@ -68,7 +68,7 @@ int main(int argc, char **argv)
 	assert(!result[4] && result[0] && result[1] == 25);
 	assert(!memcmp((void *)(uintptr_t)result[0], "private loader file bytes", 25));
 	uint64_t device = result[2], inode = result[3], pointer = result[0];
-	assert(descriptor_count() == baseline);
+	assert(descriptor_count() == baseline + 1 && __wasm_dlopen_fd() >= 0);
 	/* An overlapping request may not discard the still-owned first buffer. */
 	result = (void *)__wasm_dlopen_read(argv[1]);
 	assert(result[4] == EBUSY && result[0] == pointer);
