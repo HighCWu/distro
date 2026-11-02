@@ -15,8 +15,8 @@
     inherit pkgs;
     owner = "HighCWu";
     repo = "linux";
-    rev = "d79048f56263e88d585c86a38b6a1b0022fac53e";
-    hash = "sha256-aHhvbJnFRb5YA0hOGNn8+llMHUs0Gk5cFdrK1oXccUQ=";
+    rev = "3dc991222e5466857a5b85b0477d7905462020c6";
+    hash = "sha256-DRtZ7x1yhKUNkQ8cI0ZZXmJJIs3EHUnAbk35ICuNgrw=";
   },
 }:
 
@@ -142,6 +142,9 @@ pkgs.stdenvNoCC.mkDerivation (finalAttrs: {
     grep -qx 'CONFIG_PACKET=y' .config
     grep -qx 'CONFIG_BPF=y' .config
     grep -qx 'CONFIG_BPF_SYSCALL=y' .config
+    for option in CGROUPS CGROUP_PIDS KERNFS; do
+      grep -qx "CONFIG_$option=y" .config
+    done
     grep -qx 'CONFIG_BPF_UNPRIV_DEFAULT_OFF=y' .config
     ! grep -qx 'CONFIG_BPF_JIT=y' .config
     ! grep -qx 'CONFIG_BPF_JIT_ALWAYS_ON=y' .config
