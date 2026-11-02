@@ -71,6 +71,9 @@ pkgs.stdenvNoCC.mkDerivation (finalAttrs: {
       mit
     ];
   };
+  # Use the real program instead of the overlapping BusyBox applet in this
+  # opt-in image, following the existing util-linux package's payload policy.
+  passthru.apk.replaces = [ "busybox" ];
   passthru.checks.runtime = vm-test.installedTest {
     name = "setsid-standard-fork-${platform.wasmArch}";
     init = ./runtime-test.sh;
