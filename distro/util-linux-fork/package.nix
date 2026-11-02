@@ -34,11 +34,12 @@ pkgs.stdenvNoCC.mkDerivation (finalAttrs: {
   ];
   configurePhase = ''
     runHook preConfigure
+    # These always/default-enabled upstream tools have no --enable-<name>
+    # option. Keep their normal configure conditions; make selects the target.
     CONFIG_SITE=${sdk-fork-continuation.configSite} CC=wasm-linux-fork-cc \
       AR=llvm-ar RANLIB=llvm-ranlib CFLAGS='-O2' ./configure \
       --build=${pkgs.stdenv.buildPlatform.config} --host=${platform.targetTriple} \
       --prefix=/ --disable-shared --enable-static --disable-nls \
-      --disable-all-programs --enable-${program} \
       --without-systemd --without-udev --without-python --without-cap-ng \
       --without-selinux --without-audit --without-ncurses --without-ncursesw \
       --without-readline
