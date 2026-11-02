@@ -286,6 +286,131 @@ export interface WasmDylink {
   unknownSubsections: number[];
 }
 
+export type WasmDynamicImport = {
+  module: string;
+  name: string;
+} & (
+  | { kind: "function"; typeIndex: number }
+  | { kind: "memory"; type: WasmMemoryType }
+  | { kind: "table"; address: "i32" | "i64"; minimum: bigint; maximum?: bigint }
+  | { kind: "global"; value: "i32" | "i64"; mutable: boolean }
+);
+
+/** The current native-code dynamic profile accepts integer GOT/base globals and
+ * a funcref table. Reject other import kinds before allocating process resources.
+ * Engine validation is still required for the complete module and signatures. */
+export function read_wasm_dynamic_imports(module: Uint8Array): WasmDynamicImport[] {
+  const bytes = new Cursor(module);
+  for (const expected of [0, 97, 115, 109, 1, 0, 0, 0])
+    if (bytes.byte() !== expected) bytes.fail("invalid WebAssembly header");
+  const result: WasmDynamicImport[] = [];
+  let seen = false;
+  while (!bytes.done) {
+    const id = bytes.byte();
+    const part = bytes.span();
+    if (id === 4 && part.u32() !== 0) part.fail("dynamic module must not define a private table");
+    if (id !== 2) continue;
+    if (seen) part.fail("duplicate import section");
+    seen = true;
+    const count = part.u32();
+    for (let i = 0; i < count; i++) {
+      const module = part.span().text();
+      const name = part.span().text();
+      switch (part.byte()) {
+        case 0:
+          result.push({ module, name, kind: "function", typeIndex: part.u32() });
+          break;
+        case 1: {
+          if (part.byte() !== 0x70) part.fail("dynamic table must be funcref");
+          const flags = part.byte();
+          if (flags & ~5) part.fail("unsupported dynamic table limits");
+          const address = flags & 4 ? "i64" : "i32";
+          const limit = () => (address === "i64" ? part.u64() : BigInt(part.u32()));
+          const minimum = limit();
+          const maximum = flags & 1 ? limit() : undefined;
+          result.push({ module, name, kind: "table", address, minimum, maximum });
+          break;
+        }
+        case 2:
+          result.push({ module, name, kind: "memory", type: read_memory_type(part) });
+          break;
+        case 3: {
+          const type = part.byte();
+          const mutable = part.byte();
+          if ((type !== 0x7f && type !== 0x7e) || mutable > 1)
+            part.fail("unsupported dynamic global type");
+          result.push({
+            module,
+            name,
+            kind: "global",
+            value: type === 0x7f ? "i32" : "i64",
+            mutable: !!mutable,
+          });
+          break;
+        }
+        default:
+          part.fail("unsupported dynamic import kind");
+      }
+    }
+    part.expect_done("dynamic import section");
+  }
+  return result;
+}
+
+/** Function ABI identities for the scalar C dynamic profile. Do not let a JS
+ * forwarding function erase a producer/consumer signature mismatch. Imported
+ * function re-exports need scope/alias handling and are rejected by this profile. */
+export function read_wasm_dynamic_signatures(module: Uint8Array) {
+  const imports = read_wasm_dynamic_imports(module).filter((entry) => entry.kind === "function");
+  const functions = imports.map((entry) => entry.typeIndex);
+  const types: string[] = [];
+  const exports = new Map<string, string>();
+  const bytes = new Cursor(module, 8);
+  while (!bytes.done) {
+    const id = bytes.byte();
+    const part = bytes.span();
+    if (id === 1) {
+      const count = part.u32();
+      for (let index = 0; index < count; index++) {
+        if (part.byte() !== 0x60) part.fail("unsupported dynamic function type");
+        const parameters = [...part.span().view()];
+        const results = [...part.span().view()];
+        if ([...parameters, ...results].some((type) => type < 0x7c || type > 0x7f))
+          part.fail("dynamic function parameters/results must be scalar numbers");
+        types.push(JSON.stringify([parameters, results]));
+      }
+      part.expect_done("dynamic type section");
+    } else if (id === 3) {
+      const count = part.u32();
+      for (let index = 0; index < count; index++) functions.push(part.u32());
+      part.expect_done("dynamic function section");
+    } else if (id === 7) {
+      const count = part.u32();
+      for (let index = 0; index < count; index++) {
+        const name = part.span().text();
+        const kind = part.byte();
+        const position = part.u32();
+        if (kind !== 0) continue;
+        if (position < imports.length)
+          part.fail("dynamic function re-exports are not supported yet");
+        const type = functions[position];
+        const signature = type === undefined ? undefined : types[type];
+        if (signature === undefined) part.fail("invalid dynamic export function type");
+        exports.set(name, signature!);
+      }
+      part.expect_done("dynamic export section");
+    }
+  }
+  return {
+    exports,
+    imports: imports.map((entry) => {
+      const signature = types[entry.typeIndex];
+      if (signature === undefined) bytes.fail("invalid dynamic import function type");
+      return { ...entry, signature: signature! };
+    }),
+  };
+}
+
 /** Read tool-conventions dylink.0, not ELF and not an authorization to instantiate.
  * All names and vectors are bounded by their subsection; custom sections are not
  * validated by the engine. Preserve symbol flags (including weak and TLS) for
