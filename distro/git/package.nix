@@ -117,10 +117,10 @@ stdenv.mkDerivation (finalAttrs: {
   #   the Linux block (getrandom CSPRNG, clock_gettime, sysinfo, /proc). musl
   #   provides all of those symbols, so we keep the block and only override the
   #   platform-specific knobs below.
-  # NO_MMAP: the production kernel rejects file-backed mmap. Private anonymous
-  #   direct mappings do not satisfy Git's object/index mapping requirements.
-  #   Keep Git's upstream compat/mmap.c read/copy fallback for both widths;
-  #   this is not a softmmu or a promise of file-backed mapping support.
+  # The default kernel now supplies standard NOMMU private file copies. Git's
+  #   object/index/pack readers use PROT_READ + MAP_PRIVATE, so retain their
+  #   ordinary mmap calls instead of compiling compat/mmap.c with NO_MMAP.
+  #   These are resident copies, not MMU-backed lazy windows or shared writes.
   # Unix sockets are enabled. In Git 2.55 credential-cache launches
   #   credential-cache--daemon directly through start_command(), so the
   #   posix_spawn conversion creates the long-lived daemon without any
@@ -154,7 +154,6 @@ stdenv.mkDerivation (finalAttrs: {
   makeFlags = [
     "uname_S=Linux"
     "NO_RUST=YesPlease"
-    "NO_MMAP=YesPlease"
     "NO_REGEX=YesPlease"
     "NO_POSIX_GOODIES=YesPlease"
     "NO_OPENSSL=YesPlease"
@@ -178,6 +177,22 @@ stdenv.mkDerivation (finalAttrs: {
     # point at a Nix store path that does not exist after the slice is overlaid.
     "prefix=/usr"
   ];
+
+  # Check the generated configuration as well as the recipe: an inherited
+  # platform or sanitizer setting must not silently restore the fallback.
+  postBuild = ''
+    test -s GIT-CFLAGS || {
+      echo "Git build: missing generated compiler configuration" >&2
+      exit 1
+    }
+    mapping_status=0
+    grep -q -- '-DNO_MMAP' GIT-CFLAGS || mapping_status=$?
+    if [ "$mapping_status" -ne 1 ] || [ -e compat/mmap.o ]; then
+      echo "Git build: NO_MMAP fallback is enabled or its configuration cannot be checked" >&2
+      exit 1
+    fi
+    echo "Git build: native mmap enabled; compat/mmap.o absent"
+  '';
 
   # The default `install` target also runs `make all` dependencies with the
   # same flags via makeFlags. DESTDIR stages the compiled /usr layout under

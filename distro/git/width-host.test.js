@@ -35,7 +35,7 @@ test("Git checks the installed core and HTTP transport against the selected memo
     recipe,
     /node \$\{\.\.\/busybox\/check-binary\.mjs\} \$\{\.\.\/\.\.\/packages\/kernel\/src\/wasm_binary\.ts\} \\\n\s*"\$program" \$\{toString platform\.addressBits\} \$\{toString platform\.maximumMemoryBytes\}/,
   );
-  assert.ok(recipe.includes('"NO_MMAP=YesPlease"'));
+  assert.doesNotMatch(recipe, /"NO_MMAP=YesPlease"/);
   assert.ok(recipe.includes("patches = [ ./run-command-posix-spawn.patch ];"));
 });
 

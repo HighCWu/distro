@@ -17,7 +17,7 @@ const titles = [
 const variants = ["workflow", "packing", "remote"];
 const stages = [
   "Git workflow: commit, conflict merge, object, hook and pager verified",
-  "Git packing: object roundtrip, threaded repack, strict fsck, gc and packed history verified",
+  "Git packing: binary windows, object roundtrip, threaded repack, strict fsck, gc and packed history verified",
   "Git remote: credential cache and loopback HTTP discovery/clone verified",
 ];
 const notices = "Git notices: selected installed originals and default patch checksums verified";

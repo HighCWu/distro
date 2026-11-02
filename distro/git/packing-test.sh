@@ -1,7 +1,8 @@
 #!/bin/busybox sh
+# SPDX-License-Identifier: MIT
 
 fail() {
-  printf 'vm test guest failure: %s\n' "$*"
+  printf 'Git workload failure: %s\n' "$*"
   echo "::vm-test::fail"
   while :; do :; done
 }
@@ -41,6 +42,17 @@ while [ "$i" -lt 24 ]; do
   i=$((i + 1))
 done
 
+# Incompressible content makes the real pack exceed several 512-KiB windows.
+# Git computes offsets from half a window, aligned to the 64-KiB target page.
+dd if=/dev/urandom of=/tmp/packed-binary bs=65536 count=20 iflag=fullblock || fail "binary pack source"
+printf '\000\377\200pack-tail\000\376\001' >>/tmp/packed-binary || fail "binary pack tail"
+cp /tmp/packed-binary packed.bin || fail "copying binary into working tree"
+binary_oid=$(git hash-object packed.bin) || fail "binary object identity"
+git add packed.bin || fail "adding binary object"
+git commit -m "binary pack windows" >/dev/null 2>/tmp/e || fail "binary commit: $(cat /tmp/e)"
+git config core.packedGitWindowSize 512k || fail "pack window configuration"
+git config core.packedGitLimit 1m || fail "pack window budget"
+
 # --- cat-file round-trip through hash-object -w (writes a loose object) ---
 printf 'roundtrip payload\nsecond line\n' >payload
 oid=$(git hash-object -w payload) || fail "hash-object -w"
@@ -54,6 +66,13 @@ git repack -ad >/tmp/e 2>&1 || fail "repack -ad: $(cat /tmp/e)"
 set -- .git/objects/pack/*.pack
 [ -f "$1" ] || fail "no pack file after repack"
 [ "$#" -eq 1 ] || fail "expected exactly 1 pack, got $# packs"
+[ "$(wc -c <"$1")" -gt 1048576 ] || fail "pack too small to cross mapping windows"
+git prune-packed || fail "remove redundant loose objects"
+prefix=$(printf '%s' "$binary_oid" | cut -c1-2)
+suffix=$(printf '%s' "$binary_oid" | cut -c3-)
+[ ! -e ".git/objects/$prefix/$suffix" ] || fail "binary object still has a loose fallback"
+git cat-file blob "$binary_oid" >/tmp/packed-binary.out || fail "reading binary through pack windows"
+cmp /tmp/packed-binary /tmp/packed-binary.out || fail "packed binary window data differed"
 
 # --- fsck --strict validates the pack and full object connectivity ---
 git fsck --strict >/tmp/e 2>&1 || fail "fsck --strict after repack: $(cat /tmp/e)"
@@ -64,10 +83,12 @@ git fsck --strict >/tmp/e 2>&1 || fail "fsck --strict after gc: $(cat /tmp/e)"
 
 # --- the packed history is still fully readable ---
 c=$(git rev-list --count HEAD) || fail "rev-list --count"
-[ "$c" -eq 24 ] || fail "expected 24 commits, got $c"
+[ "$c" -eq 25 ] || fail "expected 25 commits, got $c"
 git rev-parse HEAD | grep -qE '^[0-9a-f]{40}$' || fail "rev-parse HEAD not a sha1"
 git cat-file -p HEAD:file0.txt | grep -q 'file 0 header' || fail "read blob from pack"
+git cat-file blob "$binary_oid" >/tmp/packed-binary.out || fail "binary read after gc"
+cmp /tmp/packed-binary /tmp/packed-binary.out || fail "gc changed packed binary data"
 
-echo "Git packing: object roundtrip, threaded repack, strict fsck, gc and packed history verified"
+echo "Git packing: binary windows, object roundtrip, threaded repack, strict fsck, gc and packed history verified"
 echo "::vm-test::pass"
 while :; do :; done

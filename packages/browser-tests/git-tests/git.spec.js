@@ -10,7 +10,7 @@ for (const [variant, title, stage] of [
   [
     "packing",
     "runs installed Git threaded repack, fsck and gc through Linux",
-    "Git packing: object roundtrip, threaded repack, strict fsck, gc and packed history verified",
+    "Git packing: binary windows, object roundtrip, threaded repack, strict fsck, gc and packed history verified",
   ],
   [
     "remote",
