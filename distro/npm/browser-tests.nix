@@ -9,6 +9,8 @@
   dash-fork-wasm64,
   fork-continuation,
   fork-continuation-wasm64,
+  file-mmap-stream,
+  file-mmap-stream-wasm64,
   git,
   git-wasm64,
   image,
@@ -383,6 +385,10 @@ let
           "process-remotevm-wasm32-firefox"
           "process-remotevm-wasm64-chromium"
           "process-remotevm-wasm64-firefox"
+          "process-mmapstream-wasm32-chromium"
+          "process-mmapstream-wasm32-firefox"
+          "process-mmapstream-wasm64-chromium"
+          "process-mmapstream-wasm64-firefox"
         ]
         (
           name:
@@ -404,6 +410,8 @@ let
                 "execfd"
               else if lib.hasInfix "-remotevm-" name then
                 "remotevm"
+              else if lib.hasInfix "-mmapstream-" name then
+                "mmapstream"
               else
                 "pidfd";
             bits = if lib.hasInfix "-wasm32-" name then 32 else 64;
@@ -527,6 +535,13 @@ let
   processSuite =
     bits: corpus:
     let
+      runtimeKernel =
+        if corpus == "mmapstream" then
+          (if bits == 64 then kernel-wasm64 else kernel).override {
+            linux = (if bits == 64 then linux-wasm64 else linux).override { fileMmapStreamCandidate = true; };
+          }
+        else
+          (if bits == 64 then kernel-wasm64 else kernel);
       assets =
         if corpus == "altstack" then
           (if bits == 64 then toolchain-smoke-wasm64 else toolchain-smoke)
@@ -551,6 +566,8 @@ let
           .checks.process-control.runtimeAssets
         else if corpus == "remotevm" then
           (if bits == 64 then fork-continuation-wasm64 else fork-continuation).checks.process-vm.runtimeAssets
+        else if corpus == "mmapstream" then
+          (if bits == 64 then file-mmap-stream-wasm64 else file-mmap-stream).checks.runtime.runtimeAssets
         else
           throw "unknown process browser corpus: ${corpus}";
       profile = pkgs.writeText "process-profile.json" (
@@ -590,7 +607,7 @@ let
       cp ${profile} $out/profile.json
       cp ${assets.initramfs} $out/runtime.cpio
       cp -r ${bytes}/. $out/node_modules/@lowland/bytes/
-      cp -r ${(if bits == 64 then kernel-wasm64 else kernel)}/. $out/node_modules/@lowland/kernel/
+      cp -r ${runtimeKernel}/. $out/node_modules/@lowland/kernel/
     '';
 
   forkSuite =

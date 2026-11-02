@@ -7,6 +7,11 @@ const prefixStage =
   "user-access: partial boundary copies preserve file positions, suffixes and pipe accounting pass";
 const recoveryStage = "user-access: zero lengths, valid retries and descriptor recovery pass";
 export const processStages = {
+  mmapstream: [
+    "file mmap stream: multi-megabyte reads, nonzero offset, private copies and fd position pass",
+    "file mmap stream: short reads, EOF zero tails, truncation and source lifetime pass",
+    "file mmap stream: rejection rollback, split unmap and later allocation recovery pass",
+  ],
   remotevm: [
     "process-vm: permission refusal, independent child reads, vector ordering and page crossings pass",
     "process-vm: partial transfers, kernel errors and actual remote writes pass",

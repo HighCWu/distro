@@ -36,6 +36,7 @@ for (const corpus of [
   "altstack",
   "stacklegacy",
   "remotevm",
+  "mmapstream",
 ])
   test(`${corpus}: browser controller requires two boots, closed browser and no late page error`, (t) => {
     const dir = mkdtempSync(join(tmpdir(), "process-browser-host-"));
