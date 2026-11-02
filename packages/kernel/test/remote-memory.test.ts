@@ -142,6 +142,32 @@ test("queued cancellation prevents late access and does not register an image", 
   );
 });
 
+test("a failed deadline sampler revokes a queued request before propagating", () => {
+  const { user, registry, call } = fixture();
+  let queued: RemoteMemoryMessage | undefined;
+  let samples = 0;
+  const failure = new Error("clock failed");
+  assert.throws(
+    () =>
+      request_remote_memory(
+        (message) => {
+          queued = message;
+        },
+        { kind: "register", id: 1, memory: user },
+        {
+          now() {
+            if (samples++ === 0) return 0;
+            throw failure;
+          },
+        },
+      ),
+    (error) => error === failure,
+  );
+  assert(queued);
+  registry.handle(queued);
+  assert.equal(call({ kind: "read", id: 1, user: 128, kernel: 128, length: 1 }), -3);
+});
+
 test("invalid registration and reply fail before retaining a memory", () => {
   const { registry, call } = fixture();
   assert.equal(

@@ -122,10 +122,22 @@ export function request_remote_memory(
   } catch {
     return -12;
   }
+  // Browser main agents cannot block. Detect that before publishing anything
+  // which could retain a kernel buffer, rather than throwing after send().
+  try {
+    Atomics.wait(reply, 0, PENDING, 0);
+  } catch {
+    return -95;
+  }
   const now = options.now ?? (() => performance.now());
   const deadline = now() + (options.deadlineMs ?? 5000);
   let sendFailed = false;
   let sendError: unknown;
+  const cancel_or_join = (error: unknown): never => {
+    if (Atomics.compareExchange(reply, 0, PENDING, CANCELLED) !== PENDING)
+      while (Atomics.load(reply, 0) !== DONE) Atomics.wait(reply, 0, CLAIMED, 1);
+    throw error;
+  };
   try {
     send({ type: "remote_memory", operation, reply: reply.buffer });
   } catch (error) {
@@ -141,12 +153,15 @@ export function request_remote_memory(
       if (sendFailed) throw sendError;
       return Atomics.load(reply, 1);
     }
-    if (
-      state === PENDING &&
-      now() >= deadline &&
-      Atomics.compareExchange(reply, 0, PENDING, CANCELLED) === PENDING
-    )
-      return -11;
+    if (state === PENDING) {
+      let expired = false;
+      try {
+        expired = now() >= deadline;
+      } catch (error) {
+        cancel_or_join(error);
+      }
+      if (expired && Atomics.compareExchange(reply, 0, PENDING, CANCELLED) === PENDING) return -11;
+    }
     Atomics.wait(reply, 0, state, 1);
     if (Atomics.load(reply, 0) === DONE) continue;
     // Never unwind a claimed operation through a diagnostic/scheduler hook.
@@ -155,9 +170,7 @@ export function request_remote_memory(
       try {
         options.yieldKernel();
       } catch (error) {
-        if (Atomics.compareExchange(reply, 0, PENDING, CANCELLED) !== PENDING)
-          while (Atomics.load(reply, 0) !== DONE) Atomics.wait(reply, 0, CLAIMED, 1);
-        throw error;
+        cancel_or_join(error);
       }
     }
   }
