@@ -16,9 +16,9 @@ for (const width of [32, 64]) {
     mkdirSync(join(dir, "sys"));
     writeFileSync(
       join(dir, "stdint.h"),
-      "typedef __UINTPTR_TYPE__ uintptr_t; typedef __UINT64_TYPE__ uint64_t;\n#define UINT32_C(x) x##U\n#define UINT64_C(x) x##ULL\n#define UINT64_MAX __UINT64_MAX__\n",
+      "typedef __UINTPTR_TYPE__ uintptr_t; typedef __UINT64_TYPE__ uint64_t; typedef __INT32_TYPE__ int32_t;\n#define UINT32_C(x) x##U\n#define UINT64_C(x) x##ULL\n#define UINT64_MAX __UINT64_MAX__\n",
     );
-    writeFileSync(join(dir, "errno.h"), "#define EOPNOTSUPP 95\n");
+    writeFileSync(join(dir, "errno.h"), "#define EOPNOTSUPP 95\n#define EINVAL 22\n");
     writeFileSync(join(dir, "stddef.h"), "#define offsetof(t, m) __builtin_offsetof(t, m)\n");
     writeFileSync(join(dir, "signal.h"), "#define SIGCHLD 17\n");
     writeFileSync(
@@ -149,7 +149,7 @@ for (const width of [32, 64]) {
       p(-95),
     );
     assert.equal(calls.length, 4, "unknown high flags never reach Linux");
-    assert.equal(instance.exports.__wasm_fork_clone3_features(), 3);
+    assert.equal(instance.exports.__wasm_fork_clone3_features(), 7);
     assert.equal(
       instance.exports.__wasm_fork_clone3_flags64(0x100000080n, pointer, parent, child),
       p(-11),
@@ -183,6 +183,25 @@ for (const width of [32, 64]) {
     const plain = new DataView(instance.exports.memory.buffer, Number(calls[6][1]), 88);
     assert.equal(plain.getBigUint64(0, true), 0n);
     assert.equal(plain.getBigUint64(80, true), 0n, "ordinary clone3 clears stale cgroup");
+    assert.equal(instance.exports.__wasm_fork_clone3_set_tid(0, 60001), 0);
+    assert.equal(instance.exports.__wasm_fork_clone3_set_tid(1, -19), 0);
+    assert.equal(instance.exports.__wasm_fork_clone3_set_tid(32, 1), -22);
+    assert.equal(
+      instance.exports.__wasm_fork_clone3_pid_select(0n, pointer, parent, child, 0n, 2),
+      p(-11),
+    );
+    const selected = new DataView(instance.exports.memory.buffer, Number(calls[7][1]), 88);
+    assert.equal(selected.getBigUint64(72, true), 2n);
+    const ids = new DataView(
+      instance.exports.memory.buffer,
+      Number(selected.getBigUint64(64, true)),
+      8,
+    );
+    assert.deepEqual([ids.getInt32(0, true), ids.getInt32(4, true)], [60001, -19]);
+    assert.equal(instance.exports.__wasm_fork_clone3_flags64(0n, p(0), p(0), p(0)), p(-11));
+    const recovered = new DataView(instance.exports.memory.buffer, Number(calls[8][1]), 88);
+    assert.equal(recovered.getBigUint64(64, true), 0n);
+    assert.equal(recovered.getBigUint64(72, true), 0n);
     const collision = join(dir, "collision.c");
     writeFileSync(
       collision,

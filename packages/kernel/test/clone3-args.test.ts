@@ -127,6 +127,25 @@ for (const address of ["i32", "i64"] as const)
       assert.deepEqual(parse(88), { pidfd: null, flags64: 0x200000000n, cgroup: fd });
     }
     reset();
+    view.setBigUint64(256 + 64, 8193n, true);
+    view.setBigUint64(256 + 72, 2n, true);
+    view.setInt32(8193, 60001, true);
+    view.setInt32(8197, -19, true);
+    const captured = parse(88);
+    assert.deepEqual(captured, { pidfd: null, setTid: [60001, -19] });
+    view.setInt32(8193, 9, true);
+    assert.deepEqual(
+      captured,
+      { pidfd: null, setTid: [60001, -19] },
+      "capture is independent of user frames",
+    );
+    for (const bad of [131071n, 0x100000001n, 1n << 55n]) {
+      view.setBigUint64(256 + 64, bad, true);
+      assert.equal(parse(88), -14);
+    }
+    view.setBigUint64(256 + 72, 33n, true);
+    assert.equal(parse(88), -22);
+    reset();
     view.setBigUint64(256, 0x80n, true);
     assert.deepEqual(parse(88), { pidfd: null, flags64: 0x80n }, "NEWTIME is clone3-only");
     view.setBigUint64(256, 0x100000080n, true);

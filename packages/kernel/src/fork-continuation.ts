@@ -170,6 +170,7 @@ export class ForkContinuation {
   private tids: CloneForkRequest["tids"];
   private flags64 = 0n;
   private cgroup: bigint | undefined;
+  private setTid: number[] | undefined;
   private kernelDepth = 0;
   private rewindingChild = false;
   private readonly childRewound: (() => void) | undefined;
@@ -325,6 +326,21 @@ export class ForkContinuation {
       this.nativeClone3Supported &&
       (wide || typeof this.e.__wasm_fork_clone3_native === "function");
     if (request.flags64 && (!native || !wide)) return -95;
+    if (request.setTid !== undefined) {
+      const features =
+        typeof this.e.__wasm_fork_clone3_features === "function"
+          ? this.call("__wasm_fork_clone3_features")
+          : 0;
+      if (
+        !native ||
+        typeof features !== "number" ||
+        !Number.isInteger(features) ||
+        !(features & 4) ||
+        typeof this.e.__wasm_fork_clone3_set_tid !== "function" ||
+        typeof this.e.__wasm_fork_clone3_pid_select !== "function"
+      )
+        return -95;
+    }
     if (request.cgroup !== undefined) {
       const features =
         typeof this.e.__wasm_fork_clone3_features === "function"
@@ -376,6 +392,7 @@ export class ForkContinuation {
       this.tids = request.tids;
       this.flags64 = request.flags64 ?? 0n;
       this.cgroup = request.cgroup;
+      this.setTid = request.setTid;
     }
     return result;
   }
@@ -416,6 +433,23 @@ export class ForkContinuation {
         const zero = this.address === "i64" ? 0n : 0;
         const flags =
           BigInt(this.namespaceFlags ?? zero) | BigInt(this.tids?.flags ?? zero) | this.flags64;
+        if (this.setTid !== undefined) {
+          this.setTid.forEach((value, index) =>
+            this.require(
+              this.call("__wasm_fork_clone3_set_tid", index, value) === 0,
+              "PID selection staging failed",
+            ),
+          );
+          return this.call(
+            "__wasm_fork_clone3_pid_select",
+            flags,
+            this.pidfd ?? zero,
+            this.tids?.parent ?? zero,
+            this.tids?.child ?? zero,
+            this.cgroup ?? 0n,
+            this.setTid.length,
+          );
+        }
         if (this.cgroup !== undefined)
           return this.call(
             "__wasm_fork_clone3_cgroup",
@@ -466,6 +500,7 @@ export class ForkContinuation {
       this.tids = undefined;
       this.flags64 = 0n;
       this.cgroup = undefined;
+      this.setTid = undefined;
     }
   }
 

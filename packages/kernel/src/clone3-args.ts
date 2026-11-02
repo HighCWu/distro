@@ -9,6 +9,7 @@ export interface CloneForkRequest {
   tids?: { flags: WasmAddress; parent: WasmAddress; child: WasmAddress };
   flags64?: bigint;
   cgroup?: bigint;
+  setTid?: number[];
 }
 
 const namespaceMask = 0x7e020000n;
@@ -142,7 +143,7 @@ export function clone3_fork_request(
   // require native transport: NEWTIME aliases a legacy CSIGNAL bit.
   if (flags & ~(namespaceMask | tidMask | clearSighand | newTime | intoCgroup | 0x1000n))
     return -95;
-  if (stack !== 0n || stackSize !== 0n || tids !== 0n || tidCount !== 0n) return -95;
+  if (stack !== 0n || stackSize !== 0n) return -95;
   // Linux consults PIDFD/TID/TLS fields only when their flags request them.
   // In particular an unused u64 may not fit a wasm32 pointer, and must not be
   // validated, truncated into a different target, or written by the adapter.
@@ -157,5 +158,16 @@ export function clone3_fork_request(
     flags & 0x1200000n ? field(2) : 0n,
   );
   if (typeof request !== "number" && flags & intoCgroup) request.cgroup = field(10);
+  if (typeof request !== "number" && tidCount) {
+    if (tids > BigInt(Number.MAX_SAFE_INTEGER) || (address === "i32" && tids > 0xffffffffn))
+      return -14;
+    const source = memory_bytes(memory, Number(tids), Number(tidCount) * 4);
+    if (!source) return -14;
+    // pid_t is signed 32-bit on both architectures. Preserve values for Linux
+    // permission/range/collision checks, but capture before Asyncify changes frames.
+    const copy = new Uint8Array(source);
+    const view = new DataView(copy.buffer);
+    request.setTid = Array.from({ length: Number(tidCount) }, (_, i) => view.getInt32(i * 4, true));
+  }
   return request;
 }

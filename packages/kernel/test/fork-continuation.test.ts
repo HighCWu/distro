@@ -155,6 +155,81 @@ function fixture(
 }
 
 for (const address of ["i32", "i64"] as const)
+  test(`${address}: clone3 PID selection requires capture support and clears after kernel refusal`, () => {
+    const {
+      controller,
+      exports,
+      memory,
+      pointer: p,
+      calls,
+    } = fixture(address, true, 2, true, undefined, true);
+    const view = new DataView(memory.buffer);
+    view.setBigUint64(8224, 17n, true);
+    view.setBigUint64(8256, 9001n, true);
+    view.setBigUint64(8264, 2n, true);
+    view.setInt32(9001, 60001, true);
+    view.setInt32(9005, -19, true);
+    const staged: WasmAddress[][] = [];
+    Object.assign(exports, {
+      __wasm_fork_clone3_set_tid: (...args: WasmAddress[]) => {
+        staged.push(args);
+        return 0;
+      },
+      __wasm_fork_clone3_pid_select: (...args: WasmAddress[]) => {
+        assert.deepEqual(args, [0n, p(0), p(0), p(0), 0n, 2]);
+        return p(-17);
+      },
+      __wasm_fork_clone3_flags64: (...args: WasmAddress[]) => {
+        assert.deepEqual(args, [0n, p(0), p(0), p(0)]);
+        return p(-11);
+      },
+    });
+    for (const feature of [undefined, 0, 3, 4n, NaN, 4.5]) {
+      Object.assign(exports, {
+        __wasm_fork_clone3_features: feature === undefined ? undefined : () => feature,
+      });
+      assert.equal(controller.clone3Checkpoint(p(8192), p(88), true), -95);
+      assert.equal(calls.descriptors, 0);
+    }
+    Object.assign(exports, { __wasm_fork_clone3_features: () => 7 });
+    for (const name of ["__wasm_fork_clone3_set_tid", "__wasm_fork_clone3_pid_select"]) {
+      const helper = Reflect.get(exports, name);
+      Object.assign(exports, { [name]: undefined });
+      assert.equal(controller.clone3Checkpoint(p(8192), p(88), true), -95);
+      assert.equal(calls.descriptors, 0);
+      Object.assign(exports, { [name]: helper });
+    }
+    const oldKernel = new ForkContinuation(
+      { exports } as unknown as WebAssembly.Instance,
+      memory,
+      address,
+      undefined,
+      true,
+      false,
+    );
+    assert.equal(oldKernel.clone3Checkpoint(p(8192), p(88), true), -95);
+    assert.equal(calls.descriptors, 0);
+    assert.equal(controller.clone3Checkpoint(p(8192), p(88), true), 0);
+    view.setInt32(9001, 99, true);
+    controller.suspend();
+    assert.equal(controller.clone(), p(-17));
+    assert.deepEqual(staged, [
+      [0, 60001],
+      [1, -19],
+    ]);
+    controller.resumeParent(p(-17));
+    assert.equal(controller.clone3Checkpoint(p(0), p(0), true), -17);
+    view.setBigUint64(8256, 0n, true);
+    view.setBigUint64(8264, 0n, true);
+    assert.equal(controller.clone3Checkpoint(p(8192), p(88), true), 0);
+    controller.suspend();
+    assert.equal(controller.clone(), p(-11));
+    controller.resumeParent(p(-11));
+    assert.equal(controller.clone3Checkpoint(p(0), p(0), true), -11);
+    assert.equal(staged.length, 2);
+  });
+
+for (const address of ["i32", "i64"] as const)
   test(`${address}: clone3 cgroup capability, captured fd and failure cleanup`, () => {
     const {
       controller,

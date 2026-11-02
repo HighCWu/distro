@@ -96,8 +96,10 @@ long __wasm_fork_clone_options(uintptr_t flags, uintptr_t parent, uintptr_t chil
  * Keep the canonical structure outside active Asyncify frames. The loader
  * has already suspended this single-thread caller; Linux alone writes TIDs
  * and allocates/publishes PIDFDs. No libc or application API is added. */
+static int32_t selected_tids[32];
+
 static long clone3_native(uint64_t flags, uintptr_t pidfd,
-	uintptr_t parent_tid, uintptr_t child_tid, uint64_t cgroup)
+	uintptr_t parent_tid, uintptr_t child_tid, uint64_t cgroup, unsigned count)
 {
 	static struct {
 		uint64_t flags, pidfd, child_tid, parent_tid, exit_signal;
@@ -107,12 +109,16 @@ static long clone3_native(uint64_t flags, uintptr_t pidfd,
 	const uint64_t allowed = UINT64_C(0x37f320080);
 	if (flags & ~allowed)
 		return -EOPNOTSUPP;
+	if (count > 32)
+		return -EINVAL;
 	args.flags = flags | (pidfd ? 0x1000 : 0);
 	args.pidfd = pidfd;
 	args.child_tid = child_tid;
 	args.parent_tid = parent_tid;
 	args.exit_signal = SIGCHLD;
 	args.cgroup = cgroup;
+	args.set_tid = count ? (uintptr_t)selected_tids : 0;
+	args.set_tid_size = count;
 	return fork_callback_syscall(SYS_clone3, (long)&args, sizeof args, 0, 0, 0, 0);
 }
 
@@ -123,7 +129,7 @@ long __wasm_fork_clone3_native(uintptr_t flags, uintptr_t pidfd,
 {
 	if (flags & ~(uintptr_t)UINT32_C(0x7f320000))
 		return -EOPNOTSUPP;
-	return clone3_native(flags, pidfd, parent_tid, child_tid, 0);
+	return clone3_native(flags, pidfd, parent_tid, child_tid, 0, 0);
 }
 
 /* Flags are i64 on both architectures, independent of pointer width. */
@@ -134,20 +140,38 @@ long __wasm_fork_clone3_flags64(uint64_t flags, uintptr_t pidfd,
 	/* Keep the old signature and never silently supply fd 0 for a new flag. */
 	if (flags & UINT64_C(0x200000000))
 		return -EOPNOTSUPP;
-	return clone3_native(flags, pidfd, parent_tid, child_tid, 0);
+	return clone3_native(flags, pidfd, parent_tid, child_tid, 0, 0);
 }
 
 __attribute__((export_name("__wasm_fork_clone3_cgroup")))
 long __wasm_fork_clone3_cgroup(uint64_t flags, uintptr_t pidfd,
 	uintptr_t parent_tid, uintptr_t child_tid, uint64_t cgroup)
 {
-	return clone3_native(flags, pidfd, parent_tid, child_tid, cgroup);
+	return clone3_native(flags, pidfd, parent_tid, child_tid, cgroup, 0);
+}
+
+__attribute__((export_name("__wasm_fork_clone3_set_tid")))
+int __wasm_fork_clone3_set_tid(unsigned index, int32_t value)
+{
+	if (index >= 32)
+		return -EINVAL;
+	selected_tids[index] = value;
+	return 0;
+}
+
+__attribute__((export_name("__wasm_fork_clone3_pid_select")))
+long __wasm_fork_clone3_pid_select(uint64_t flags, uintptr_t pidfd,
+	uintptr_t parent_tid, uintptr_t child_tid, uint64_t cgroup, unsigned count)
+{
+	if (!count)
+		return -EINVAL;
+	return clone3_native(flags, pidfd, parent_tid, child_tid, cgroup, count);
 }
 
 /* Private object capability, not a libc/application API. Bit 0 admits
- * CLONE_NEWTIME; bit 1 admits the separate cgroup transport. */
+ * CLONE_NEWTIME; bit 1 cgroup; bit 2 the captured set_tid vector. */
 __attribute__((export_name("__wasm_fork_clone3_features")))
 int __wasm_fork_clone3_features(void)
 {
-	return 3;
+	return 7;
 }

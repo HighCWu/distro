@@ -46,7 +46,7 @@ ABI-1-only loaders reject these objects, and new loaders still accept ABI 1 for
 the old clone subset. Only ABI 2 enables `clone3` through the v2 import.
 The v2 import adapts Linux `clone3` (435) for the same limited fork shape:
 zero flags or capability-gated options below, SIGCHLD exit signal, no alternate
-stack or CLONE_SETTLS flag. Nonzero set_tid selections remain unsupported.
+stack or CLONE_SETTLS flag. PID selection needs the optional transport below.
 Unrequested PIDFD/TID/TLS/cgroup fields are ignored as on Linux, including
 values that would not be representable or accessible as pointers on wasm32.
 The u64 `clone_args` layout is identical on both pointer widths. Sizes from 64
@@ -122,6 +122,16 @@ The old wide helper retains its signature and refuses this flag. Linux alone
 checks the target descriptor, permissions, controller limits and rollback.
 An unrequested cgroup field is ignored. This does not enable shared-memory,
 custom-stack, TLS or multithreaded fork, and adds no libc/application API.
+
+The `set_tid` vector requires native clone3 and feature bit 2, plus the optional
+`__wasm_fork_clone3_set_tid`/`__wasm_fork_clone3_pid_select` exports. Before
+unwind the loader captures up to 32 signed pid_t values. After unwind it stages
+those values in the execution object's static buffer, outside active frames;
+Linux copies them through its normal clone_args path. PID ranges, namespace
+depth, permissions and collisions remain Linux decisions. Old objects refuse
+before descriptor initialization. Every ordinary clone3 clears the internal
+pointer/count, and an error clears the loader's captured vector. No public libc
+function or application API is introduced.
 
 `build-materials/` retains the profile/musl recipes, compiler configuration,
 Binaryen source and license, and links to the default SDK materials and selected
