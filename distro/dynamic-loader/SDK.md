@@ -8,7 +8,8 @@
 The normal SDK stays unchanged. This is not an ELF format or stable new file ABI.
 
 Compile main sources normally with this compiler. Compile side objects using
-`-fPIC -c`, then use the SDK's ordinary `wasm-ld --shared --no-entry` with
+`-fPIC -c`, then use the SDK's ordinary `wasm-ld -m wasm32` (or `-m wasm64`)
+with `--shared --no-entry --unresolved-symbols=import-dynamic`,
 `--shared-memory --import-memory --import-table`, the platform's maximum memory,
 SONAME and exports. The runtime recipe demonstrates the exact commands.
 The current Linux Clang driver still injects a static `--table-base` for shared
@@ -20,6 +21,8 @@ and exports its definitions, as needed by side libraries.
 Linux shared-link branch corrected: no executable crt1, no fixed table base,
 and no implicit static system archives in side modules. Explicit user library
 inputs remain available; system/runtime imports resolve from the main module.
+The shared driver selects dynamic unresolved imports before explicit linker
+arguments, so a user's later stricter unresolved-symbol policy still wins.
 It checks static/shared driver commands and links and instantiates real PIC
 libraries in both widths. This candidate does not change the default compiler
 or this SDK wrapper's configuration, and its engine checks are not Linux

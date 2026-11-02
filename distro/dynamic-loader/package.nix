@@ -29,10 +29,12 @@ pkgs.stdenvNoCC.mkDerivation (finalAttrs: {
     # The current Clang Linux driver injects a static --table-base for -shared.
     wasm-linux-dlopen-cc -O2 -fPIC -c ${./library-a.c} -o a.o
     wasm-linux-dlopen-cc -O2 -fPIC -c ${./library-b.c} -o b.o
-    wasm-ld --shared --no-entry --shared-memory --import-memory --import-table \
+    wasm-ld -m ${platform.wasmArch} --shared --no-entry --shared-memory --import-memory --import-table \
+      --unresolved-symbols=import-dynamic \
       --max-memory=${toString platform.maximumMemoryBytes} --export-all --export=__wasm_call_ctors \
       -soname libplugin-a.so a.o -o libplugin-a.so
-    wasm-ld --shared --no-entry --shared-memory --import-memory --import-table \
+    wasm-ld -m ${platform.wasmArch} --shared --no-entry --shared-memory --import-memory --import-table \
+      --unresolved-symbols=import-dynamic \
       --max-memory=${toString platform.maximumMemoryBytes} --export-all --export=__wasm_call_ctors \
       --rpath=${lib.escapeShellArg "$ORIGIN/deps"} -soname libplugin-b.so b.o libplugin-a.so -o libplugin-b.so
     runHook postBuild

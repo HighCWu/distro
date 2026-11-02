@@ -44,6 +44,7 @@ for width in (32, 64):
         assert ("--table-base=3" in linker) == (not shared), linker
         assert ("-lc" in linker) == (not shared), linker
         assert ("-shared" in linker) == shared, linker
+        assert ("--unresolved-symbols=import-dynamic" in linker) == shared, linker
         (
             root / f"wasm{width}-{'shared' if shared else 'static'}-command.json"
         ).write_text(json.dumps(linker))
