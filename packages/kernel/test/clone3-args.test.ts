@@ -8,6 +8,10 @@ for (const address of ["i32", "i64"] as const)
     const p = (n: number) => (address === "i64" ? BigInt(n) : n);
     const memory = new WebAssembly.Memory({ initial: 1 });
     const parse = (args: number[]) => clone_fork_request(memory, address, args.map(p));
+    assert.deepEqual(parse([17 | 0x600, 0, -1, -1, -1, -1]), {
+      pidfd: null,
+      sharingFlags: p(0x600),
+    });
     assert.deepEqual(parse([17, 0, 0, 0, 0, 999]), { pidfd: null });
     if (address === "i64")
       assert.deepEqual(
@@ -60,6 +64,13 @@ for (const address of ["i32", "i64"] as const)
     };
     const parse = (size: number, pointer = 256) =>
       clone3_fork_request(memory, address, p(pointer), p(size));
+    reset();
+    view.setBigUint64(256, 0x20600n, true);
+    assert.deepEqual(parse(88), {
+      pidfd: null,
+      namespaceFlags: p(0x20000),
+      sharingFlags: p(0x600),
+    });
     reset();
     for (const size of [64, 65, 72, 80, 88, 96, 65536])
       assert.deepEqual(parse(size), { pidfd: null });

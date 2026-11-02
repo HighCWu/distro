@@ -133,6 +133,14 @@ before descriptor initialization. Every ordinary clone3 clears the internal
 pointer/count, and an error clears the loader's captured vector. No public libc
 function or application API is introduced.
 
+CLONE_FS and CLONE_FILES require feature bit 3 and the matching options/native
+transport. They share Linux cwd/umask and descriptor tables respectively; user
+linear memory remains independent. Linux owns flag conflicts and resource
+lifetimes. Both flags-first clone and clone3 use this gate. Old execution
+objects refuse before descriptor initialization, and ordinary fork retains
+its usual independent fs/file-table semantics. CLONE_VM, CLONE_THREAD and
+multithreaded fork remain outside this continuation profile.
+
 `build-materials/` retains the profile/musl recipes, compiler configuration,
 Binaryen source and license, and links to the default SDK materials and selected
 sources. This is a Nix store output, not a relocatable standalone SDK archive or

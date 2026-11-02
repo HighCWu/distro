@@ -337,6 +337,7 @@ lib.makeScope (scope: lib.callPackageWith ({ inherit lib pkgs; } // scope)) (
     clone-flags64 = callPackage ./clone-flags64/package.nix { };
     clone-timens = callPackage ./clone-timens/package.nix { };
     clone-pid-select = callPackage ./clone-pid-select/package.nix { };
+    clone-sharing = callPackage ./clone-sharing/package.nix { };
     timezone = callPackage ./timezone/package.nix { };
     file-mmap-stream = callPackage ./file-mmap-stream/package.nix {
       vm-test = self.vm-test.override {
@@ -389,6 +390,13 @@ lib.makeScope (scope: lib.callPackageWith ({ inherit lib pkgs; } // scope)) (
       vm-test = vmTestWasm64;
     };
     clone-pid-select-wasm64 = callPackage ./clone-pid-select/package.nix {
+      platform = self.platform-wasm64;
+      sdk-fork-continuation = self.sdk-fork-continuation-wasm64;
+      musl = self.musl-wasm64;
+      llvm-runtimes = self.llvm-runtimes-wasm64;
+      vm-test = vmTestWasm64;
+    };
+    clone-sharing-wasm64 = callPackage ./clone-sharing/package.nix {
       platform = self.platform-wasm64;
       sdk-fork-continuation = self.sdk-fork-continuation-wasm64;
       musl = self.musl-wasm64;

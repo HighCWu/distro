@@ -164,6 +164,7 @@ export class ForkContinuation {
   private result: number | null = null;
   private pidfd: WasmAddress | null = null;
   private namespaceFlags: WasmAddress | null = null;
+  private sharingFlags: CloneForkRequest["sharingFlags"];
   private nativeRequest = false;
   private legacyOptions = false;
   private nativeActive = false;
@@ -366,6 +367,19 @@ export class ForkContinuation {
         return -95;
     }
     const legacy = !clone3 && typeof this.e.__wasm_fork_clone_options === "function";
+    if (request.sharingFlags !== undefined) {
+      const features =
+        typeof this.e.__wasm_fork_clone3_features === "function"
+          ? this.call("__wasm_fork_clone3_features")
+          : 0;
+      if (
+        (!native && !legacy) ||
+        typeof features !== "number" ||
+        !Number.isInteger(features) ||
+        !(features & 8)
+      )
+        return -95;
+    }
     if (request.tids && !native && !legacy) return -95;
     if (
       !native &&
@@ -387,6 +401,7 @@ export class ForkContinuation {
     if (result === 0) {
       this.pidfd = request.pidfd;
       this.namespaceFlags = request.namespaceFlags ?? null;
+      this.sharingFlags = request.sharingFlags;
       this.nativeRequest = native;
       this.legacyOptions = legacy;
       this.tids = request.tids;
@@ -432,7 +447,10 @@ export class ForkContinuation {
         this.nativeActive = true;
         const zero = this.address === "i64" ? 0n : 0;
         const flags =
-          BigInt(this.namespaceFlags ?? zero) | BigInt(this.tids?.flags ?? zero) | this.flags64;
+          BigInt(this.namespaceFlags ?? zero) |
+          BigInt(this.sharingFlags ?? zero) |
+          BigInt(this.tids?.flags ?? zero) |
+          this.flags64;
         if (this.setTid !== undefined) {
           this.setTid.forEach((value, index) =>
             this.require(
@@ -472,6 +490,7 @@ export class ForkContinuation {
         const zero = this.address === "i64" ? 0n : 0;
         const flags =
           BigInt(this.namespaceFlags ?? zero) |
+          BigInt(this.sharingFlags ?? zero) |
           BigInt(this.tids?.flags ?? zero) |
           (this.pidfd === null ? 0n : 0x1000n);
         return this.call(
@@ -494,6 +513,7 @@ export class ForkContinuation {
       // A negative result or trap must not leak options to a later plain fork.
       this.pidfd = null;
       this.namespaceFlags = null;
+      this.sharingFlags = undefined;
       this.nativeRequest = false;
       this.legacyOptions = false;
       this.nativeActive = false;

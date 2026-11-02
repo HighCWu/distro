@@ -84,6 +84,10 @@ let
       callbackCloneImport = "linux.syscall";
       clone3ForkSubset = true;
       clone3NamespaceTransport = true;
+      cloneResourceSharingFlags = [
+        "CLONE_FS"
+        "CLONE_FILES"
+      ];
       cloneNamespaceTransport = true;
       nativeClone3Transport = true;
       clone3WideFlags = [ "CLONE_CLEAR_SIGHAND" ];

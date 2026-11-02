@@ -6,6 +6,7 @@ import { memory_bytes, type WasmAddress, type WasmAddressType } from "./wasm.ts"
 export interface CloneForkRequest {
   pidfd: WasmAddress | null;
   namespaceFlags?: WasmAddress;
+  sharingFlags?: WasmAddress;
   tids?: { flags: WasmAddress; parent: WasmAddress; child: WasmAddress };
   flags64?: bigint;
   cgroup?: bigint;
@@ -13,6 +14,7 @@ export interface CloneForkRequest {
 }
 
 const namespaceMask = 0x7e020000n;
+const sharingMask = 0x600n; // CLONE_FS | CLONE_FILES, with an independent mm.
 const tidMask = 0x01300000n;
 const clearSighand = 0x100000000n;
 const newTime = 0x80n;
@@ -39,6 +41,8 @@ function fork_options(
   const options: Omit<CloneForkRequest, "pidfd"> = namespaces
     ? { namespaceFlags: address === "i64" ? namespaces : Number(namespaces) }
     : {};
+  if (flags & sharingMask)
+    options.sharingFlags = address === "i64" ? flags & sharingMask : Number(flags & sharingMask);
   if (flags & (clearSighand | newTime | intoCgroup))
     options.flags64 = flags & (clearSighand | newTime | intoCgroup);
   if (flags & tidMask) {
@@ -75,7 +79,8 @@ export function clone_fork_request(
   } catch {
     return -95;
   }
-  if ((flags & 0xffn) !== 17n || flags & ~(namespaceMask | tidMask | 0x1000n | 0xffn)) return -95;
+  if ((flags & 0xffn) !== 17n || flags & ~(namespaceMask | sharingMask | tidMask | 0x1000n | 0xffn))
+    return -95;
   if (!(flags & (0x1000n | tidMask))) {
     // No supported flag requests parent/child TID or TLS updates. Linux
     // ignores those registers (often unspecified in short syscall calls).
@@ -141,7 +146,9 @@ export function clone3_fork_request(
   // Linux owns namespace configuration, capabilities and flag combinations.
   // Namespace/TID bits fit the old transport. CLEAR_SIGHAND and NEWTIME
   // require native transport: NEWTIME aliases a legacy CSIGNAL bit.
-  if (flags & ~(namespaceMask | tidMask | clearSighand | newTime | intoCgroup | 0x1000n))
+  if (
+    flags & ~(namespaceMask | sharingMask | tidMask | clearSighand | newTime | intoCgroup | 0x1000n)
+  )
     return -95;
   if (stack !== 0n || stackSize !== 0n) return -95;
   // Linux consults PIDFD/TID/TLS fields only when their flags request them.
