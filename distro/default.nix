@@ -136,6 +136,16 @@ lib.makeScope (scope: lib.callPackageWith ({ inherit lib pkgs; } // scope)) (
       llvm-runtimes = self.llvm-runtimes-wasm64;
       sdk-fork-continuation = self.sdk-fork-continuation-wasm64;
     };
+    setsid-fork = callPackage ./setsid-fork/package.nix { };
+    setsid-fork-wasm64 = callPackage ./setsid-fork/package.nix {
+      platform = self.platform-wasm64;
+      llvm-toolchain = self.llvm-toolchain-wasm64;
+      sdk-fork-continuation = self.sdk-fork-continuation-wasm64;
+      musl = self.musl-wasm64;
+      llvm-runtimes = self.llvm-runtimes-wasm64;
+      busybox = self.busybox-wasm64;
+      vm-test = vmTestWasm64;
+    };
     cgroup-pids = callPackage ./cgroup-pids/package.nix { };
     cgroup-pids-wasm64 = callPackage ./cgroup-pids/package.nix {
       platform = self.platform-wasm64;
