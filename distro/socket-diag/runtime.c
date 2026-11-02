@@ -244,8 +244,10 @@ static struct sample create_netlink(void)
 	CHECK(!getsockname(sample.fd, (struct sockaddr *)&address, &length) &&
 	      length == sizeof(address) && address.nl_pid, "usersock actual port ID");
 	sample.port = address.nl_pid;
-	/* Upstream ss renders this protocol's u32 port ID as a signed int. */
-	snprintf(sample.address, sizeof(sample.address), "usersock:%ld", (long)(int32_t)sample.port);
+	/* ss -n renders both the protocol number and the signed u32 port ID.
+	 * nl_proto_n2a() honors the same numeric option as the address renderer. */
+	snprintf(sample.address, sizeof(sample.address), "%d:%ld", NETLINK_USERSOCK,
+		 (long)(int32_t)sample.port);
 	struct stat state;
 	CHECK(!fstat(sample.fd, &state) && S_ISSOCK(state.st_mode) &&
 	      state.st_ino && (uint64_t)state.st_ino <= UINT32_MAX, "usersock diagnostic inode");
@@ -360,7 +362,11 @@ static void verify_netlink(const struct sample *sample, int present)
 		if (!end) break;
 		row = end + 1;
 	}
-	CHECK(found == present, "upstream ss Netlink protocol/port live and closed identity");
+	if (found != present) {
+		printf("ss Netlink diagnostic: expected=%s present=%d matches=%d output=%.4096s\n",
+		       sample->address, present, found, output);
+		fail("upstream ss Netlink protocol/port live and closed identity");
+	}
 }
 
 int main(void)
