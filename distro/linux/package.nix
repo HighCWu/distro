@@ -15,8 +15,8 @@
     inherit pkgs;
     owner = "HighCWu";
     repo = "linux";
-    rev = "b920e6b82c63eec3bf28a0281b832a0038e51305";
-    hash = "sha256-oxHlxUULPw7Mxc14Wuu+dCGjRCNM4WTYwng5VMrmjmg=";
+    rev = "c4420655e524544a67ece9ca6cb8be66eda267b4";
+    hash = "sha256-Zxe6Fb1K3WZ6XN0uQvxRFVgofYwEb5tTmAFTo8Ol4AM=";
   },
 }:
 
@@ -141,7 +141,8 @@ pkgs.stdenvNoCC.mkDerivation (finalAttrs: {
     grep -qx 'CONFIG_VM_EVENT_COUNTERS=y' .config
     grep -qx 'CONFIG_PACKET=y' .config
     for option in CRYPTO CRYPTO_USER CRYPTO_USER_API_HASH CRYPTO_SHA256 CRYPTO_HMAC \
-      CRYPTO_USER_API_SKCIPHER CRYPTO_AES CRYPTO_CBC CRYPTO_CTR; do
+      CRYPTO_USER_API_SKCIPHER CRYPTO_AES CRYPTO_CBC CRYPTO_CTR \
+      CRYPTO_USER_API_AEAD CRYPTO_GCM; do
       grep -qx "CONFIG_$option=y" .config
     done
     grep -qx 'CONFIG_FHANDLE=y' .config
