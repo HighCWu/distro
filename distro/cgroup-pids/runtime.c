@@ -158,7 +158,13 @@ static void clone_into_group(void)
     errno = 0;
     require(syscall(SYS_clone3, (long)(uintptr_t)&args, (long)sizeof args) == -1 && errno == EAGAIN,
             "target PIDs controller refuses birth");
-    require(pidfd == -1 && current() == 0, "failed creation leaves output and target unchanged");
+    require(current() == 0, "failed creation leaves target unchanged");
+    /* Linux writes a reserved PIDFD before cgroup_can_fork(). It revokes the
+     * reservation on error, but does not roll back the user output slot. */
+    if (pidfd >= 0) {
+        errno = 0;
+        require(fcntl(pidfd, F_GETFD) == -1 && errno == EBADF, "failed PIDFD reservation was revoked");
+    }
     inventory = opendir("/proc/self/fd");
     require(inventory != NULL, "rollback descriptor inventory");
     int final_fds = 0;
@@ -169,6 +175,7 @@ static void clone_into_group(void)
     puts("clone3 cgroup: size, descriptor and PIDs rejection leave no child or PIDFD pass");
 
     control(LEAF "/pids.max", "1");
+    pidfd = -1;
     char parent_group[256];
     contents("/proc/self/cgroup", parent_group, sizeof parent_group);
     int ready[2], release[2];
