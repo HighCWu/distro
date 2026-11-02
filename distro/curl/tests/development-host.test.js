@@ -432,7 +432,7 @@ test("both widths use installed example, SDK flags, ABI guard and complete notic
   assert.ok(recipe.includes("$out/share/licenses/curl/example-MIT"));
   assert.equal(
     [...recipe.matchAll(/passthru\.apk\.license = finalAttrs\.passthru\.apk\.license;/g)].length,
-    3,
+    4,
   );
   assert.doesNotMatch(source, /__wasm__|::vm-test::|while\s*\(1\)|sleep\(/);
   assert.equal(spawnSync("sh", ["-n"], { input: script }).status, 0);

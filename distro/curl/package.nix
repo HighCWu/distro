@@ -41,9 +41,9 @@ stdenv.mkDerivation (finalAttrs: {
   # Static-only, OpenSSL backend, zlib for content encoding. Everything that
   # would pull in an unavailable transport or a library we do not ship is
   # turned off explicitly so the cross configure cannot latch onto a stray
-  # host copy. Plain HTTP/HTTPS/FILE transfers need no fork; the threaded
-  # resolver is disabled so name lookups stay in-process (numeric addresses
-  # in the Linux check resolve without DNS regardless). Direct HTTPS uses
+  # host copy. Plain HTTP/HTTPS/FILE transfers need no fork. Standard pthread
+  # support now permits the upstream threaded resolver, including NOSIGNAL
+  # applications whose other transfers must progress during DNS. Direct HTTPS uses
   # OpenSSL and the distribution CA bundle unless --cacert overrides it. The
   # optional host Fetch adapter is a separate plaintext HTTP transport, not a TLS tunnel.
   configureFlags = [
@@ -53,7 +53,7 @@ stdenv.mkDerivation (finalAttrs: {
     "--with-zlib=${zlib}"
     "--enable-http"
     "--enable-file"
-    "--disable-threaded-resolver"
+    "--enable-threaded-resolver"
     "--disable-ares"
     "--disable-ldap"
     "--disable-ldaps"
@@ -73,6 +73,11 @@ stdenv.mkDerivation (finalAttrs: {
     "--without-ca-path"
     "--without-ca-embed"
   ];
+
+  postConfigure = ''
+    grep -qx '#define USE_RESOLV_THREADED 1' lib/curl_config.h
+    ! grep -qx '#define USE_ARES 1' lib/curl_config.h
+  '';
 
   postBuild = ''
     node ${../busybox/check-binary.mjs} ${../../packages/kernel/src/wasm_binary.ts} \
@@ -177,6 +182,31 @@ stdenv.mkDerivation (finalAttrs: {
         cp relocated/installation/share/doc/libcurl/examples/LICENSE.MIT $out/share/licenses/curl/example-MIT
       '';
 
+  # Ordinary libcurl/pthread/socket consumer; no project application API.
+  passthru.resolverApplication =
+    pkgs.runCommand "libcurl-threaded-resolver-${platform.wasmArch}"
+      {
+        nativeBuildInputs = [ pkgs.nodejs ];
+        passthru.apk.license = finalAttrs.passthru.apk.license;
+      }
+      ''
+        mkdir -p $out/bin $out/share/licenses
+        cp -r ${finalAttrs.finalPackage.development}/. development/
+        export WASM_PKG_CONFIG_PATH="$PWD/development/lib/pkgconfig"
+        export WASM_PKG_CONFIG_SYSROOT_DIR=/
+        cflags_text=$(${sdk}/bin/wasm-linux-pkg-config --cflags libcurl)
+        libs_text=$(${sdk}/bin/wasm-linux-pkg-config --libs libcurl)
+        read -ra cflags <<< "$cflags_text"
+        read -ra libs <<< "$libs_text"
+        ${sdk}/bin/wasm-linux-cc -O2 -Wall -Wextra -Werror -pthread \
+          "''${cflags[@]}" ${./tests/resolver.c} "''${libs[@]}" -o $out/bin/curl-resolver
+        node ${../busybox/check-binary.mjs} ${../../packages/kernel/src/wasm_binary.ts} \
+          $out/bin/curl-resolver ${toString platform.addressBits} ${toString platform.maximumMemoryBytes}
+        cp -r development/share/licenses/curl $out/share/licenses/
+        chmod u+w $out/share/licenses/curl
+        cp ${../sdk/LICENSE.MIT} $out/share/licenses/curl/resolver-test-MIT
+      '';
+
   # An independent consumer of the installed CMake project. Keep the direct
   # compiler consumer above: neither build path substitutes for the other.
   passthru.developmentCmakeApplication =
@@ -249,6 +279,15 @@ stdenv.mkDerivation (finalAttrs: {
   };
 
   passthru.checks = {
+    resolver = vm-test.installedTest {
+      name = "curl-threaded-resolver-${platform.wasmArch}";
+      init = ./tests/resolver-test.sh;
+      cpus = 2;
+      contents = [
+        busybox
+        finalAttrs.finalPackage.resolverApplication
+      ];
+    };
     development = vm-test.installedTest {
       name = "libcurl-installed-application-${platform.wasmArch}";
       inherit (finalAttrs.finalPackage.runtimeAssets.development) init contents;
