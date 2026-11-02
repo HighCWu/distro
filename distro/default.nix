@@ -259,6 +259,16 @@ lib.makeScope (scope: lib.callPackageWith ({ inherit lib pkgs; } // scope)) (
       vm-test = vmTestWasm64;
     };
     bpf-syscall = callPackage ./bpf-syscall/package.nix { };
+    bpf-nofault = self.bpf-syscall.override {
+      pname = "bpf-nofault";
+      runtimeSource = ./bpf-syscall/nofault.c;
+      initSource = ./bpf-syscall/nofault-test.sh;
+    };
+    bpf-nofault-wasm64 = self.bpf-syscall-wasm64.override {
+      pname = "bpf-nofault";
+      runtimeSource = ./bpf-syscall/nofault.c;
+      initSource = ./bpf-syscall/nofault-test.sh;
+    };
     bpf-syscall-wasm64 = callPackage ./bpf-syscall/package.nix {
       stdenv = self.stdenv-wasm64;
       platform = self.platform-wasm64;

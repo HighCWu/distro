@@ -8,32 +8,35 @@
   busybox,
   platform,
   vm-test,
+  pname ? "bpf-syscall",
+  runtimeSource ? ./runtime.c,
+  initSource ? ./runtime-test.sh,
 }:
 stdenv.mkDerivation (finalAttrs: {
-  pname = "bpf-syscall";
+  inherit pname;
   version = "1";
   dontUnpack = true;
   meta.license = lib.licenses.mit;
   nativeBuildInputs = [ pkgs.nodejs ];
   buildPhase = ''
     runHook preBuild
-    $CC -O2 -Wall -Wextra -Werror ${./runtime.c} -o bpf-syscall
+    $CC -O2 -Wall -Wextra -Werror ${runtimeSource} -o ${pname}
     node ${../busybox/check-binary.mjs} ${../../packages/kernel/src/wasm_binary.ts} \
-      bpf-syscall ${toString platform.addressBits} ${toString platform.maximumMemoryBytes}
+      ${pname} ${toString platform.addressBits} ${toString platform.maximumMemoryBytes}
     runHook postBuild
   '';
   installPhase = ''
     runHook preInstall
-    install -Dm755 bpf-syscall $out/bin/bpf-syscall
-    notices=$out/share/licenses/bpf-syscall
+    install -Dm755 ${pname} $out/bin/${pname}
+    notices=$out/share/licenses/${pname}
     install -Dm644 ${../sdk/LICENSE.MIT} "$notices/LICENSE.MIT"
     install -Dm644 ${musl.src}/COPYRIGHT "$notices/musl-COPYRIGHT"
     install -Dm644 ${llvm-runtimes.src}/compiler-rt/LICENSE.TXT "$notices/compiler-rt-LICENSE.TXT"
     runHook postInstall
   '';
   passthru.checks.runtime = vm-test.installedTest {
-    name = "bpf-syscall-${platform.wasmArch}";
-    init = ./runtime-test.sh;
+    name = "${pname}-${platform.wasmArch}";
+    init = initSource;
     contents = [
       busybox
       finalAttrs.finalPackage
