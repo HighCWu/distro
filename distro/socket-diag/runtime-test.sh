@@ -1,7 +1,7 @@
 #!/bin/busybox sh
 # SPDX-License-Identifier: MIT
 export PATH=/bin:/sbin:/usr/bin:/usr/sbin
-unset PROC_ROOT PROC_NET_UNIX PROC_NET_TCP PROC_NET_UDP
+unset PROC_ROOT PROC_NET_UNIX PROC_NET_TCP PROC_NET_UDP PROC_NET_NETLINK
 (cd / && sha256sum -c /ss.sha256) || exit 1
 version=$(/sbin/ss -V) || exit 1
 case "$version" in
