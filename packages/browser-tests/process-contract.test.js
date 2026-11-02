@@ -29,6 +29,7 @@ for (const corpus of Object.keys(processStages))
   });
 
 for (const corpus of [
+  "dylink",
   "resolver",
   "dash",
   "bash",
@@ -48,7 +49,7 @@ for (const corpus of [
     const profile = {
       addressBits: corpus === "upper32" ? 32 : 64,
       corpus,
-      cpus: ["upper32", "useraccess", "altstack", "stacklegacy"].includes(corpus) ? 1 : 2,
+      cpus: ["upper32", "useraccess", "altstack", "stacklegacy", "dylink"].includes(corpus) ? 1 : 2,
     };
     writeFileSync(join(dir, "profile.json"), JSON.stringify(profile));
     writeFileSync(

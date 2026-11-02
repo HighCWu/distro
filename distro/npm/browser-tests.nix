@@ -7,6 +7,8 @@
   curl-wasm64,
   dash-fork,
   dash-fork-wasm64,
+  dynamic-loader,
+  dynamic-loader-wasm64,
   fork-continuation,
   fork-continuation-wasm64,
   file-mmap-stream,
@@ -393,6 +395,10 @@ let
           "process-resolver-wasm32-firefox"
           "process-resolver-wasm64-chromium"
           "process-resolver-wasm64-firefox"
+          "process-dylink-wasm32-chromium"
+          "process-dylink-wasm32-firefox"
+          "process-dylink-wasm64-chromium"
+          "process-dylink-wasm64-firefox"
         ]
         (
           name:
@@ -418,6 +424,8 @@ let
                 "mmapstream"
               else if lib.hasInfix "-resolver-" name then
                 "resolver"
+              else if lib.hasInfix "-dylink-" name then
+                "dylink"
               else
                 "pidfd";
             bits = if lib.hasInfix "-wasm32-" name then 32 else 64;
@@ -576,6 +584,8 @@ let
           (if bits == 64 then file-mmap-stream-wasm64 else file-mmap-stream).checks.runtime.runtimeAssets
         else if corpus == "resolver" then
           (if bits == 64 then curl-wasm64 else curl).checks.resolver.runtimeAssets
+        else if corpus == "dylink" then
+          (if bits == 64 then dynamic-loader-wasm64 else dynamic-loader).checks.runtime.runtimeAssets
         else
           throw "unknown process browser corpus: ${corpus}";
       profile = pkgs.writeText "process-profile.json" (
@@ -596,6 +606,7 @@ let
               "useraccess"
               "altstack"
               "stacklegacy"
+              "dylink"
             ]
           then
             1

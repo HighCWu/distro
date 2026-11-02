@@ -7,6 +7,13 @@ const prefixStage =
   "user-access: partial boundary copies preserve file positions, suffixes and pipe accounting pass";
 const recoveryStage = "user-access: zero lengths, valid retries and descriptor recovery pass";
 export const processStages = {
+  dylink: [
+    "dynamic loader: main symbols, canonical pointers and dlerror pass",
+    "dynamic loader: Linux files, RUNPATH dependencies, GOT and constructors pass",
+    "dynamic loader: aliases, local/global scope, dependency reuse and close pass",
+    "dynamic loader: cyclic dependencies, peer constructors and canonical relocations pass",
+    "dynamic loader: missing/malformed rejection, descriptor recovery and cleanup pass",
+  ],
   resolver: [
     "curl resolver: pending DNS does not block an independent multi transfer pass",
     "curl resolver: delayed reply, new DNS request and exact HTTP bodies pass",

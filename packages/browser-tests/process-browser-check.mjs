@@ -14,7 +14,7 @@ assert.ok(addressBits === 32 || addressBits === 64, "invalid address width");
 assert.ok(Object.hasOwn(processStages, corpus), "unknown process corpus");
 assert.equal(
   cpus,
-  ["useraccess", "upper32", "altstack", "stacklegacy"].includes(corpus) ? 1 : 2,
+  ["useraccess", "upper32", "altstack", "stacklegacy", "dylink"].includes(corpus) ? 1 : 2,
   "CPU profile mismatch",
 );
 if (corpus === "upper32") assert.equal(addressBits, 32, "upper-half profile requires wasm32");
