@@ -155,6 +155,72 @@ function fixture(
 }
 
 for (const address of ["i32", "i64"] as const)
+  test(`${address}: clone3 cgroup capability, captured fd and failure cleanup`, () => {
+    const {
+      controller,
+      exports,
+      memory,
+      pointer: p,
+      calls,
+    } = fixture(address, true, 2, true, undefined, true);
+    const view = new DataView(memory.buffer);
+    view.setBigUint64(8192, 0x200000000n, true);
+    view.setBigUint64(8224, 17n, true);
+    view.setBigUint64(8272, 19n, true);
+    let groupCalls = 0,
+      plainCalls = 0;
+    Object.assign(exports, {
+      __wasm_fork_clone3_flags64: (...args: WasmAddress[]) => {
+        plainCalls++;
+        assert.deepEqual(args, [0n, p(0), p(0), p(0)]);
+        return p(-11);
+      },
+      __wasm_fork_clone3_cgroup: (...args: WasmAddress[]) => {
+        groupCalls++;
+        assert.deepEqual(args, [0x200000000n, p(0), p(0), p(0), 19n]);
+        return p(-9);
+      },
+    });
+    for (const features of [undefined, 0, 1, 2n, NaN, 2.5]) {
+      Object.assign(exports, {
+        __wasm_fork_clone3_features: features === undefined ? undefined : () => features,
+      });
+      assert.equal(controller.clone3Checkpoint(p(8192), p(88), true), -95);
+      assert.equal(calls.descriptors, 0);
+    }
+    Object.assign(exports, { __wasm_fork_clone3_features: () => 3 });
+    const helper = Reflect.get(exports, "__wasm_fork_clone3_cgroup");
+    Object.assign(exports, { __wasm_fork_clone3_cgroup: undefined });
+    assert.equal(controller.clone3Checkpoint(p(8192), p(88), true), -95);
+    assert.equal(calls.descriptors, 0);
+    Object.assign(exports, { __wasm_fork_clone3_cgroup: helper });
+    const oldKernel = new ForkContinuation(
+      { exports } as unknown as WebAssembly.Instance,
+      memory,
+      address,
+      undefined,
+      true,
+      false,
+    );
+    assert.equal(oldKernel.clone3Checkpoint(p(8192), p(88), true), -95);
+    assert.equal(calls.descriptors, 0);
+    assert.equal(controller.clone3Checkpoint(p(8192), p(88), true), 0);
+    view.setBigUint64(8272, 77n, true);
+    controller.suspend();
+    assert.equal(controller.clone(), p(-9));
+    controller.resumeParent(p(-9));
+    assert.equal(controller.clone3Checkpoint(p(0), p(0), true), -9);
+    view.setBigUint64(8192, 0n, true);
+    assert.equal(controller.clone3Checkpoint(p(8192), p(88), true), 0);
+    controller.suspend();
+    assert.equal(controller.clone(), p(-11));
+    controller.resumeParent(p(-11));
+    assert.equal(controller.clone3Checkpoint(p(0), p(0), true), -11);
+    assert.equal(groupCalls, 1);
+    assert.equal(plainCalls, 1);
+  });
+
+for (const address of ["i32", "i64"] as const)
   test(`${address}: clone3 high flags require wide transport and clear after failure`, () => {
     const {
       controller,

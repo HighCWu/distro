@@ -97,14 +97,14 @@ long __wasm_fork_clone_options(uintptr_t flags, uintptr_t parent, uintptr_t chil
  * has already suspended this single-thread caller; Linux alone writes TIDs
  * and allocates/publishes PIDFDs. No libc or application API is added. */
 static long clone3_native(uint64_t flags, uintptr_t pidfd,
-	uintptr_t parent_tid, uintptr_t child_tid)
+	uintptr_t parent_tid, uintptr_t child_tid, uint64_t cgroup)
 {
 	static struct {
 		uint64_t flags, pidfd, child_tid, parent_tid, exit_signal;
 		uint64_t stack, stack_size, tls, set_tid, set_tid_size, cgroup;
 	} args __attribute__((aligned(8)));
 	_Static_assert(sizeof args == 88, "Linux clone_args aligned u64 ABI");
-	const uint64_t allowed = UINT64_C(0x17f320080);
+	const uint64_t allowed = UINT64_C(0x37f320080);
 	if (flags & ~allowed)
 		return -EOPNOTSUPP;
 	args.flags = flags | (pidfd ? 0x1000 : 0);
@@ -112,6 +112,7 @@ static long clone3_native(uint64_t flags, uintptr_t pidfd,
 	args.child_tid = child_tid;
 	args.parent_tid = parent_tid;
 	args.exit_signal = SIGCHLD;
+	args.cgroup = cgroup;
 	return fork_callback_syscall(SYS_clone3, (long)&args, sizeof args, 0, 0, 0, 0);
 }
 
@@ -122,7 +123,7 @@ long __wasm_fork_clone3_native(uintptr_t flags, uintptr_t pidfd,
 {
 	if (flags & ~(uintptr_t)UINT32_C(0x7f320000))
 		return -EOPNOTSUPP;
-	return clone3_native(flags, pidfd, parent_tid, child_tid);
+	return clone3_native(flags, pidfd, parent_tid, child_tid, 0);
 }
 
 /* Flags are i64 on both architectures, independent of pointer width. */
@@ -130,13 +131,23 @@ __attribute__((export_name("__wasm_fork_clone3_flags64")))
 long __wasm_fork_clone3_flags64(uint64_t flags, uintptr_t pidfd,
 	uintptr_t parent_tid, uintptr_t child_tid)
 {
-	return clone3_native(flags, pidfd, parent_tid, child_tid);
+	/* Keep the old signature and never silently supply fd 0 for a new flag. */
+	if (flags & UINT64_C(0x200000000))
+		return -EOPNOTSUPP;
+	return clone3_native(flags, pidfd, parent_tid, child_tid, 0);
+}
+
+__attribute__((export_name("__wasm_fork_clone3_cgroup")))
+long __wasm_fork_clone3_cgroup(uint64_t flags, uintptr_t pidfd,
+	uintptr_t parent_tid, uintptr_t child_tid, uint64_t cgroup)
+{
+	return clone3_native(flags, pidfd, parent_tid, child_tid, cgroup);
 }
 
 /* Private object capability, not a libc/application API. Bit 0 admits
- * CLONE_NEWTIME only through the canonical clone3 structure above. */
+ * CLONE_NEWTIME; bit 1 admits the separate cgroup transport. */
 __attribute__((export_name("__wasm_fork_clone3_features")))
 int __wasm_fork_clone3_features(void)
 {
-	return 1;
+	return 3;
 }

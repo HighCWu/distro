@@ -1,13 +1,20 @@
 // SPDX-License-Identifier: MIT
 #define _GNU_SOURCE
+#ifndef __wasm__
+#error "Run only in the isolated Linux/Wasm cgroup test image"
+#endif
 #include <errno.h>
+#include <dirent.h>
 #include <fcntl.h>
+#include <linux/sched.h>
 #include <poll.h>
 #include <stdio.h>
+#include <stdint.h>
 #include <stdlib.h>
 #include <string.h>
 #include <sys/mount.h>
 #include <sys/stat.h>
+#include <sys/syscall.h>
 #include <sys/wait.h>
 #include <unistd.h>
 
@@ -119,6 +126,101 @@ static void receive_byte(int fd)
     require(count == 1 && byte == 'x', "pipe handoff read");
 }
 
+static void clone_into_group(void)
+{
+    int group = open(LEAF, O_RDONLY | O_DIRECTORY | O_CLOEXEC);
+    require(group >= 0, "open target cgroup");
+    int pidfd = -1;
+    struct clone_args args = {
+        .flags = CLONE_INTO_CGROUP | CLONE_PIDFD,
+        .exit_signal = SIGCHLD,
+        .pidfd = (uintptr_t)&pidfd,
+        .cgroup = (unsigned)group,
+    };
+    DIR *inventory = opendir("/proc/self/fd");
+    require(inventory != NULL, "initial descriptor inventory");
+    int initial_fds = 0;
+    while (readdir(inventory)) initial_fds++;
+    require(closedir(inventory) == 0, "initial inventory cleanup");
+    errno = 0;
+    require(syscall(SYS_clone3, (long)(uintptr_t)&args, 80L) == -1 && errno == EINVAL,
+            "INTO_CGROUP requires VER2 size");
+    args.cgroup = UINT64_C(1) << 32;
+    errno = 0;
+    require(syscall(SYS_clone3, (long)(uintptr_t)&args, (long)sizeof args) == -1 && errno == EINVAL,
+            "full-width fd cannot silently truncate");
+    args.cgroup = 0x7fffffff;
+    errno = 0;
+    require(syscall(SYS_clone3, (long)(uintptr_t)&args, (long)sizeof args) == -1 && errno == EBADF,
+            "invalid cgroup descriptor rejected by Linux");
+    args.cgroup = (unsigned)group;
+    control(LEAF "/pids.max", "0");
+    errno = 0;
+    require(syscall(SYS_clone3, (long)(uintptr_t)&args, (long)sizeof args) == -1 && errno == EAGAIN,
+            "target PIDs controller refuses birth");
+    require(pidfd == -1 && current() == 0, "failed creation leaves output and target unchanged");
+    inventory = opendir("/proc/self/fd");
+    require(inventory != NULL, "rollback descriptor inventory");
+    int final_fds = 0;
+    while (readdir(inventory)) final_fds++;
+    require(closedir(inventory) == 0 && final_fds == initial_fds,
+            "failed clone3 leaves no leaked descriptors");
+    no_children();
+    puts("clone3 cgroup: size, descriptor and PIDs rejection leave no child or PIDFD pass");
+
+    control(LEAF "/pids.max", "1");
+    char parent_group[256];
+    contents("/proc/self/cgroup", parent_group, sizeof parent_group);
+    int ready[2], release[2];
+    require(pipe2(ready, O_CLOEXEC) == 0 && pipe2(release, O_CLOEXEC) == 0, "birth handshake pipes");
+    pid_t child = syscall(SYS_clone3, (long)(uintptr_t)&args, (long)sizeof args);
+    require(child >= 0, "create directly in target cgroup");
+    if (!child) {
+        require(pidfd == -1, "parent PIDFD output not copied into child snapshot");
+        require(close(ready[0]) == 0 && close(release[1]) == 0, "born child endpoints");
+        char membership[256];
+        contents("/proc/self/cgroup", membership, sizeof membership);
+        require(!strcmp(membership, "0::/work\n") && current() == 1,
+                "first user observation is already in target group");
+        send_byte(ready[1]);
+        receive_byte(release[0]);
+        require(close(ready[1]) == 0 && close(release[0]) == 0, "born child cleanup");
+        _exit(43);
+    }
+    require(close(ready[1]) == 0 && close(release[0]) == 0, "birth parent endpoints");
+    receive_byte(ready[0]);
+    require(pidfd >= 0 && (fcntl(pidfd, F_GETFD) & FD_CLOEXEC), "kernel-published close-on-exec PIDFD");
+    struct pollfd item = { .fd = pidfd, .events = POLLIN };
+    require(poll(&item, 1, 0) == 0, "live target child PIDFD not ready");
+    char membership[256], expected[64];
+    contents("/proc/self/cgroup", membership, sizeof membership);
+    require(!strcmp(membership, parent_group), "parent membership unchanged");
+    snprintf(expected, sizeof expected, "%ld\n", (long)child);
+    contents(LEAF "/cgroup.procs", membership, sizeof membership);
+    require(!strcmp(membership, expected) && current() == 1, "target contains only new child");
+    send_byte(release[1]);
+    wait_child(child, 43);
+    require(poll(&item, 1, 0) == 1 && (item.revents & POLLIN), "reaped target PIDFD ready");
+    require(close(pidfd) == 0 && close(ready[0]) == 0 && close(release[1]) == 0,
+            "birth descriptors close");
+    require(current() == 0, "target child charge released");
+    no_children();
+    puts("clone3 cgroup: birth membership, parent isolation, PIDFD and reap pass");
+
+    child = fork();
+    require(child >= 0, "ordinary fork after cgroup clone");
+    if (!child) {
+        contents("/proc/self/cgroup", membership, sizeof membership);
+        require(!strcmp(membership, parent_group), "ordinary child inherits original group");
+        _exit(44);
+    }
+    wait_child(child, 44);
+    require(current() == 0 && close(group) == 0, "no stale cgroup option or descriptor");
+    control(LEAF "/pids.max", "max");
+    no_children();
+    puts("clone3 cgroup: later ordinary fork and target accounting recovery pass");
+}
+
 int main(void)
 {
     require(setvbuf(stdout, NULL, _IONBF, 0) == 0, "unbuffered stages across fork");
@@ -132,6 +234,7 @@ int main(void)
     require(found, "PIDs controller available");
     control(ROOT "/cgroup.subtree_control", "+pids");
     require(mkdir(LEAF, 0755) == 0, "create child cgroup");
+    clone_into_group();
     control(LEAF "/cgroup.procs", "0");
     require(current() == 1, "caller migrated alone");
     contents(LEAF "/pids.max", buffer, sizeof(buffer));

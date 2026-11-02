@@ -8,12 +8,14 @@ export interface CloneForkRequest {
   namespaceFlags?: WasmAddress;
   tids?: { flags: WasmAddress; parent: WasmAddress; child: WasmAddress };
   flags64?: bigint;
+  cgroup?: bigint;
 }
 
 const namespaceMask = 0x7e020000n;
 const tidMask = 0x01300000n;
 const clearSighand = 0x100000000n;
 const newTime = 0x80n;
+const intoCgroup = 0x200000000n;
 
 function unsigned_word(value: WasmAddress, address: WasmAddressType): bigint {
   if (
@@ -36,7 +38,8 @@ function fork_options(
   const options: Omit<CloneForkRequest, "pidfd"> = namespaces
     ? { namespaceFlags: address === "i64" ? namespaces : Number(namespaces) }
     : {};
-  if (flags & (clearSighand | newTime)) options.flags64 = flags & (clearSighand | newTime);
+  if (flags & (clearSighand | newTime | intoCgroup))
+    options.flags64 = flags & (clearSighand | newTime | intoCgroup);
   if (flags & tidMask) {
     // Linux performs TID stores (including its own fault behavior). Refuse
     // only addresses that the Wasm architecture cannot represent faithfully.
@@ -132,14 +135,17 @@ export function clone3_fork_request(
   if (flags & clearSighand && flags & 0x800n) return -22;
   if ((stack === 0n) !== (stackSize === 0n)) return -22;
   if (tidCount > 32n || (tids === 0n) !== (tidCount === 0n)) return -22;
+  if (flags & intoCgroup && (length < 88n || field(10) > 0x7fffffffn)) return -22;
   if (signal !== 17n) return -95;
   // Linux owns namespace configuration, capabilities and flag combinations.
   // Namespace/TID bits fit the old transport. CLEAR_SIGHAND and NEWTIME
   // require native transport: NEWTIME aliases a legacy CSIGNAL bit.
-  if (flags & ~(namespaceMask | tidMask | clearSighand | newTime | 0x1000n)) return -95;
+  if (flags & ~(namespaceMask | tidMask | clearSighand | newTime | intoCgroup | 0x1000n))
+    return -95;
   for (let index = 1; index < 11; index++)
     if (
       index !== 4 &&
+      index !== 10 &&
       !(index === 1 && flags & 0x1000n) &&
       !(index === 2 && flags & 0x1200000n) &&
       !(index === 3 && flags & 0x100000n) &&
@@ -148,7 +154,7 @@ export function clone3_fork_request(
       return -95;
   // Do not truncate a clone_args u64 pointer to the module's pointer width.
   // Linux owns the actual write and fd allocation/rollback, not this parser.
-  return fork_options(
+  const request = fork_options(
     memory,
     address,
     flags,
@@ -156,4 +162,6 @@ export function clone3_fork_request(
     flags & 0x100000n ? field(3) : 0n,
     flags & 0x1200000n ? field(2) : 0n,
   );
+  if (typeof request !== "number" && flags & intoCgroup) request.cgroup = field(10);
+  return request;
 }

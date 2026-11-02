@@ -149,7 +149,7 @@ for (const width of [32, 64]) {
       p(-95),
     );
     assert.equal(calls.length, 4, "unknown high flags never reach Linux");
-    assert.equal(instance.exports.__wasm_fork_clone3_features(), 1);
+    assert.equal(instance.exports.__wasm_fork_clone3_features(), 3);
     assert.equal(
       instance.exports.__wasm_fork_clone3_flags64(0x100000080n, pointer, parent, child),
       p(-11),
@@ -167,6 +167,22 @@ for (const width of [32, 64]) {
     );
     assert.equal(instance.exports.__wasm_fork_clone_options(p(0x80), pointer, child), p(-95));
     assert.equal(calls.length, 5, "old helpers still refuse the conflicting signal bit");
+    assert.equal(
+      instance.exports.__wasm_fork_clone3_flags64(0x200000000n, pointer, parent, child),
+      p(-95),
+    );
+    assert.equal(calls.length, 5, "old wide signature cannot silently choose fd zero");
+    assert.equal(
+      instance.exports.__wasm_fork_clone3_cgroup(0x200000000n, pointer, parent, child, 19n),
+      p(-11),
+    );
+    const grouped = new DataView(instance.exports.memory.buffer, Number(calls[5][1]), 88);
+    assert.equal(grouped.getBigUint64(0, true), 0x200001000n);
+    assert.equal(grouped.getBigUint64(80, true), 19n);
+    assert.equal(instance.exports.__wasm_fork_clone3_flags64(0n, p(0), p(0), p(0)), p(-11));
+    const plain = new DataView(instance.exports.memory.buffer, Number(calls[6][1]), 88);
+    assert.equal(plain.getBigUint64(0, true), 0n);
+    assert.equal(plain.getBigUint64(80, true), 0n, "ordinary clone3 clears stale cgroup");
     const collision = join(dir, "collision.c");
     writeFileSync(
       collision,

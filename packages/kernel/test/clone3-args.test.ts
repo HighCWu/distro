@@ -84,7 +84,6 @@ for (const address of ["i32", "i64"] as const)
     for (const [index, value, error] of [
       [0, 17n, -22],
       [0, 0x100n, -95],
-      [0, 0x200000000n, -95],
       [0, 0x100000800n, -22],
       [1, 0x100000000n, -95],
       [2, 1n, -95],
@@ -97,12 +96,21 @@ for (const address of ["i32", "i64"] as const)
       [7, 1n, -95],
       [8, 1n, -22],
       [9, 1n, -22],
-      [10, 1n, -95],
       [11, 1n, -7],
     ] as const) {
       reset();
       view.setBigUint64(256 + index * 8, value, true);
       assert.equal(parse(96), error, `field ${index}`);
+    }
+    reset();
+    view.setBigUint64(256 + 80, 0xffffffffffffffffn, true);
+    assert.deepEqual(parse(88), { pidfd: null }, "unrequested cgroup fd is ignored by Linux");
+    view.setBigUint64(256, 0x200000000n, true);
+    assert.equal(parse(80), -22, "cgroup requires the full VER2 structure");
+    assert.equal(parse(88), -22, "fd must fit Linux int without narrowing");
+    for (const fd of [0n, 19n, 0x7fffffffn]) {
+      view.setBigUint64(256 + 80, fd, true);
+      assert.deepEqual(parse(88), { pidfd: null, flags64: 0x200000000n, cgroup: fd });
     }
     reset();
     view.setBigUint64(256, 0x80n, true);

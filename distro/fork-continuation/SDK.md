@@ -112,6 +112,15 @@ CLEAR_SIGHAND and SIGHAND returns EINVAL; shared-handler/thread creation is not
 enabled. Legacy clone keeps Linux's low-32-bit flags rule. This is execution
 compatibility for the existing syscall, not a new libc interface. Target
 signal/disposition and recovery evidence is tracked separately.
+
+CLONE_INTO_CGROUP uses the optional `__wasm_fork_clone3_cgroup` transport and
+bit 1 of `__wasm_fork_clone3_features`. The cgroup fd remains a u64 on both
+pointer widths; Linux requires VER2 size and a value no larger than INT_MAX.
+The old wide helper retains its signature and refuses this flag. Linux alone
+checks the target descriptor, permissions, controller limits and rollback.
+An unrequested cgroup field is ignored. This does not enable shared-memory,
+custom-stack, TLS or multithreaded fork, and adds no libc/application API.
+
 `build-materials/` retains the profile/musl recipes, compiler configuration,
 Binaryen source and license, and links to the default SDK materials and selected
 sources. This is a Nix store output, not a relocatable standalone SDK archive or
