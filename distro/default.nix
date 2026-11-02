@@ -141,6 +141,12 @@ lib.makeScope (scope: lib.callPackageWith ({ inherit lib pkgs; } // scope)) (
       sdk = self.sdk-wasm64;
     };
     dynamic-loader = callPackage ./dynamic-loader/package.nix { };
+    dynamic-driver = callPackage ./dynamic-loader/driver.nix {
+      compiler = self.llvm-toolchain-unwrapped.override {
+        includeHostBackend = false;
+        patches = [ ./dynamic-loader/linux-shared.patch ];
+      };
+    };
     dynamic-loader-wasm64 = callPackage ./dynamic-loader/package.nix {
       platform = self.platform-wasm64;
       sdk-dynamic-loader = self.sdk-dynamic-loader-wasm64;

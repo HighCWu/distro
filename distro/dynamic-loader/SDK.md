@@ -16,6 +16,15 @@ links, so the general-purpose `cc -shared` path requires a separate driver fix.
 No application source calls a private loader API. Main linking includes libc
 and exports its definitions, as needed by side libraries.
 
+`dynamic-driver-check-build` separately builds a candidate Clang with the
+Linux shared-link branch corrected: no executable crt1, no fixed table base,
+and no implicit static system archives in side modules. Explicit user library
+inputs remain available; system/runtime imports resolve from the main module.
+It checks static/shared driver commands and links and instantiates real PIC
+libraries in both widths. This candidate does not change the default compiler
+or this SDK wrapper's configuration, and its engine checks are not Linux
+process or ELF acceptance.
+
 Library files are opened through Linux in the process's credentials, not host
 fetch. Direct paths, LD_LIBRARY_PATH, direct-dependency RUNPATH/$ORIGIN and
 /lib:/usr/lib are searched. Secure execution ignores LD_LIBRARY_PATH. Files are

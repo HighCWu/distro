@@ -1,0 +1,43 @@
+# SPDX-License-Identifier: Apache-2.0 WITH LLVM-exception
+# Linux/Wasm shared objects use the main module runtime and relocated table.
+--- a/clang/lib/Driver/ToolChains/WebAssembly.cpp
++++ b/clang/lib/Driver/ToolChains/WebAssembly.cpp
+@@ -114,6 +114,8 @@
+   ToolChain.AddFilePathLibArgs(Args, CmdArgs);
+ 
+   bool IsCommand = true;
++  const bool IsLinuxShared = ToolChain.getTriple().isOSLinux() &&
++                             Args.hasArg(options::OPT_shared);
+   const char *Crt1;
+   const char *Entry = nullptr;
+ 
+@@ -153,7 +155,8 @@
+     }
+   }
+ 
+-  if (!Args.hasArg(options::OPT_nostdlib, options::OPT_nostartfiles))
++  if (!IsLinuxShared &&
++      !Args.hasArg(options::OPT_nostdlib, options::OPT_nostartfiles))
+     CmdArgs.push_back(Args.MakeArgString(ToolChain.GetFilePath(Crt1)));
+   if (Entry) {
+     CmdArgs.push_back(Args.MakeArgString("--entry"));
+@@ -166,7 +169,7 @@
+   // Linux reserves function-pointer values 1 and 2 for SIG_IGN and SIG_HOLD.
+   // Keep real address-taken functions out of those wasm table slots. Linker
+   // inputs follow this default, so an explicit user --table-base wins.
+-  if (ToolChain.getTriple().isOSLinux())
++  if (ToolChain.getTriple().isOSLinux() && !IsLinuxShared)
+     CmdArgs.push_back("--table-base=3");
+ 
+   AddLinkerInputs(ToolChain, Inputs, Args, CmdArgs, JA);
+@@ -174,7 +177,10 @@
+   if (WantsPthread(ToolChain.getTriple(), Args))
+     CmdArgs.push_back("--shared-memory");
+ 
+-  if (!Args.hasArg(options::OPT_nostdlib, options::OPT_nodefaultlibs)) {
++  // Linux/Wasm side modules share the main module's libc and runtime. Pulling
++  // static system archives into each side module duplicates process state.
++  if (!IsLinuxShared &&
++      !Args.hasArg(options::OPT_nostdlib, options::OPT_nodefaultlibs)) {
+     if (ToolChain.ShouldLinkCXXStdlib(Args))
+       ToolChain.AddCXXStdlibLibArgs(Args, CmdArgs);

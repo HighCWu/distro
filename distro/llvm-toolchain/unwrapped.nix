@@ -3,6 +3,7 @@
 {
   pkgs,
   includeHostBackend ? true,
+  patches ? [ ],
   src ? pkgs.fetchFromGitHub {
     owner = "HighCWu";
     repo = "llvm-project";
@@ -59,7 +60,7 @@ in
 llvmPackages.stdenv.mkDerivation {
   pname = "llvm-toolchain-unwrapped";
   version = llvmPackages.release_version;
-  inherit src;
+  inherit src patches;
 
   nativeBuildInputs = [
     pkgs.cmake
