@@ -15,8 +15,8 @@
     inherit pkgs;
     owner = "HighCWu";
     repo = "linux";
-    rev = "c4420655e524544a67ece9ca6cb8be66eda267b4";
-    hash = "sha256-Zxe6Fb1K3WZ6XN0uQvxRFVgofYwEb5tTmAFTo8Ol4AM=";
+    rev = "19367bfc1d6b501d85ad77724130f5187df4c92e";
+    hash = "sha256-NbjHGv8/3iHT7XYUxQSisR4bgKoZcjFxNpTlM2GGq6E=";
   },
 }:
 
@@ -142,9 +142,11 @@ pkgs.stdenvNoCC.mkDerivation (finalAttrs: {
     grep -qx 'CONFIG_PACKET=y' .config
     for option in CRYPTO CRYPTO_USER CRYPTO_USER_API_HASH CRYPTO_SHA256 CRYPTO_HMAC \
       CRYPTO_USER_API_SKCIPHER CRYPTO_AES CRYPTO_CBC CRYPTO_CTR \
-      CRYPTO_USER_API_AEAD CRYPTO_GCM; do
+      CRYPTO_USER_API_AEAD CRYPTO_GCM CRYPTO_USER_API_RNG \
+      CRYPTO_DRBG_MENU CRYPTO_DRBG CRYPTO_DRBG_HMAC CRYPTO_SHA512; do
       grep -qx "CONFIG_$option=y" .config
     done
+    ! grep -qx 'CONFIG_CRYPTO_USER_API_RNG_CAVP=y' .config
     grep -qx 'CONFIG_FHANDLE=y' .config
     grep -qx 'CONFIG_HAVE_ARCH_SECCOMP=y' .config
     grep -qx 'CONFIG_SECCOMP=y' .config

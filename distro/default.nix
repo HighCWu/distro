@@ -128,6 +128,15 @@ lib.makeScope (scope: lib.callPackageWith ({ inherit lib pkgs; } // scope)) (
     direct-io = callPackage ./direct-io/package.nix { };
     packet-sockets = callPackage ./packet-sockets/package.nix { };
     alg-hash = callPackage ./alg-hash/package.nix { };
+    alg-rng = callPackage ./alg-rng/package.nix { };
+    alg-rng-wasm64 = callPackage ./alg-rng/package.nix {
+      stdenv = self.stdenv-wasm64;
+      platform = self.platform-wasm64;
+      musl = self.musl-wasm64;
+      llvm-runtimes = self.llvm-runtimes-wasm64;
+      busybox = self.busybox-wasm64;
+      vm-test = vmTestWasm64;
+    };
     alg-aead = callPackage ./alg-aead/package.nix { };
     alg-aead-wasm64 = callPackage ./alg-aead/package.nix {
       alg-hash = self.alg-hash-wasm64;
