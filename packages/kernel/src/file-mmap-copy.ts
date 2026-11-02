@@ -6,7 +6,15 @@ import { memory_bytes, refresh_memory, type WasmAddress, type WasmAddressType } 
  * This neither reads files nor admits file mmap. No source address reaches userspace.
  */
 export class FileMmapCopy {
-  private active: { source: number; length: number; used: boolean } | null = null;
+  private active:
+    | ({ length: number; used: boolean } & (
+        | { source: number }
+        | {
+            populate: (destination: WasmAddress, length: WasmAddress) => number;
+            result: number | null;
+          }
+      ))
+    | null = null;
   private kernel_memory: WebAssembly.Memory;
   private address: WasmAddressType;
   private kernel_exports: () => WebAssembly.Exports;
@@ -52,6 +60,49 @@ export class FileMmapCopy {
     return this.kernel_supported() && typeof exports.__wasm_mmap_init_v1 === "function" ? 1 : 0;
   }
 
+  stream_capabilities(exports: WebAssembly.Exports): number {
+    return this.capabilities(exports) &&
+      typeof this.kernel_exports().populate_file_mmap_v1 === "function"
+      ? 1
+      : 0;
+  }
+
+  /** The existing initializer grants one synchronous fill before publication.
+   * The private kernel export owns the source file and all bounded VFS reads.
+   * Neither fd nor a kernel pointer is passed to the user module.
+   */
+  map_stream(
+    exports: WebAssembly.Exports,
+    rounded: WasmAddress,
+    populate: (destination: WasmAddress, length: WasmAddress) => number,
+    abort?: (error: unknown) => void,
+  ): WasmAddress {
+    if (this.active) return this.error(16);
+    if (!this.stream_capabilities(exports)) return this.error(95);
+    const size = this.scalar(rounded);
+    if (size === null || !size || size % 65536) return this.error(22);
+    const active = { length: size, used: false, populate, result: null as number | null };
+    this.active = active;
+    try {
+      const result = (exports.__wasm_mmap_init_v1 as CallableFunction)(
+        rounded,
+        rounded,
+      ) as WasmAddress;
+      const failure = result < 0 && result >= -4095;
+      if (!failure && (!this.scalar(result) || !active.used || active.result !== 0))
+        throw new WebAssembly.RuntimeError(
+          "file initializer returned before successful population",
+        );
+      return result;
+    } catch (error) {
+      this.active = null;
+      abort?.(error);
+      throw error;
+    } finally {
+      this.active = null;
+    }
+  }
+
   /** Called only by the new kernel import, never by a user syscall argument. */
   map(
     exports: WebAssembly.Exports,
@@ -93,6 +144,19 @@ export class FileMmapCopy {
     const start = this.scalar(destination);
     const count = this.scalar(length);
     if (start === null || count === null || count !== active.length) return -22;
+    if ("populate" in active) {
+      try {
+        refresh_memory(memory, this.address);
+        if (!start || !memory_bytes(memory, start, count)) return -14;
+      } catch {
+        return -14;
+      }
+      // Kernel exceptions must propagate to machine failure, never be turned
+      // into an ordinary user-copy errno while a VFS producer is unjoined.
+      const result = active.populate(destination, length);
+      active.result = result;
+      return result;
+    }
     try {
       refresh_memory(this.kernel_memory, this.address);
       refresh_memory(memory, this.address);

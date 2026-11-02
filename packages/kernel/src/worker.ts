@@ -78,7 +78,7 @@ import {
   type Instance,
   kernel_imports,
   user_context_imports,
-  type MachineTerminationReason,
+  MachineTerminationReason,
   memory_bytes,
   refresh_memory,
   refresh_memory_range,
@@ -160,6 +160,7 @@ function user_imports({
   imports_v2: Imports["user_v2"];
   imports_signal_v1: Imports["user_signal_v1"];
   imports_mmap_init_v1: Imports["user_mmap_init_v1"];
+  imports_mmap_stream_v1: Imports["user_mmap_stream_v1"];
   imports_fork_v1: Imports["user_fork_v1"];
 } {
   const HALT_USER = Symbol("halt user");
@@ -718,6 +719,39 @@ function user_imports({
         );
       },
     },
+    imports_mmap_stream_v1: {
+      capabilities() {
+        assert(instance);
+        return mmap_copy.stream_capabilities(instance.exports);
+      },
+      map(rounded) {
+        assert(instance);
+        return user_callback(() =>
+          mmap_copy.map_stream(
+            instance!.exports,
+            rounded,
+            (destination, length) => {
+              try {
+                return kernel_leaf(() =>
+                  get_kernel_instance().exports.populate_file_mmap_v1!(destination, length),
+                );
+              } catch (error) {
+                // This private export executes only kernel/VFS code. A trap
+                // may strand a producer; do not resume user code or free its
+                // storage through the ordinary callback-abort path.
+                if (error !== HALT_KERNEL) console.error("kernel file-map producer failed:", error);
+                postMessage({ type: "terminate_machine", reason: MachineTerminationReason.Panic });
+                throw HALT_KERNEL;
+              }
+            },
+            (error) => {
+              if (error !== HALT_KERNEL)
+                kernel_leaf(() => get_kernel_instance().exports.abort_file_mmap_v1?.());
+            },
+          ),
+        );
+      },
+    },
     imports_mmap_init_v1: {
       capabilities() {
         assert(instance);
@@ -843,6 +877,7 @@ function start({
     user_v2: user.imports_v2,
     user_signal_v1: user.imports_signal_v1,
     user_mmap_init_v1: user.imports_mmap_init_v1,
+    user_mmap_stream_v1: user.imports_mmap_stream_v1,
     kernel: kernel_imports({
       address: kernel_address,
       is_worker: true,

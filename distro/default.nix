@@ -281,6 +281,24 @@ lib.makeScope (scope: lib.callPackageWith ({ inherit lib pkgs; } // scope)) (
     clone-flags64 = callPackage ./clone-flags64/package.nix { };
     clone-timens = callPackage ./clone-timens/package.nix { };
     timezone = callPackage ./timezone/package.nix { };
+    file-mmap-stream = callPackage ./file-mmap-stream/package.nix {
+      vm-test = self.vm-test.override {
+        kernel = self.kernel.override {
+          linux = self.linux.override { fileMmapStreamCandidate = true; };
+        };
+      };
+    };
+    file-mmap-stream-wasm64 = callPackage ./file-mmap-stream/package.nix {
+      platform = self.platform-wasm64;
+      sdk = self.sdk-wasm64;
+      musl = self.musl-wasm64;
+      llvm-runtimes = self.llvm-runtimes-wasm64;
+      vm-test = vmTestWasm64.override {
+        kernel = self.kernel-wasm64.override {
+          linux = self.linux-wasm64.override { fileMmapStreamCandidate = true; };
+        };
+      };
+    };
     timezone-wasm64 = callPackage ./timezone/package.nix {
       platform = self.platform-wasm64;
       sdk = self.sdk-wasm64;

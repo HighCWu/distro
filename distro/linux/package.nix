@@ -9,19 +9,20 @@
   wasmBits ? 32,
   mmapCopyTest ? false,
   fileMmapCandidate ? false,
+  fileMmapStreamCandidate ? false,
   vtimeCandidate ? false,
   llvm-toolchain-unwrapped,
   src ? import ./fetch-source.nix {
     inherit pkgs;
     owner = "HighCWu";
     repo = "linux";
-    rev = "f090bca6abef743f8a8f4bac49b5a1cbb2ea8864";
-    hash = "sha256-gzNoovXFxQ5zWc2d3ZRgkVybiKY436pNeZBh1RBVK4Y=";
+    rev = "1b81174a8c93bbfa4a630851ee6f17da4926a5d6";
+    hash = "sha256-4Lhcn73OWFLtb32hhSp+9w8yQfWPelZWwSax/duxsvk=";
   },
 }:
 
 let
-  copyHostChecks = fileMmapCandidate || mmapCopyTest;
+  copyHostChecks = fileMmapCandidate || fileMmapStreamCandidate || mmapCopyTest;
   identity =
     value:
     let
@@ -42,6 +43,7 @@ let
         debug
         mmapCopyTest
         fileMmapCandidate
+        fileMmapStreamCandidate
         vtimeCandidate
         ;
       sourceIdentity = identity src;
@@ -99,16 +101,33 @@ pkgs.stdenvNoCC.mkDerivation (finalAttrs: {
     ${lib.optionalString mmapCopyTest ''
       scripts/config --enable WASM_MMAP_COPY_TEST
     ''}
-    ${lib.optionalString fileMmapCandidate ''
+    ${lib.optionalString (fileMmapCandidate || fileMmapStreamCandidate) ''
       scripts/config --enable WASM_FILE_MMAP
+    ''}
+    ${lib.optionalString fileMmapStreamCandidate ''
+      scripts/config --enable WASM_FILE_MMAP_STREAM
     ''}
     ${lib.optionalString vtimeCandidate ''
       scripts/config --enable WASM_VTIME --disable TICK_CPU_ACCOUNTING \
         --enable VIRT_CPU_ACCOUNTING_GEN --enable CONTEXT_TRACKING_USER_FORCE
     ''}
-    ${lib.optionalString (mmapCopyTest || fileMmapCandidate || vtimeCandidate) ''
-      make olddefconfig
-    ''}
+    ${lib.optionalString
+      (mmapCopyTest || fileMmapCandidate || fileMmapStreamCandidate || vtimeCandidate)
+      ''
+        make olddefconfig
+      ''
+    }
+    ${
+      if fileMmapStreamCandidate then
+        ''
+          grep -qx 'CONFIG_WASM_FILE_MMAP=y' .config
+          grep -qx 'CONFIG_WASM_FILE_MMAP_STREAM=y' .config
+        ''
+      else
+        ''
+          ! grep -qx 'CONFIG_WASM_FILE_MMAP_STREAM=y' .config
+        ''
+    }
 
     ${
       if vtimeCandidate then
@@ -215,7 +234,7 @@ pkgs.stdenvNoCC.mkDerivation (finalAttrs: {
       ''
             cd ${finalAttrs.finalPackage}
             sha256sum --check linux-build/SHA256SUMS
-        jq --exit-status '.schemaVersion == 1 and .wasmBits == ${toString wasmBits} and .debug == ${builtins.toJSON debug} and .mmapCopyTest == ${builtins.toJSON mmapCopyTest} and .fileMmapCandidate == ${builtins.toJSON fileMmapCandidate} and .vtimeCandidate == ${builtins.toJSON vtimeCandidate}' linux-build/build.json
+        jq --exit-status '.schemaVersion == 1 and .wasmBits == ${toString wasmBits} and .debug == ${builtins.toJSON debug} and .mmapCopyTest == ${builtins.toJSON mmapCopyTest} and .fileMmapCandidate == ${builtins.toJSON fileMmapCandidate} and .fileMmapStreamCandidate == ${builtins.toJSON fileMmapStreamCandidate} and .vtimeCandidate == ${builtins.toJSON vtimeCandidate}' linux-build/build.json
             test -s linux-build/kernel.config
             test -s linux-build/LICENSES/preferred/GPL-2.0
             touch $out

@@ -39,6 +39,7 @@ export interface Instance extends WebAssembly.Instance {
     remote_memory_ready?(id: number): number;
     /** Release the quiescent file copy before rethrowing a user callback exception. */
     abort_file_mmap_v1?(): void;
+    populate_file_mmap_v1?(destination: WasmAddress, length: WasmAddress): number;
   };
 }
 
@@ -359,6 +360,10 @@ export interface Imports {
   user_mmap_init_v1: {
     capabilities(): number;
     map(rounded: WasmAddress, source: WasmAddress, length: WasmAddress): WasmAddress;
+  };
+  user_mmap_stream_v1: {
+    capabilities(): number;
+    map(rounded: WasmAddress): WasmAddress;
   };
   virtio: {
     set_features(dev: number, features: bigint): void;
