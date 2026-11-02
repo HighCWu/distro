@@ -30,3 +30,5 @@ administrative socket destruction, every ss option, or dynamic linking.
 The image's unchanged NOMMU BusyBox uses its upstream BUSYBOX_EXEC_PATH option
 set to /bin/busybox, so subshells and command substitutions can re-execute the
 installed binary without depending on /proc/self/exe.
+The dedicated check configures its own loopback address before the consumer
+and takes that interface down before publishing the final pass marker.

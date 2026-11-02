@@ -12,6 +12,9 @@ case "$version" in
   ;;
 esac
 echo 'socket diagnostics: proc-free NOMMU shell subshell and command substitution pass'
+ifconfig lo 127.0.0.1 up || exit 1
 /libexec/socket-diag/verify || exit 1
+ifconfig lo down || exit 1
+echo 'socket diagnostics: loopback fixture teardown pass'
 echo '::vm-test::pass'
 while :; do sleep 1; done
