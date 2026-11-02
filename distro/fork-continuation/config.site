@@ -1,0 +1,5 @@
+# SPDX-License-Identifier: MIT
+# Appended only to the optional static C fork profile's base policy.
+# Let Autoconf perform its ordinary declaration/link probe. Do not inherit a
+# default-profile denial, or prefill a success merely because a header exists.
+unset ac_cv_func_fork ac_cv_func_fork_works

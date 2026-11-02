@@ -13,6 +13,9 @@ let
   forkMusl = musl.override { enableForkContinuation = true; };
   forkBase = sysroot-base.override { musl = forkMusl; };
   forkRoot = sysroot.override { sysroot-base = forkBase; };
+  configSite = pkgs.writeText "fork-${platform.wasmArch}-config.site" (
+    builtins.readFile ../config.site + "\n" + builtins.readFile ./config.site
+  );
   # Execution-state support is not a musl implementation detail. Other libc
   # ports and raw syscall callers can link the same object and use this ABI.
   execution =
@@ -93,6 +96,7 @@ let
         sysroot = "${forkRoot}";
         compilerConfiguration = "${config}";
         executionObject = "${execution}/fork-execution.o";
+        configSite = "${configSite}";
       };
     }
   );
@@ -102,6 +106,8 @@ let
     cp -r ${../musl} $out/recipes/musl
     cp ${../sdk/compiler.sh} $out/recipes/compiler.sh
     cp ${config} $out/recipes/compiler.cfg
+    cp ${../config.site} $out/recipes/config.site
+    cp ${configSite} $out/recipes/fork-config.site
     cp ${pkgs.binaryen.src}/LICENSE $out/licenses/Binaryen-LICENSE
     cp ${../sdk/LICENSE.MIT} $out/licenses/SDK-MIT.txt
     ln -s ${pkgs.binaryen.src} $out/binaryen-source
@@ -120,8 +126,10 @@ pkgs.symlinkJoin {
     mkdir -p $out/share/linux-wasm-fork-sdk
     ln -s ${materials} $out/share/linux-wasm-fork-sdk/build-materials
     cp ${./SDK.md} $out/share/linux-wasm-fork-sdk/README.md
+    cp ${configSite} $out/share/linux-wasm-fork-sdk/config.site
   '';
   passthru = {
+    inherit configSite;
     sysroot = forkRoot;
     buildMaterials = materials;
     checks.wrapper =
@@ -140,6 +148,8 @@ pkgs.symlinkJoin {
           cp ${./sdk.nix} fork-continuation/sdk.nix
           cp ${./execution.c} fork-continuation/execution.c
           cp ${./raw-clone.c} fork-continuation/raw-clone.c
+          cp ${./config.site} fork-continuation/config.site
+          cp ${../config.site} config.site
           cp ${./execution-link.test.js} fork-continuation/execution-link.test.js
           cp ${../default.nix} default.nix
           node --test fork-continuation/sdk.test.js

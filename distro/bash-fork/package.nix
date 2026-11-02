@@ -39,7 +39,7 @@ let
     patches = [ ../bash/wasm-anonfile.patch ];
     configurePhase = ''
       runHook preConfigure
-      CONFIG_SITE=${../config.site} CC=wasm-linux-fork-cc \
+      CONFIG_SITE=${sdk-fork-continuation.configSite} CC=wasm-linux-fork-cc \
         CFLAGS='-O2 -std=gnu17 -mllvm -wasm-enable-sjlj' ./configure \
         --build=${pkgs.stdenv.buildPlatform.config} --host=${platform.targetTriple} \
         --prefix=/ --enable-static-link --disable-readline --disable-nls \

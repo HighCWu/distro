@@ -9,6 +9,40 @@ import { test } from "node:test";
 const template = readFileSync(new URL("./finalize.sh", import.meta.url), "utf8");
 const quote = (value) => "'" + value.replaceAll("'", "'\\''") + "'";
 
+test("fork profile clears only the default fork denial and preserves other unsupported semantics", () => {
+  const base = readFileSync(new URL("../config.site", import.meta.url), "utf8");
+  const delta = readFileSync(new URL("./config.site", import.meta.url), "utf8");
+  const variables = [
+    "ac_cv_func_fork",
+    "ac_cv_func_fork_works",
+    "ac_cv_func_vfork",
+    "ac_cv_func_vfork_works",
+    "ac_cv_func_mmap_fixed_mapped",
+    "ac_cv_func_dlopen",
+    "ac_cv_search_dlopen",
+    "ac_cv_lib_dl_dlopen",
+  ];
+  const print = variables.map((key) => `printf '%s\\n' "\${${key}-unset}"`).join("\n");
+  for (const shell of ["sh", "bash"]) {
+    for (const profile of [false, true]) {
+      const result = spawnSync(
+        shell,
+        ["-eu", "-c", base + "\n" + (profile ? delta : "") + "\n" + print],
+        {
+          encoding: "utf8",
+          env: { ...process.env, ac_cv_func_fork: "host-yes", ac_cv_func_fork_works: "host-yes" },
+        },
+      );
+      assert.equal(result.status, 0, result.stderr);
+      assert.deepEqual(result.stdout.trim().split("\n"), [
+        profile ? "unset" : "no",
+        profile ? "unset" : "no",
+        ...Array(6).fill("no"),
+      ]);
+    }
+  }
+});
+
 function fixture(t, fail = false) {
   const dir = mkdtempSync(join(tmpdir(), "fork sdk "));
   t.after(() => rmSync(dir, { recursive: true, force: true }));

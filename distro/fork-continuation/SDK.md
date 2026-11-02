@@ -26,6 +26,14 @@ transform individual objects, transform an executable twice, strip the required
 exports, or use the default SDK linker/sysroot for the final link. Ordinary
 programs executed by `exec` may still use the default SDK without Asyncify.
 
+For Autoconf builds, select this profile's
+`share/linux-wasm-fork-sdk/config.site` with the standard `CONFIG_SITE` variable
+(Nix users can use the package's `configSite` attribute). It removes the default
+SDK's negative fork cache answers so the normal compile/link probes can run;
+it does not prefill success. The default SDK's policy is unchanged. The profile
+still disables vfork, fixed/file-mapping capability probes and dynamic loading.
+Every complete executable still needs the finalizer after linking.
+
 Current supported scope: static C, fork from ordinary single-thread program
 execution. Fork from a signal handler, runtime callback, or a process with sibling
 threads is rejected. Dynamic modules, C++ EH/SjLj, vfork and multithreaded fork
