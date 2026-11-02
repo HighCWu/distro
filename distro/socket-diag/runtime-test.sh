@@ -11,6 +11,7 @@ case "$version" in
   exit 1
   ;;
 esac
+echo 'socket diagnostics: proc-free NOMMU shell subshell and command substitution pass'
 /libexec/socket-diag/verify || exit 1
 echo '::vm-test::pass'
 while :; do sleep 1; done

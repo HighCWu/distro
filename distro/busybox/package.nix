@@ -75,6 +75,9 @@ stdenv.mkDerivation (finalAttrs: {
     make -j$NIX_BUILD_CORES defconfig
     config STATIC y
     config NOMMU y
+    # NOMMU hush re-executes itself for subshells/command substitutions. The
+    # installed images also support booting without procfs (upstream option).
+    config BUSYBOX_EXEC_PATH /bin/busybox
     config FEATURE_IPV6 y
     config STATIC_LIBGCC n
     config CROSS_COMPILER_PREFIX llvm-
@@ -142,6 +145,7 @@ stdenv.mkDerivation (finalAttrs: {
 
     make -j$NIX_BUILD_CORES oldconfig
     grep -qx 'CONFIG_NSENTER=y' .config
+    grep -qx 'CONFIG_BUSYBOX_EXEC_PATH="/bin/busybox"' .config
 
     runHook postConfigure
   '';

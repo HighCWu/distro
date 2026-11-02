@@ -21,7 +21,12 @@ link preserves the execution support, libc/toolchain identities and licenses.
 Upstream source notices and COPYING remain authoritative; the independent
 recipe and this documentation are MIT.
 
-The runtime check verifies live and closed UNIX/UDP/TCP sockets and ordinary
-user access. It does not mount procfs, so missing diagnostic handlers cannot
+The runtime check verifies live and closed UNIX/UDP/TCP/Netlink sockets and
+ordinary user access. For Netlink, raw diagnostic replies identify the inode
+and port, while ss independently renders the matching protocol and port.
+It does not mount procfs, so missing diagnostic handlers cannot
 be masked by ss reading `/proc/net` instead. This does not validate BPF,
 administrative socket destruction, every ss option, or dynamic linking.
+The image's unchanged NOMMU BusyBox uses its upstream BUSYBOX_EXEC_PATH option
+set to /bin/busybox, so subshells and command substitutions can re-execute the
+installed binary without depending on /proc/self/exe.
