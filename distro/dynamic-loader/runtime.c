@@ -11,6 +11,7 @@
 #include <stdlib.h>
 #include <string.h>
 #include <sys/mount.h>
+#include <sys/stat.h>
 #include <sys/syscall.h>
 #include <unistd.h>
 
@@ -53,9 +54,16 @@ int main(void)
     require(!dlsym(self, "not_a_real_symbol") && dlerror() && !dlerror(), "one-shot standard dlerror");
     puts("dynamic loader: main symbols, canonical pointers and dlerror pass");
 
-    require(!setenv("LD_LIBRARY_PATH", "/plugins", 1), "library search environment");
+    require(!mkdir("/plugins/shadow", 0700), "create first search directory");
+    int shadow = open("/plugins/shadow/libplugin-b.so", O_CREAT | O_EXCL | O_WRONLY, 0600);
+    require(shadow >= 0 && write(shadow, "bad", 3) == 3 && !close(shadow), "create shadowed malformed library");
+    require(!setenv("LD_LIBRARY_PATH", "/plugins/shadow:/plugins", 1), "ordered library search environment");
+    require(!dlopen("libplugin-b.so", RTLD_NOW) && dlerror(), "opened malformed library stops path search");
+    require(descriptors() == baseline, "shadow rejection descriptor cleanup");
+    require(!unlink("/plugins/shadow/libplugin-b.so"), "remove malformed first candidate");
     void *plugin = dlopen("libplugin-b.so", RTLD_NOW | RTLD_LOCAL);
-    require(plugin != 0, "load dependency graph");
+    require(plugin != 0, "missing first candidate permits dependency graph search");
+    require(!rmdir("/plugins/shadow"), "remove first search directory");
     int (*initial)(void) = symbol(plugin, "plugin_initial");
     int (*count)(void) = symbol(plugin, "plugin_count");
     int (*run)(int) = symbol(plugin, "plugin_run");

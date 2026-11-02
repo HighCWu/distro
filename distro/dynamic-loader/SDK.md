@@ -33,6 +33,10 @@ RTLD_GLOBAL definitions precede a newly loaded group for binding; explicit
 handle lookup searches that object's group. RTLD_LOCAL, GLOBAL, NOLOAD and
 NODELETE are accepted. Objects remain resident through close, matching musl's
 existing policy; dynamic unloading is not implemented.
+Search advances past ENOENT, ENOTDIR, EACCES or ENAMETOOLONG only when opening
+the candidate failed. Other open errors stop search. Once a file is opened,
+admission, read, allocation and format failures stop loading instead of silently
+substituting a later same-name library. Failure cleanup permits a later retry.
 An mm-owned kernel file reference retains each inode after the temporary input
 fd closes. Close-range operations cannot release these references; exec/exit
 teardown releases them without calling old user code. Older kernels without

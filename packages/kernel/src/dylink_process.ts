@@ -43,6 +43,10 @@ type Options = {
   unpinFile(id: number): number;
 };
 
+// Only failures to open a path may advance to a later search directory.
+// An opened object's admission, read or format failure must retain precedence.
+class DylinkSearchMiss extends Error {}
+
 /** Per-main-instance execution state. Files come exclusively through the main
  * program's guarded Linux syscalls. Modules remain resident as musl dlclose does;
  * this profile has no Worker publication or fork snapshot protocol yet. */
@@ -128,7 +132,7 @@ export class ProcessDylink {
   }
   #read(path: string, known: ReadonlyMap<string, File>): File {
     const encoded = new TextEncoder().encode(path + "\0");
-    if (encoded.length > 4096) throw new Error("dynamic path exceeds PATH_MAX");
+    if (encoded.length > 4096) throw new DylinkSearchMiss("dynamic path exceeds PATH_MAX");
     const pointer = this.#call(
       "__wasm_dlopen_allocate",
       this.#word(BigInt(encoded.length)),
@@ -152,7 +156,12 @@ export class ProcessDylink {
         // An existing inode is already code in this process. Later file content
         // changes or admission errors must not replace/reset the live object.
         if (error !== 16n && resident) return resident;
-        if (error) throw new Error(`cannot open ${path}: errno ${error}`);
+        if (error) {
+          const message = `cannot open ${path}: errno ${error}`;
+          if ([2n, 13n, 20n, 36n].includes(error) && Number(this.#call("__wasm_dlopen_fd")) < 0)
+            throw new DylinkSearchMiss(message);
+          throw new Error(message);
+        }
         const size = view.getBigUint64(8, true);
         if (size > 64n * 1024n * 1024n) throw new Error("dynamic file exceeds profile capacity");
         const bytes = memory_bytes(
@@ -288,8 +297,7 @@ export class ProcessDylink {
             if (!aliases.has(basename)) aliases.set(basename, file.key);
             return file;
           } catch (error) {
-            if (this.#options.isControlFlow(error) || error instanceof DylinkInitializationError)
-              throw error;
+            if (!(error instanceof DylinkSearchMiss)) throw error;
             failure = error;
           }
         }
