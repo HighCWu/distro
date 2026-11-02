@@ -16,6 +16,7 @@
 #include <unistd.h>
 
 static volatile int private_word = 17;
+static int flags_first;
 
 static void require(int ok, const char *what)
 {
@@ -27,6 +28,14 @@ static void require(int ok, const char *what)
 
 static pid_t create(uint64_t flags, int *pidfd)
 {
+    if (flags_first) {
+        uint64_t legacy_flags = flags | SIGCHLD;
+#if __SIZEOF_LONG__ == 8
+        legacy_flags |= UINT64_C(1) << 40; /* Legacy Linux ignores upper flag bits. */
+#endif
+        return syscall(SYS_clone, (long)legacy_flags, 0L,
+                       pidfd ? (long)(uintptr_t)pidfd : -1L, -1L, -1L, 999L);
+    }
     struct clone_args args = { .flags = flags, .exit_signal = SIGCHLD,
         .pidfd = pidfd ? (uintptr_t)pidfd : 0 };
     _Static_assert(sizeof(struct clone_args) == 88, "Linux clone_args fixed u64 fields");
@@ -52,9 +61,10 @@ static void no_children(void)
             "rejected request leaves no child");
 }
 
-int main(void)
+static void run(int legacy)
 {
-    require(setvbuf(stdout, NULL, _IONBF, 0) == 0, "unbuffered stages across fork");
+    flags_first = legacy;
+    const char *api = legacy ? "clone" : "clone3";
     struct utsname original;
     require(uname(&original) == 0, "parent UTS identity");
     int queue = msgget(IPC_PRIVATE, IPC_CREAT | 0600);
@@ -90,7 +100,7 @@ int main(void)
     require(msgctl(queue, IPC_STAT, &state) == 0 && msgctl(queue, IPC_RMID, NULL) == 0,
             "parent IPC object remains usable and is removed");
     no_children();
-    puts("clone namespaces: standard UTS/IPC isolation, private memory and atomic PIDFD pass");
+    printf("clone namespaces: %s UTS/IPC isolation, private memory and atomic PIDFD pass\n", api);
 
     child = create(CLONE_NEWPID, NULL);
     require(child >= 0, "standard clone3 PID namespace");
@@ -101,7 +111,7 @@ int main(void)
     require(child > 1, "parent receives the outer namespace PID");
     reap(child, 37);
     no_children();
-    puts("clone namespaces: PID namespace init identity, outer PID and wait cleanup pass");
+    printf("clone namespaces: %s PID namespace init identity, outer PID and wait cleanup pass\n", api);
 
     child = fork();
     require(child >= 0, "ordinary permission-check worker");
@@ -124,7 +134,14 @@ int main(void)
     }
     reap(child, 43);
     no_children();
-    puts("clone namespaces: kernel EPERM rollback, unchanged PIDFD and later ordinary fork pass");
+    printf("clone namespaces: %s kernel EPERM rollback, unchanged PIDFD and later ordinary fork pass\n", api);
+}
+
+int main(void)
+{
+    require(setvbuf(stdout, NULL, _IONBF, 0) == 0, "unbuffered stages across fork");
+    run(0);
+    run(1);
     puts("::vm-test::pass");
     for (;;) pause();
 }

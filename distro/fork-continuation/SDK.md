@@ -54,7 +54,7 @@ callback import returns ENOSYS for clone3 instead of invoking kernel clone
 without a continuation. This does not extend multithread fork or raw-caller
 libc cleanup guarantees. Target acceptance is recorded separately in the project.
 
-Matching newer execution support also transports CLONE_NEWNS, CLONE_NEWUTS,
+Matching newer execution support transports CLONE_NEWNS, CLONE_NEWUTS,
 CLONE_NEWIPC, CLONE_NEWUSER, CLONE_NEWPID, CLONE_NEWNET and CLONE_NEWCGROUP,
 optionally combined with CLONE_PIDFD. Linux decides namespace configuration,
 permissions and valid combinations; transport does not enable a disabled
@@ -65,6 +65,17 @@ because legacy callback clone's CSIGNAL bits cannot represent it. The static C,
 single-thread and default-stack limits remain; these additions do not introduce
 an application API or libc function. Namespace target checks are independent
 of previously accepted fork checks and still require actual runtime evidence.
+
+The v2 import also accepts these namespace/PIDFD combinations through standard
+flags-first `clone` (220): flags, default stack, parent_tid/PIDFD, child_tid, TLS.
+SIGCHLD and the default stack are required. parent_tid is validated only as the
+CLONE_PIDFD output; unrequested parent/child TID and TLS registers, and the sixth
+unused register, are ignored as on Linux. TID/TLS flags remain unsupported.
+Legacy flags use their low 32 bits as in kernel clone; clone3 keeps its u64 flag
+field, and PIDFD pointers retain the module's full pointer width in either API.
+Captured options use the same capability gates and rollback as clone3;
+rewind completes the already admitted call. The callback import still uses its
+original callback layout and is never inferred from numeric flag values.
 
 `share/linux-wasm-fork-sdk/profile.json` records the experimental profile.
 `build-materials/` retains the profile/musl recipes, compiler configuration,

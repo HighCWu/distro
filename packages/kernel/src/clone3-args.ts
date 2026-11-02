@@ -1,22 +1,83 @@
 // SPDX-License-Identifier: MIT
-// Linux clone_args is an array of aligned u64 fields on BOTH pointer widths.
+// Linux clone_args uses aligned u64 fields; legacy clone uses machine words.
 // Only the existing single-thread, default-stack fork shape is admitted here.
 import { memory_bytes, type WasmAddress, type WasmAddressType } from "./wasm.ts";
+
+export interface CloneForkRequest {
+  pidfd: WasmAddress | null;
+  namespaceFlags?: WasmAddress;
+}
+
+const namespaceMask = 0x7e020000n;
+
+function unsigned_word(value: WasmAddress, address: WasmAddressType): bigint {
+  if (
+    typeof value !== (address === "i64" ? "bigint" : "number") ||
+    (typeof value === "number" && !Number.isSafeInteger(value))
+  )
+    throw new Error("invalid word");
+  return BigInt.asUintN(address === "i64" ? 64 : 32, BigInt(value));
+}
+
+function fork_options(
+  memory: WebAssembly.Memory,
+  address: WasmAddressType,
+  flags: bigint,
+  pidfd: bigint,
+): number | CloneForkRequest {
+  const namespaces = flags & namespaceMask;
+  const options = namespaces
+    ? { namespaceFlags: address === "i64" ? namespaces : Number(namespaces) }
+    : {};
+  if (!(flags & 0x1000n)) return { pidfd: null, ...options };
+  if (
+    pidfd === 0n ||
+    pidfd > BigInt(Number.MAX_SAFE_INTEGER) ||
+    (address === "i32" && pidfd > 0xffffffffn) ||
+    !memory_bytes(memory, Number(pidfd), 4)
+  )
+    return -14;
+  return { pidfd: address === "i64" ? pidfd : Number(pidfd), ...options };
+}
+
+/** Linux default clone(flags, stack, ptid/pidfd, ctid, tls); no callback layout. */
+export function clone_fork_request(
+  memory: WebAssembly.Memory,
+  address: WasmAddressType,
+  args: WasmAddress[],
+): number | CloneForkRequest {
+  const zero = (v: WasmAddress | undefined) => v === 0 || v === 0n;
+  if (args.length !== 6 || !zero(args[1])) return -95;
+  let flags: bigint;
+  try {
+    // Legacy Linux clone consumes lower_32_bits(flags), unlike clone3's u64
+    // flag field. Only flags are narrowed; a PIDFD pointer must keep its width.
+    flags = BigInt.asUintN(32, unsigned_word(args[0]!, address));
+  } catch {
+    return -95;
+  }
+  if ((flags & 0xffn) !== 17n || flags & ~(namespaceMask | 0x1000n | 0xffn)) return -95;
+  if (!(flags & 0x1000n)) {
+    // No supported flag requests parent/child TID or TLS updates. Linux
+    // ignores those registers (often unspecified in short syscall calls).
+    return fork_options(memory, address, flags, 0n);
+  }
+  let pidfd: bigint;
+  try {
+    pidfd = unsigned_word(args[2]!, address);
+  } catch {
+    return -14;
+  }
+  return fork_options(memory, address, flags, pidfd);
+}
 
 export function clone3_fork_request(
   memory: WebAssembly.Memory,
   address: WasmAddressType,
   pointer: WasmAddress,
   size: WasmAddress,
-): number | { pidfd: WasmAddress | null; namespaceFlags?: WasmAddress } {
-  const unsigned = (value: WasmAddress) => {
-    if (
-      typeof value !== (address === "i64" ? "bigint" : "number") ||
-      (typeof value === "number" && !Number.isSafeInteger(value))
-    )
-      throw new Error("invalid word");
-    return BigInt.asUintN(address === "i64" ? 64 : 32, BigInt(value));
-  };
+): number | CloneForkRequest {
+  const unsigned = (value: WasmAddress) => unsigned_word(value, address);
   let length: bigint;
   try {
     length = unsigned(size);
@@ -57,24 +118,10 @@ export function clone3_fork_request(
   // Linux owns namespace configuration, capabilities and flag combinations.
   // These bits fit legacy clone's flags word. NEWTIME (0x80) does not: that
   // word encodes CSIGNAL there, so it must never be silently dropped.
-  const namespaceMask = 0x7e020000n;
   if (flags & ~(namespaceMask | 0x1000n)) return -95;
   for (let index = 1; index < 11; index++)
     if (index !== 4 && !(index === 1 && flags & 0x1000n) && field(index) !== 0n) return -95;
-  const namespaces = flags & namespaceMask;
-  const options = namespaces
-    ? { namespaceFlags: address === "i64" ? namespaces : Number(namespaces) }
-    : {};
-  if (!(flags & 0x1000n)) return { pidfd: null, ...options };
-  const pidfd = field(1);
   // Do not truncate a clone_args u64 pointer to the module's pointer width.
   // Linux owns the actual write and fd allocation/rollback, not this parser.
-  if (
-    pidfd === 0n ||
-    pidfd > BigInt(Number.MAX_SAFE_INTEGER) ||
-    (address === "i32" && pidfd > 0xffffffffn) ||
-    !memory_bytes(memory, Number(pidfd), 4)
-  )
-    return -14;
-  return { pidfd: address === "i64" ? pidfd : Number(pidfd), ...options };
+  return fork_options(memory, address, flags, field(1));
 }

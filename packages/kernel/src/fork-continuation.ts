@@ -8,7 +8,7 @@ import {
   type WasmAddress,
   type WasmAddressType,
 } from "./wasm.ts";
-import { clone3_fork_request } from "./clone3-args.ts";
+import { clone3_fork_request, clone_fork_request, type CloneForkRequest } from "./clone3-args.ts";
 
 export interface ForkSnapshot {
   version: 1;
@@ -122,9 +122,7 @@ export function dispatch_fork_syscall(
     // The import name selects the ABI. Never infer a layout from flag values
     // or from a possible function-table index. The sixth register is unused
     // by the Linux default five-argument clone ABI.
-    const supported =
-      args.length === 6 && (args[0] === 17 || args[0] === 17n) && args.slice(1, 5).every(zero);
-    const result = supported ? (fork?.syscallCheckpoint(allowed) ?? -95) : -95;
+    const result = fork?.cloneCheckpoint(args, allowed) ?? -95;
     return typeof nr === "bigint" ? BigInt(result) : result;
   }
   if ((nr === 220 || nr === 220n) && zero(args[0])) {
@@ -286,6 +284,14 @@ export class ForkContinuation {
     return this.checkpoint(this.call("__wasm_fork_descriptor"), allowed);
   }
 
+  cloneCheckpoint(args: WasmAddress[], allowed: boolean): number {
+    if (!allowed || this.kernelDepth !== 0 || !this.syscallAbi || args.length !== 6) return -95;
+    if (this.state() === 2) return this.syscallCheckpoint(allowed);
+    if (this.state() !== 0 || this.descriptor !== null) return -16;
+    const request = clone_fork_request(this.memory, this.address, args);
+    return typeof request === "number" ? request : this.requestCheckpoint(request, allowed);
+  }
+
   clone3Checkpoint(pointer: WasmAddress, size: WasmAddress, allowed: boolean): number {
     if (!allowed || this.kernelDepth !== 0 || !("__wasm_fork_syscall_abi" in this.e)) return -95;
     if (this.syscallAbi < 2) return -38;
@@ -295,6 +301,10 @@ export class ForkContinuation {
     if (this.state() !== 0 || this.descriptor !== null) return -16;
     const request = clone3_fork_request(this.memory, this.address, pointer, size);
     if (typeof request === "number") return request;
+    return this.requestCheckpoint(request, allowed);
+  }
+
+  private requestCheckpoint(request: CloneForkRequest, allowed: boolean): number {
     if (
       request.namespaceFlags !== undefined &&
       typeof this.e.__wasm_fork_clone_namespaces !== "function"

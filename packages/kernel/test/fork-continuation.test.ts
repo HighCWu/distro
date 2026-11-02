@@ -735,6 +735,52 @@ for (const address of ["i32", "i64"] as const) {
     assert.equal(dispatch(parent.controller), p(-12));
   });
 
+  test(`${address}: flags-first namespace/PIDFD clone uses captured options and finishes its rewind`, () => {
+    for (const outcome of [321, -1, -11, "trap"] as const) {
+      const f = fixture(address, true, 2),
+        p = f.pointer;
+      const args = [p(17 | 0x0c021000), p(0), p(8193), p(0), p(0), p(999)];
+      const dispatch = () =>
+        dispatch_fork_syscall(
+          f.controller,
+          p(220),
+          args,
+          true,
+          () => assert.fail("flags request reached callback fallback"),
+          "flags-v2",
+        );
+      assert.equal(dispatch(), p(-95));
+      assert.equal(f.calls.descriptors, 0);
+      const passed: WasmAddress[][] = [];
+      Object.assign(f.exports, {
+        __wasm_fork_clone_namespaces: (...options: WasmAddress[]) => {
+          passed.push(options);
+          if (outcome === "trap") throw Error("raw namespace trap");
+          return p(outcome);
+        },
+      });
+      assert.equal(dispatch(), p(0));
+      const snapshot = f.controller.suspend();
+      if (outcome === "trap") assert.throws(() => f.controller.clone(), /raw namespace trap/);
+      else assert.equal(f.controller.clone(), p(outcome));
+      assert.deepEqual(passed, [[p(0x0c020000), p(8193)]]);
+      const result = outcome === "trap" ? -11 : outcome;
+      f.controller.resumeParent(p(result));
+      args[0] = p(0x100);
+      args[2] = p(0);
+      assert.equal(dispatch(), p(result), "rewind finishes the request already admitted");
+      if (result > 0) {
+        const child = fixture(address, true, 2);
+        child.controller.resumeChild(snapshot);
+        assert.equal(child.controller.cloneCheckpoint(args, true), 0);
+      }
+      assert.equal(f.controller.syscallCheckpoint(true), 0);
+      f.controller.suspend();
+      assert.equal(f.controller.clone(), p(1234));
+      assert.equal(passed.length, 1, "later ordinary fork has no stale options");
+    }
+  });
+
   test(`${address}: flags-first clone rejects unsupported requests without callback fallback`, () => {
     const f = fixture(address, true),
       p = f.pointer;
@@ -756,9 +802,6 @@ for (const address of ["i32", "i64"] as const) {
       [0, 7],
       [0, 0x100 | 17],
       [1, 8],
-      [2, 8],
-      [3, 8],
-      [4, 8],
     ] as const) {
       const changed = [...args];
       changed[index] = value;
@@ -770,7 +813,11 @@ for (const address of ["i32", "i64"] as const) {
       "legacy null callback is not reinterpreted",
     );
     assert.equal(f.calls.descriptors, 0);
-    assert.equal(dispatch(args), p(0), "a rejected request does not poison the next clone");
+    assert.equal(
+      dispatch([17, 0, -1, -1, -1, 999]),
+      p(0),
+      "unrequested TID/TLS registers are ignored after rejection",
+    );
   });
 
   test(`${address}: import version, not coincident flag/table values, selects clone layout`, () => {

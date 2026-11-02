@@ -1,7 +1,52 @@
 // SPDX-License-Identifier: MIT
 import assert from "node:assert/strict";
 import test from "node:test";
-import { clone3_fork_request } from "../src/clone3-args.ts";
+import { clone3_fork_request, clone_fork_request } from "../src/clone3-args.ts";
+
+for (const address of ["i32", "i64"] as const)
+  test(`${address}: flags-first clone options keep the Linux word layout`, () => {
+    const p = (n: number) => (address === "i64" ? BigInt(n) : n);
+    const memory = new WebAssembly.Memory({ initial: 1 });
+    const parse = (args: number[]) => clone_fork_request(memory, address, args.map(p));
+    assert.deepEqual(parse([17, 0, 0, 0, 0, 999]), { pidfd: null });
+    if (address === "i64")
+      assert.deepEqual(
+        clone_fork_request(memory, address, [(1n << 40n) | 17n, 0n, -1n, -1n, -1n, 999n]),
+        { pidfd: null },
+        "legacy flags ignore upper bits without narrowing pointer arguments",
+      );
+    if (address === "i64")
+      assert.equal(
+        clone_fork_request(memory, address, [0x1011n, 0n, (1n << 32n) | 8193n, 0n, 0n, 0n]),
+        -14,
+        "legacy PIDFD pointers keep their high bits",
+      );
+    assert.deepEqual(parse([17 | 0x1000, 0, 8193, 0, 0, 0]), { pidfd: p(8193) });
+    assert.deepEqual(parse([17 | 0x0c020000, 0, 0, 0, 0, 0]), {
+      pidfd: null,
+      namespaceFlags: p(0x0c020000),
+    });
+    assert.deepEqual(parse([17 | 0x0c021000, 0, 8193, 0, 0, 0]), {
+      pidfd: p(8193),
+      namespaceFlags: p(0x0c020000),
+    });
+    for (const flags of [0, 7, 17 | 0x80, 17 | 0x100, 17 | 0x100000])
+      assert.equal(parse([flags, 0, 0, 0, 0, 0]), -95);
+    assert.deepEqual(
+      parse([17, 0, -1, -1, -1, 999]),
+      { pidfd: null },
+      "unrequested words are ignored",
+    );
+    assert.equal(
+      parse([17, 8, 0, 0, 0, 0]),
+      -95,
+      "alternate user stack is not a fork continuation",
+    );
+    for (const pointer of [0, -1, 65533])
+      assert.equal(parse([17 | 0x1000, 0, pointer, 0, 0, 0]), -14);
+    assert.equal(parse([0, 0, 17, 0, 0, 0]), -95, "callback tuple is never guessed as flags-first");
+    assert.equal(parse([17, 0, 0, 0, 0]), -95);
+  });
 
 for (const address of ["i32", "i64"] as const)
   test(`${address}: bounded clone3 u64 layout and rejection`, () => {
