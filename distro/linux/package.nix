@@ -145,6 +145,9 @@ pkgs.stdenvNoCC.mkDerivation (finalAttrs: {
     for option in CGROUPS CGROUP_PIDS KERNFS; do
       grep -qx "CONFIG_$option=y" .config
     done
+    for option in NAMESPACES UTS_NS IPC_NS PID_NS; do
+      grep -qx "CONFIG_$option=y" .config
+    done
     grep -qx 'CONFIG_BPF_UNPRIV_DEFAULT_OFF=y' .config
     ! grep -qx 'CONFIG_BPF_JIT=y' .config
     ! grep -qx 'CONFIG_BPF_JIT_ALWAYS_ON=y' .config

@@ -83,6 +83,7 @@ let
       syscallImport = "linux.syscall_v2";
       callbackCloneImport = "linux.syscall";
       clone3ForkSubset = true;
+      clone3NamespaceTransport = true;
       binaryenVersion = pkgs.binaryen.version;
       continuationBufferBytes = 262144;
       overflowBehavior = "trap";

@@ -277,6 +277,14 @@ lib.makeScope (scope: lib.callPackageWith ({ inherit lib pkgs; } // scope)) (
       sysroot = self.sysroot-wasm64;
       vm-test = vmTestWasm64;
     };
+    clone-namespaces = callPackage ./clone-namespaces/package.nix { };
+    clone-namespaces-wasm64 = callPackage ./clone-namespaces/package.nix {
+      platform = self.platform-wasm64;
+      sdk-fork-continuation = self.sdk-fork-continuation-wasm64;
+      musl = self.musl-wasm64;
+      llvm-runtimes = self.llvm-runtimes-wasm64;
+      vm-test = vmTestWasm64;
+    };
     clone-arguments = callPackage ./clone-arguments/package.nix { };
     clone-arguments-wasm64 = callPackage ./clone-arguments/package.nix {
       platform = self.platform-wasm64;

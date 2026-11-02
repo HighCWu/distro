@@ -18,12 +18,21 @@ for (const address of ["i32", "i64"] as const)
     reset();
     for (const size of [64, 65, 72, 80, 88, 96, 65536])
       assert.deepEqual(parse(size), { pidfd: null });
+    for (const flags of [
+      0x20000, 0x2000000, 0x4000000, 0x8000000, 0x10000000, 0x20000000, 0x40000000, 0x7e020000,
+    ]) {
+      reset();
+      view.setBigUint64(256, BigInt(flags), true);
+      assert.deepEqual(parse(88), { pidfd: null, namespaceFlags: p(flags) });
+    }
+    reset();
     for (const size of [0, 1, 63]) assert.equal(parse(size), -22);
     for (const size of [65537, -1]) assert.equal(parse(size), -7);
     for (const pointer of [0, -1, 131072 - 63]) assert.equal(parse(64, pointer), -14);
     for (const [index, value, error] of [
       [0, 17n, -22],
       [0, 0x100n, -95],
+      [0, 0x80n, -95],
       [0, 0x100000000n, -95],
       [1, 0x100000000n, -95],
       [2, 1n, -95],
@@ -64,6 +73,8 @@ for (const address of ["i32", "i64"] as const)
     view.setInt32(8193, -1, true);
     assert.deepEqual(parse(64), { pidfd: p(8193) }, "unaligned user output is valid");
     assert.equal(view.getInt32(8193, true), -1, "parser does not allocate/write a pidfd");
+    view.setBigUint64(256, 0x1000n | 0x4000000n, true);
+    assert.deepEqual(parse(88), { pidfd: p(8193), namespaceFlags: p(0x4000000) });
     view.setBigUint64(256, 0x1000n | 0x100000n, true);
     assert.equal(parse(88), -95, "parent-tid combination stays unsupported");
   });

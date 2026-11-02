@@ -429,6 +429,66 @@ for (const address of ["i32", "i64"] as const) {
     }
   });
 
+  test(`${address}: clone3 namespace transport preserves admitted flags and rollback`, () => {
+    for (const withPidfd of [false, true])
+      for (const outcome of [321, -1, -11, "trap"] as const) {
+        const f = fixture(address, true, 2),
+          p = f.pointer;
+        const view = new DataView(f.memory.buffer);
+        view.setBigUint64(4096, 0x0c020000n | (withPidfd ? 0x1000n : 0n), true);
+        view.setBigUint64(4104, withPidfd ? 8193n : 0n, true);
+        view.setBigUint64(4128, 17n, true);
+        assert.equal(f.controller.clone3Checkpoint(p(4096), p(88), true), -95);
+        assert.equal(f.calls.descriptors, 0, "old execution support cannot drop namespace flags");
+        const passed: WasmAddress[][] = [];
+        Object.assign(f.exports, {
+          __wasm_fork_clone_namespaces: (...args: WasmAddress[]) => {
+            passed.push(args);
+            if (outcome === "trap") throw Error("namespace clone trap");
+            return p(outcome);
+          },
+        });
+        assert.equal(f.controller.clone3Checkpoint(p(4096), p(88), false), -95);
+        assert.equal(
+          f.controller.kernelCall(() => f.controller.clone3Checkpoint(p(4096), p(88), true)),
+          -95,
+        );
+        assert.equal(f.controller.clone3Checkpoint(p(4096), p(88), true), 0);
+        // Namespace creation must use the bounded request already copied,
+        // not argument memory modified while the continuation unwinds.
+        view.setBigUint64(4096, 0x100n, true);
+        view.setBigUint64(4104, 1n << 55n, true);
+        f.controller.suspend();
+        if (outcome === "trap") assert.throws(() => f.controller.clone(), /namespace clone trap/);
+        else assert.equal(f.controller.clone(), p(outcome));
+        assert.deepEqual(passed, [[p(0x0c020000), p(withPidfd ? 8193 : 0)]]);
+        f.controller.resumeParent(p(outcome === "trap" ? -11 : outcome));
+        assert.equal(
+          f.controller.clone3Checkpoint(p(0), p(0), true),
+          outcome === "trap" ? -11 : outcome,
+        );
+        assert.equal(f.controller.syscallCheckpoint(true), 0);
+        f.controller.suspend();
+        assert.equal(
+          f.controller.clone(),
+          p(1234),
+          "plain fork has no stale namespace/pidfd options",
+        );
+        assert.equal(passed.length, 1);
+      }
+    const oldKernel = fixture(address, true, 2, false),
+      p = oldKernel.pointer;
+    const view = new DataView(oldKernel.memory.buffer);
+    view.setBigUint64(4096, 0x04001000n, true);
+    view.setBigUint64(4104, 8193n, true);
+    view.setBigUint64(4128, 17n, true);
+    Object.assign(oldKernel.exports, {
+      __wasm_fork_clone_namespaces: () => assert.fail("old pidfd kernel"),
+    });
+    assert.equal(oldKernel.controller.clone3Checkpoint(p(4096), p(88), true), -95);
+    assert.equal(oldKernel.calls.descriptors, 0);
+  });
+
   test(`${address}: child injection precedes rewind and stack/TLS restore at the deferred user boundary`, () => {
     const parent = fixture(address, true),
       child = fixture(address, true),

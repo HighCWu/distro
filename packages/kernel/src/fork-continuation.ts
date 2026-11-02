@@ -160,6 +160,7 @@ export class ForkContinuation {
   private descriptor: WasmAddress | null = null;
   private result: number | null = null;
   private pidfd: WasmAddress | null = null;
+  private namespaceFlags: WasmAddress | null = null;
   private kernelDepth = 0;
   private rewindingChild = false;
   private readonly childRewound: (() => void) | undefined;
@@ -295,12 +296,22 @@ export class ForkContinuation {
     const request = clone3_fork_request(this.memory, this.address, pointer, size);
     if (typeof request === "number") return request;
     if (
+      request.namespaceFlags !== undefined &&
+      typeof this.e.__wasm_fork_clone_namespaces !== "function"
+    )
+      return -95;
+    if (
       request.pidfd !== null &&
-      (!this.pidfdSupported || typeof this.e.__wasm_fork_clone_pidfd !== "function")
+      (!this.pidfdSupported ||
+        (request.namespaceFlags === undefined &&
+          typeof this.e.__wasm_fork_clone_pidfd !== "function"))
     )
       return -95;
     const result = this.syscallCheckpoint(allowed);
-    if (result === 0) this.pidfd = request.pidfd;
+    if (result === 0) {
+      this.pidfd = request.pidfd;
+      this.namespaceFlags = request.namespaceFlags ?? null;
+    }
     return result;
   }
 
@@ -335,12 +346,19 @@ export class ForkContinuation {
   clone(): WasmAddress {
     this.require(this.state() === 0 && this.descriptor !== null, "clone before unwind completed");
     try {
+      if (this.namespaceFlags !== null)
+        return this.call(
+          "__wasm_fork_clone_namespaces",
+          this.namespaceFlags,
+          this.pidfd ?? (this.address === "i64" ? 0n : 0),
+        );
       return this.pidfd === null
         ? this.call("__wasm_fork_clone")
         : this.call("__wasm_fork_clone_pidfd", this.pidfd);
     } finally {
       // A negative result or trap must not leak options to a later plain fork.
       this.pidfd = null;
+      this.namespaceFlags = null;
     }
   }
 

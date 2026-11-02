@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: MIT
 // Opt-in execution ABI only. Process creation uses the existing Linux clone.
 #include <stdint.h>
+#include <errno.h>
 #include <signal.h>
 #include <sys/syscall.h>
 
@@ -64,4 +65,17 @@ long __wasm_fork_clone_pidfd(uintptr_t pidfd)
 {
 	return fork_callback_syscall(SYS_clone, (long)fork_child, 0,
 		SIGCHLD | 0x1000, (long)pidfd, 0, 0);
+}
+
+/* Optional execution transport, not a libc entry point. The kernel owns all
+ * namespace permissions and creation/rollback. NEWTIME cannot be carried in
+ * legacy clone's CSIGNAL word and is deliberately excluded. */
+__attribute__((export_name("__wasm_fork_clone_namespaces")))
+long __wasm_fork_clone_namespaces(uintptr_t namespaces, uintptr_t pidfd)
+{
+	const uintptr_t allowed = UINT32_C(0x7e020000);
+	if (!namespaces || (namespaces & ~allowed))
+		return -EOPNOTSUPP;
+	return fork_callback_syscall(SYS_clone, (long)fork_child, 0,
+		(long)namespaces | SIGCHLD | (pidfd ? 0x1000 : 0), (long)pidfd, 0, 0);
 }
