@@ -67,6 +67,20 @@ lib.makeScope (scope: lib.callPackageWith ({ inherit lib pkgs; } // scope)) (
       llvm-toolchain = self.llvm-toolchain-wasm64;
       sysroot = self.sysroot-wasm64;
     };
+    symbolVersionToolchain = self.llvm-toolchain-unwrapped.override {
+      src = import ./symbol-versions/source.nix { inherit pkgs; };
+      includeHostBackend = false;
+    };
+    symbolVersionSdk32 = self.sdk.override {
+      llvm-toolchain = self.llvm-toolchain.override {
+        llvm-toolchain-unwrapped = symbolVersionToolchain;
+      };
+    };
+    symbolVersionSdk64 = self.sdk-wasm64.override {
+      llvm-toolchain = self.llvm-toolchain-wasm64.override {
+        llvm-toolchain-unwrapped = symbolVersionToolchain;
+      };
+    };
   in
   {
     inherit debug sourceVersion;
@@ -133,6 +147,30 @@ lib.makeScope (scope: lib.callPackageWith ({ inherit lib pkgs; } // scope)) (
       busybox = self.busybox-wasm64;
     };
     toolchain-smoke-runtime-wasm64 = self.toolchain-smoke-wasm64.checks.c-runtime;
+    symbol-versions = callPackage ./symbol-versions/package.nix {
+      sdk = symbolVersionSdk32;
+      extraChecks.both =
+        pkgs.runCommand "symbol-versions-both-widths"
+          {
+            passthru.ci.heavy = true;
+          }
+          ''
+            # One build graph shares the candidate compiler between both widths.
+            test -e ${self.symbol-versions.checks.profile}
+            test -e ${self.symbol-versions-wasm64.checks.profile}
+            test -e ${self.symbol-versions.checks.cxx-runtime}
+            test -e ${self.symbol-versions-wasm64.checks.cxx-runtime}
+            test -e ${self.symbol-versions.checks.runtime}
+            test -e ${self.symbol-versions-wasm64.checks.runtime}
+            touch $out
+          '';
+    };
+    symbol-versions-wasm64 = callPackage ./symbol-versions/package.nix {
+      platform = self.platform-wasm64;
+      sdk = symbolVersionSdk64;
+      vm-test = vmTestWasm64;
+      busybox = self.busybox-wasm64;
+    };
     public-syscall = callPackage ./public-syscall/package.nix { };
     fuse-passthrough = callPackage ./fuse-passthrough/package.nix { };
     procps-vmstat = callPackage ./procps-vmstat/package.nix { };

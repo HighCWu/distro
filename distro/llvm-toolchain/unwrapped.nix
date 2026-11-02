@@ -2,6 +2,7 @@
 # wasm-linux branch carries the wasm32-unknown-linux-musl target.
 {
   pkgs,
+  includeHostBackend ? true,
   src ? pkgs.fetchFromGitHub {
     owner = "HighCWu";
     repo = "llvm-project";
@@ -45,7 +46,7 @@ let
     "-DCLANG_DEFAULT_RTLIB=compiler-rt"
     "-DCLANG_DEFAULT_CXX_STDLIB=libc++"
     "-DCLANG_DEFAULT_LINKER=lld"
-    "-DLLVM_TARGETS_TO_BUILD=${nativeTarget};WebAssembly"
+    "-DLLVM_TARGETS_TO_BUILD=${if includeHostBackend then "${nativeTarget};" else ""}WebAssembly"
     "-DLLVM_ENABLE_LIBXML2=ON"
     "-DLLVM_ENABLE_ZLIB=ON"
     "-DLLVM_ENABLE_ZSTD=OFF"
