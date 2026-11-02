@@ -40,7 +40,10 @@ let
         node ${../busybox/check-binary.mjs} ${../../packages/kernel/src/wasm_binary.ts} \
           $out/bin/symbol-versions ${toString platform.addressBits} ${toString platform.maximumMemoryBytes}
         cp ${../sdk/LICENSE.MIT} $out/share/licenses/symbol-versions/test-MIT
-        cp -r ${sdk}/share/linux-wasm-sdk/licenses $out/share/licenses/symbol-versions/sdk
+        # SDK joins expose notices through store symlinks. The installed Linux
+        # image needs actual notice bytes, independent of the build host store.
+        cp -rL ${sdk}/share/linux-wasm-sdk/licenses $out/share/licenses/symbol-versions/sdk
+        (cd $out/share/licenses/symbol-versions/sdk && sha256sum --check SHA256SUMS)
       '';
 in
 program
