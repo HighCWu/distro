@@ -16,7 +16,7 @@ for (const width of [32, 64]) {
     mkdirSync(join(dir, "sys"));
     writeFileSync(
       join(dir, "stdint.h"),
-      "typedef __UINTPTR_TYPE__ uintptr_t; typedef __UINT64_TYPE__ uint64_t;\n#define UINT32_C(x) x##U\n#define UINT64_C(x) x##ULL\n",
+      "typedef __UINTPTR_TYPE__ uintptr_t; typedef __UINT64_TYPE__ uint64_t;\n#define UINT32_C(x) x##U\n#define UINT64_C(x) x##ULL\n#define UINT64_MAX __UINT64_MAX__\n",
     );
     writeFileSync(join(dir, "errno.h"), "#define EOPNOTSUPP 95\n");
     writeFileSync(join(dir, "stddef.h"), "#define offsetof(t, m) __builtin_offsetof(t, m)\n");
