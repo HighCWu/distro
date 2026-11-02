@@ -51,6 +51,8 @@ static void reap(pid_t pid, int expected)
 
 static void run(const char *tool, const char *self, int force, int leader, int tty, int missing)
 {
+    const pid_t parent = getpid(), parent_group = getpgrp();
+    check(parent > 0 && parent_group > 0, "controller identity before spawn");
     int channel[2];
     check(pipe2(channel, O_CLOEXEC) == 0, "report pipe");
     int master = -1, input;
@@ -72,7 +74,7 @@ static void run(const char *tool, const char *self, int force, int leader, int t
           posix_spawn_file_actions_addclose(&actions, channel[1]) == 0 &&
           posix_spawn_file_actions_addclose(&actions, input) == 0, "child file actions");
     check(posix_spawnattr_setflags(&attributes, POSIX_SPAWN_SETPGROUP) == 0 &&
-          posix_spawnattr_setpgroup(&attributes, leader ? 0 : getpgrp()) == 0,
+          posix_spawnattr_setpgroup(&attributes, leader ? 0 : parent_group) == 0,
           "explicit initial process group");
     char *arguments[9];
     int n = 0;
@@ -89,6 +91,8 @@ static void run(const char *tool, const char *self, int force, int leader, int t
     int error = posix_spawn(&child, tool, &actions, &attributes, arguments, environment);
     if (error) errno = error;
     check(error == 0, "spawn original setsid");
+    check(getpid() == parent && getpgrp() == parent_group,
+          "spawn preserves controller process identity");
     check(posix_spawnattr_destroy(&attributes) == 0 &&
           posix_spawn_file_actions_destroy(&actions) == 0, "destroy spawn controls");
     check(close(channel[1]) == 0 && close(input) == 0, "parent closes child endpoints");
@@ -111,11 +115,24 @@ static void run(const char *tool, const char *self, int force, int leader, int t
     check(close(channel[0]) == 0, "report fd cleanup");
     reap(child, missing ? 127 : 37);
     if (!missing) {
+        check(used == sizeof(record), "complete observer identity");
+        /* Retain the full identity contract and report the actual process tree
+         * when a platform error changes the tool's fork/exec decision. errno
+         * after the single-reap check is ECHILD and cannot diagnose that tree. */
+        if (((force || leader) ? record.pid == child : record.pid != child) ||
+            record.parent != ((force || leader) ? child : parent) ||
+            record.session != record.pid || record.group != record.pid) {
+            fprintf(stderr, "standard setsid: identity force=%d leader=%d tty=%d "
+                    "controller=%ld controller_group=%ld spawned=%ld observed=%ld "
+                    "parent=%ld session=%ld group=%ld\n", force, leader, tty,
+                    (long)parent, (long)parent_group, (long)child, (long)record.pid,
+                    (long)record.parent, (long)record.session, (long)record.group);
+        }
         check(used == sizeof(record) && record.pid > 0 && record.session == record.pid &&
               record.group == record.pid, "program has a new session and group");
         if (force || leader)
             check(record.pid != child && record.parent == child, "real ordinary fork before exec");
-        else check(record.pid == child && record.parent == getpid(), "direct exec without unnecessary fork");
+        else check(record.pid == child && record.parent == parent, "direct exec without unnecessary fork");
         if (tty) check(record.tty_session == record.pid && record.foreground == record.pid,
                        "child owns controlling terminal and foreground group");
     } else check(!used, "exec failure never enters observer");
