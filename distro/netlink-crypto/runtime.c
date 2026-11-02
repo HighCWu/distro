@@ -96,7 +96,8 @@ static void report(const struct nlmsghdr *header, const char *expected,
 			CHECK(attribute->nla_len == NLA_HDRLEN + sizeof(struct crypto_report_blkcipher), "cipher report size");
 			const struct crypto_report_blkcipher *cipher = data;
 			CHECK(memchr(cipher->type, 0, sizeof(cipher->type)) &&
-			      !strcmp(cipher->type, "skcipher") && cipher->blocksize == 16 &&
+			      (!strcmp(cipher->type, "skcipher") || !strcmp(cipher->type, "lskcipher")) &&
+			      cipher->blocksize == 16 &&
 			      cipher->min_keysize == 16 && cipher->max_keysize == 32 &&
 			      cipher->ivsize == 16, "CBC-AES metadata");
 			*cipher_seen = found = 1;
