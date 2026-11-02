@@ -19,6 +19,7 @@ function binary(
     result64?: boolean;
     functionImports?: number;
     reexport?: boolean;
+    callImport?: boolean;
   } = {},
 ) {
   const metadata = [
@@ -26,7 +27,11 @@ function binary(
     ...section(2, [options.needed?.length ?? 0, ...(options.needed ?? []).flatMap(text)]),
     ...(options.extra ?? []),
   ];
-  const body = options.trap ? [0, 0, 11] : [0, options.result64 ? 0x42 : 0x41, 42, 11];
+  const body = options.trap
+    ? [0, 0, 11]
+    : options.callImport
+      ? [0, 0x10, 0, 11]
+      : [0, options.result64 ? 0x42 : 0x41, 42, 11];
   const parts = [
     section(0, [...text("dylink.0"), ...metadata]),
     section(1, [
@@ -148,6 +153,58 @@ test("incompatible hidden resource maxima reject before data initialization", ()
   const before = new Uint8Array(options.memory.buffer).slice();
   assert.throws(() => link_dylink_graph(options), /memory maximum/);
   assert.deepEqual(new Uint8Array(options.memory.buffer), before);
+});
+
+test("main/global bindings supply direct functions while handle lookup remains local", () => {
+  const imports = [1, ...text("env"), ...text("external"), 0, 0];
+  const options = setup(
+    new Map([["root", binary({ imports, functionImports: 1, callImport: true })]]),
+  );
+  const value = () => 7;
+  const linked = link_dylink_graph({
+    ...options,
+    externalSymbols: new Map([
+      ["external", { value, signature: "[[],[127]]" }],
+      ["main_only", { value, signature: "[[],[127]]" }],
+    ]),
+  });
+  linked.initialize();
+  assert.equal((linked.instances.get("root")!.exports.answer as CallableFunction)(), 7);
+  assert.equal((linked.lookup("answer")!.value as CallableFunction)(), 7);
+  assert.equal(linked.lookup("main_only"), undefined);
+});
+
+test("an exit/exec control transfer escapes a constructor without being relabeled a trap", () => {
+  const imports = [1, ...text("env"), ...text("control"), 0, 0];
+  const options = setup(
+    new Map([
+      [
+        "root",
+        binary({ exportName: "__wasm_call_ctors", imports, functionImports: 1, callImport: true }),
+      ],
+    ]),
+  );
+  const control = Symbol("process control transfer");
+  const linked = link_dylink_graph({
+    ...options,
+    externalSymbols: new Map([
+      [
+        "control",
+        {
+          value: () => {
+            throw control;
+          },
+          signature: "[[],[127]]",
+        },
+      ],
+    ]),
+    isControlFlow: (error) => error === control,
+  });
+  assert.throws(
+    () => linked.initialize(),
+    (error: unknown) => error === control,
+  );
+  assert.throws(() => linked.initialize(), /cannot be retried/);
 });
 
 test("dynamic import types retain memory64, table32 and independent integer globals", () => {

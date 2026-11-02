@@ -20,6 +20,14 @@ export class DylinkInitializationError extends Error {
   }
 }
 
+export interface DylinkExternalSymbol {
+  value: WebAssembly.ExportValue;
+  /** Required for direct function imports; obtained from the owner's module. */
+  signature?: string;
+  /** Data pointers are absolute; canonical function pointers may be supplied. */
+  address?: bigint;
+}
+
 /** Link an already fetched, acyclic batch in caller-owned process arenas.
  * File lookup, allocator locking, main-module interposition, worker publication,
  * unload and fork snapshots belong to the process loader, not this component.
@@ -38,6 +46,9 @@ export function link_dylink_graph(options: {
   memoryArena: Readonly<DylinkArena>;
   tableArena: Readonly<DylinkArena>;
   hostFunctions?: ReadonlyMap<string, ReadonlyMap<string, CallableFunction>>;
+  externalSymbols?: ReadonlyMap<string, DylinkExternalSymbol>;
+  /** Execution control transfers (exit/exec) must escape initialization intact. */
+  isControlFlow?(error: unknown): boolean;
 }) {
   const { memory, table, stack, memoryArena, tableArena } = options;
   const modules = new Map<
@@ -101,7 +112,18 @@ export function link_dylink_graph(options: {
   }
   const records = order.map((name) => modules.get(name)!);
   type Record = (typeof records)[number];
-  const symbols = new Map<string, { owner: Record; kind: "function" | "global" }>();
+  type Symbol = { owner?: Record; external?: DylinkExternalSymbol; kind: "function" | "global" };
+  const symbols = new Map<string, Symbol>();
+  for (const [name, external] of options.externalSymbols ?? []) {
+    if (typeof external.value === "function") symbols.set(name, { external, kind: "function" });
+    else if (external.value instanceof WebAssembly.Global && external.address !== undefined)
+      symbols.set(name, { external, kind: "global" });
+  }
+  const ownSymbols = new Map<string, Symbol>();
+  const valueOf = (symbol: Symbol, name: string) =>
+    symbol.owner?.instance?.exports[name] ?? symbol.external?.value;
+  const signatureOf = (symbol: Symbol, name: string) =>
+    symbol.owner?.signatures.exports.get(name) ?? symbol.external?.signature;
   // Lookup scope and constructor order differ: breadth-first root/NEEDED lookup
   // uses the first definition, including a weak one, as normal ELF lookup does.
   const scope = [options.root];
@@ -135,7 +157,9 @@ export function link_dylink_graph(options: {
       if (internal.has(symbol.name)) continue;
       const attributes = flags.get(symbol.name) ?? 0;
       if (attributes & 6) continue;
-      if (!symbols.has(symbol.name)) symbols.set(symbol.name, { owner: record, kind: symbol.kind });
+      const definition: Symbol = { owner: record, kind: symbol.kind };
+      if (!symbols.has(symbol.name)) symbols.set(symbol.name, definition);
+      if (!ownSymbols.has(symbol.name)) ownSymbols.set(symbol.name, definition);
     }
   }
   const functionGOT = new Set<string>();
@@ -194,7 +218,7 @@ export function link_dylink_graph(options: {
             throw new Error(`unresolved dynamic function: ${entry.module}.${entry.name}`);
           if (
             symbol &&
-            symbol.owner.signatures.exports.get(entry.name) !==
+            signatureOf(symbol, entry.name) !==
               record.signatures.imports.find(
                 (item) => item.module === entry.module && item.name === entry.name,
               )?.signature
@@ -253,7 +277,9 @@ export function link_dylink_graph(options: {
         ...records[0]!.metadata,
         memorySize: 0,
         memoryAlignment: 0,
-        tableSize: functionGOT.size,
+        tableSize:
+          functionGOT.size +
+          [...ownSymbols.values()].filter((symbol) => symbol.kind === "function").length,
         tableAlignment: 0,
       },
     ],
@@ -304,13 +330,14 @@ export function link_dylink_graph(options: {
             break;
           case "function": {
             const host = options.hostFunctions?.get(entry.module)?.get(entry.name);
-            const dependency = symbols.get(entry.name)?.owner.instance?.exports[entry.name];
+            const definition = symbols.get(entry.name);
+            const dependency = definition && valueOf(definition, entry.name);
             group[entry.name] =
               host ??
               (typeof dependency === "function" ? dependency : undefined) ??
               ((...args: unknown[]) => {
                 const symbol = symbols.get(entry.name);
-                const fn = symbol?.owner.instance?.exports[entry.name];
+                const fn = symbol && valueOf(symbol, entry.name);
                 if (typeof fn !== "function")
                   throw new WebAssembly.RuntimeError("unavailable dynamic function");
                 return fn(...args);
@@ -339,11 +366,13 @@ export function link_dylink_graph(options: {
     for (const { entry, global } of got) {
       const symbol = symbols.get(entry.name);
       if (!symbol) continue; // Weak undefined GOT retains null.
-      const value = symbol.owner.instance!.exports[entry.name];
+      const value = valueOf(symbol, entry.name);
       const address =
-        typeof value === "function"
-          ? functionPointer(value)
-          : symbol.owner.base + BigInt((value as WebAssembly.Global).value);
+        symbol.external?.address !== undefined
+          ? symbol.external.address
+          : typeof value === "function"
+            ? functionPointer(value)
+            : symbol.owner!.base + BigInt((value as WebAssembly.Global).value);
       if (address < 0n || address >= 1n << BigInt(memoryArena.address === "i32" ? 32 : 64))
         throw new RangeError("dynamic symbol address exceeds pointer width");
       global.value = word(address, memoryArena.address);
@@ -353,6 +382,7 @@ export function link_dylink_graph(options: {
       if (typeof relocate === "function") relocate();
     }
   } catch (error) {
+    if (options.isControlFlow?.(error)) throw error;
     throw new DylinkInitializationError(error);
   }
   let initialized = false;
@@ -360,6 +390,18 @@ export function link_dylink_graph(options: {
     order,
     layout: { ...layout, tableEnd: extra.tableEnd },
     instances: new Map(order.map((name) => [name, modules.get(name)!.instance!])),
+    /** Handle-local lookup excludes main/global preemption. Imports above still
+     * honor that scope; explicit dlsym(handle, name) uses the object's own group. */
+    lookup(name: string): DylinkExternalSymbol | undefined {
+      const symbol = ownSymbols.get(name);
+      if (!symbol) return undefined;
+      const value = valueOf(symbol, name)!;
+      const address =
+        typeof value === "function"
+          ? functionPointer(value)
+          : symbol.owner!.base + BigInt((value as WebAssembly.Global).value);
+      return { value, address, signature: signatureOf(symbol, name) };
+    },
     initialize() {
       if (initialized) throw new Error("dynamic constructors cannot be retried");
       initialized = true;
@@ -369,6 +411,7 @@ export function link_dylink_graph(options: {
           if (typeof ctor === "function") ctor();
         }
       } catch (error) {
+        if (options.isControlFlow?.(error)) throw error;
         throw new DylinkInitializationError(error);
       }
     },
