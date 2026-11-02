@@ -20,6 +20,7 @@ function binary(
     functionImports?: number;
     reexport?: boolean;
     callImport?: boolean;
+    startCall?: boolean;
   } = {},
 ) {
   const metadata = [
@@ -35,13 +36,14 @@ function binary(
   const parts = [
     section(0, [...text("dylink.0"), ...metadata]),
     section(1, [
-      1,
+      options.startCall ? 2 : 1,
       0x60,
       0,
       ...(options.trap === "start" ? [0] : [1, options.result64 ? 0x7e : 0x7f]),
+      ...(options.startCall ? [0x60, 0, 0] : []),
     ]),
     ...(options.imports ? [section(2, options.imports)] : []),
-    section(3, [1, 0]),
+    section(3, options.startCall ? [2, 0, 1] : [1, 0]),
     ...(options.privateMemory ? [section(5, [1, 0, 1])] : []),
     section(7, [
       1,
@@ -50,7 +52,13 @@ function binary(
       options.reexport ? 0 : (options.functionImports ?? 0),
     ]),
     ...(options.trap === "start" ? [section(8, [0])] : []),
-    section(10, [1, body.length, ...body]),
+    ...(options.startCall ? [section(8, [(options.functionImports ?? 0) + 1])] : []),
+    section(10, [
+      options.startCall ? 2 : 1,
+      body.length,
+      ...body,
+      ...(options.startCall ? [11, 0, 0x10, 0, 0x41, 42, 0x47, 0x04, 0x40, 0, 0x0b, 0x0b] : []),
+    ]),
   ];
   return new Uint8Array([0, 97, 115, 109, 1, 0, 0, 0, ...parts.flat()]);
 }
@@ -129,7 +137,7 @@ test("missing dependencies, TLS, extensions, private memory and missing symbols 
   }
 });
 
-test("a JS forwarding path cannot hide incompatible Wasm function signatures", () => {
+test("forwarded imports cannot hide incompatible Wasm function signatures", () => {
   const imports = [1, ...text("env"), ...text("external"), 0, 0];
   const options = setup(
     new Map([
@@ -142,6 +150,38 @@ test("a JS forwarding path cannot hide incompatible Wasm function signatures", (
   assert.deepEqual(new Uint8Array(options.memory.buffer), before);
   const reexport = binary({ imports, functionImports: 1, reexport: true });
   assert.throws(() => link_dylink_graph(setup(new Map([["root", reexport]]))), /re-exports/);
+});
+
+test("later starts can use a forward edge as soon as its provider is instantiated", () => {
+  const imports = (name: string) => [1, ...text("env"), ...text(name), 0, 0];
+  const linked = link_dylink_graph(
+    setup(
+      new Map([
+        [
+          "root",
+          binary({
+            needed: ["left", "provider"],
+            imports: imports("left_answer"),
+            functionImports: 1,
+            startCall: true,
+          }),
+        ],
+        [
+          "left",
+          binary({
+            needed: ["root"],
+            imports: imports("external"),
+            functionImports: 1,
+            callImport: true,
+            exportName: "left_answer",
+          }),
+        ],
+        ["provider", binary({ exportName: "external" })],
+      ]),
+    ),
+  );
+  assert.deepEqual(linked.order, ["left", "provider", "root"]);
+  linked.initialize();
 });
 
 test("constructor and start traps are irreversible errors, and constructors cannot be retried", () => {

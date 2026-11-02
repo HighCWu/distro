@@ -9,6 +9,7 @@ import {
   type WasmDylink,
 } from "./wasm_binary.ts";
 import { wasm_table_get } from "./wasm.ts";
+import { create_dylink_forwarder } from "./dylink_forwarder.ts";
 
 /** An error after data/table initialization may follow arbitrary Wasm start or
  * constructor effects. The process owner must terminate, not resume dlopen with
@@ -299,6 +300,7 @@ export function link_dylink_graph(options: {
   for (const [index, record] of fresh.entries()) Object.assign(record, layout.items[index]);
   const word = (value: bigint, type: "i32" | "i64") => (type === "i64" ? value : Number(value));
   const got: { entry: { module: string; name: string }; global: WebAssembly.Global }[] = [];
+  const forwards = new Map<Record, { name: string; target: WebAssembly.Global }[]>();
   let nextSlot = layout.tableEnd;
   const functionPointers = options.functionPointers ?? new Map<CallableFunction, bigint>();
   function functionPointer(fn: CallableFunction): bigint {
@@ -342,16 +344,23 @@ export function link_dylink_graph(options: {
             const host = options.hostFunctions?.get(entry.module)?.get(entry.name);
             const definition = symbols.get(entry.name);
             const dependency = definition && valueOf(definition, entry.name);
-            group[entry.name] =
-              host ??
-              (typeof dependency === "function" ? dependency : undefined) ??
-              ((...args: unknown[]) => {
-                const symbol = symbols.get(entry.name);
-                const fn = symbol && valueOf(symbol, entry.name);
-                if (typeof fn !== "function")
-                  throw new WebAssembly.RuntimeError("unavailable dynamic function");
-                return fn(...args);
-              });
+            if (host || typeof dependency === "function") {
+              group[entry.name] = host ?? dependency!;
+            } else {
+              const signature = record.signatures.imports.find(
+                (item) => item.module === entry.module && item.name === entry.name,
+              )!.signature;
+              const forward = create_dylink_forwarder(signature, table, tableArena.address);
+              group[entry.name] = forward.call;
+              if (definition) {
+                const provider = definition.owner;
+                if (!provider) throw new Error("unavailable dynamic function");
+                const pending = forwards.get(provider) ?? [];
+                pending.push({ name: entry.name, target: forward.target });
+                forwards.set(provider, pending);
+              }
+              // A weak undefined call retains target zero and traps natively.
+            }
             break;
           }
           case "global":
@@ -372,7 +381,16 @@ export function link_dylink_graph(options: {
         }
       }
       record.instance = new WebAssembly.Instance(record.module, imports);
+      // Publish each provider immediately, as the previous late JS lookup did.
+      // A later start section can call an earlier module through this edge.
+      for (const { name, target } of forwards.get(record) ?? []) {
+        const fn = record.instance.exports[name];
+        if (typeof fn !== "function") throw new Error("unavailable dynamic function");
+        target.value = word(functionPointer(fn), tableArena.address);
+      }
+      forwards.delete(record);
     }
+    if (forwards.size) throw new Error("unavailable dynamic function provider");
     for (const { entry, global } of got) {
       const symbol = symbols.get(entry.name);
       if (!symbol) continue; // Weak undefined GOT retains null.

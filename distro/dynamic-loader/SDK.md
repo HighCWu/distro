@@ -45,7 +45,7 @@ fd closes. Close-range operations cannot release these references; exec/exit
 teardown releases them without calling old user code. Older kernels without
 this private execution capability reject the profile before exec commits.
 
-This first profile supports single-thread static C mains and scalar-C side-module
+This first profile supports single-thread static C mains and numeric C/SIMD side-module
 graphs, including cyclic dependencies. Each object is instantiated once; all
 GOT bindings and data relocations precede the constructor pass. Constructors
 follow dependency DFS postorder, skipping already visited edges. A cycle has
@@ -53,7 +53,7 @@ no universal dependency-before-dependent order; its members must tolerate peers
 whose constructors have not run yet. Reopening a resident cycle does not rerun
 constructors. It refuses clone/clone3 rather than creating Workers with
 missing modules. It cannot combine with the fork-continuation SDK. TLS,
-reentrant dlopen during constructors, RTLD_NEXT, non-scalar
+reentrant dlopen during constructors, RTLD_NEXT, reference-value
 function signatures, dynamic symbol versions, cross-module setjmp/longjmp and C++ exceptions
 and cross-Worker publication still need implementation and acceptance.
 Names/paths currently use UTF-8; strings are bounded to 4096 bytes. Individual
@@ -66,6 +66,11 @@ of claiming rollback; exit/exec control transfers keep their normal path.
 Main-symbol dlsym during a Wasm start callback allocates canonical pointers
 outside the batch's table publication range, preserving the module's elements.
 This does not enable recursive dlopen or expose the uncommitted object's handle.
+Forward references between Wasm modules use a matching Wasm function signature
+and a mutable target table index. Scalar and v128 arguments remain in Wasm;
+binding the canonical provider slot precedes relocation and constructors.
+Calling an unbound/weak-undefined target traps through the null table slot.
+This does not make JavaScript host callbacks accept SIMD arguments.
 Default CONFIG_MMU=n and bounded direct memory remain in force. Independent
 execution code is MIT; musl and all dependencies retain their licenses.
 

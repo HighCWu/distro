@@ -388,7 +388,7 @@ export function read_wasm_dynamic_imports(
   return result;
 }
 
-/** Function ABI identities for the scalar C dynamic profile. Do not let a JS
+/** Function ABI identities for the numeric C/SIMD dynamic profile. Do not let a JS
  * forwarding function erase a producer/consumer signature mismatch. Imported
  * function re-exports need scope/alias handling and are rejected by this profile. */
 export function read_wasm_dynamic_signatures(module: Uint8Array, allowDefinedTable = false) {
@@ -408,8 +408,8 @@ export function read_wasm_dynamic_signatures(module: Uint8Array, allowDefinedTab
         if (part.byte() !== 0x60) part.fail("unsupported dynamic function type");
         const parameters = [...part.span().view()];
         const results = [...part.span().view()];
-        if ([...parameters, ...results].some((type) => type < 0x7c || type > 0x7f))
-          part.fail("dynamic function parameters/results must be scalar numbers");
+        if ([...parameters, ...results].some((type) => type < 0x7b || type > 0x7f))
+          part.fail("dynamic function parameters/results must be numeric values");
         types.push(JSON.stringify([parameters, results]));
       }
       part.expect_done("dynamic type section");

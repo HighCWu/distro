@@ -37,8 +37,8 @@ pkgs.stdenvNoCC.mkDerivation (finalAttrs: {
       --unresolved-symbols=import-dynamic \
       --max-memory=${toString platform.maximumMemoryBytes} --export-all --export=__wasm_call_ctors \
       --rpath=${lib.escapeShellArg "$ORIGIN/deps"} -soname libplugin-b.so b.o libplugin-a.so -o libplugin-b.so
-    wasm-linux-dlopen-cc -O2 -fPIC -c ${./cycle-a.c} -o cycle-a.o
-    wasm-linux-dlopen-cc -O2 -fPIC -c ${./cycle-b.c} -o cycle-b.o
+    wasm-linux-dlopen-cc -O2 -msimd128 -fPIC -c ${./cycle-a.c} -o cycle-a.o
+    wasm-linux-dlopen-cc -O2 -msimd128 -fPIC -c ${./cycle-b.c} -o cycle-b.o
     # Bootstrap A with its final basename to express both NEEDED edges.
     # Only the final A and B are installed; neither embeds the other's code.
     mkdir bootstrap

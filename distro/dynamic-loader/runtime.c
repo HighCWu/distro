@@ -110,12 +110,16 @@ int main(void)
             *(int (**)(int))symbol(cycle, "cycle_b_function") == a_step &&
             a_step(2) == 13 && b_step(2) == 10,
             "mutual direct calls and canonical function pointer relocations");
+    int (*vector_check)(void) = symbol(cycle, "cycle_vector_check");
+    require(*(int *)symbol(cycle, "cycle_b_vector_observed") == 220 && vector_check() == 220,
+            "SIMD arguments stay in Wasm during forward constructor and mutual calls");
     void *cycle_peer = dlopen("cycle-b.so", RTLD_NOW | RTLD_NOLOAD);
     require(cycle_peer != 0 && symbol(cycle_peer, "cycle_a_value") == a_value &&
             *a_count == 1 && *b_count == 1, "cyclic dependency reopen reuses instances");
     require(!dlclose(cycle) && !dlclose(cycle_peer) && descriptors() == baseline,
             "cyclic resident close and descriptor cleanup");
     puts("dynamic loader: cyclic dependencies, peer constructors and canonical relocations pass");
+    puts("dynamic loader: cross-module SIMD signatures and typed forward calls pass");
 
     require(!dlopen("missing.so", RTLD_NOW) && dlerror(), "missing library failure");
     int fd = open("/plugins/bad.so", O_CREAT | O_TRUNC | O_WRONLY, 0600);
