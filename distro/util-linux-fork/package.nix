@@ -21,6 +21,10 @@ assert builtins.elem program [
 pkgs.stdenvNoCC.mkDerivation (finalAttrs: {
   pname = "util-linux-${program}-standard-fork";
   inherit (util-linux) version src;
+  outputs = [
+    "out"
+    "buildMaterials"
+  ];
   dontFixup = true;
   nativeBuildInputs = [
     sdk-fork-continuation
@@ -59,15 +63,15 @@ pkgs.stdenvNoCC.mkDerivation (finalAttrs: {
     runHook preInstall
     install -Dm755 program.wasm $out/bin/${program}
     install -Dm755 verify.wasm $out/libexec/${program}-fork/verify
-    mkdir -p $out/share/licenses/${program}-fork $out/share/${program}-fork-materials
+    mkdir -p $out/share/licenses/${program}-fork $buildMaterials/share/${program}-fork-materials
     cp -r COPYING Documentation/licenses $out/share/licenses/${program}-fork/
     install -Dm644 ${../sdk/LICENSE.MIT} $out/share/licenses/${program}-fork/LOCAL-ADDITIONS.MIT
     cp ${musl.src}/COPYRIGHT $out/share/licenses/${program}-fork/musl-COPYRIGHT
     cp ${llvm-runtimes.src}/compiler-rt/LICENSE.TXT $out/share/licenses/${program}-fork/compiler-rt-LICENSE.TXT
     cp config.h config.log program-source.sha256 ${./package.nix} ${runtimeSource} \
-      $out/share/${program}-fork-materials/
-    ln -s $src $out/share/${program}-fork-materials/source
-    ln -s ${sdk-fork-continuation.buildMaterials} $out/share/${program}-fork-materials/sdk
+      $buildMaterials/share/${program}-fork-materials/
+    ln -s $src $buildMaterials/share/${program}-fork-materials/source
+    ln -s ${sdk-fork-continuation.buildMaterials} $buildMaterials/share/${program}-fork-materials/sdk
     runHook postInstall
   '';
   meta = {

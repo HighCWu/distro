@@ -12,6 +12,10 @@
 pkgs.stdenvNoCC.mkDerivation (finalAttrs: {
   pname = "cgroup-pids";
   version = "1";
+  outputs = [
+    "out"
+    "buildMaterials"
+  ];
   dontUnpack = true;
   dontFixup = true;
   nativeBuildInputs = [
@@ -33,9 +37,9 @@ pkgs.stdenvNoCC.mkDerivation (finalAttrs: {
     install -Dm644 ${../sdk/LICENSE.MIT} "$notices/LICENSE.MIT"
     install -Dm644 ${musl.src}/COPYRIGHT "$notices/musl-COPYRIGHT"
     install -Dm644 ${llvm-runtimes.src}/compiler-rt/LICENSE.TXT "$notices/compiler-rt-LICENSE.TXT"
-    mkdir -p $out/share/cgroup-pids-materials
-    cp ${./runtime.c} ${./package.nix} $out/share/cgroup-pids-materials/
-    ln -s ${sdk-fork-continuation.buildMaterials} $out/share/cgroup-pids-materials/sdk
+    mkdir -p $buildMaterials/share/cgroup-pids-materials
+    cp ${./runtime.c} ${./package.nix} $buildMaterials/share/cgroup-pids-materials/
+    ln -s ${sdk-fork-continuation.buildMaterials} $buildMaterials/share/cgroup-pids-materials/sdk
     runHook postInstall
   '';
   meta.license = lib.licenses.mit;
