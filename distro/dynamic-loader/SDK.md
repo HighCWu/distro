@@ -59,10 +59,18 @@ LLD's module data image. All GOT bindings and ordinary/TLS pointer relocations
 precede constructors; resident reuse preserves this thread's values. Runtime
 checks keep the TLS image within its module allocation. TLS globals and init
 helpers are not published as ordinary data/function symbols. This path still
-needs the new seven-stage Linux process acceptance; it does not add Worker
+needs matching Linux process acceptance for this source version; it does not add Worker
 creation, imported/public TLS bindings or general dynamic TLS support.
 
-Reentrant dlopen during constructors, RTLD_NEXT, reference-value
+The constructor candidate publishes relocated groups and global definitions
+before running their constructors. A constructor may then load another graph,
+reopen a running parent, or finish a pending shared dependency. Initialization
+state is shared across groups; running/completed constructors are skipped and
+failed ones stay poisoned. The new eight-stage Linux process acceptance is
+still pending. File I/O, allocator callbacks and Wasm start sections retain
+the recursive-loading guard until their graph is ready.
+
+RTLD_NEXT, reference-value
 function signatures, dynamic symbol versions, cross-module setjmp/longjmp and C++ exceptions
 and cross-Worker publication still need implementation and acceptance.
 Names/paths currently use UTF-8; strings are bounded to 4096 bytes.
@@ -76,7 +84,8 @@ Wasm start/relocation/constructor side effects, a trap ends the process instead
 of claiming rollback; exit/exec control transfers keep their normal path.
 Main-symbol dlsym during a Wasm start callback allocates canonical pointers
 outside the batch's table publication range, preserving the module's elements.
-This does not enable recursive dlopen or expose the uncommitted object's handle.
+This does not enable dlopen from a Wasm start section or expose a graph before
+its instances and relocations are ready.
 Forward references between Wasm modules use a matching Wasm function signature
 and a mutable target table index. Scalar and v128 arguments remain in Wasm;
 binding the canonical provider slot precedes relocation and constructors.

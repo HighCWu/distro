@@ -3,6 +3,7 @@ import {
   DylinkInitializationError,
   link_dylink_graph,
   type DylinkExternalSymbol,
+  type DylinkModuleRecord,
 } from "./dylink_linker.ts";
 import { plan_dylink_layout } from "./dylink.ts";
 import {
@@ -58,10 +59,7 @@ export class ProcessDylink {
   readonly #pointers = new Map<CallableFunction, bigint>();
   readonly #files = new Map<string, File>();
   readonly #aliases = new Map<string, string>();
-  readonly #reuse = new Map<
-    string,
-    { instance: WebAssembly.Instance; base: bigint; tableBase: bigint }
-  >();
+  readonly #reuse = new Map<string, DylinkModuleRecord>();
   readonly #groups = new Map<string, { group: Group; handle: number }>();
   readonly #handles = new Map<number, Group>();
   #cursor: bigint;
@@ -310,6 +308,9 @@ export class ProcessDylink {
       if (old) {
         if (flags & 256) this.#promote(old.group);
         for (const [name, key] of aliases) this.#aliases.set(name, key);
+        this.#busy = false;
+        acquired = false;
+        old.group.ensureInitialized();
         return this.#word(BigInt(old.handle));
       }
       if (flags & 4 && !this.#reuse.has(root.key))
@@ -402,7 +403,6 @@ export class ProcessDylink {
       if (this.#cursor === tableEnd || group.layout.tableEnd > this.#cursor)
         this.#cursor = group.layout.tableEnd;
       committed = true;
-      group.initialize();
       const handle = this.#handles.size + 2;
       this.#handles.set(handle, group);
       this.#groups.set(root.key, { group, handle });
@@ -411,6 +411,13 @@ export class ProcessDylink {
       for (const [key, record] of group.records) this.#reuse.set(key, record);
       if (flags & 256) this.#promote(group);
       allocation = undefined; // Resident until exec/exit, including dlclose.
+      // Instances, GOT/TLS relocations and file ownership are complete. Publish
+      // before constructors so recursive dlopen sees the same records and can
+      // initialize other pending dependencies exactly once. Start/I/O/allocator
+      // callbacks above remain guarded against reentrant graph construction.
+      this.#busy = false;
+      acquired = false;
+      group.ensureInitialized();
       return this.#word(BigInt(handle));
     } catch (error) {
       if (committed && !this.#options.isControlFlow(error))

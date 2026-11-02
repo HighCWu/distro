@@ -29,6 +29,14 @@ export interface DylinkExternalSymbol {
   address?: bigint;
 }
 
+type Initialization = { state: "pending" | "running" | "done" | "failed" };
+export type DylinkModuleRecord = {
+  instance: WebAssembly.Instance;
+  base: bigint;
+  tableBase: bigint;
+  initialization?: Initialization;
+};
+
 /** Link an already fetched batch in caller-owned process arenas.
  * File lookup, allocator locking, main-module interposition, worker publication,
  * unload and fork snapshots belong to the process loader, not this component.
@@ -48,7 +56,7 @@ export function link_dylink_graph(options: {
   tableArena: Readonly<DylinkArena>;
   hostFunctions?: ReadonlyMap<string, ReadonlyMap<string, CallableFunction>>;
   externalSymbols?: ReadonlyMap<string, DylinkExternalSymbol>;
-  reuse?: ReadonlyMap<string, { instance: WebAssembly.Instance; base: bigint; tableBase: bigint }>;
+  reuse?: ReadonlyMap<string, DylinkModuleRecord>;
   functionPointers?: Map<CallableFunction, bigint>;
   /** Only the process profile which refuses Worker creation may use LLD's
    * first-thread TLS image. No imported/public TLS binding is provided. */
@@ -70,6 +78,7 @@ export function link_dylink_graph(options: {
       base: bigint;
       tableBase: bigint;
       dependencies: string[];
+      initialization: Initialization;
     }
   >();
   // An iterative DFS bounds traversal by fetched files, not the JavaScript stack.
@@ -118,6 +127,7 @@ export function link_dylink_graph(options: {
     }
     if (read_wasm_memories(bytes).definitions.length)
       throw new Error("dynamic module must not define private memory");
+    const resident = options.reuse?.get(name);
     modules.set(name, {
       module,
       metadata,
@@ -129,7 +139,8 @@ export function link_dylink_graph(options: {
       dependencies: metadata.needed.map(
         (dependency) => options.resolveDependency?.(dependency, name) ?? dependency,
       ),
-      ...options.reuse?.get(name),
+      ...resident,
+      initialization: resident?.initialization ?? { state: resident ? "done" : "pending" },
     });
     pending.push({ name, finish: true });
     for (const dependency of modules.get(name)!.dependencies.toReversed())
@@ -472,6 +483,30 @@ export function link_dylink_graph(options: {
     throw new DylinkInitializationError(error);
   }
   let initialized = false;
+  const ensureInitialized = () => {
+    try {
+      for (const record of records) {
+        const initialization = record.initialization;
+        if (initialization.state === "failed")
+          throw new Error("dynamic constructor previously failed");
+        if (initialization.state !== "pending") continue;
+        initialization.state = "running";
+        try {
+          const ctor = record.instance!.exports.__wasm_call_ctors;
+          if (typeof ctor === "function") ctor();
+          initialization.state = "done";
+        } catch (error) {
+          initialization.state = "failed";
+          throw error;
+        }
+      }
+    } catch (error) {
+      if (options.isControlFlow?.(error)) throw error;
+      throw error instanceof DylinkInitializationError
+        ? error
+        : new DylinkInitializationError(error);
+    }
+  };
   return {
     order,
     layout: { ...layout, tableEnd: extra.tableEnd },
@@ -481,7 +516,12 @@ export function link_dylink_graph(options: {
         const record = modules.get(name)!;
         return [
           name,
-          { instance: record.instance!, base: record.base, tableBase: record.tableBase },
+          {
+            instance: record.instance!,
+            base: record.base,
+            tableBase: record.tableBase,
+            initialization: record.initialization,
+          },
         ];
       }),
     ),
@@ -501,15 +541,11 @@ export function link_dylink_graph(options: {
     initialize() {
       if (initialized) throw new Error("dynamic constructors cannot be retried");
       initialized = true;
-      try {
-        for (const record of fresh) {
-          const ctor = record.instance!.exports.__wasm_call_ctors;
-          if (typeof ctor === "function") ctor();
-        }
-      } catch (error) {
-        if (options.isControlFlow?.(error)) throw error;
-        throw new DylinkInitializationError(error);
-      }
+      ensureInitialized();
     },
+    /** Reentrant dlopen may encounter a shared dependency before its outer
+     * initializer reaches it. Running/done modules are skipped, failed ones
+     * stay poisoned; a fresh traversal never retries a constructor. */
+    ensureInitialized,
   };
 }

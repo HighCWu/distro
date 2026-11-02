@@ -101,6 +101,24 @@ pkgs.stdenvNoCC.mkDerivation (finalAttrs: {
     }}
     ${sideCC} -O2 -msimd128 -fPIC -c ${./cycle-a.c} -o cycle-a.o
     ${sideCC} -O2 -msimd128 -fPIC -c ${./cycle-b.c} -o cycle-b.o
+    ${sideCC} -O2 -fPIC -c ${./reentrant-root.c} -o reentrant-root.o
+    ${sideCC} -O2 -fPIC -c ${./reentrant-leaf.c} -o reentrant-leaf.o
+    ${sideCC} -O2 -fPIC -c ${./reentrant-reject.c} -o reentrant-reject.o
+    ${linkShared {
+      name = "reentrant-root.so";
+      output = "reentrant-root.so";
+      inputs = [ "reentrant-root.o" ];
+    }}
+    ${linkShared {
+      name = "reentrant-leaf.so";
+      output = "reentrant-leaf.so";
+      inputs = [ "reentrant-leaf.o" ];
+    }}
+    ${linkShared {
+      name = "reentrant-reject.so";
+      output = "reentrant-reject.so";
+      inputs = [ "reentrant-reject.o" ];
+    }}
     # Bootstrap A with its final basename to express both NEEDED edges.
     # Only the final A and B are installed; neither embeds the other's code.
     mkdir bootstrap
@@ -134,11 +152,15 @@ pkgs.stdenvNoCC.mkDerivation (finalAttrs: {
     install -Dm644 libplugin-b.so $out/lib/libplugin-b.so
     install -Dm644 cycle-a.so $out/lib/cycle-a.so
     install -Dm644 cycle-b.so $out/lib/cycle-b.so
+    install -Dm644 reentrant-root.so $out/lib/reentrant-root.so
+    install -Dm644 reentrant-leaf.so $out/lib/reentrant-leaf.so
+    install -Dm644 reentrant-reject.so $out/lib/reentrant-reject.so
     install -Dm644 ${../sdk/LICENSE.MIT} $out/share/licenses/dynamic-loader/LICENSE.MIT
     cp ${musl.src}/COPYRIGHT $out/share/licenses/dynamic-loader/musl-COPYRIGHT
     cp ${llvm-runtimes.src}/compiler-rt/LICENSE.TXT $out/share/licenses/dynamic-loader/compiler-rt-LICENSE.TXT
     mkdir -p $buildMaterials/share/dynamic-loader-materials
     cp ${./runtime.c} ${./library-a.c} ${./library-b.c} ${./cycle-a.c} ${./cycle-b.c} ${./package.nix} $buildMaterials/share/dynamic-loader-materials/
+    cp ${./reentrant-root.c} ${./reentrant-leaf.c} ${./reentrant-reject.c} $buildMaterials/share/dynamic-loader-materials/
     ln -s ${sdk-dynamic-loader.buildMaterials} $buildMaterials/share/dynamic-loader-materials/sdk
     ${lib.optionalString (sharedCompiler != null) ''
       cp ${./linux-shared.patch} $buildMaterials/share/dynamic-loader-materials/
@@ -155,6 +177,9 @@ pkgs.stdenvNoCC.mkDerivation (finalAttrs: {
       "/plugins/deps/libplugin-a.so" = "${finalAttrs.finalPackage}/lib/libplugin-a.so";
       "/plugins/cycle-a.so" = "${finalAttrs.finalPackage}/lib/cycle-a.so";
       "/plugins/cycle-b.so" = "${finalAttrs.finalPackage}/lib/cycle-b.so";
+      "/plugins/reentrant-root.so" = "${finalAttrs.finalPackage}/lib/reentrant-root.so";
+      "/plugins/reentrant-leaf.so" = "${finalAttrs.finalPackage}/lib/reentrant-leaf.so";
+      "/plugins/reentrant-reject.so" = "${finalAttrs.finalPackage}/lib/reentrant-reject.so";
     };
   };
 })

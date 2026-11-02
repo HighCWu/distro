@@ -115,6 +115,97 @@ test("cycles reuse module records with a single initialization schedule", () => 
   }
 });
 
+test("reentrant groups share pending, running, completed and poisoned constructor states", () => {
+  const ctor = (name: string, needed: string[] = []) =>
+    binary({
+      needed,
+      imports: [1, ...text("env"), ...text(name), 0, 0],
+      functionImports: 1,
+      callImport: true,
+      exportName: "__wasm_call_ctors",
+    });
+  const files = new Map([
+    ["root", ctor("root_ctor", ["peer"])],
+    ["peer", ctor("peer_ctor")],
+  ]);
+  const options = setup(files);
+  const events: string[] = [];
+  let outer: ReturnType<typeof link_dylink_graph>;
+  const hostFunctions = new Map([
+    [
+      "env",
+      new Map<string, CallableFunction>([
+        [
+          "root_ctor",
+          () => {
+            events.push("root");
+            return 0;
+          },
+        ],
+        [
+          "peer_ctor",
+          () => {
+            events.push("peer enter");
+            const nested = link_dylink_graph({ ...options, hostFunctions, reuse: outer.records });
+            nested.ensureInitialized();
+            nested.ensureInitialized();
+            events.push("peer leave");
+            return 0;
+          },
+        ],
+      ]),
+    ],
+  ]);
+  outer = link_dylink_graph({ ...options, hostFunctions });
+  outer.initialize();
+  outer.ensureInitialized();
+  assert.deepEqual(
+    events,
+    ["peer enter", "root", "peer leave"],
+    "running dependency is skipped, pending root runs once, outer traversal then skips it",
+  );
+  let calls = 0;
+  const failingOptions = setup(new Map([["root", ctor("fail")]]));
+  const failing = link_dylink_graph({
+    ...failingOptions,
+    hostFunctions: new Map([
+      [
+        "env",
+        new Map([
+          [
+            "fail",
+            () => {
+              calls++;
+              throw new Error("ctor failed");
+            },
+          ],
+        ]),
+      ],
+    ]),
+  });
+  assert.throws(() => failing.ensureInitialized(), DylinkInitializationError);
+  const reused = link_dylink_graph({
+    ...failingOptions,
+    reuse: failing.records,
+    hostFunctions: new Map([
+      [
+        "env",
+        new Map([
+          [
+            "fail",
+            () => {
+              calls++;
+              return 0;
+            },
+          ],
+        ]),
+      ],
+    ]),
+  });
+  assert.throws(() => reused.ensureInitialized(), DylinkInitializationError);
+  assert.equal(calls, 1, "a failed constructor stays poisoned across reused groups");
+});
+
 test("missing dependencies, TLS, extensions, private memory and missing symbols fail before mutation", () => {
   const unresolved = [1, ...text("env"), ...text("missing"), 0, 0];
   const cases = [

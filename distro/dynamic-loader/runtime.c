@@ -151,6 +151,23 @@ int main(void)
             "resident lookup does not initialize TLS again");
     puts("dynamic loader: first-thread private TLS initialization, isolation and resident reuse pass");
 
+    void *recursive = dlopen("reentrant-root.so", RTLD_NOW | RTLD_GLOBAL);
+    require(recursive != 0, "constructor can open a new graph");
+    void *recursive_leaf = dlopen("reentrant-leaf.so", RTLD_NOW | RTLD_NOLOAD);
+    require(recursive_leaf != 0 && *(int *)symbol(recursive, "reentrant_root_errors") == 0 &&
+            *(int *)symbol(recursive_leaf, "reentrant_leaf_errors") == 0,
+            "recursive failure recovery, GLOBAL imports and initializing-parent reopen");
+    require(*(int *)symbol(recursive, "reentrant_root_count") == 1 &&
+            *(int *)symbol(recursive_leaf, "reentrant_leaf_count") == 1 &&
+            *(int *)symbol(recursive, "reentrant_root_value") == 26 &&
+            *(int *)symbol(recursive, "reentrant_root_observed") == 25 &&
+            *(int **)symbol(recursive_leaf, "reentrant_leaf_saved") ==
+                symbol(recursive, "reentrant_root_value"), "recursive canonical pointers, relocation and single constructors");
+    require(dlopen("reentrant-root.so", RTLD_NOW | RTLD_NOLOAD) == recursive &&
+            !dlclose(recursive) && !dlclose(recursive_leaf) && descriptors() == baseline,
+            "recursive resident reuse and descriptor cleanup");
+    puts("dynamic loader: constructor dlopen, nested rejection recovery and single initialization pass");
+
     require(!dlopen("missing.so", RTLD_NOW) && dlerror(), "missing library failure");
     int fd = open("/plugins/bad.so", O_CREAT | O_TRUNC | O_WRONLY, 0600);
     require(fd >= 0 && write(fd, "bad", 3) == 3 && !close(fd), "create malformed library");
