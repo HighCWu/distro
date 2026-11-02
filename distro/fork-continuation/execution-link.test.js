@@ -16,7 +16,7 @@ for (const width of [32, 64]) {
     mkdirSync(join(dir, "sys"));
     writeFileSync(
       join(dir, "stdint.h"),
-      "typedef __UINTPTR_TYPE__ uintptr_t; typedef __UINT64_TYPE__ uint64_t;\n#define UINT32_C(x) x##U\n",
+      "typedef __UINTPTR_TYPE__ uintptr_t; typedef __UINT64_TYPE__ uint64_t;\n#define UINT32_C(x) x##U\n#define UINT64_C(x) x##ULL\n",
     );
     writeFileSync(join(dir, "errno.h"), "#define EOPNOTSUPP 95\n");
     writeFileSync(join(dir, "stddef.h"), "#define offsetof(t, m) __builtin_offsetof(t, m)\n");
@@ -126,6 +126,29 @@ for (const width of [32, 64]) {
       [0x01301000n, BigInt(pointer), BigInt(child), BigInt(parent), 17n, 0n, 0n, 0n, 0n, 0n, 0n],
       "compiled C preserves u64 fields and distinct PIDFD/parent/child outputs",
     );
+    assert.equal(
+      instance.exports.__wasm_fork_clone3_flags64(0x100000000n, pointer, parent, child),
+      p(-11),
+    );
+    assert.equal(calls[3][0], p(435));
+    const wide = new DataView(instance.exports.memory.buffer, Number(calls[3][1]), 88);
+    assert.equal(
+      wide.getBigUint64(0, true),
+      0x100001000n,
+      "real C i64 argument preserves high flags on wasm32 and wasm64",
+    );
+    assert.equal(wide.getBigUint64(24, true), BigInt(parent));
+    if (width === 64)
+      assert.equal(
+        instance.exports.__wasm_fork_clone3_native(0x100000000n, pointer, parent, child),
+        p(-95),
+        "old helper keeps its low-flag scope",
+      );
+    assert.equal(
+      instance.exports.__wasm_fork_clone3_flags64(1n << 63n, pointer, parent, child),
+      p(-95),
+    );
+    assert.equal(calls.length, 4, "unknown high flags never reach Linux");
     const collision = join(dir, "collision.c");
     writeFileSync(
       collision,

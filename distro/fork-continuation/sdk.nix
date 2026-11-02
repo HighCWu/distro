@@ -86,6 +86,7 @@ let
       clone3NamespaceTransport = true;
       cloneNamespaceTransport = true;
       nativeClone3Transport = true;
+      clone3WideFlags = [ "CLONE_CLEAR_SIGHAND" ];
       binaryenVersion = pkgs.binaryen.version;
       continuationBufferBytes = 262144;
       overflowBehavior = "trap";

@@ -69,9 +69,10 @@ of previously accepted fork checks and still require actual runtime evidence.
 
 The v2 import also accepts these namespace/PIDFD combinations through standard
 flags-first `clone` (220): flags, default stack, parent_tid/PIDFD, child_tid, TLS.
-SIGCHLD and the default stack are required. parent_tid is validated only as the
-CLONE_PIDFD output; unrequested parent/child TID and TLS registers, and the sixth
-unused register, are ignored as on Linux. TLS flags remain unsupported.
+SIGCHLD and the default stack are required. The CLONE_PIDFD output must fit an
+int in linear memory; requested TID addresses retain their full pointer width
+and Linux performs the stores. Unrequested parent/child TID and TLS registers,
+and the sixth unused register, are ignored as on Linux. TLS flags remain unsupported.
 Legacy flags use their low 32 bits as in kernel clone; clone3 keeps its u64 flag
 field, and PIDFD pointers retain the module's full pointer width in either API.
 Captured options use the same capability gates and rollback as clone3;
@@ -100,6 +101,17 @@ Custom stacks, TLS flags and multithreaded fork remain unsupported. Actual
 target acceptance of this increment is recorded separately from host checks.
 
 `share/linux-wasm-fork-sdk/profile.json` records the experimental profile.
+
+CLONE_CLEAR_SIGHAND requires the optional `__wasm_fork_clone3_flags64` export
+and the native kernel capability above. Its flags argument is i64 even on
+wasm32; pointer arguments retain the target's pointer width. The old
+`__wasm_fork_clone3_native` export keeps its original signature and low-flag
+scope, so older objects are never passed a mismatched argument type.
+Linux resets custom signal handlers while retaining SIG_IGN. Combining
+CLEAR_SIGHAND and SIGHAND returns EINVAL; shared-handler/thread creation is not
+enabled. Legacy clone keeps Linux's low-32-bit flags rule. This is execution
+compatibility for the existing syscall, not a new libc interface. Target
+signal/disposition and recovery evidence is tracked separately.
 `build-materials/` retains the profile/musl recipes, compiler configuration,
 Binaryen source and license, and links to the default SDK materials and selected
 sources. This is a Nix store output, not a relocatable standalone SDK archive or

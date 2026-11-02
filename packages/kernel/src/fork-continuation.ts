@@ -168,6 +168,7 @@ export class ForkContinuation {
   private legacyOptions = false;
   private nativeActive = false;
   private tids: CloneForkRequest["tids"];
+  private flags64 = 0n;
   private kernelDepth = 0;
   private rewindingChild = false;
   private readonly childRewound: (() => void) | undefined;
@@ -317,10 +318,12 @@ export class ForkContinuation {
   }
 
   private requestCheckpoint(request: CloneForkRequest, allowed: boolean, clone3: boolean): number {
+    const wide = typeof this.e.__wasm_fork_clone3_flags64 === "function";
     const native =
       clone3 &&
       this.nativeClone3Supported &&
-      typeof this.e.__wasm_fork_clone3_native === "function";
+      (wide || typeof this.e.__wasm_fork_clone3_native === "function");
+    if (request.flags64 && (!native || !wide)) return -95;
     const legacy = !clone3 && typeof this.e.__wasm_fork_clone_options === "function";
     if (request.tids && !native && !legacy) return -95;
     if (
@@ -346,6 +349,7 @@ export class ForkContinuation {
       this.nativeRequest = native;
       this.legacyOptions = legacy;
       this.tids = request.tids;
+      this.flags64 = request.flags64 ?? 0n;
     }
     return result;
   }
@@ -384,10 +388,12 @@ export class ForkContinuation {
       if (this.nativeRequest) {
         this.nativeActive = true;
         const zero = this.address === "i64" ? 0n : 0;
-        const flags = BigInt(this.namespaceFlags ?? zero) | BigInt(this.tids?.flags ?? zero);
+        const flags =
+          BigInt(this.namespaceFlags ?? zero) | BigInt(this.tids?.flags ?? zero) | this.flags64;
+        const wide = typeof this.e.__wasm_fork_clone3_flags64 === "function";
         return this.call(
-          "__wasm_fork_clone3_native",
-          this.address === "i64" ? flags : Number(flags),
+          wide ? "__wasm_fork_clone3_flags64" : "__wasm_fork_clone3_native",
+          wide || this.address === "i64" ? flags : Number(flags),
           this.pidfd ?? zero,
           this.tids?.parent ?? zero,
           this.tids?.child ?? zero,
@@ -423,6 +429,7 @@ export class ForkContinuation {
       this.legacyOptions = false;
       this.nativeActive = false;
       this.tids = undefined;
+      this.flags64 = 0n;
     }
   }
 

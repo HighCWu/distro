@@ -155,6 +155,52 @@ function fixture(
 }
 
 for (const address of ["i32", "i64"] as const)
+  test(`${address}: clone3 high flags require wide transport and clear after failure`, () => {
+    const {
+      controller,
+      exports,
+      memory,
+      pointer: p,
+      calls,
+    } = fixture(address, true, 2, true, undefined, true);
+    const view = new DataView(memory.buffer);
+    view.setBigUint64(8192, 0x100000000n, true);
+    view.setBigUint64(8224, 17n, true);
+    Object.assign(exports, {
+      __wasm_fork_clone3_native: () => {
+        throw new Error("high flags narrowed to an old helper");
+      },
+    });
+    assert.equal(controller.clone3Checkpoint(p(8192), p(88), true), -95);
+    assert.equal(calls.descriptors, 0);
+    let expected = 0x100000000n;
+    Object.assign(exports, {
+      __wasm_fork_clone3_flags64: (...args: WasmAddress[]) => {
+        assert.deepEqual(args, [expected, p(0), p(0), p(0)]);
+        return dispatch_fork_syscall(controller, p(435), [], true, () => p(-11));
+      },
+    });
+    const oldKernel = new ForkContinuation(
+      { exports } as unknown as WebAssembly.Instance,
+      memory,
+      address,
+      undefined,
+      true,
+      false,
+    );
+    assert.equal(oldKernel.clone3Checkpoint(p(8192), p(88), true), -95);
+    for (const flags of [0x100000000n, 0n]) {
+      expected = flags;
+      view.setBigUint64(8192, flags, true);
+      assert.equal(controller.clone3Checkpoint(p(8192), p(88), true), 0);
+      controller.suspend();
+      assert.equal(controller.clone(), p(-11));
+      controller.resumeParent(p(-11));
+      assert.equal(controller.clone3Checkpoint(p(0), p(0), true), -11);
+    }
+  });
+
+for (const address of ["i32", "i64"] as const)
   test(`${address}: legacy TID clone retains syscall 220 even with native clone3 available`, () => {
     const { controller, exports, pointer: p } = fixture(address, true, 2, true, undefined, true);
     const args = [0x01300011, 0, 9008, 9016, -1, 999].map(p);

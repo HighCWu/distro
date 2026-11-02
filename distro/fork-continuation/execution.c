@@ -96,8 +96,7 @@ long __wasm_fork_clone_options(uintptr_t flags, uintptr_t parent, uintptr_t chil
  * Keep the canonical structure outside active Asyncify frames. The loader
  * has already suspended this single-thread caller; Linux alone writes TIDs
  * and allocates/publishes PIDFDs. No libc or application API is added. */
-__attribute__((export_name("__wasm_fork_clone3_native")))
-long __wasm_fork_clone3_native(uintptr_t flags, uintptr_t pidfd,
+static long clone3_native(uint64_t flags, uintptr_t pidfd,
 	uintptr_t parent_tid, uintptr_t child_tid)
 {
 	static struct {
@@ -105,7 +104,7 @@ long __wasm_fork_clone3_native(uintptr_t flags, uintptr_t pidfd,
 		uint64_t stack, stack_size, tls, set_tid, set_tid_size, cgroup;
 	} args __attribute__((aligned(8)));
 	_Static_assert(sizeof args == 88, "Linux clone_args aligned u64 ABI");
-	const uintptr_t allowed = UINT32_C(0x7f320000);
+	const uint64_t allowed = UINT64_C(0x17f320000);
 	if (flags & ~allowed)
 		return -EOPNOTSUPP;
 	args.flags = flags | (pidfd ? 0x1000 : 0);
@@ -114,4 +113,22 @@ long __wasm_fork_clone3_native(uintptr_t flags, uintptr_t pidfd,
 	args.parent_tid = parent_tid;
 	args.exit_signal = SIGCHLD;
 	return fork_callback_syscall(SYS_clone3, (long)&args, sizeof args, 0, 0, 0, 0);
+}
+
+/* Preserve the old pointer-width helper's signature for existing loaders. */
+__attribute__((export_name("__wasm_fork_clone3_native")))
+long __wasm_fork_clone3_native(uintptr_t flags, uintptr_t pidfd,
+	uintptr_t parent_tid, uintptr_t child_tid)
+{
+	if (flags & ~(uintptr_t)UINT32_C(0x7f320000))
+		return -EOPNOTSUPP;
+	return clone3_native(flags, pidfd, parent_tid, child_tid);
+}
+
+/* Flags are i64 on both architectures, independent of pointer width. */
+__attribute__((export_name("__wasm_fork_clone3_flags64")))
+long __wasm_fork_clone3_flags64(uint64_t flags, uintptr_t pidfd,
+	uintptr_t parent_tid, uintptr_t child_tid)
+{
+	return clone3_native(flags, pidfd, parent_tid, child_tid);
 }

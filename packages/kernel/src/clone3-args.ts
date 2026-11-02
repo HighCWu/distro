@@ -7,10 +7,12 @@ export interface CloneForkRequest {
   pidfd: WasmAddress | null;
   namespaceFlags?: WasmAddress;
   tids?: { flags: WasmAddress; parent: WasmAddress; child: WasmAddress };
+  flags64?: bigint;
 }
 
 const namespaceMask = 0x7e020000n;
 const tidMask = 0x01300000n;
+const clearSighand = 0x100000000n;
 
 function unsigned_word(value: WasmAddress, address: WasmAddressType): bigint {
   if (
@@ -33,6 +35,7 @@ function fork_options(
   const options: Omit<CloneForkRequest, "pidfd"> = namespaces
     ? { namespaceFlags: address === "i64" ? namespaces : Number(namespaces) }
     : {};
+  if (flags & clearSighand) options.flags64 = flags & clearSighand;
   if (flags & tidMask) {
     // Linux performs TID stores (including its own fault behavior). Refuse
     // only addresses that the Wasm architecture cannot represent faithfully.
@@ -125,13 +128,15 @@ export function clone3_fork_request(
   // clone3 does not encode CSIGNAL in flags. CLONE_NEWTIME's reused bit is
   // excluded from this syntactic check but still unsupported below.
   if ((flags & 0x7fn) !== 0n || (flags & 0x400000n) !== 0n || signal > 64n) return -22;
+  if (flags & clearSighand && flags & 0x800n) return -22;
   if ((stack === 0n) !== (stackSize === 0n)) return -22;
   if (tidCount > 32n || (tids === 0n) !== (tidCount === 0n)) return -22;
   if (signal !== 17n) return -95;
   // Linux owns namespace configuration, capabilities and flag combinations.
-  // These bits fit legacy clone's flags word. NEWTIME (0x80) does not: that
-  // word encodes CSIGNAL there, so it must never be silently dropped.
-  if (flags & ~(namespaceMask | tidMask | 0x1000n)) return -95;
+  // Namespace/TID bits fit the old transport; CLEAR_SIGHAND needs the wide
+  // native helper. NEWTIME (0x80) still conflicts with legacy CSIGNAL and is
+  // not admitted until it has its own native-only transport contract.
+  if (flags & ~(namespaceMask | tidMask | clearSighand | 0x1000n)) return -95;
   for (let index = 1; index < 11; index++)
     if (
       index !== 4 &&

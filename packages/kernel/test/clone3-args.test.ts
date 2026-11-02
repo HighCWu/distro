@@ -71,6 +71,13 @@ for (const address of ["i32", "i64"] as const)
       assert.deepEqual(parse(88), { pidfd: null, namespaceFlags: p(flags) });
     }
     reset();
+    view.setBigUint64(256, 0x100000000n, true);
+    assert.deepEqual(
+      parse(88),
+      { pidfd: null, flags64: 0x100000000n },
+      "clone3 high flags retain their full u64 on both pointer widths",
+    );
+    reset();
     for (const size of [0, 1, 63]) assert.equal(parse(size), -22);
     for (const size of [65537, -1]) assert.equal(parse(size), -7);
     for (const pointer of [0, -1, 131072 - 63]) assert.equal(parse(64, pointer), -14);
@@ -78,7 +85,8 @@ for (const address of ["i32", "i64"] as const)
       [0, 17n, -22],
       [0, 0x100n, -95],
       [0, 0x80n, -95],
-      [0, 0x100000000n, -95],
+      [0, 0x200000000n, -95],
+      [0, 0x100000800n, -22],
       [1, 0x100000000n, -95],
       [2, 1n, -95],
       [3, 1n, -95],
