@@ -280,6 +280,14 @@ lib.makeScope (scope: lib.callPackageWith ({ inherit lib pkgs; } // scope)) (
     clone-namespaces = callPackage ./clone-namespaces/package.nix { };
     clone-flags64 = callPackage ./clone-flags64/package.nix { };
     clone-timens = callPackage ./clone-timens/package.nix { };
+    timezone = callPackage ./timezone/package.nix { };
+    timezone-wasm64 = callPackage ./timezone/package.nix {
+      platform = self.platform-wasm64;
+      sdk = self.sdk-wasm64;
+      musl = self.musl-wasm64;
+      llvm-runtimes = self.llvm-runtimes-wasm64;
+      vm-test = vmTestWasm64;
+    };
     clone-timens-wasm64 = callPackage ./clone-timens/package.nix {
       platform = self.platform-wasm64;
       sdk-fork-continuation = self.sdk-fork-continuation-wasm64;
