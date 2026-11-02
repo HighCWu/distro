@@ -389,6 +389,10 @@ let
           "process-mmapstream-wasm32-firefox"
           "process-mmapstream-wasm64-chromium"
           "process-mmapstream-wasm64-firefox"
+          "process-resolver-wasm32-chromium"
+          "process-resolver-wasm32-firefox"
+          "process-resolver-wasm64-chromium"
+          "process-resolver-wasm64-firefox"
         ]
         (
           name:
@@ -412,6 +416,8 @@ let
                 "remotevm"
               else if lib.hasInfix "-mmapstream-" name then
                 "mmapstream"
+              else if lib.hasInfix "-resolver-" name then
+                "resolver"
               else
                 "pidfd";
             bits = if lib.hasInfix "-wasm32-" name then 32 else 64;
@@ -568,6 +574,8 @@ let
           (if bits == 64 then fork-continuation-wasm64 else fork-continuation).checks.process-vm.runtimeAssets
         else if corpus == "mmapstream" then
           (if bits == 64 then file-mmap-stream-wasm64 else file-mmap-stream).checks.runtime.runtimeAssets
+        else if corpus == "resolver" then
+          (if bits == 64 then curl-wasm64 else curl).checks.resolver.runtimeAssets
         else
           throw "unknown process browser corpus: ${corpus}";
       profile = pkgs.writeText "process-profile.json" (
@@ -579,7 +587,7 @@ let
       );
     in
     assert
-      assets.disks == [ ]
+      (if corpus == "resolver" then builtins.length assets.disks == 1 else assets.disks == [ ])
       &&
         assets.cpus == (
           if
@@ -597,7 +605,7 @@ let
     pkgs.runCommand "${corpus}-wasm${toString bits}-browser-suite" { } ''
       mkdir -p $out/node_modules/@lowland/kernel $out/node_modules/@lowland/bytes
       ${playwright.linkRuntime "$out"}
-      cp ${source}/process-app.js $out/app.js
+      cp ${source}/${if corpus == "resolver" then "process-root-app.js" else "process-app.js"} $out/app.js
       cp ${source}/process-browser-check.mjs $out/process-browser-check.mjs
       cp ${source}/process-contract.js $out/process-contract.js
       cp ${source}/runtime-smoke.js $out/runtime-smoke.js
@@ -606,6 +614,7 @@ let
       cp ${source}/server.js $out/server.js
       cp ${profile} $out/profile.json
       cp ${assets.initramfs} $out/runtime.cpio
+      ${lib.optionalString (corpus == "resolver") "cp ${builtins.head assets.disks} $out/root.ext4"}
       cp -r ${bytes}/. $out/node_modules/@lowland/bytes/
       cp -r ${runtimeKernel}/. $out/node_modules/@lowland/kernel/
     '';

@@ -7,6 +7,11 @@ const prefixStage =
   "user-access: partial boundary copies preserve file positions, suffixes and pipe accounting pass";
 const recoveryStage = "user-access: zero lengths, valid retries and descriptor recovery pass";
 export const processStages = {
+  resolver: [
+    "curl resolver: pending DNS does not block an independent multi transfer pass",
+    "curl resolver: delayed reply, new DNS request and exact HTTP bodies pass",
+    "curl resolver: resolver/server thread joins, descriptor recovery and cleanup pass",
+  ],
   mmapstream: [
     "file mmap stream: multi-megabyte reads, nonzero offset, private copies and fd position pass",
     "file mmap stream: short reads, EOF zero tails, truncation and source lifetime pass",

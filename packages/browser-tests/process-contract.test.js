@@ -29,6 +29,7 @@ for (const corpus of Object.keys(processStages))
   });
 
 for (const corpus of [
+  "resolver",
   "dash",
   "bash",
   "useraccess",
@@ -221,4 +222,94 @@ test("browser app admits CPU profiles before loading initramfs and preserves leg
   await assert.rejects(globalThis.bootProcessRuntimeSmoke(), /requires cross-origin isolation/);
   assert.equal(initLoads, 3, "bad profiles never load initramfs or start a machine");
   assert.deepEqual(globalThis.processCpuProfileTest, [1, 2, 2]);
+});
+
+test("resolver reuses installed Node assets and fresh root storage before each boot", async (t) => {
+  const recipe = readFileSync(
+    new URL("../../distro/npm/browser-tests.nix", import.meta.url),
+    "utf8",
+  );
+  for (const bits of [32, 64])
+    for (const engine of ["chromium", "firefox"])
+      assert.ok(recipe.includes(`"process-resolver-wasm${bits}-${engine}"`));
+  assert.match(
+    recipe,
+    /\(if bits == 64 then curl-wasm64 else curl\)\.checks\.resolver\.runtimeAssets/,
+  );
+  const consumer = readFileSync(
+    new URL("../../distro/curl/tests/resolver.c", import.meta.url),
+    "utf8",
+  );
+  for (const stage of processStages.resolver) assert.ok(consumer.includes(stage));
+  const keys = ["fetch", "crossOriginIsolated", "bootProcessRuntimeSmoke", "rootProcessProbe"];
+  const saved = keys.map((key) => [key, Object.getOwnPropertyDescriptor(globalThis, key)]);
+  t.after(() => {
+    for (const [key, descriptor] of saved) {
+      if (descriptor) Object.defineProperty(globalThis, key, descriptor);
+      else delete globalThis[key];
+    }
+  });
+  const dataUrl = (source) =>
+    "data:text/javascript;base64," + Buffer.from(source).toString("base64");
+  const kernel = dataUrl(`
+    export const consoleDevice=()=>{}, entropyDevice=()=>{};
+    export const blockDevice=storage=>storage;
+    export const bootMachine=options=>globalThis.rootProcessProbe.boot(options);
+  `);
+  const runtime = dataUrl(`export async function runRuntimeSmoke(options) {
+    const init = await options.loadInitramfs();
+    if (init.length !== 2 || init[0] !== 8) throw Error('bad init image');
+    return options.bootMachine({cpus:options.cpus, plugins:['console', 'entropy']});
+  }`);
+  const app = readFileSync(new URL("process-root-app.js", import.meta.url), "utf8")
+    .replace('"@lowland/kernel"', JSON.stringify(kernel))
+    .replace('"./runtime-smoke.js"', JSON.stringify(runtime));
+  let boots = 0,
+    images = 0,
+    missing = false;
+  let profile = { corpus: "resolver", cpus: 2 };
+  globalThis.crossOriginIsolated = true;
+  globalThis.rootProcessProbe = {
+    boot(options) {
+      boots++;
+      assert.equal(options.cpus, 2);
+      assert.deepEqual(options.plugins.slice(0, 2), ["console", "entropy"]);
+      const disk = options.plugins[2],
+        bytes = new Uint8Array(4);
+      assert.equal(disk.capacity, 4);
+      assert.equal(disk.read(0, bytes), 4);
+      assert.deepEqual([...bytes], [1, 2, 3, 4]);
+      assert.equal(disk.write(1, new Uint8Array([9, 8])), 2);
+      disk.read(0, bytes);
+      assert.deepEqual([...bytes], [1, 9, 8, 4]);
+      disk.flush();
+      return "isolated root fixture pass";
+    },
+  };
+  globalThis.fetch = async (path) => {
+    if (path === "/profile.json") return { ok: true, json: async () => profile };
+    images++;
+    assert.ok(path === "/root.ext4" || path === "/runtime.cpio");
+    return {
+      ok: !missing,
+      status: 404,
+      arrayBuffer: async () => new Uint8Array(path === "/root.ext4" ? [1, 2, 3, 4] : [8, 6]).buffer,
+    };
+  };
+  await import(dataUrl(app));
+  for (let i = 0; i < 2; i++)
+    assert.equal(await globalThis.bootProcessRuntimeSmoke(), "isolated root fixture pass");
+  assert.equal(boots, 2);
+  for (const bad of [
+    { corpus: "resolver", cpus: 1 },
+    { corpus: "dash", cpus: 2 },
+  ]) {
+    profile = bad;
+    await assert.rejects(globalThis.bootProcessRuntimeSmoke(), /invalid installed process profile/);
+  }
+  assert.equal(images, 4, "bad profiles must not read images");
+  profile = { corpus: "resolver", cpus: 2 };
+  missing = true;
+  await assert.rejects(globalThis.bootProcessRuntimeSmoke(), /process image load failed/);
+  assert.equal(boots, 2, "missing disk/init must never boot a machine");
 });
