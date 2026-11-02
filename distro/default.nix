@@ -69,7 +69,6 @@ lib.makeScope (scope: lib.callPackageWith ({ inherit lib pkgs; } // scope)) (
     };
     symbolVersionToolchain = self.llvm-toolchain-unwrapped.override {
       src = import ./symbol-versions/source.nix { inherit pkgs; };
-      includeHostBackend = false;
     };
     symbolVersionSdk32 = self.sdk.override {
       llvm-toolchain = self.llvm-toolchain.override {
