@@ -367,23 +367,37 @@ export class ProcessDylink {
       const tableEnd = planned.tableEnd + BigInt(extra);
       if (tableEnd > tableLimit) throw new Error("dynamic table exceeds process capacity");
       this.#grow(tableEnd);
-      const group = link_dylink_graph({
-        root: root.key,
-        files: new Map(files.map((file) => [file.key, file.bytes])),
-        memory: this.#options.memory,
-        table: this.#table,
-        stack: this.#stack,
-        memoryMaximumPages: BigInt(this.#options.maximumPages),
-        tableMaximumElements: this.#options.tableType.maximum,
-        memoryArena: { cursor: base, limit: base + size, address: this.#options.address },
-        tableArena: { cursor: this.#cursor, limit: tableEnd, address: tableAddress },
-        externalSymbols: this.#symbols,
-        functionPointers: this.#pointers,
-        reuse: this.#reuse,
-        resolveDependency: (name, parent) => local.get(parent)!.dependencies.get(name)!,
-        isControlFlow: this.#options.isControlFlow,
-      });
-      this.#cursor = group.layout.tableEnd;
+      const tableStart = this.#cursor;
+      // A Wasm start section can call main code which performs dlsym. Keep its
+      // new canonical pointers beyond this batch's initialization/clear range.
+      this.#cursor = tableEnd;
+      let group: Group;
+      try {
+        group = link_dylink_graph({
+          root: root.key,
+          files: new Map(files.map((file) => [file.key, file.bytes])),
+          memory: this.#options.memory,
+          table: this.#table,
+          stack: this.#stack,
+          memoryMaximumPages: BigInt(this.#options.maximumPages),
+          tableMaximumElements: this.#options.tableType.maximum,
+          memoryArena: { cursor: base, limit: base + size, address: this.#options.address },
+          tableArena: { cursor: tableStart, limit: tableEnd, address: tableAddress },
+          externalSymbols: this.#symbols,
+          functionPointers: this.#pointers,
+          reuse: this.#reuse,
+          resolveDependency: (name, parent) => local.get(parent)!.dependencies.get(name)!,
+          isControlFlow: this.#options.isControlFlow,
+        });
+      } catch (error) {
+        // Ordinary errors precede instantiation and reentrant user code. Traps
+        // and control transfers leave this instance, so never roll them back.
+        if (!this.#options.isControlFlow(error) && !(error instanceof DylinkInitializationError))
+          this.#cursor = tableStart;
+        throw error;
+      }
+      if (this.#cursor === tableEnd || group.layout.tableEnd > this.#cursor)
+        this.#cursor = group.layout.tableEnd;
       committed = true;
       group.initialize();
       const handle = this.#handles.size + 2;

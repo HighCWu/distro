@@ -63,6 +63,9 @@ objects. These are profile capacities, not Linux syscall limits.
 Pre-initialization failures report through the existing dlerror path. After
 Wasm start/relocation/constructor side effects, a trap ends the process instead
 of claiming rollback; exit/exec control transfers keep their normal path.
+Main-symbol dlsym during a Wasm start callback allocates canonical pointers
+outside the batch's table publication range, preserving the module's elements.
+This does not enable recursive dlopen or expose the uncommitted object's handle.
 Default CONFIG_MMU=n and bounded direct memory remain in force. Independent
 execution code is MIT; musl and all dependencies retain their licenses.
 
