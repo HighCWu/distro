@@ -45,10 +45,15 @@ fd closes. Close-range operations cannot release these references; exec/exit
 teardown releases them without calling old user code. Older kernels without
 this private execution capability reject the profile before exec commits.
 
-This first profile supports single-thread static C mains and acyclic scalar-C
-side-module graphs. It refuses clone/clone3 rather than creating Workers with
-missing modules. It cannot combine with the fork-continuation SDK. TLS, cyclic
-dependencies, reentrant dlopen during constructors, RTLD_NEXT, non-scalar
+This first profile supports single-thread static C mains and scalar-C side-module
+graphs, including cyclic dependencies. Each object is instantiated once; all
+GOT bindings and data relocations precede the constructor pass. Constructors
+follow dependency DFS postorder, skipping already visited edges. A cycle has
+no universal dependency-before-dependent order; its members must tolerate peers
+whose constructors have not run yet. Reopening a resident cycle does not rerun
+constructors. It refuses clone/clone3 rather than creating Workers with
+missing modules. It cannot combine with the fork-continuation SDK. TLS,
+reentrant dlopen during constructors, RTLD_NEXT, non-scalar
 function signatures, dynamic symbol versions, cross-module setjmp/longjmp and C++ exceptions
 and cross-Worker publication still need implementation and acceptance.
 Names/paths currently use UTF-8; strings are bounded to 4096 bytes. Individual

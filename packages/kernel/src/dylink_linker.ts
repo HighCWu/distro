@@ -28,7 +28,7 @@ export interface DylinkExternalSymbol {
   address?: bigint;
 }
 
-/** Link an already fetched, acyclic batch in caller-owned process arenas.
+/** Link an already fetched batch in caller-owned process arenas.
  * File lookup, allocator locking, main-module interposition, worker publication,
  * unload and fork snapshots belong to the process loader, not this component.
  * All modules must be trusted executable files: a Wasm start section runs during
@@ -70,16 +70,15 @@ export function link_dylink_graph(options: {
   >();
   // An iterative DFS bounds traversal by fetched files, not the JavaScript stack.
   const order: string[] = [];
-  const active = new Set<string>();
   const pending = [{ name: options.root, finish: false }];
   while (pending.length) {
     const { name, finish } = pending.pop()!;
     if (finish) {
-      active.delete(name);
       order.push(name);
       continue;
     }
-    if (active.has(name)) throw new Error("cyclic dynamic dependencies are not supported yet");
+    // Records are registered before following NEEDED edges. A back edge reuses
+    // the same record; all instances and GOT bindings precede constructors.
     if (modules.has(name)) continue;
     const bytes = options.files.get(name);
     if (!bytes) throw new Error(`missing dynamic dependency: ${name}`);
@@ -113,7 +112,6 @@ export function link_dylink_graph(options: {
       ),
       ...options.reuse?.get(name),
     });
-    active.add(name);
     pending.push({ name, finish: true });
     for (const dependency of modules.get(name)!.dependencies.toReversed())
       pending.push({ name: dependency, finish: false });

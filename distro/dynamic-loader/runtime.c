@@ -90,6 +90,33 @@ int main(void)
     require(!dlclose(alias) && !dlclose(plugin) && !dlclose(dependency), "musl resident close semantics");
     puts("dynamic loader: aliases, local/global scope, dependency reuse and close pass");
 
+    void *cycle = dlopen("cycle-a.so", RTLD_NOW | RTLD_LOCAL);
+    require(cycle != 0, "load real cyclic NEEDED graph");
+    int *a_value = symbol(cycle, "cycle_a_value");
+    int *b_value = symbol(cycle, "cycle_b_value");
+    int *a_count = symbol(cycle, "cycle_a_count");
+    int *b_count = symbol(cycle, "cycle_b_count");
+    int (*a_step)(int) = symbol(cycle, "cycle_a_step");
+    int (*b_step)(int) = symbol(cycle, "cycle_b_step");
+    require(*a_value == 11 && *b_value == 8 && *a_count == 1 && *b_count == 1,
+            "cyclic constructor schedule executes each module once");
+    require(*(int *)symbol(cycle, "cycle_a_observed") == 8 &&
+            *(int *)symbol(cycle, "cycle_b_observed") == 3,
+            "cycle constructors can call relocated peers");
+    require(*(int **)symbol(cycle, "cycle_a_saved") == b_value &&
+            *(int **)symbol(cycle, "cycle_b_saved") == a_value,
+            "both cyclic data relocations precede constructors");
+    require(*(int (**)(int))symbol(cycle, "cycle_a_function") == b_step &&
+            *(int (**)(int))symbol(cycle, "cycle_b_function") == a_step &&
+            a_step(2) == 13 && b_step(2) == 10,
+            "mutual direct calls and canonical function pointer relocations");
+    void *cycle_peer = dlopen("cycle-b.so", RTLD_NOW | RTLD_NOLOAD);
+    require(cycle_peer != 0 && symbol(cycle_peer, "cycle_a_value") == a_value &&
+            *a_count == 1 && *b_count == 1, "cyclic dependency reopen reuses instances");
+    require(!dlclose(cycle) && !dlclose(cycle_peer) && descriptors() == baseline,
+            "cyclic resident close and descriptor cleanup");
+    puts("dynamic loader: cyclic dependencies, peer constructors and canonical relocations pass");
+
     require(!dlopen("missing.so", RTLD_NOW) && dlerror(), "missing library failure");
     int fd = open("/plugins/bad.so", O_CREAT | O_TRUNC | O_WRONLY, 0600);
     require(fd >= 0 && write(fd, "bad", 3) == 3 && !close(fd), "create malformed library");

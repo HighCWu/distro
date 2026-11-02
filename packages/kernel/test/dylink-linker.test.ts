@@ -91,15 +91,26 @@ test("dependency graph deduplicates diamonds and zeroes only allocated data", ()
   assert.throws(() => linked.initialize(), /cannot be retried/);
 });
 
-test("missing dependencies, cycles, TLS, extensions, private memory and missing symbols fail before mutation", () => {
-  const unresolved = [1, ...text("env"), ...text("missing"), 0, 0];
-  const cases = [
-    new Map([["root", binary({ needed: ["absent"] })]]),
+test("cycles reuse module records with a single initialization schedule", () => {
+  for (const files of [
     new Map([["root", binary({ needed: ["root"] })]]),
     new Map([
       ["root", binary({ needed: ["other"] })],
       ["other", binary({ needed: ["root"] })],
     ]),
+  ]) {
+    const linked = link_dylink_graph(setup(files));
+    assert.deepEqual(linked.order, files.size === 1 ? ["root"] : ["other", "root"]);
+    assert.equal(linked.instances.size, files.size);
+    linked.initialize();
+    assert.throws(() => linked.initialize(), /cannot be retried/);
+  }
+});
+
+test("missing dependencies, TLS, extensions, private memory and missing symbols fail before mutation", () => {
+  const unresolved = [1, ...text("env"), ...text("missing"), 0, 0];
+  const cases = [
+    new Map([["root", binary({ needed: ["absent"] })]]),
     new Map([["root", binary({ extra: section(3, [1, ...text("tls"), 0x80, 2]) })]]),
     new Map([["root", binary({ extra: section(99, []) })]]),
     new Map([["root", binary({ privateMemory: true })]]),
