@@ -95,6 +95,9 @@ static void report(const struct nlmsghdr *header, const char *expected,
 		    !strcmp(algorithm->cru_name, "cbc(aes)")) {
 			CHECK(attribute->nla_len == NLA_HDRLEN + sizeof(struct crypto_report_blkcipher), "cipher report size");
 			const struct crypto_report_blkcipher *cipher = data;
+			printf("NETLINK_CRYPTO metadata: CBC-AES backend=%.64s block=%u key=%u..%u iv=%u\n",
+			       cipher->type, cipher->blocksize, cipher->min_keysize,
+			       cipher->max_keysize, cipher->ivsize);
 			CHECK(memchr(cipher->type, 0, sizeof(cipher->type)) &&
 			      (!strcmp(cipher->type, "skcipher") || !strcmp(cipher->type, "lskcipher")) &&
 			      cipher->blocksize == 16 &&
