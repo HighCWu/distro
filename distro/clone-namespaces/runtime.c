@@ -61,6 +61,66 @@ static void no_children(void)
             "rejected request leaves no child");
 }
 
+struct tid_slot { uint32_t before; int value; uint32_t after; };
+
+static void tid_guards(const struct tid_slot *slot)
+{
+    require(slot->before == UINT32_C(0x12345678) &&
+            slot->after == UINT32_C(0x87654321), "TID output writes exactly one int");
+}
+
+static void run_tids(int legacy, int newpid)
+{
+    struct tid_slot parent = { UINT32_C(0x12345678), -1, UINT32_C(0x87654321) };
+    struct tid_slot child_tid = parent, descriptor = parent;
+    uint64_t flags = CLONE_PARENT_SETTID | CLONE_CHILD_SETTID | CLONE_CHILD_CLEARTID;
+    if (newpid) flags |= CLONE_NEWPID;
+    if (!legacy) flags |= CLONE_PIDFD;
+    struct clone_args args = { .flags = flags, .exit_signal = SIGCHLD,
+        .parent_tid = (uintptr_t)&parent.value, .child_tid = (uintptr_t)&child_tid.value,
+        .pidfd = legacy ? 0 : (uintptr_t)&descriptor.value };
+    pid_t child = legacy
+        ? syscall(SYS_clone, (long)(flags | SIGCHLD), 0L,
+                  (long)(uintptr_t)&parent.value, (long)(uintptr_t)&child_tid.value, -1L, 999L)
+        : syscall(SYS_clone3, (long)(uintptr_t)&args, (long)sizeof args);
+    require(child >= 0, "standard clone with Linux TID outputs");
+    if (!child) {
+        require(child_tid.value == getpid() && (!newpid || child_tid.value == 1),
+                "Linux child TID store uses the child PID namespace");
+        require(parent.value == -1 && descriptor.value == -1,
+                "parent TID/PIDFD writes do not mutate private child memory");
+        tid_guards(&parent); tid_guards(&child_tid); tid_guards(&descriptor);
+        _exit(47);
+    }
+    require(parent.value == child && child_tid.value == -1,
+            "Linux parent TID store uses outer PID without changing child output");
+    tid_guards(&parent); tid_guards(&child_tid); tid_guards(&descriptor);
+    reap(child, 47);
+    if (!legacy) {
+        require(descriptor.value >= 0 && fcntl(descriptor.value, F_GETFD) >= 0,
+                "clone3 independently publishes PIDFD and parent TID");
+        require(close(descriptor.value) == 0, "TID clone PIDFD cleanup");
+    }
+    no_children();
+    printf("clone namespaces: %s%s Linux parent/child TID stores, guards and cleanup pass\n",
+           legacy ? "clone" : "clone3", newpid ? " NEWPID" : "");
+}
+
+static void reject_tid_alias(void)
+{
+    int output = -1;
+    struct clone_args args = { .flags = CLONE_PIDFD | CLONE_PARENT_SETTID,
+        .exit_signal = SIGCHLD, .pidfd = (uintptr_t)&output,
+        .parent_tid = (uintptr_t)&output };
+    errno = 0;
+    pid_t child = syscall(SYS_clone3, (long)(uintptr_t)&args, (long)sizeof args);
+    if (!child) _exit(93);
+    require(child == -1 && errno == EINVAL && output == -1,
+            "Linux rejects aliased PIDFD and parent TID before publication");
+    no_children();
+    puts("clone namespaces: clone3 PIDFD/TID alias rejection preserves output and children pass");
+}
+
 static void run(int legacy)
 {
     flags_first = legacy;
@@ -142,6 +202,10 @@ int main(void)
     require(setvbuf(stdout, NULL, _IONBF, 0) == 0, "unbuffered stages across fork");
     run(0);
     run(1);
+    run_tids(0, 0);
+    run_tids(1, 0);
+    run_tids(0, 1);
+    reject_tid_alias();
     puts("::vm-test::pass");
     for (;;) pause();
 }

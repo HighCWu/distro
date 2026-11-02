@@ -34,6 +34,7 @@ export interface Instance extends WebAssembly.Instance {
     copy_worker_wait?(): void;
     /** Capability 1 joins unpublished Workers after a post-copy fork failure. */
     fork_worker_abort_abi?(): number;
+    native_clone3_fork_abi?(): number;
     /** Release the quiescent file copy before rethrowing a user callback exception. */
     abort_file_mmap_v1?(): void;
   };
@@ -307,6 +308,9 @@ export interface Imports {
   };
   user_context_v1: {
     abi(): number;
+  };
+  user_fork_v1: {
+    entry(): WasmAddress;
   };
   user_signal_v1: {
     stack_pointer(to: WasmAddress): number;

@@ -79,3 +79,39 @@ long __wasm_fork_clone_namespaces(uintptr_t namespaces, uintptr_t pidfd)
 	return fork_callback_syscall(SYS_clone, (long)fork_child, 0,
 		(long)namespaces | SIGCHLD | (pidfd ? 0x1000 : 0), (long)pidfd, 0, 0);
 }
+
+/* Legacy clone retains syscall 220 and its aliased parent_tid/PIDFD slot.
+ * Linux handles stores, namespace identity, permissions and alias rejection. */
+__attribute__((export_name("__wasm_fork_clone_options")))
+long __wasm_fork_clone_options(uintptr_t flags, uintptr_t parent, uintptr_t child)
+{
+	const uintptr_t allowed = UINT32_C(0x7f321000);
+	if (flags & ~allowed)
+		return -EOPNOTSUPP;
+	return fork_callback_syscall(SYS_clone, (long)fork_child, 0,
+		(long)flags | SIGCHLD, (long)parent, (long)child, 0);
+}
+
+/* Private execution transport into Linux's original clone3 implementation.
+ * Keep the canonical structure outside active Asyncify frames. The loader
+ * has already suspended this single-thread caller; Linux alone writes TIDs
+ * and allocates/publishes PIDFDs. No libc or application API is added. */
+__attribute__((export_name("__wasm_fork_clone3_native")))
+long __wasm_fork_clone3_native(uintptr_t flags, uintptr_t pidfd,
+	uintptr_t parent_tid, uintptr_t child_tid)
+{
+	static struct {
+		uint64_t flags, pidfd, child_tid, parent_tid, exit_signal;
+		uint64_t stack, stack_size, tls, set_tid, set_tid_size, cgroup;
+	} args __attribute__((aligned(8)));
+	_Static_assert(sizeof args == 88, "Linux clone_args aligned u64 ABI");
+	const uintptr_t allowed = UINT32_C(0x7f320000);
+	if (flags & ~allowed)
+		return -EOPNOTSUPP;
+	args.flags = flags | (pidfd ? 0x1000 : 0);
+	args.pidfd = pidfd;
+	args.child_tid = child_tid;
+	args.parent_tid = parent_tid;
+	args.exit_signal = SIGCHLD;
+	return fork_callback_syscall(SYS_clone3, (long)&args, sizeof args, 0, 0, 0, 0);
+}

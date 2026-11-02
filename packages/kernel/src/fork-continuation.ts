@@ -108,6 +108,11 @@ export function dispatch_fork_syscall(
   if (strict) return fork ? fork.kernelCall(invoke) : invoke();
   const zero = (value: WasmAddress | undefined) => value === 0 || value === 0n;
   if (nr === 435 || nr === 435n) {
+    // Only our suspended, capability-gated execution helper may call generic
+    // kernel clone3 through the legacy import. Ordinary callers still enter
+    // the flags-v2 continuation path and cannot bypass the admission gate.
+    if (layout === "callback-v1" && fork?.nativeClone3DispatchAllowed())
+      return fork.kernelCall(invoke);
     // clone3 has no legacy callback layout. Never let it reach copy_thread
     // without a user continuation; the old import explicitly reports ENOSYS.
     const result =
@@ -159,6 +164,10 @@ export class ForkContinuation {
   private result: number | null = null;
   private pidfd: WasmAddress | null = null;
   private namespaceFlags: WasmAddress | null = null;
+  private nativeRequest = false;
+  private legacyOptions = false;
+  private nativeActive = false;
+  private tids: CloneForkRequest["tids"];
   private kernelDepth = 0;
   private rewindingChild = false;
   private readonly childRewound: (() => void) | undefined;
@@ -167,6 +176,7 @@ export class ForkContinuation {
   private readonly address: WasmAddressType;
   private readonly syscallAbi: number;
   private readonly pidfdSupported: boolean;
+  private readonly nativeClone3Supported: boolean;
 
   constructor(
     instance: WebAssembly.Instance,
@@ -174,7 +184,9 @@ export class ForkContinuation {
     address: WasmAddressType,
     childRewound?: () => void,
     pidfdSupported = false,
+    nativeClone3Supported = false,
   ) {
+    this.nativeClone3Supported = nativeClone3Supported;
     this.pidfdSupported = pidfdSupported;
     this.childRewound = childRewound;
     this.e = instance.exports;
@@ -289,7 +301,7 @@ export class ForkContinuation {
     if (this.state() === 2) return this.syscallCheckpoint(allowed);
     if (this.state() !== 0 || this.descriptor !== null) return -16;
     const request = clone_fork_request(this.memory, this.address, args);
-    return typeof request === "number" ? request : this.requestCheckpoint(request, allowed);
+    return typeof request === "number" ? request : this.requestCheckpoint(request, allowed, false);
   }
 
   clone3Checkpoint(pointer: WasmAddress, size: WasmAddress, allowed: boolean): number {
@@ -301,11 +313,19 @@ export class ForkContinuation {
     if (this.state() !== 0 || this.descriptor !== null) return -16;
     const request = clone3_fork_request(this.memory, this.address, pointer, size);
     if (typeof request === "number") return request;
-    return this.requestCheckpoint(request, allowed);
+    return this.requestCheckpoint(request, allowed, true);
   }
 
-  private requestCheckpoint(request: CloneForkRequest, allowed: boolean): number {
+  private requestCheckpoint(request: CloneForkRequest, allowed: boolean, clone3: boolean): number {
+    const native =
+      clone3 &&
+      this.nativeClone3Supported &&
+      typeof this.e.__wasm_fork_clone3_native === "function";
+    const legacy = !clone3 && typeof this.e.__wasm_fork_clone_options === "function";
+    if (request.tids && !native && !legacy) return -95;
     if (
+      !native &&
+      !legacy &&
       request.namespaceFlags !== undefined &&
       typeof this.e.__wasm_fork_clone_namespaces !== "function"
     )
@@ -313,7 +333,9 @@ export class ForkContinuation {
     if (
       request.pidfd !== null &&
       (!this.pidfdSupported ||
-        (request.namespaceFlags === undefined &&
+        (!native &&
+          !legacy &&
+          request.namespaceFlags === undefined &&
           typeof this.e.__wasm_fork_clone_pidfd !== "function"))
     )
       return -95;
@@ -321,6 +343,9 @@ export class ForkContinuation {
     if (result === 0) {
       this.pidfd = request.pidfd;
       this.namespaceFlags = request.namespaceFlags ?? null;
+      this.nativeRequest = native;
+      this.legacyOptions = legacy;
+      this.tids = request.tids;
     }
     return result;
   }
@@ -356,6 +381,31 @@ export class ForkContinuation {
   clone(): WasmAddress {
     this.require(this.state() === 0 && this.descriptor !== null, "clone before unwind completed");
     try {
+      if (this.nativeRequest) {
+        this.nativeActive = true;
+        const zero = this.address === "i64" ? 0n : 0;
+        const flags = BigInt(this.namespaceFlags ?? zero) | BigInt(this.tids?.flags ?? zero);
+        return this.call(
+          "__wasm_fork_clone3_native",
+          this.address === "i64" ? flags : Number(flags),
+          this.pidfd ?? zero,
+          this.tids?.parent ?? zero,
+          this.tids?.child ?? zero,
+        );
+      }
+      if (this.legacyOptions) {
+        const zero = this.address === "i64" ? 0n : 0;
+        const flags =
+          BigInt(this.namespaceFlags ?? zero) |
+          BigInt(this.tids?.flags ?? zero) |
+          (this.pidfd === null ? 0n : 0x1000n);
+        return this.call(
+          "__wasm_fork_clone_options",
+          this.address === "i64" ? flags : Number(flags),
+          this.pidfd ?? this.tids?.parent ?? zero,
+          this.tids?.child ?? zero,
+        );
+      }
       if (this.namespaceFlags !== null)
         return this.call(
           "__wasm_fork_clone_namespaces",
@@ -369,7 +419,19 @@ export class ForkContinuation {
       // A negative result or trap must not leak options to a later plain fork.
       this.pidfd = null;
       this.namespaceFlags = null;
+      this.nativeRequest = false;
+      this.legacyOptions = false;
+      this.nativeActive = false;
+      this.tids = undefined;
     }
+  }
+
+  nativeClone3DispatchAllowed(): boolean {
+    return this.nativeActive && this.kernelDepth === 0;
+  }
+
+  nativeClone3EntryAllowed(): boolean {
+    return this.nativeActive && this.kernelDepth === 1;
   }
 
   resumeParent(value: WasmAddress): void {

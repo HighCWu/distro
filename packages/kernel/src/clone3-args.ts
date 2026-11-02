@@ -6,9 +6,11 @@ import { memory_bytes, type WasmAddress, type WasmAddressType } from "./wasm.ts"
 export interface CloneForkRequest {
   pidfd: WasmAddress | null;
   namespaceFlags?: WasmAddress;
+  tids?: { flags: WasmAddress; parent: WasmAddress; child: WasmAddress };
 }
 
 const namespaceMask = 0x7e020000n;
+const tidMask = 0x01300000n;
 
 function unsigned_word(value: WasmAddress, address: WasmAddressType): bigint {
   if (
@@ -24,11 +26,20 @@ function fork_options(
   address: WasmAddressType,
   flags: bigint,
   pidfd: bigint,
+  parentTid = 0n,
+  childTid = 0n,
 ): number | CloneForkRequest {
   const namespaces = flags & namespaceMask;
-  const options = namespaces
+  const options: Omit<CloneForkRequest, "pidfd"> = namespaces
     ? { namespaceFlags: address === "i64" ? namespaces : Number(namespaces) }
     : {};
+  if (flags & tidMask) {
+    // Linux performs TID stores (including its own fault behavior). Refuse
+    // only addresses that the Wasm architecture cannot represent faithfully.
+    if (address === "i32" && (parentTid > 0xffffffffn || childTid > 0xffffffffn)) return -14;
+    const p = (n: bigint) => (address === "i64" ? n : Number(n));
+    options.tids = { flags: p(flags & tidMask), parent: p(parentTid), child: p(childTid) };
+  }
   if (!(flags & 0x1000n)) return { pidfd: null, ...options };
   if (
     pidfd === 0n ||
@@ -56,19 +67,21 @@ export function clone_fork_request(
   } catch {
     return -95;
   }
-  if ((flags & 0xffn) !== 17n || flags & ~(namespaceMask | 0x1000n | 0xffn)) return -95;
-  if (!(flags & 0x1000n)) {
+  if ((flags & 0xffn) !== 17n || flags & ~(namespaceMask | tidMask | 0x1000n | 0xffn)) return -95;
+  if (!(flags & (0x1000n | tidMask))) {
     // No supported flag requests parent/child TID or TLS updates. Linux
     // ignores those registers (often unspecified in short syscall calls).
     return fork_options(memory, address, flags, 0n);
   }
   let pidfd: bigint;
   try {
-    pidfd = unsigned_word(args[2]!, address);
+    pidfd = flags & 0x1000n ? unsigned_word(args[2]!, address) : 0n;
+    const parent = flags & 0x100000n ? unsigned_word(args[2]!, address) : 0n;
+    const child = flags & 0x1200000n ? unsigned_word(args[3]!, address) : 0n;
+    return fork_options(memory, address, flags, pidfd, parent, child);
   } catch {
     return -14;
   }
-  return fork_options(memory, address, flags, pidfd);
 }
 
 export function clone3_fork_request(
@@ -118,10 +131,24 @@ export function clone3_fork_request(
   // Linux owns namespace configuration, capabilities and flag combinations.
   // These bits fit legacy clone's flags word. NEWTIME (0x80) does not: that
   // word encodes CSIGNAL there, so it must never be silently dropped.
-  if (flags & ~(namespaceMask | 0x1000n)) return -95;
+  if (flags & ~(namespaceMask | tidMask | 0x1000n)) return -95;
   for (let index = 1; index < 11; index++)
-    if (index !== 4 && !(index === 1 && flags & 0x1000n) && field(index) !== 0n) return -95;
+    if (
+      index !== 4 &&
+      !(index === 1 && flags & 0x1000n) &&
+      !(index === 2 && flags & 0x1200000n) &&
+      !(index === 3 && flags & 0x100000n) &&
+      field(index) !== 0n
+    )
+      return -95;
   // Do not truncate a clone_args u64 pointer to the module's pointer width.
   // Linux owns the actual write and fd allocation/rollback, not this parser.
-  return fork_options(memory, address, flags, field(1));
+  return fork_options(
+    memory,
+    address,
+    flags,
+    field(1),
+    flags & 0x100000n ? field(3) : 0n,
+    flags & 0x1200000n ? field(2) : 0n,
+  );
 }

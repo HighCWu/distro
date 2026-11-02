@@ -90,6 +90,7 @@ function fixture(
   syscallAbi = 1,
   pidfdSupported = true,
   registers = { stack: 32768, tls: 1024 },
+  nativeClone3 = false,
 ) {
   const pointer = (n: number): WasmAddress => (address === "i64" ? BigInt(n) : n);
   const memory = new WebAssembly.Memory({ initial: 1 });
@@ -148,9 +149,125 @@ function fixture(
     address,
     undefined,
     pidfdSupported,
+    nativeClone3,
   );
   return { controller, exports, memory, pointer, descriptor, calls };
 }
+
+for (const address of ["i32", "i64"] as const)
+  test(`${address}: legacy TID clone retains syscall 220 even with native clone3 available`, () => {
+    const { controller, exports, pointer: p } = fixture(address, true, 2, true, undefined, true);
+    const args = [0x01300011, 0, 9008, 9016, -1, 999].map(p);
+    Object.assign(exports, {
+      __wasm_fork_clone3_native: () => {
+        throw new Error("legacy clone changed syscall number");
+      },
+    });
+    assert.equal(
+      controller.cloneCheckpoint(args, true),
+      -95,
+      "native clone3 must not substitute for missing legacy TID transport",
+    );
+    let invoked = false;
+    Object.assign(exports, {
+      __wasm_fork_clone_options: (...options: WasmAddress[]) => {
+        assert.deepEqual(options, [p(0x01300000), p(9008), p(9016)]);
+        return dispatch_fork_syscall(
+          controller,
+          p(220),
+          [p(7), p(0), ...options, p(0)],
+          true,
+          () => {
+            invoked = true;
+            assert.equal(controller.nativeClone3EntryAllowed(), false);
+            return p(1234);
+          },
+        );
+      },
+    });
+    assert.equal(controller.cloneCheckpoint(args, true), 0);
+    controller.suspend();
+    assert.equal(controller.clone(), p(1234));
+    assert.equal(invoked, true);
+    controller.resumeParent(p(1234));
+    assert.equal(controller.cloneCheckpoint(args, true), 1234);
+  });
+
+for (const address of ["i32", "i64"] as const)
+  test(`${address}: native clone3 preserves distinct TIDs and scopes kernel dispatch`, () => {
+    const {
+      controller,
+      exports,
+      memory,
+      pointer: p,
+    } = fixture(address, true, 2, true, undefined, true);
+    const view = new DataView(memory.buffer);
+    view.setBigUint64(8192, 0x01301000n, true);
+    view.setBigUint64(8200, 9000n, true); // PIDFD
+    view.setBigUint64(8208, 9016n, true); // child_tid
+    view.setBigUint64(8216, 9008n, true); // parent_tid
+    view.setBigUint64(8224, 17n, true);
+    assert.equal(
+      controller.clone3Checkpoint(p(8192), p(88), true),
+      -95,
+      "a kernel capability alone cannot replace the execution helper",
+    );
+    let calls = 0;
+    Object.assign(exports, {
+      __wasm_fork_clone3_native: (...args: WasmAddress[]) => {
+        calls++;
+        assert.deepEqual(args, [p(0x01300000), p(9000), p(9008), p(9016)]);
+        assert.equal(controller.nativeClone3DispatchAllowed(), true);
+        return dispatch_fork_syscall(controller, p(435), [], true, () => {
+          assert.equal(controller.nativeClone3DispatchAllowed(), false);
+          assert.equal(controller.nativeClone3EntryAllowed(), true);
+          assert.equal(
+            dispatch_fork_syscall(controller, p(435), [], true, () => {
+              throw new Error("nested native clone3 reached kernel");
+            }),
+            p(-38),
+          );
+          return p(-11);
+        });
+      },
+    });
+    assert.equal(controller.clone3Checkpoint(p(8192), p(88), true), 0);
+    controller.suspend();
+    assert.equal(controller.clone(), p(-11));
+    assert.equal(calls, 1);
+    assert.equal(controller.nativeClone3DispatchAllowed(), false);
+    const oldKernel = new ForkContinuation(
+      { exports } as unknown as WebAssembly.Instance,
+      memory,
+      address,
+      undefined,
+      true,
+      false,
+    );
+    assert.equal(
+      oldKernel.clone3Checkpoint(p(8192), p(88), true),
+      -95,
+      "an execution helper cannot enable TID flags on an older kernel",
+    );
+    controller.resumeParent(p(-11));
+    assert.equal(controller.clone3Checkpoint(p(0), p(0), true), -11);
+    assert.equal(
+      dispatch_fork_syscall(controller, p(435), [], true, () => {
+        throw new Error("idle native clone3 reached kernel");
+      }),
+      p(-38),
+    );
+
+    Object.assign(exports, {
+      __wasm_fork_clone3_native: () => {
+        throw new Error("clone trap");
+      },
+    });
+    assert.equal(controller.clone3Checkpoint(p(8192), p(88), true), 0);
+    controller.suspend();
+    assert.throws(() => controller.clone(), /clone trap/);
+    assert.equal(controller.nativeClone3DispatchAllowed(), false);
+  });
 
 test("syscall import versions are explicit; an unknown version is not admitted", () => {
   const string = (value: string) => [value.length, ...new TextEncoder().encode(value)];

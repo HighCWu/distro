@@ -30,7 +30,7 @@ for (const address of ["i32", "i64"] as const)
       pidfd: p(8193),
       namespaceFlags: p(0x0c020000),
     });
-    for (const flags of [0, 7, 17 | 0x80, 17 | 0x100, 17 | 0x100000])
+    for (const flags of [0, 7, 17 | 0x80, 17 | 0x100, 17 | 0x80000])
       assert.equal(parse([flags, 0, 0, 0, 0, 0]), -95);
     assert.deepEqual(
       parse([17, 0, -1, -1, -1, 999]),
@@ -121,5 +121,25 @@ for (const address of ["i32", "i64"] as const)
     view.setBigUint64(256, 0x1000n | 0x4000000n, true);
     assert.deepEqual(parse(88), { pidfd: p(8193), namespaceFlags: p(0x4000000) });
     view.setBigUint64(256, 0x1000n | 0x100000n, true);
-    assert.equal(parse(88), -95, "parent-tid combination stays unsupported");
+    view.setBigUint64(280, 8200n, true);
+    assert.deepEqual(
+      parse(88),
+      { pidfd: p(8193), tids: { flags: p(0x100000), parent: p(8200), child: p(0) } },
+      "clone3 preserves separate PIDFD and parent TID outputs",
+    );
+    view.setBigUint64(256, 0x01300000n, true);
+    view.setBigUint64(264, 0n, true);
+    view.setBigUint64(272, 8216n, true);
+    assert.deepEqual(parse(88), {
+      pidfd: null,
+      tids: { flags: p(0x01300000), parent: p(8200), child: p(8216) },
+    });
+    assert.deepEqual(
+      clone_fork_request(memory, address, [p(0x01300011), p(0), p(8200), p(8216), p(-1), p(999)]),
+      { pidfd: null, tids: { flags: p(0x01300000), parent: p(8200), child: p(8216) } },
+    );
+    if (address === "i32") {
+      view.setBigUint64(280, 0x100000000n, true);
+      assert.equal(parse(88), -14, "a TID pointer is never truncated to wasm32");
+    }
   });

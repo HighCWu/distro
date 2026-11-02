@@ -511,6 +511,7 @@ export async function bootMachine(options: BootMachineOptions): Promise<Machine>
         call_handler: unavailable,
       },
       user_context_v1: user_context_imports(),
+      user_fork_v1: { entry: () => (memory_type.address === "i64" ? 0n : 0) },
       user_v2: {
         mremap_fixed: unavailable,
         mmap_fixed: unavailable,

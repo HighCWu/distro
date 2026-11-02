@@ -6,7 +6,8 @@ runtime/kernel packages that implement the optional `linux_fork_v1` protocol.
 
 This profile imports `linux.syscall_v2`, whose clone arguments use the Linux
 default order: flags, stack, parent TID, child TID, TLS. Only the single-thread
-fork shape (`SIGCHLD` with the other five-argument fields zero) is supported.
+fork shape with `SIGCHLD` and the default child stack is supported, with the
+namespace, PIDFD and TID options described below gated by matching support.
 The unused sixth syscall register is ignored. The existing pthread callback
 clone explicitly retains `linux.syscall`; import versions, not argument values,
 select the ABI. The default SDK continues to use the original import.
@@ -44,8 +45,8 @@ New execution objects export syscall continuation ABI 2. Use a matching runtime;
 ABI-1-only loaders reject these objects, and new loaders still accept ABI 1 for
 the old clone subset. Only ABI 2 enables `clone3` through the v2 import.
 The v2 import adapts Linux `clone3` (435) for the same limited fork shape:
-zero flags or capability-gated CLONE_PIDFD, SIGCHLD exit signal, no alternate
-stack, tid/TLS or CLONE_INTO_CGROUP options.
+zero flags or capability-gated options below, SIGCHLD exit signal, no alternate
+stack, TLS or CLONE_INTO_CGROUP options.
 The u64 `clone_args` layout is identical on both pointer widths. Sizes from 64
 through 65536 bytes are bounded and read-checked; unknown tail bytes must be zero.
 Malformed sizes/addresses/tails return EINVAL/EFAULT/E2BIG; other unsupported
@@ -70,12 +71,33 @@ The v2 import also accepts these namespace/PIDFD combinations through standard
 flags-first `clone` (220): flags, default stack, parent_tid/PIDFD, child_tid, TLS.
 SIGCHLD and the default stack are required. parent_tid is validated only as the
 CLONE_PIDFD output; unrequested parent/child TID and TLS registers, and the sixth
-unused register, are ignored as on Linux. TID/TLS flags remain unsupported.
+unused register, are ignored as on Linux. TLS flags remain unsupported.
 Legacy flags use their low 32 bits as in kernel clone; clone3 keeps its u64 flag
 field, and PIDFD pointers retain the module's full pointer width in either API.
 Captured options use the same capability gates and rollback as clone3;
 rewind completes the already admitted call. The callback import still uses its
 original callback layout and is never inferred from numeric flag values.
+
+With `native_clone3_fork_abi=1` from the kernel and the optional execution
+object export `__wasm_fork_clone3_native`, admitted clone3 requests enter Linux's
+original clone3 implementation. A private kernel/loader import supplies the
+suspended child entry; without it the kernel refuses before spawning a Worker.
+Older kernel/object pairs retain the existing callback transport for their
+previously supported shapes. This adds no Linux syscall or libc interface.
+
+Matching native support admits CLONE_PARENT_SETTID, CLONE_CHILD_SETTID and
+CLONE_CHILD_CLEARTID through clone3. Legacy clone uses the optional execution
+export `__wasm_fork_clone_options` with the kernel's existing callback syscall,
+preserving number 220 rather than substituting clone3/435. It can carry those
+TID flags without requiring the new native-clone3 kernel capability.
+Linux performs the TID stores;
+the loader does not write them. clone3 keeps PIDFD and parent_tid as separate
+addresses, while legacy clone aliases that register and Linux rejects the
+PIDFD/PARENT_SETTID alias. Child TIDs use the child's PID namespace; parent
+TIDs use the parent's namespace. Private memory remains private, so a child
+clear-TID action does not create a shared-memory wakeup facility for its parent.
+Custom stacks, TLS flags and multithreaded fork remain unsupported. Actual
+target acceptance of this increment is recorded separately from host checks.
 
 `share/linux-wasm-fork-sdk/profile.json` records the experimental profile.
 `build-materials/` retains the profile/musl recipes, compiler configuration,

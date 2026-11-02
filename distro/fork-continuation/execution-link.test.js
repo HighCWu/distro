@@ -16,8 +16,9 @@ for (const width of [32, 64]) {
     mkdirSync(join(dir, "sys"));
     writeFileSync(
       join(dir, "stdint.h"),
-      "typedef __UINTPTR_TYPE__ uintptr_t; typedef __UINT64_TYPE__ uint64_t;\n",
+      "typedef __UINTPTR_TYPE__ uintptr_t; typedef __UINT64_TYPE__ uint64_t;\n#define UINT32_C(x) x##U\n",
     );
+    writeFileSync(join(dir, "errno.h"), "#define EOPNOTSUPP 95\n");
     writeFileSync(join(dir, "stddef.h"), "#define offsetof(t, m) __builtin_offsetof(t, m)\n");
     writeFileSync(join(dir, "signal.h"), "#define SIGCHLD 17\n");
     writeFileSync(
@@ -108,6 +109,23 @@ for (const width of [32, 64]) {
     assert.equal(calls[0][0], p(220));
     assert.ok(calls[0][1] > 0, "continuation child callback");
     assert.deepEqual(calls[0].slice(2), [p(0), p(0x1011), pointer, p(0), p(0)]);
+    const parent = pointer + p(8),
+      child = pointer + p(16);
+    assert.equal(instance.exports.__wasm_fork_clone_options(p(0x01301000), pointer, child), p(-11));
+    assert.equal(calls[1][0], p(220), "legacy TID transport retains the clone syscall");
+    assert.deepEqual(calls[1].slice(2), [p(0), p(0x01301011), pointer, child, p(0)]);
+    assert.equal(
+      instance.exports.__wasm_fork_clone3_native(p(0x01300000), pointer, parent, child),
+      p(-11),
+    );
+    assert.equal(calls[2][0], p(435), "native transport uses generic Linux clone3");
+    assert.equal(calls[2][2], p(88));
+    const view = new DataView(instance.exports.memory.buffer, Number(calls[2][1]), 88);
+    assert.deepEqual(
+      Array.from({ length: 11 }, (_, index) => view.getBigUint64(index * 8, true)),
+      [0x01301000n, BigInt(pointer), BigInt(child), BigInt(parent), 17n, 0n, 0n, 0n, 0n, 0n, 0n],
+      "compiled C preserves u64 fields and distinct PIDFD/parent/child outputs",
+    );
     const collision = join(dir, "collision.c");
     writeFileSync(
       collision,

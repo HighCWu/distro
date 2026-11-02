@@ -85,6 +85,7 @@ let
       clone3ForkSubset = true;
       clone3NamespaceTransport = true;
       cloneNamespaceTransport = true;
+      nativeClone3Transport = true;
       binaryenVersion = pkgs.binaryen.version;
       continuationBufferBytes = 262144;
       overflowBehavior = "trap";

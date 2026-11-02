@@ -85,6 +85,7 @@ import {
   type WasmAddress,
   type WasmAddressType,
   wasm_pointer_to_number,
+  wasm_address_from_number,
   wasm_size_to_number,
   wasm_table_get,
   type UserContext,
@@ -157,6 +158,7 @@ function user_imports({
   imports_v2: Imports["user_v2"];
   imports_signal_v1: Imports["user_signal_v1"];
   imports_mmap_init_v1: Imports["user_mmap_init_v1"];
+  imports_fork_v1: Imports["user_fork_v1"];
 } {
   const HALT_USER = Symbol("halt user");
 
@@ -325,11 +327,25 @@ function user_imports({
           context.address,
           profile ? () => profile.childRewound() : undefined,
           get_kernel_instance().exports.fork_worker_abort_abi?.() === 1,
+          get_kernel_instance().exports.native_clone3_fork_abi?.() === 1,
         )
       : null;
   }
 
   const result: ReturnType<typeof user_imports> = {
+    imports_fork_v1: {
+      entry() {
+        const entry =
+          signal_depth === 0 && fork?.nativeClone3EntryAllowed()
+            ? context?.fork_continuation?.entry
+            : undefined;
+        return entry === undefined
+          ? kernel_address === "i64"
+            ? 0n
+            : 0
+          : wasm_address_from_number(wasm_pointer_to_number(entry), kernel_address);
+      },
+    },
     get context() {
       return context;
     },
@@ -778,6 +794,7 @@ function start({
     },
     user: user.imports,
     user_context_v1: user_context_imports(),
+    user_fork_v1: user.imports_fork_v1,
     user_v2: user.imports_v2,
     user_signal_v1: user.imports_signal_v1,
     user_mmap_init_v1: user.imports_mmap_init_v1,
