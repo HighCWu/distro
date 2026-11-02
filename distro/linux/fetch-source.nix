@@ -7,27 +7,14 @@
   hash,
 }:
 assert builtins.match "[0-9a-f]{40}" rev != null;
-pkgs.fetchzip {
+pkgs.fetchgit {
   name = "source";
-  inherit hash;
-  extension = "tar.gz";
-  stripRoot = true;
-  # GitHub can rate-limit concurrent public runners. Keep retries spaced and
-  # bounded rather than immediately exhausting both identical-tree mirrors.
-  # This bounds the retry window, not the duration of a successful transfer.
-  curlOptsList = [
-    "--retry"
-    "5"
-    "--retry-delay"
-    "15"
-    "--retry-max-time"
-    "180"
-  ];
-  # Both endpoints serve the same pinned tree. The unpacked hash remains
-  # mandatory; fallback must never accept a different revision or contents.
-  # Bypass github.com's archive redirect first, but retain it as a fallback.
-  urls = [
-    "https://codeload.github.com/${owner}/${repo}/tar.gz/${rev}"
-    "https://github.com/${owner}/${repo}/archive/${rev}.tar.gz"
-  ];
+  inherit rev hash;
+  # Both archive endpoints returned 429 for the pinned kernel in public CI.
+  # Git serves the same immutable source without that archive endpoint. Keep
+  # the independently verified recursive content hash, not a new unchecked
+  # checkout hash. Nix must reject any differing files, modes or symlinks.
+  url = "https://github.com/${owner}/${repo}.git";
+  fetchSubmodules = false;
+  leaveDotGit = false;
 }

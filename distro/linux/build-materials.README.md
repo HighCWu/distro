@@ -18,6 +18,11 @@ not necessarily the selected source when an override was used. Rebuilding also
 requires the matching distro sources,
 flake.lock, Nix dependencies and compiler sources.
 
+The default fetch helper uses Git at the exact commit, excludes `.git` and
+submodules, and requires the pinned recursive content hash. This avoids the
+public archive endpoint's observed rate limit without accepting a new tree.
+It does not replace hash verification with trust in a branch name.
+
 From the kernel package root, verify the binary and these materials with:
 
 ```sh
