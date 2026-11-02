@@ -28,7 +28,15 @@ for (const corpus of Object.keys(processStages))
     assert.throws(() => assertProcessOutput(output + "\n" + foreign, corpus));
   });
 
-for (const corpus of ["dash", "bash", "useraccess", "upper32", "altstack", "stacklegacy"])
+for (const corpus of [
+  "dash",
+  "bash",
+  "useraccess",
+  "upper32",
+  "altstack",
+  "stacklegacy",
+  "remotevm",
+])
   test(`${corpus}: browser controller requires two boots, closed browser and no late page error`, (t) => {
     const dir = mkdtempSync(join(tmpdir(), "process-browser-host-"));
     t.after(() => rmSync(dir, { recursive: true, force: true }));

@@ -44,7 +44,7 @@ export class RemoteMemoryRegistry {
     if (Atomics.compareExchange(reply, 0, PENDING, CLAIMED) !== PENDING) return;
     let result = -5;
     try {
-      result = this.perform(message.operation);
+      result = this.request(message.operation);
     } catch {
       /* Publish EIO on host errors. */
     }
@@ -52,6 +52,15 @@ export class RemoteMemoryRegistry {
     Atomics.store(reply, 0, DONE);
     // reply is a JS-owned SAB held by this handler, not freed kernel memory.
     Atomics.notify(reply, 0);
+  }
+
+  /** Main-agent kernel imports must not wait on their own message queue. */
+  request(operation: RemoteMemoryOperation): number {
+    try {
+      return this.perform(operation);
+    } catch {
+      return -5;
+    }
   }
 
   private perform(operation: RemoteMemoryOperation): number {

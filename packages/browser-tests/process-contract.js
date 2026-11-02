@@ -7,6 +7,12 @@ const prefixStage =
   "user-access: partial boundary copies preserve file positions, suffixes and pipe accounting pass";
 const recoveryStage = "user-access: zero lengths, valid retries and descriptor recovery pass";
 export const processStages = {
+  remotevm: [
+    "process-vm: permission refusal, independent child reads, vector ordering and page crossings pass",
+    "process-vm: partial transfers, kernel errors and actual remote writes pass",
+    "process-vm: child observation, reap, self access and later fork recovery pass",
+    "process-vm: pure user busy-loop reads, writes, memory growth and child observation pass",
+  ],
   altstack: [
     "signal-altstack: standard registration, query and kernel error paths pass",
     "signal-altstack: siginfo context, nested on-stack delivery and normal return pass",

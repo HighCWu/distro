@@ -379,6 +379,10 @@ let
           "process-pidfd-wasm64-firefox"
           "process-execfd-wasm64-chromium"
           "process-execfd-wasm64-firefox"
+          "process-remotevm-wasm32-chromium"
+          "process-remotevm-wasm32-firefox"
+          "process-remotevm-wasm64-chromium"
+          "process-remotevm-wasm64-firefox"
         ]
         (
           name:
@@ -398,6 +402,8 @@ let
                 "dash"
               else if lib.hasInfix "-execfd-" name then
                 "execfd"
+              else if lib.hasInfix "-remotevm-" name then
+                "remotevm"
               else
                 "pidfd";
             bits = if lib.hasInfix "-wasm32-" name then 32 else 64;
@@ -543,6 +549,8 @@ let
         else if corpus == "pidfd" then
           (if bits == 64 then fork-continuation-wasm64 else fork-continuation)
           .checks.process-control.runtimeAssets
+        else if corpus == "remotevm" then
+          (if bits == 64 then fork-continuation-wasm64 else fork-continuation).checks.process-vm.runtimeAssets
         else
           throw "unknown process browser corpus: ${corpus}";
       profile = pkgs.writeText "process-profile.json" (

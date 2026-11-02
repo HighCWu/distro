@@ -2,6 +2,7 @@
 
 import { listen_endpoint, post_endpoint } from "./endpoint.ts";
 import { platform } from "./platform.ts";
+import { request_remote_memory, type RemoteMemoryMessage } from "./remote-memory.ts";
 import {
   create_fork_profile,
   new_fork_profile_request,
@@ -112,6 +113,7 @@ export interface ForwardedInitMessage {
   fork_profile?: ForkProfileRequest;
 }
 export type WorkerMessage =
+  | RemoteMemoryMessage
   | {
       type: "spawn_worker";
       name: string;
@@ -209,7 +211,25 @@ function user_imports({
     return call_kernel_entry(get_kernel_instance().exports, kernel_address, invoke, true);
   }
 
+  let registered_memory: WebAssembly.Memory | undefined;
+  let registered_id = 0;
+  function register_remote_memory(): void {
+    if (!context) return;
+    const exports = get_kernel_instance().exports;
+    if (!exports.current_remote_memory_id || !exports.remote_memory_ready) return;
+    // During exec, task->mm may precede the JS context swap. The kernel's
+    // context_mm check must succeed before associating this Memory with it.
+    const id = kernel_leaf(() => exports.current_remote_memory_id!());
+    if (!id || (registered_id === id && registered_memory === context.memory)) return;
+    if (request_remote_memory(postMessage, { kind: "register", id, memory: context.memory }) !== 1)
+      return; // Retain the cooperative kernel route if registration failed.
+    if (kernel_leaf(() => exports.remote_memory_ready!(id)) !== 0) return;
+    registered_id = id;
+    registered_memory = context.memory;
+  }
+
   function user_callback<T>(invoke: () => T): T {
+    register_remote_memory();
     return call_user_callback(get_kernel_instance().exports, kernel_address, invoke);
   }
 
@@ -418,6 +438,7 @@ function user_imports({
       call() {
         for (;;) {
           try {
+            register_remote_memory();
             call_entry();
             if (fork?.unwinding()) {
               assert(context);
@@ -514,6 +535,7 @@ function user_imports({
       // signal handling:
       call_signal_handler(fn, sig) {
         assert(instance);
+        register_remote_memory();
 
         const { __indirect_function_table } = instance.exports;
         assert(__indirect_function_table instanceof WebAssembly.Table, "Invalid function table");
@@ -534,6 +556,7 @@ function user_imports({
       },
       call_siginfo_handler(trampoline, fn, sig) {
         assert(instance);
+        register_remote_memory();
 
         const { __indirect_function_table } = instance.exports;
         assert(__indirect_function_table instanceof WebAssembly.Table, "Invalid function table");
@@ -788,6 +811,28 @@ function start({
 
   const imports = {
     env: { memory },
+    remote_memory_v1: {
+      copy(id, user, kernel, length, write): number {
+        return request_remote_memory(
+          postMessage,
+          { kind: write ? "write" : "read", id, user, kernel, length },
+          { yieldKernel: instance.exports.copy_worker_wait },
+        );
+      },
+      release(id) {
+        // No kernel buffer is retained. Shutdown must not block the main
+        // agent or wait for a reply while tearing down this mm.
+        try {
+          postMessage({
+            type: "remote_memory",
+            operation: { kind: "release", id },
+            reply: new SharedArrayBuffer(8),
+          });
+        } catch {
+          /* Machine teardown also drops all retained references. */
+        }
+      },
+    },
     boot: {
       get_devicetree: unavailable,
       get_initramfs: unavailable,

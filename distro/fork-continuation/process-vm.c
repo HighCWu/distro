@@ -9,6 +9,7 @@
 #include <stdlib.h>
 #include <string.h>
 #include <sys/prctl.h>
+#include <sys/mman.h>
 #include <sys/syscall.h>
 #include <sys/uio.h>
 #include <sys/wait.h>
@@ -62,6 +63,68 @@ static void require(int ok, const char *what)
 	}
 	exit(1);
 #endif
+}
+
+static void check_busy_owner(void)
+{
+	struct busy_data { uint32_t stop, value; };
+	int ready[2], status;
+	uintptr_t address = 0;
+	require(pipe(ready) == 0, "busy owner pipe");
+	pid_t child = fork();
+	require(child >= 0, "fork busy owner");
+	if (!child) {
+		close(ready[0]);
+		size_t length = 4 * 65536;
+#ifdef __wasm__
+		/* A mapping larger than the entire prior memory forces growth,
+		 * and its final page lies beyond the registry's original buffer.
+		 */
+		size_t old_size = (size_t)__builtin_wasm_memory_size(0) * 65536;
+		length = old_size + 65536;
+#endif
+		unsigned char *mapping = mmap(NULL, length, PROT_READ | PROT_WRITE,
+			MAP_PRIVATE | MAP_ANONYMOUS, -1, 0);
+		if (mapping == MAP_FAILED) _exit(120);
+		struct busy_data *state = (void *)(mapping + length - 65536);
+#ifdef __wasm__
+		if ((uintptr_t)state < old_size ||
+		    (size_t)__builtin_wasm_memory_size(0) * 65536 <= old_size) _exit(121);
+#endif
+		state->value = 41;
+		__atomic_store_n(&state->stop, 0, __ATOMIC_RELEASE);
+		address = (uintptr_t)state;
+		if (write(ready[1], &address, sizeof address) != sizeof address) _exit(122);
+		/* No syscall, host callback or cooperative checkpoint in this loop. */
+		while (!__atomic_load_n(&state->stop, __ATOMIC_ACQUIRE)) {}
+		if (state->value != 73) _exit(123);
+		if (munmap(mapping, length) || close(ready[1])) _exit(124);
+		_exit(39);
+	}
+	active_child = child;
+	require(close(ready[1]) == 0 && read(ready[0], &address, sizeof address) == sizeof address,
+		"busy owner publishes grown address");
+	struct busy_data observed;
+	struct iovec local = {&observed, sizeof observed}, remote = {(void *)address, sizeof observed};
+	require(process_vm_readv(child, &local, 1, &remote, 1, 0) == sizeof observed &&
+		observed.stop == 0 && observed.value == 41, "read busy owner's grown region");
+	uint32_t value = 73;
+	local = (struct iovec){&value, sizeof value};
+	remote = (struct iovec){(void *)(address + sizeof(uint32_t)), sizeof value};
+	require(process_vm_writev(child, &local, 1, &remote, 1, 0) == sizeof value,
+		"write busy owner's grown region");
+	value = 0;
+	require(process_vm_readv(child, &local, 1, &remote, 1, 0) == sizeof value && value == 73,
+		"read back while owner stays in user code");
+	value = 1;
+	remote.iov_base = (void *)address;
+	require(process_vm_writev(child, &local, 1, &remote, 1, 0) == sizeof value,
+		"release busy owner through remote write");
+	require(waitpid(child, &status, 0) == child && WIFEXITED(status) && WEXITSTATUS(status) == 39,
+		"busy owner observes payload and exits");
+	active_child = 0;
+	require(close(ready[0]) == 0, "close busy owner pipe");
+	puts("process-vm: pure user busy-loop reads, writes, memory growth and child observation pass");
 }
 
 int main(void)
@@ -148,6 +211,7 @@ int main(void)
 	        "later fork and wait recovery");
 	active_child = 0;
 	puts("process-vm: child observation, reap, self access and later fork recovery pass");
+	check_busy_owner();
 	puts("::vm-test::pass");
 	fflush(stdout);
 #ifdef __wasm__

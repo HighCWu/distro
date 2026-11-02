@@ -2,6 +2,7 @@
 
 import { type DeviceTreeNode, generate_devicetree, section_properties } from "./devicetree.ts";
 import { platform, type WorkerHandle } from "./platform.ts";
+import { RemoteMemoryRegistry } from "./remote-memory.ts";
 import { cache_successful_load } from "./resource-cache.ts";
 import { checked_cpu_count } from "./boot-options.ts";
 import { create_copy_fault_plan, mark_copy_timeout } from "./copy-fault.ts";
@@ -199,6 +200,7 @@ export async function bootMachine(options: BootMachineOptions): Promise<Machine>
   let failed = false;
   let finish_error: unknown;
   let finish_promise: Promise<void> | undefined;
+  let remote_memory: RemoteMemoryRegistry | undefined;
 
   const closed_promise = Promise.withResolvers<void>();
   // Lifecycle promises on platform objects do not cause unhandled rejections
@@ -227,6 +229,7 @@ export async function bootMachine(options: BootMachineOptions): Promise<Machine>
       }
       try {
         await terminate_workers(workers);
+        remote_memory?.close();
       } catch (termination_error) {
         if (!failed) {
           failed = true;
@@ -262,6 +265,8 @@ export async function bootMachine(options: BootMachineOptions): Promise<Machine>
       memory_type.address,
     );
     assert(wasm_memory.buffer.byteLength === pages * PAGE_SIZE);
+    remote_memory = new RemoteMemoryRegistry(wasm_memory);
+    const memory_registry = remote_memory;
 
     const devicetree: DeviceTreeNode = {
       "#address-cells": memory_type.address === "i64" ? 2 : 1,
@@ -338,6 +343,9 @@ export async function bootMachine(options: BootMachineOptions): Promise<Machine>
         on_message(raw) {
           const message = raw as WorkerMessage;
           switch (message.type) {
+            case "remote_memory":
+              memory_registry.handle(message);
+              break;
             case "spawn_worker":
               try {
                 start_worker(message.name, {
@@ -488,6 +496,20 @@ export async function bootMachine(options: BootMachineOptions): Promise<Machine>
         get_user_context: unavailable,
         worker_exit: unavailable,
       }),
+      remote_memory_v1: {
+        copy(id, user, kernel, length, write) {
+          return memory_registry.request({
+            kind: write ? "write" : "read",
+            id,
+            user,
+            kernel,
+            length,
+          });
+        },
+        release(id) {
+          memory_registry.request({ kind: "release", id });
+        },
+      },
       user: {
         compile_begin: unavailable,
         compile_write: unavailable,

@@ -35,6 +35,8 @@ export interface Instance extends WebAssembly.Instance {
     /** Capability 1 joins unpublished Workers after a post-copy fork failure. */
     fork_worker_abort_abi?(): number;
     native_clone3_fork_abi?(): number;
+    current_remote_memory_id?(): number;
+    remote_memory_ready?(id: number): number;
     /** Release the quiescent file copy before rethrowing a user callback exception. */
     abort_file_mmap_v1?(): void;
   };
@@ -258,6 +260,10 @@ export type MachineTerminationReason =
 
 export interface Imports {
   env: { memory: WebAssembly.Memory };
+  remote_memory_v1: {
+    copy(id: number, user: WasmAddress, kernel: WasmAddress, length: number, write: number): number;
+    release(id: number): void;
+  };
   boot: {
     get_devicetree(buf: WasmAddress, size: WasmAddress): WasmAddress;
     get_initramfs(buf: WasmAddress, size: WasmAddress): number;
