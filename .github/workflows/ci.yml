@@ -288,6 +288,8 @@ jobs:
       contents: read
     steps:
       - uses: actions/checkout@v6
+      - name: Reclaim unused hosted toolchains before restoring the Nix store
+        run: bash distro/ci/reclaim-runner-space.sh
       - uses: nixbuild/nix-quick-install-action@v35
       - uses: nix-community/cache-nix-action@v7
         id: heavy-cache
