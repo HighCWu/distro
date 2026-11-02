@@ -9,15 +9,17 @@
   wasmBits ? 32,
   mmapCopyTest ? false,
   fileMmapCandidate ? false,
-  fileMmapStreamCandidate ? false,
+  # Historical argument name; the verified streaming path is now the normal
+  # build. Tests of the old bounded/closed policies must opt out explicitly.
+  fileMmapStreamCandidate ? true,
   vtimeCandidate ? false,
   llvm-toolchain-unwrapped,
   src ? import ./fetch-source.nix {
     inherit pkgs;
     owner = "HighCWu";
     repo = "linux";
-    rev = "1b81174a8c93bbfa4a630851ee6f17da4926a5d6";
-    hash = "sha256-4Lhcn73OWFLtb32hhSp+9w8yQfWPelZWwSax/duxsvk=";
+    rev = "59937da2c13854108f39ccf1a7f29535dc51b12f";
+    hash = "sha256-Ki1YF+Jk7YHX/WXdfs10KzTs4je+hR7GvLDwll5OOhY=";
   },
 }:
 
@@ -118,9 +120,18 @@ pkgs.stdenvNoCC.mkDerivation (finalAttrs: {
       ''
     }
     ${
-      if fileMmapStreamCandidate then
+      if fileMmapCandidate || fileMmapStreamCandidate then
         ''
           grep -qx 'CONFIG_WASM_FILE_MMAP=y' .config
+        ''
+      else
+        ''
+          ! grep -qx 'CONFIG_WASM_FILE_MMAP=y' .config
+        ''
+    }
+    ${
+      if fileMmapStreamCandidate then
+        ''
           grep -qx 'CONFIG_WASM_FILE_MMAP_STREAM=y' .config
         ''
       else

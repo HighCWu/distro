@@ -3,6 +3,7 @@
 
 import errno
 import mmap
+import os
 import sys
 import tempfile
 
@@ -146,6 +147,28 @@ def exercise_mapping_hints():
     print("Python mmap: advisory stack and populate flags preserve zero initialization, resize, advice and close")
 
 
+def exercise_file_copies():
+    size = 4 * mmap.PAGESIZE + 37
+    original = (bytes(range(256)) * ((size + 255) // 256))[:size]
+    with tempfile.TemporaryFile() as backing:
+        backing.write(original)
+        backing.flush()
+        backing.seek(7)
+        mapping = mmap.mmap(backing.fileno(), size, flags=mmap.MAP_PRIVATE,
+                            prot=mmap.PROT_READ | mmap.PROT_WRITE)
+        assert mapping[:] == original and backing.tell() == 7
+        mapping[0] ^= 0xFF
+        assert mapping.flush() is None
+        assert os.pread(backing.fileno(), size, 0) == original, "private mapping wrote back"
+        with mmap.mmap(backing.fileno(), size, flags=mmap.MAP_PRIVATE,
+                       prot=mmap.PROT_READ) as readonly:
+            assert readonly[:] == original
+            expect_error(TypeError, lambda: readonly.__setitem__(0, 1))
+    assert mapping[0] == (original[0] ^ 0xFF) and mapping[-1] == original[-1]
+    mapping.close()
+    print("Python mmap: ordinary private file copies, read-only API, no writeback and source-close lifetime verified")
+
+
 def exercise_kernel_boundaries():
     # CPython's default anonymous request is MAP_SHARED, not MAP_PRIVATE.
     error = expect_error(OSError, lambda: mmap.mmap(-1, mmap.PAGESIZE))
@@ -158,12 +181,12 @@ def exercise_kernel_boundaries():
             lambda: mmap.mmap(
                 backing.fileno(),
                 mmap.PAGESIZE,
-                flags=mmap.MAP_PRIVATE,
+                flags=mmap.MAP_SHARED,
                 prot=mmap.PROT_READ | mmap.PROT_WRITE,
             ),
         )
         assert error.errno == errno.EINVAL, error
-    print("Python mmap: default shared and file mappings rejected by default kernel")
+    print("Python mmap: shared anonymous and file mappings remain explicitly rejected")
 
 
 if __name__ == "__main__":
@@ -173,5 +196,6 @@ if __name__ == "__main__":
     exercise_flush()
     exercise_advice()
     exercise_mapping_hints()
+    exercise_file_copies()
     if sys.argv[1:]:
         exercise_kernel_boundaries()

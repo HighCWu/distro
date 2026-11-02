@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: MIT
 // Run the installed-system shell assertions against a host CLI. This validates
 // the workload and its failure checks, not the Wasm build, mapping ABI or kernel.
-// Only forced mmap rejection is simulated: the host kernel supports file mmap.
+// Closed-kernel refusals are simulated; positive mappings use the native CLI.
 import assert from "node:assert/strict";
 import { spawnSync } from "node:child_process";
 import { mkdtempSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
@@ -14,6 +14,7 @@ function run(
   fault = "",
   mapping = 'echo "zstd: error 34 : Invalid argument" >&2; return 34',
   mountStatus = 0,
+  expectation = "closed",
 ) {
   const directory = mkdtempSync(join(tmpdir(), "linux-wasm-zstd-workload-"));
   try {
@@ -30,7 +31,8 @@ function run(
       .replace("while :; do :; done", "exit 0");
     return spawnSync("sh", ["-s"], {
       // Never mount over the developer's /dev. Only the target test mounts it.
-      input: `mount() {
+      input: `export ZSTD_FILE_MMAP_EXPECT=${expectation}
+      mount() {
         test "$*" = "-t devtmpfs devtmpfs /dev" || return 99
         return ${mountStatus}
       }
@@ -56,9 +58,26 @@ test("Zstandard workload roundtrips malloc dictionaries, binary files and pipes"
     [...result.stdout.matchAll(/zstd: dictionary boundary (\d+) verified/g)].map((match) =>
       Number(match[1]),
     ),
-    [65535, 65536, 65537, 131071, 131072, 131073],
+    [65535, 65536, 65537, 131071, 131072, 131073, 4194311],
   );
   assert.doesNotMatch(result.stdout, /::vm-test::fail/);
+});
+
+test("ordinary workload requires successful forced private mapping in both directions", () => {
+  const result = run("", "", 0, "enabled");
+  assert.equal(result.status, 0, result.error?.message ?? result.stdout + result.stderr);
+  assert.match(
+    result.stdout,
+    /default kernel private file mapping and malloc cross-roundtrips verified/,
+  );
+  assert.match(result.stdout, /dictionary boundary 4194311 verified/);
+  assert.match(result.stdout, /::vm-test::pass/);
+});
+
+test("empty forced mapping output cannot pass the ordinary workload", () => {
+  const result = run("", "return 0", 0, "enabled");
+  assert.equal(result.status, 1, result.error?.message ?? result.stdout + result.stderr);
+  assert.doesNotMatch(result.stdout, /::vm-test::pass/);
 });
 
 test("missing test devices fails before running the compression workload", () => {

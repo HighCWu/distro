@@ -127,7 +127,7 @@ int main(void)
 		rejected(fd, page, PROT_READ | PROT_WRITE, MAP_PRIVATE, 0, error);
 		rejected(fd, page, PROT_WRITE, MAP_PRIVATE, 0, error);
 	}
-	puts(FILE_MMAP_MODE == 0 ? "file mmap: default kernel remains closed" :
+	puts(FILE_MMAP_MODE == 0 ? "file mmap: explicitly closed kernel refuses copies" :
 		"file mmap: old module refused without initialized-copy export");
 #else
 	int empty = open("/snapshot/empty", O_RDONLY);

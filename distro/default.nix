@@ -30,6 +30,24 @@ lib.makeScope (scope: lib.callPackageWith ({ inherit lib pkgs; } // scope)) (
       apk = self.apk-wasm64;
       image = self.image-wasm64;
     };
+    # Historical refusal controls use an explicitly closed kernel. They must
+    # not redefine the ordinary runtime's file-mapping policy.
+    vmTestClosed32 = self.vm-test.override {
+      kernel = self.kernel.override {
+        linux = self.linux.override {
+          fileMmapCandidate = false;
+          fileMmapStreamCandidate = false;
+        };
+      };
+    };
+    vmTestClosed64 = vmTestWasm64.override {
+      kernel = self.kernel-wasm64.override {
+        linux = self.linux-wasm64.override {
+          fileMmapCandidate = false;
+          fileMmapStreamCandidate = false;
+        };
+      };
+    };
     vtimeVm32 = self.vm-test.override {
       kernel = self.kernel.override { linux = self.linux.override { vtimeCandidate = true; }; };
     };
@@ -494,28 +512,39 @@ lib.makeScope (scope: lib.callPackageWith ({ inherit lib pkgs; } // scope)) (
     mmap-benchmark =
       let
         fileKernel = self.kernel.override {
-          linux = self.linux.override { fileMmapCandidate = true; };
+          linux = self.linux.override {
+            fileMmapCandidate = true;
+            fileMmapStreamCandidate = false;
+          };
         };
       in
       callPackage ./mmap-benchmark/package.nix {
         inherit fileKernel;
+        vm-test-closed = vmTestClosed32;
         vm-test-file = self.vm-test.override {
           kernel = fileKernel;
         };
         vm-test-copy = self.vm-test.override {
           kernel = self.kernel.override {
-            linux = self.linux.override { mmapCopyTest = true; };
+            linux = self.linux.override {
+              mmapCopyTest = true;
+              fileMmapStreamCandidate = false;
+            };
           };
         };
       };
     mmap-benchmark-wasm64 =
       let
         fileKernel = self.kernel-wasm64.override {
-          linux = self.linux-wasm64.override { fileMmapCandidate = true; };
+          linux = self.linux-wasm64.override {
+            fileMmapCandidate = true;
+            fileMmapStreamCandidate = false;
+          };
         };
       in
       callPackage ./mmap-benchmark/package.nix {
         inherit fileKernel;
+        vm-test-closed = vmTestClosed64;
         vm-test-file = vmTestWasm64.override {
           kernel = fileKernel;
         };
@@ -526,7 +555,10 @@ lib.makeScope (scope: lib.callPackageWith ({ inherit lib pkgs; } // scope)) (
         sdk = self.sdk-wasm64;
         vm-test-copy = vmTestWasm64.override {
           kernel = self.kernel-wasm64.override {
-            linux = self.linux-wasm64.override { mmapCopyTest = true; };
+            linux = self.linux-wasm64.override {
+              mmapCopyTest = true;
+              fileMmapStreamCandidate = false;
+            };
           };
         };
       };
@@ -684,9 +716,13 @@ lib.makeScope (scope: lib.callPackageWith ({ inherit lib pkgs; } // scope)) (
       vm-test = vmTestWasm64;
     };
     zstd = callPackage ./zstd/package.nix {
+      vm-test-closed = vmTestClosed32;
       vm-test-file = self.vm-test.override {
         kernel = self.kernel.override {
-          linux = self.linux.override { fileMmapCandidate = true; };
+          linux = self.linux.override {
+            fileMmapCandidate = true;
+            fileMmapStreamCandidate = false;
+          };
         };
       };
     };
@@ -698,9 +734,13 @@ lib.makeScope (scope: lib.callPackageWith ({ inherit lib pkgs; } // scope)) (
       llvm-runtimes = self.llvm-runtimes-wasm64;
       platform = self.platform-wasm64;
       vm-test = vmTestWasm64;
+      vm-test-closed = vmTestClosed64;
       vm-test-file = vmTestWasm64.override {
         kernel = self.kernel-wasm64.override {
-          linux = self.linux-wasm64.override { fileMmapCandidate = true; };
+          linux = self.linux-wasm64.override {
+            fileMmapCandidate = true;
+            fileMmapStreamCandidate = false;
+          };
         };
       };
     };

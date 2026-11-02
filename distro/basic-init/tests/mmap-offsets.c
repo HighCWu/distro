@@ -20,7 +20,7 @@
 #endif
 #endif
 
-/* File mappings remain disabled in this default-kernel workload. Anonymous
+/* File mappings are disabled in this explicit closed-kernel control. Anonymous
  * offsets retain the entry alignment rule but are not file-source offsets. */
 static void rejected(long result, const char *operation)
 {

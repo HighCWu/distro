@@ -16,10 +16,17 @@ test("Python anonymous buffer fixture runs on the native interpreter", () => {
     result.stdout,
     /resize growth, shrink, zero tail, exported buffers and error recovery verified/,
   );
-  assert.doesNotMatch(result.stdout, /default shared and file mappings rejected/);
+  assert.match(
+    result.stdout,
+    /ordinary private file copies, read-only API, no writeback and source-close lifetime verified/,
+  );
+  assert.doesNotMatch(
+    result.stdout,
+    /shared anonymous and file mappings remain explicitly rejected/,
+  );
 });
 
-test("target fixture requires explicit kernel rejection checks, without overriding mmap probes", () => {
+test("target fixture retains shared-mapping rejection checks without overriding mmap probes", () => {
   const recipe = readFileSync(new URL("./package.nix", import.meta.url), "utf8");
   assert.doesNotMatch(
     recipe,
@@ -41,6 +48,31 @@ test("target fixture requires explicit kernel rejection checks, without overridi
     browser,
     /Python mmap: resize growth, shrink, zero tail, exported buffers and error recovery verified/,
   );
+});
+
+test("private file fixture rejects accidental shared writeback", () => {
+  const fixture = fileURLToPath(new URL("./mmap-test.py", import.meta.url));
+  const result = spawnSync(
+    "python3",
+    [
+      "-c",
+      `
+import mmap, runpy, sys
+namespace = runpy.run_path(sys.argv[1])
+original = mmap.mmap
+def shared(fd, *args, **kwargs):
+    if fd >= 0:
+        kwargs["flags"] = mmap.MAP_SHARED
+    return original(fd, *args, **kwargs)
+mmap.mmap = shared
+namespace["exercise_file_copies"]()
+`,
+      fixture,
+    ],
+    { encoding: "utf8", timeout: 10000 },
+  );
+  assert.notEqual(result.status, 0);
+  assert.match(result.stderr, /private mapping wrote back/);
 });
 
 for (const mode of ["noop", "lost-prefix", "ignored-error", "stale-pages"])

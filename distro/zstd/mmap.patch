@@ -1,7 +1,7 @@
 Recognize POSIX dictionary mapping failures.
 
-The default Linux/Wasm kernel rejects file mappings. Ordinary dictionaries
-use the upstream malloc/read path; --no-mmap-dict also selects it explicitly.
+Ordinary dictionaries use the upstream malloc/read path; --no-mmap-dict also
+selects it explicitly. Private file mapping is supplied by the Linux/Wasm kernel.
 Keep --mmap-dict as a real mapping request, not a silently emulated success.
 POSIX mmap signals failure with MAP_FAILED, not NULL; reject it before handing
 the dictionary to the compressor. This source change remains under Zstandard's

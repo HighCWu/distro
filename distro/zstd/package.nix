@@ -11,6 +11,7 @@
   platform,
   image,
   vm-test,
+  vm-test-closed,
   vm-test-file,
 }:
 
@@ -109,10 +110,14 @@ stdenv.mkDerivation (finalAttrs: {
             snapshotFirstDisk = true;
             readOnlyDisks = true;
           };
-          # Having the export must not open the default kernel's mmap policy.
-          releaseConfig = vm-test.installedTest {
-            name = "zstd-export-default-${platform.wasmArch}";
-            init = ./roundtrip-test.sh;
+          # Having the export must not bypass an explicitly closed kernel.
+          releaseConfig = vm-test-closed.installedTest {
+            name = "zstd-export-closed-${platform.wasmArch}";
+            init = pkgs.writeScript "zstd-closed-roundtrip.sh" ''
+              #!/bin/busybox sh
+              export ZSTD_FILE_MMAP_EXPECT=closed
+              ${builtins.readFile ./roundtrip-test.sh}
+            '';
             contents = [
               candidate
               busybox

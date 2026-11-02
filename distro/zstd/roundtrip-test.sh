@@ -10,6 +10,14 @@ fail() {
 export PATH=/bin:/sbin:/usr/bin:/usr/sbin
 export LC_ALL=C
 
+# Only the explicitly closed-kernel control expects refusal. The normal
+# installed workload must exercise the ordinary private file-mapping path.
+ZSTD_FILE_MMAP_EXPECT=${ZSTD_FILE_MMAP_EXPECT:-enabled}
+case "$ZSTD_FILE_MMAP_EXPECT" in
+enabled | closed) ;;
+*) fail "unknown file mapping expectation" ;;
+esac
+
 # The root-pivot fixture unmounts its boot devtmpfs. Provide real device nodes
 # before using /dev/zero; the runtime's /dev/null alone is not sufficient.
 mount -t devtmpfs devtmpfs /dev || fail "mounting test devices failed"
@@ -29,8 +37,7 @@ zstd --no-mmap-dict -D /tmp/dictionary -q -c /tmp/data >/tmp/dict.zst || fail "m
 zstd -D /tmp/dictionary -d -q -c /tmp/dict.zst >/tmp/dict.out || fail "default dictionary decompression failed"
 cmp /tmp/data /tmp/dict.out || fail "default dictionary roundtrip differed"
 
-# Production kernels reject file mmap. Require the actual mapping failure,
-# not a crash, missing option/file or silent fallback; neither mode emits data.
+# A closed-kernel control must report the actual failure, not a crash or fallback.
 reject_mapping() {
   dictionary=$1
   compressed=$2
@@ -46,21 +53,35 @@ reject_mapping() {
     test ! -s /tmp/mapped.out || fail "rejected mapping emitted output: $mode $dictionary"
   done
 }
-reject_mapping /tmp/dictionary /tmp/dict.zst
-echo "zstd: malloc dictionaries verified; forced file mapping rejected"
+verify_mapping() {
+  dictionary=$1
+  compressed=$2
+  if test "$ZSTD_FILE_MMAP_EXPECT" = closed; then
+    reject_mapping "$dictionary" "$compressed"
+    return
+  fi
+  zstd --mmap-dict -D "$dictionary" -q -c /tmp/data >/tmp/mapped.zst || fail "forced mapping compression failed"
+  zstd --no-mmap-dict -D "$dictionary" -d -q -c /tmp/mapped.zst >/tmp/mapped.out || fail "mapped/malloc cross-decompression failed"
+  cmp /tmp/data /tmp/mapped.out || fail "mapped compression data differed"
+  zstd --mmap-dict -D "$dictionary" -d -q -c "$compressed" >/tmp/mapped.out || fail "forced mapping decompression failed"
+  cmp /tmp/data /tmp/mapped.out || fail "mapped decompression data differed"
+}
+verify_mapping /tmp/dictionary /tmp/dict.zst
+if test "$ZSTD_FILE_MMAP_EXPECT" = closed; then
+  echo "zstd: malloc dictionaries verified; forced file mapping rejected"
+else
+  echo "zstd: default kernel private file mapping and malloc cross-roundtrips verified"
+fi
 
-# Pin the real-application boundary corpus before enabling any file mmap.
-# The experimental copy ceiling is two 64-KiB pages, not an application ABI.
-# These are mutable files: future immutable-source admission must still reject
-# forced mmap here, even after a supported immutable mapping path is added.
-dd if=/dev/zero of=/tmp/dictionary-seed bs=131073 count=1 || fail "dictionary seed generation failed"
-for size in 65535 65536 65537 131071 131072 131073; do
+# Include the historical staging boundary and a multi-megabyte ordinary file.
+dd if=/dev/zero of=/tmp/dictionary-seed bs=4194311 count=1 || fail "dictionary seed generation failed"
+for size in 65535 65536 65537 131071 131072 131073 4194311; do
   head -c "$size" /tmp/dictionary-seed >/tmp/boundary-dictionary || fail "boundary dictionary preparation failed"
   test "$(wc -c </tmp/boundary-dictionary)" -eq "$size" || fail "boundary dictionary size mismatch"
   zstd -D /tmp/boundary-dictionary -q -c /tmp/data >/tmp/boundary.zst || fail "boundary default dictionary compression failed"
   zstd --no-mmap-dict -D /tmp/boundary-dictionary -d -q -c /tmp/boundary.zst >/tmp/boundary.out || fail "boundary malloc dictionary decompression failed"
   cmp /tmp/data /tmp/boundary.out || fail "boundary dictionary roundtrip differed"
-  reject_mapping /tmp/boundary-dictionary /tmp/boundary.zst
+  verify_mapping /tmp/boundary-dictionary /tmp/boundary.zst
   echo "zstd: dictionary boundary $size verified"
 done
 

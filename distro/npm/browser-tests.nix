@@ -968,7 +968,10 @@ let
       assets = (if bits == 32 then mmap-benchmark else mmap-benchmark-wasm64).fileBrowserAssets;
       zstdAssets = (if bits == 32 then zstd else zstd-wasm64).checks.file.browserAssets;
       testKernel = (if bits == 32 then kernel else kernel-wasm64).override {
-        linux = (if bits == 32 then linux else linux-wasm64).override { fileMmapCandidate = true; };
+        linux = (if bits == 32 then linux else linux-wasm64).override {
+          fileMmapCandidate = true;
+          fileMmapStreamCandidate = false;
+        };
       };
     in
     pkgs.runCommand "file-mmap-wasm${toString bits}-browser-tests" { } ''

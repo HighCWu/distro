@@ -8,6 +8,7 @@
   sdk,
   image,
   vm-test,
+  vm-test-closed,
   vm-test-copy,
   vm-test-file,
   fileKernel,
@@ -169,7 +170,7 @@ pkgs.runCommand "mmap-benchmark-artifacts-${platform.wasmArch}"
       init = "${executables}/correctness.wasm";
       cpus = 4;
     };
-    passthru.checks.offsets = vm-test.rawInitramfsTest {
+    passthru.checks.offsets = vm-test-closed.rawInitramfsTest {
       name = "mmap-offsets-${platform.wasmArch}";
       init = "${executables}/offsets.wasm";
     };
@@ -220,7 +221,7 @@ pkgs.runCommand "mmap-benchmark-artifacts-${platform.wasmArch}"
           passthru.ci.heavy = true;
           candidate = run vm-test-file "candidate";
           legacy = run vm-test-file "legacy";
-          releaseConfig = run vm-test "default";
+          releaseConfig = run vm-test-closed "default";
           regression = vm-test-copy.rawInitramfsTest {
             name = "mmap-vfs-lifetime-${platform.wasmArch}";
             init = "${executables}/vfs-lifetime.wasm";
