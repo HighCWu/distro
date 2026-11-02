@@ -39,7 +39,13 @@ static void *symbol(void *handle, const char *name)
     (void)dlerror();
     void *address = dlsym(handle, name);
     const char *error = dlerror();
-    require(address != 0 && !error, name);
+    if (!address || error) {
+        /* dlerror consumes its state. Preserve this result instead of asking
+         * require() to read it again and hiding the original loader failure. */
+        fprintf(stderr, "::vm-test::fail: dynamic loader: symbol=%s address=%p errno=%d dlerror=%s\n",
+                name, address, errno, error ? error : "none");
+        exit(1);
+    }
     return address;
 }
 int main(void)
