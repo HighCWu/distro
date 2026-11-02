@@ -8,6 +8,7 @@
 #include <linux/netlink.h>
 #include <linux/netlink_diag.h>
 #include <linux/sock_diag.h>
+#include <linux/unix_diag.h>
 #include <netinet/in.h>
 #include <poll.h>
 #include <stddef.h>
@@ -38,6 +39,63 @@ struct sample {
 	char address[128];
 };
 static char output[65537];
+static void diagnostic_dump(const struct sample *sample, int present);
+
+static int column_is(const char *row, unsigned column, const char *text)
+{
+	const char *end = strchr(row, '\n');
+	if (!end) end = row + strlen(row);
+	for (unsigned i = 0; i <= column; i++) {
+		while (row < end && isspace((unsigned char)*row)) row++;
+		const char *start = row;
+		while (row < end && !isspace((unsigned char)*row)) row++;
+		if (row == start) return 0;
+		if (i == column) return (size_t)(row - start) == strlen(text) &&
+			!memcmp(start, text, (size_t)(row - start));
+	}
+	return 0;
+}
+
+/* Upstream UNIX output uses the local-port column for the socket inode.
+ * Its optional ino: detail, when present, is the filesystem inode instead. */
+static const char *unix_inode_row(const char *text, unsigned long long inode)
+{
+	char token[32];
+	snprintf(token, sizeof(token), "%llu", inode);
+	for (const char *row = text; *row;) {
+		if (column_is(row, 0, "u_str") && column_is(row, 5, token)) return row;
+		const char *end = strchr(row, '\n');
+		if (!end) break;
+		row = end + 1;
+	}
+	return NULL;
+}
+
+static int unix_uid(const struct nlmsghdr *header, uint32_t *uid)
+{
+	size_t base = NLMSG_LENGTH(sizeof(struct unix_diag_msg));
+	if (header->nlmsg_len < base) return 0;
+	size_t remaining = header->nlmsg_len - base;
+	const unsigned char *cursor = (const unsigned char *)header + base;
+	int found = 0;
+	while (remaining) {
+		if (remaining < sizeof(struct nlattr)) return 0;
+		struct nlattr attr;
+		memcpy(&attr, cursor, sizeof(attr));
+		size_t aligned = NLA_ALIGN((size_t)attr.nla_len);
+		if (attr.nla_len < NLA_HDRLEN || attr.nla_len > remaining ||
+		    aligned > remaining) return 0;
+		if ((attr.nla_type & NLA_TYPE_MASK) == UNIX_DIAG_UID) {
+			if (found || attr.nla_type != UNIX_DIAG_UID ||
+			    attr.nla_len != NLA_HDRLEN + sizeof(*uid)) return 0;
+			memcpy(uid, cursor + NLA_HDRLEN, sizeof(*uid));
+			found = 1;
+		}
+		cursor += aligned;
+		remaining -= aligned;
+	}
+	return found;
+}
 
 /* Match a complete inode token on one row, never an inode's decimal prefix. */
 static const char *inode_row(const char *text, unsigned long long inode)
@@ -151,15 +209,20 @@ static struct sample create(const char *mode)
 static void verify(struct sample *samples, int present)
 {
 	for (int i = 0; i < 3; i++) {
+		int is_unix = !strcmp(samples[i].mode, "-x");
+		if (is_unix) diagnostic_dump(&samples[i], present);
 		ss(samples[i].mode);
-		const char *row = inode_row(output, samples[i].inode);
+		const char *row = is_unix ? unix_inode_row(output, samples[i].inode) :
+			inode_row(output, samples[i].inode);
 		if (present) {
-			if (!row || !row_has(row, samples[i].address)) {
+			char address[sizeof(samples[i].address) + 2];
+			snprintf(address, sizeof(address), "@%s", samples[i].address);
+			if (!row || !(is_unix ? column_is(row, 4, address) : row_has(row, samples[i].address))) {
 				printf("ss diagnostic: mode=%s inode=%llu expected=%s output=%.4096s\n",
 				       samples[i].mode, samples[i].inode, samples[i].address, output);
 				fail("own socket inode and address in real ss output");
 			}
-			if (getuid()) {
+			if (getuid() && !is_unix) {
 				char uid[48];
 				snprintf(uid, sizeof(uid), "uid:%lu", (unsigned long)getuid());
 				CHECK(row_has(row, uid), "ordinary user's kernel socket identity");
@@ -190,22 +253,34 @@ static struct sample create_netlink(void)
 	return sample;
 }
 
-static void netlink_dump(const struct sample *sample, int present)
+static void diagnostic_dump(const struct sample *sample, int present)
 {
+	int is_unix = !strcmp(sample->mode, "-x");
 	int fd = socket(AF_NETLINK, SOCK_RAW | SOCK_CLOEXEC, NETLINK_SOCK_DIAG);
 	CHECK(fd >= 0, "Netlink diagnostic socket");
 	struct sockaddr_nl kernel = {.nl_family = AF_NETLINK};
-	struct {
+	struct diagnostic_query {
 		struct nlmsghdr header;
-		struct netlink_diag_req request;
+		union {
+			struct netlink_diag_req netlink_request;
+			struct unix_diag_req unix_request;
+		} request;
 	} query = {
-		.header = {.nlmsg_len = sizeof(query), .nlmsg_type = SOCK_DIAG_BY_FAMILY,
+		.header = {.nlmsg_type = SOCK_DIAG_BY_FAMILY,
 			.nlmsg_flags = NLM_F_REQUEST | NLM_F_DUMP, .nlmsg_seq = 41},
-		.request = {.sdiag_family = AF_NETLINK, .sdiag_protocol = NETLINK_USERSOCK,
-			.ndiag_show = NDIAG_SHOW_GROUPS | NDIAG_SHOW_MEMINFO},
 	};
-	CHECK(sendto(fd, &query, sizeof(query), 0, (struct sockaddr *)&kernel,
-	             sizeof(kernel)) == sizeof(query), "request usersock diagnostic dump");
+	_Static_assert(offsetof(struct diagnostic_query, request) == NLMSG_HDRLEN, "diagnostic request layout");
+	if (is_unix) {
+		query.header.nlmsg_len = NLMSG_LENGTH(sizeof(struct unix_diag_req));
+		query.request.unix_request = (struct unix_diag_req){.sdiag_family = AF_UNIX,
+			.udiag_states = UINT32_MAX, .udiag_show = UDIAG_SHOW_UID};
+	} else {
+		query.header.nlmsg_len = NLMSG_LENGTH(sizeof(struct netlink_diag_req));
+		query.request.netlink_request = (struct netlink_diag_req){.sdiag_family = AF_NETLINK,
+			.sdiag_protocol = NETLINK_USERSOCK, .ndiag_show = NDIAG_SHOW_GROUPS | NDIAG_SHOW_MEMINFO};
+	}
+	CHECK(sendto(fd, &query, query.header.nlmsg_len, 0, (struct sockaddr *)&kernel,
+	             sizeof(kernel)) == (ssize_t)query.header.nlmsg_len, "request socket diagnostic dump");
 	int found = 0, done = 0;
 	for (unsigned packet = 0; !done && packet < 128; packet++) {
 		struct pollfd readiness = {.fd = fd, .events = POLLIN};
@@ -241,8 +316,20 @@ static void netlink_dump(const struct sample *sample, int present)
 				continue;
 			}
 			CHECK(header->nlmsg_type == SOCK_DIAG_BY_FAMILY &&
-			      header->nlmsg_len >= NLMSG_LENGTH(sizeof(struct netlink_diag_msg)),
+			      header->nlmsg_len >= NLMSG_LENGTH(is_unix ? sizeof(struct unix_diag_msg) : sizeof(struct netlink_diag_msg)),
 			      "Netlink diagnostic record, not an error or unrelated reply");
+			if (is_unix) {
+				struct unix_diag_msg record;
+				memcpy(&record, NLMSG_DATA(header), sizeof(record));
+				CHECK(record.udiag_family == AF_UNIX, "requested UNIX diagnostic family");
+				if (record.udiag_ino == sample->inode) {
+					uint32_t uid;
+					CHECK(record.udiag_type == SOCK_STREAM && !found &&
+					      unix_uid(header, &uid) && uid == getuid(), "unique UNIX inode, type and creator UID");
+					found = 1;
+				}
+				continue;
+			}
 			struct netlink_diag_msg record;
 			memcpy(&record, NLMSG_DATA(header), sizeof(record));
 			CHECK(record.ndiag_family == AF_NETLINK && record.ndiag_protocol == NETLINK_USERSOCK,
@@ -264,7 +351,7 @@ static void verify_netlink(const struct sample *sample, int present)
 {
 	/* ss's Netlink renderer omits inode/UID. Verify the kernel inode independently,
 	 * then require the real tool to render this same protocol/port, without procfs. */
-	netlink_dump(sample, present);
+	diagnostic_dump(sample, present);
 	ss("netlink");
 	int found = 0;
 	for (const char *row = output; *row;) {

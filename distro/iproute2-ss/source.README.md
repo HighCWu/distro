@@ -24,6 +24,9 @@ recipe and this documentation are MIT.
 The runtime check verifies live and closed UNIX/UDP/TCP/Netlink sockets and
 ordinary user access. For Netlink, raw diagnostic replies identify the inode
 and port, while ss independently renders the matching protocol and port.
+For UNIX sockets, the socket inode is the local-port column; an optional ino:
+detail describes a filesystem inode. Creator UID is verified through the
+standard UNIX diagnostic UID attribute because this ss renderer omits it.
 It does not mount procfs, so missing diagnostic handlers cannot
 be masked by ss reading `/proc/net` instead. This does not validate BPF,
 administrative socket destruction, every ss option, or dynamic linking.
