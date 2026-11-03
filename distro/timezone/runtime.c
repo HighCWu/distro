@@ -3,9 +3,12 @@
 #include <errno.h>
 #include <fcntl.h>
 #include <stdio.h>
+#include <stdint.h>
 #include <stdlib.h>
 #include <string.h>
 #include <sys/stat.h>
+#include <sys/prctl.h>
+#include <sys/syscall.h>
 #include <time.h>
 #include <unistd.h>
 
@@ -79,6 +82,33 @@ int main(int argc, char **argv)
     require(fd == baseline && close(fd) == 0 && unlink("/tz-pipe") == 0,
             "nonregular fallback closes fd and later valid loading recovers");
     puts("timezone: nonblocking FIFO refusal, UTC fallback and later TZif recovery pass");
+
+    /* Linux UAPI classic-BPF layouts, local to this test. Deny read before
+     * libc reloads a different TZif: only the standard file-mmap path can
+     * populate its contents without issuing a userspace read syscall. */
+    struct filter { uint16_t code; uint8_t jt, jf; uint32_t k; };
+    const struct filter instructions[] = {
+        { 0x20, 0, 0, 0 },
+        { 0x15, 0, 1, SYS_read },
+        { 0x06, 0, 0, 0x00050000 | EACCES },
+        { 0x06, 0, 0, 0x7fff0000 },
+    };
+    const struct { unsigned short len; const struct filter *filter; } program = {
+        sizeof instructions / sizeof instructions[0], instructions,
+    };
+    require(prctl(PR_SET_NO_NEW_PRIVS, 1L, 0L, 0L, 0L) == 0 &&
+            syscall(SYS_seccomp, 1L, 0L, (long)&program, 0L, 0L, 0L) == 0,
+            "install standard read-denial filter");
+    char byte;
+    errno = 0;
+    require(read(-1, &byte, 1) == -1 && errno == EACCES, "read actually denied before fd lookup");
+    select_zone(east);
+    check(summer, 21, 32400, 0, "JST");
+    select_zone(west);
+    check(summer, 8, -14400, 1, "EDT");
+    fd = open(west, O_RDONLY | O_CLOEXEC);
+    require(fd == baseline && close(fd) == 0, "mapped reload retains descriptor cleanup");
+    puts("timezone: standard private mappings reload TZif while read syscalls are denied pass");
 #endif
     puts("::vm-test::pass");
 #ifdef __wasm__
