@@ -8,6 +8,7 @@
 #include <limits.h>
 #include <stdio.h>
 #include <stdlib.h>
+#include <string.h>
 #include <unistd.h>
 
 static void require(int ok, const char *what)
@@ -18,21 +19,28 @@ static void require(int ok, const char *what)
 }
 int main(int argc, char **argv)
 {
-    require(argc == 3, "expected existing file and shared-directory paths");
+    require(argc == 4, "expected existing file, directory and mount-policy mode");
+    int backend_only = strcmp(argv[3], "backend-only") == 0;
+    require(backend_only || strcmp(argv[3], "mounted-readonly") == 0, "known mount-policy mode");
     require(access(argv[1], F_OK) == 0 && access(argv[1], R_OK) == 0 &&
             faccessat(AT_FDCWD, argv[1], R_OK, AT_EACCESS) == 0,
             "existence and read probes remain available");
     puts("readonly access: existence and read probes succeed on the read-only backend pass");
     errno = 0;
-    require(access(argv[1], W_OK) == -1 && errno == EROFS, "file write probe follows backend policy");
+    int result = access(argv[1], W_OK);
+    require(backend_only ? result == 0 : result == -1 && errno == EROFS, "file write probe follows Linux mount policy");
     errno = 0;
-    require(access(argv[1], R_OK | W_OK) == -1 && errno == EROFS, "mixed write probe follows backend policy");
+    result = access(argv[1], R_OK | W_OK);
+    require(backend_only ? result == 0 : result == -1 && errno == EROFS, "mixed write probe follows Linux mount policy");
     errno = 0;
-    require(access(argv[2], W_OK) == -1 && errno == EROFS, "directory write probe follows backend policy");
+    result = access(argv[2], W_OK);
+    require(backend_only ? result == 0 : result == -1 && errno == EROFS, "directory write probe follows Linux mount policy");
     errno = 0;
-    require(faccessat(AT_FDCWD, argv[1], W_OK, AT_EACCESS) == -1 && errno == EROFS,
-            "effective-ID write probe follows backend policy");
-    puts("readonly access: file, directory, mixed and effective-ID write probes return EROFS pass");
+    result = faccessat(AT_FDCWD, argv[1], W_OK, AT_EACCESS);
+    require(backend_only ? result == 0 : result == -1 && errno == EROFS,
+            "effective-ID write probe follows Linux mount policy");
+    puts(backend_only ? "readonly access: backend-only protection does not override virtiofs default permission probes pass" :
+         "readonly access: file, directory, mixed and effective-ID write probes return EROFS pass");
     errno = 0;
     require(open(argv[1], O_WRONLY | O_CLOEXEC) == -1 && errno == EROFS, "actual writable open is denied");
     int fd = open(argv[1], O_RDONLY | O_CLOEXEC);

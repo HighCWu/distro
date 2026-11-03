@@ -5,7 +5,7 @@ import { tmpdir } from "node:os";
 import path from "node:path";
 import { fileSystemDevice } from "@lowland/kernel";
 import { NodeFS } from "../src/node.ts";
-import { SeekMode, SystemError } from "../src/index.ts";
+import { MountFlags, SeekMode, SystemError } from "../src/index.ts";
 import { guest_test } from "./fixture.ts";
 import {
   load_file_timestamps,
@@ -23,6 +23,10 @@ guest_test("Node directory sharing through Linux", async (t, fixture) => {
     fileSystemDevice(filesystem, { tag: "node-test", cache: false }),
     fileSystemDevice(new NodeFS(shared, { readOnly: true }), {
       tag: "node-readonly",
+      cache: false,
+    }),
+    fileSystemDevice(new NodeFS(shared, { readOnly: true }), {
+      tag: "node-readonly-mounted",
       cache: false,
     }),
   ]);
@@ -77,29 +81,41 @@ guest_test("Node directory sharing through Linux", async (t, fixture) => {
       assert.equal((await stat(target)).mode & 0o777, 0o640);
     });
 
-    await t.test("standard access probes honor backend read-only policy", async () => {
-      await writeFile(path.join(shared, "access-probe"), "readable");
-      await guest.fs.mkdir("/tmp/readonly-shared");
-      // Deliberately do not set a read-only mount flag: the server's access
-      // policy must agree with its open/write policy on this ordinary mount.
-      await guest.mount("node-readonly", "/tmp/readonly-shared", { type: "virtiofs" });
-      await guest.fs.writeFile("/tmp/readonly-access", await load_readonly_access());
-      await guest.fs.chmod("/tmp/readonly-access", 0o755);
-      const process = await guest.exec([
-        "/tmp/readonly-access",
-        "/tmp/readonly-shared/access-probe",
-        "/tmp/readonly-shared",
-      ]);
-      const stdout = new Response(process.stdout).text();
-      const stderr = new Response(process.stderr).text();
-      assert.equal((await process.status).success, true, await stderr);
-      assert.deepEqual((await stdout).trim().split("\n"), [
-        "readonly access: existence and read probes succeed on the read-only backend pass",
-        "readonly access: file, directory, mixed and effective-ID write probes return EROFS pass",
-        "readonly access: actual open policy, read recovery and missing-path errors remain correct pass",
-      ]);
-      assert.equal(await readFile(path.join(shared, "access-probe"), "utf8"), "readable");
-    });
+    await t.test(
+      "standard access distinguishes backend protection from a read-only mount",
+      async () => {
+        await writeFile(path.join(shared, "access-probe"), "readable");
+        await guest.fs.writeFile("/tmp/readonly-access", await load_readonly_access());
+        await guest.fs.chmod("/tmp/readonly-access", 0o755);
+        for (const mounted of [false, true]) {
+          const target = mounted ? "/tmp/readonly-mounted" : "/tmp/readonly-shared";
+          await guest.fs.mkdir(target);
+          // Upstream virtio-fs checks local permissions by default; backend
+          // protection alone cannot set the Linux mount's read-only flag.
+          await guest.mount(mounted ? "node-readonly-mounted" : "node-readonly", target, {
+            type: "virtiofs",
+            flags: mounted ? MountFlags.RDONLY : 0,
+          });
+          const process = await guest.exec([
+            "/tmp/readonly-access",
+            target + "/access-probe",
+            target,
+            mounted ? "mounted-readonly" : "backend-only",
+          ]);
+          const stdout = new Response(process.stdout).text();
+          const stderr = new Response(process.stderr).text();
+          assert.equal((await process.status).success, true, await stderr);
+          assert.deepEqual((await stdout).trim().split("\n"), [
+            "readonly access: existence and read probes succeed on the read-only backend pass",
+            mounted
+              ? "readonly access: file, directory, mixed and effective-ID write probes return EROFS pass"
+              : "readonly access: backend-only protection does not override virtiofs default permission probes pass",
+            "readonly access: actual open policy, read recovery and missing-path errors remain correct pass",
+          ]);
+        }
+        assert.equal(await readFile(path.join(shared, "access-probe"), "utf8"), "readable");
+      },
+    );
 
     await t.test(
       "leading U+FEFF names and link targets remain distinct through Linux",

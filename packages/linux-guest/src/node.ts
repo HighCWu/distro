@@ -281,7 +281,8 @@ class Handle {
 }
 
 export interface NodeFSOptions {
-  /** Reject all operations which could modify the shared directory. */
+  /** Reject backend mutations. Also mount with MS_RDONLY for Linux read-only
+   * permission probes: upstream virtio-fs default_permissions can bypass ACCESS. */
   readOnly?: boolean;
 }
 
