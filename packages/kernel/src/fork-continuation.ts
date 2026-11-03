@@ -173,6 +173,7 @@ export class ForkContinuation {
   private cgroup: bigint | undefined;
   private setTid: number[] | undefined;
   private kernelDepth = 0;
+  private readonly userPollSupported: boolean;
   private rewindingChild = false;
   private readonly childRewound: (() => void) | undefined;
   private readonly e: WebAssembly.Exports;
@@ -194,6 +195,14 @@ export class ForkContinuation {
     this.pidfdSupported = pidfdSupported;
     this.childRewound = childRewound;
     this.e = instance.exports;
+    this.userPollSupported = typeof this.e.__wasm_fork_user_poll_abi === "function";
+    if (this.userPollSupported) {
+      this.require(
+        (this.e.__wasm_fork_user_poll_abi as CallableFunction).length === 0,
+        "invalid fork polling ABI signature",
+      );
+      this.require(this.call("__wasm_fork_user_poll_abi") === 1, "unsupported fork polling ABI");
+    }
     this.memory = memory;
     this.address = address;
     for (const name of functions)
@@ -419,6 +428,17 @@ export class ForkContinuation {
     } finally {
       this.kernelDepth--;
     }
+  }
+
+  userPollAllowed(insideSignal = false): boolean {
+    // Stopped unwind still owns a live descriptor while clone copies memory.
+    // Handler nesting is separately checked by the kernel/host callback gate.
+    return (
+      this.userPollSupported &&
+      this.state() === 0 &&
+      this.descriptor === null &&
+      (this.kernelDepth === 0 || insideSignal)
+    );
   }
 
   unwinding(): boolean {

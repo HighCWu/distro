@@ -4,6 +4,12 @@ This opt-in profile does not replace the default SDK. Build `sdk-fork-continuati
 or `sdk-fork-continuation-wasm64` from the distro flake. Use matching-width
 runtime/kernel packages that implement the optional `linux_fork_v1` protocol.
 
+The separate `sdk-fork-cooperative-poll` and `-wasm64` candidates combine this
+profile with application-only computation checkpoints, using an explicit private
+composition marker. They retain whole-link finalization and single-thread static
+C limits. Libc polling and dynamic linking are not enabled by this composition;
+see `../fork-poll/README.md` for its target acceptance requirements.
+
 This profile imports `linux.syscall_v2`, whose clone arguments use the Linux
 default order: flags, stack, parent TID, child TID, TLS. Only the single-thread
 fork shape with `SIGCHLD` and the default child stack is supported, with the

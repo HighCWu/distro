@@ -79,6 +79,28 @@ for (const width of [32, 64]) {
     const linked = run([callbackObject, rawObject, memoryObject, ...flags, "-o", output]);
     assert.equal(linked.status, 0, linked.stderr || String(linked.error));
     const module = new WebAssembly.Module(readFileSync(output));
+    assert.equal(
+      WebAssembly.Module.exports(module).some((x) => x.name === "__wasm_fork_user_poll_abi"),
+      false,
+    );
+    const combined = join(dir, "combined.wasm");
+    const pollLinked = run([
+      "-DWASM_FORK_USER_POLL=1",
+      execution,
+      rawObject,
+      memoryObject,
+      ...flags,
+      "-o",
+      combined,
+    ]);
+    assert.equal(pollLinked.status, 0, pollLinked.stderr || String(pollLinked.error));
+    const pollInstance = new WebAssembly.Instance(new WebAssembly.Module(readFileSync(combined)), {
+      linux: {
+        syscall: () => (width === 64 ? -11n : -11),
+        syscall_v2: () => (width === 64 ? -95n : -95),
+      },
+    });
+    assert.equal(pollInstance.exports.__wasm_fork_user_poll_abi(), 1);
     assert.deepEqual(
       WebAssembly.Module.imports(module)
         .map(({ module, name, kind }) => `${module}.${name}:${kind}`)

@@ -156,11 +156,11 @@ for (const address of ["i32", "i64"] as const) {
   });
 }
 
-test("poll module admission requires explicit ABI/globals and rejects fork/dynamic combinations", () => {
+test("poll admission requires explicit ABI/globals and a separate fork composition marker", () => {
   const text = (value: string) => [value.length, ...new TextEncoder().encode(value)];
   const section = (id: number, bytes: number[]) => [id, ...leb(bytes.length), ...bytes];
   const leb = (n: number): number[] => (n < 128 ? [n] : [(n & 127) | 128, ...leb(n >>> 7)]);
-  for (const variant of ["normal", "no-abi", "fork", "dynamic", "unknown"] as const) {
+  for (const variant of ["normal", "no-abi", "fork", "fork-poll", "dynamic", "unknown"] as const) {
     const imports = [
       ...text("linux_user_poll_v1"),
       ...text(variant === "unknown" ? "future" : "checkpoint"),
@@ -176,7 +176,8 @@ test("poll module admission requires explicit ABI/globals and rejects fork/dynam
       3,
       1,
       ...(variant !== "no-abi" ? [...text("__wasm_user_poll_abi"), 0, 0] : []),
-      ...(variant === "fork" ? [...text("__wasm_fork_abi"), 0, 0] : []),
+      ...(["fork", "fork-poll"].includes(variant) ? [...text("__wasm_fork_abi"), 0, 0] : []),
+      ...(variant === "fork-poll" ? [...text("__wasm_fork_user_poll_abi"), 0, 0] : []),
     ];
     const module = new WebAssembly.Module(
       new Uint8Array([
@@ -191,10 +192,17 @@ test("poll module admission requires explicit ABI/globals and rejects fork/dynam
         ...section(1, [1, 0x60, 0, 1, 0x7f]),
         ...section(2, [variant === "dynamic" ? 2 : 1, ...imports]),
         ...section(6, [2, 0x7f, 1, 0x41, 0, 0x0b, 0x7f, 1, 0x41, 0, 0x0b]),
-        ...section(7, [variant === "no-abi" ? 2 : variant === "fork" ? 4 : 3, ...exports]),
+        ...section(7, [
+          variant === "no-abi" ? 2 : variant === "fork" ? 4 : variant === "fork-poll" ? 5 : 3,
+          ...exports,
+        ]),
       ]),
     );
-    assert.equal(user_module_imports_supported(module), variant === "normal", variant);
+    assert.equal(
+      user_module_imports_supported(module),
+      variant === "normal" || variant === "fork-poll",
+      variant,
+    );
   }
 });
 

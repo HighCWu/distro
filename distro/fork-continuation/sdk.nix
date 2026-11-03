@@ -8,6 +8,7 @@
   sysroot,
   llvm-toolchain,
   sdk,
+  cooperativePoll ? false,
 }:
 let
   forkMusl = musl.override { enableForkContinuation = true; };
@@ -33,7 +34,12 @@ let
             ]
             ++ platform.compilerFlags
           )
-        } -O2 -Wall -Wextra -Werror -c ${./execution.c} -o $out/fork-execution.o
+        } ${lib.optionalString cooperativePoll "-DWASM_FORK_USER_POLL=1"} \
+          -O2 -Wall -Wextra -Werror -c ${./execution.c} -o $out/fork-execution.o
+        ${lib.optionalString cooperativePoll ''
+          clang ${lib.escapeShellArgs ([ "--target=${platform.targetTriple}" ] ++ platform.compilerFlags)} \
+            -O2 -Wall -Wextra -Werror -c ${../cooperative-poll/execution.c} -o $out/user-poll.o
+        ''}
       '';
   config = pkgs.writeText "fork-${platform.wasmArch}.cfg" (
     lib.concatMapStringsSep "\n" lib.escapeShellArg (
@@ -43,6 +49,10 @@ let
       ]
       ++ platform.compilerFlags
       ++ [ ("$" + "${execution}/fork-execution.o") ]
+      ++ lib.optionals cooperativePoll [
+        "-fsanitize-coverage=trace-pc,no-prune,edge"
+        ("$" + "${execution}/user-poll.o")
+      ]
       ++ map (flag: "$-Wl,${flag}") (
         platform.linkerFlags
         ++ [
@@ -50,6 +60,7 @@ let
           "--export=__tls_base"
           "--undefined=__wasm_fork_abi"
         ]
+        ++ lib.optional cooperativePoll "--export=__wasm_user_poll_abi"
       )
     )
     + "\n"
@@ -76,6 +87,7 @@ let
     builtins.toJSON {
       schemaVersion = 1;
       profile = "experimental-static-c-fork-v1";
+      applicationPolling = cooperativePoll;
       inherit (platform) addressBits targetTriple;
       defaultSdkUnchanged = true;
       requiresFinalization = true;
@@ -122,6 +134,7 @@ let
     mkdir -p $out/recipes $out/licenses
     cp -r ${./.} $out/recipes/fork-continuation
     cp -r ${../musl} $out/recipes/musl
+    ${lib.optionalString cooperativePoll "cp -r ${../cooperative-poll} $out/recipes/cooperative-poll"}
     cp ${../sdk/compiler.sh} $out/recipes/compiler.sh
     cp ${config} $out/recipes/compiler.cfg
     cp ${../config.site} $out/recipes/config.site
@@ -134,7 +147,7 @@ let
   '';
 in
 pkgs.symlinkJoin {
-  name = "linux-wasm-fork-sdk-${platform.wasmArch}";
+  name = "linux-wasm-fork-sdk-${platform.wasmArch}${lib.optionalString cooperativePoll "-poll"}";
   paths = [
     cc
     finalize

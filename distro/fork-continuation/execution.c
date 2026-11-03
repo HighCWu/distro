@@ -5,6 +5,11 @@
 #include <signal.h>
 #include <sys/syscall.h>
 
+#ifdef WASM_FORK_USER_POLL
+__attribute__((export_name("__wasm_fork_user_poll_abi")))
+int __wasm_fork_user_poll_abi(void) { return 1; }
+#endif
+
 __attribute__((import_module("linux"), import_name("syscall")))
 extern long fork_callback_syscall(long, long, long, long, long, long, long);
 

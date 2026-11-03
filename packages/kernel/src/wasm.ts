@@ -190,14 +190,21 @@ export function user_module_imports_supported(module: WebAssembly.Module): boole
   )
     return false;
   if (poll1 || poll2) {
-    if (
-      imports.some(
-        (entry) => entry.module === "linux_fork_v1" || entry.module === "linux_dlopen_v1",
-      )
-    )
-      return false;
+    if (imports.some((entry) => entry.module === "linux_dlopen_v1")) return false;
     const exports = WebAssembly.Module.exports(module);
-    if (exports.some((entry) => entry.name === "__wasm_fork_abi")) return false;
+    if (
+      exports.some((entry) => entry.name === "__wasm_fork_abi") ||
+      imports.some((entry) => entry.module === "linux_fork_v1")
+    ) {
+      if (
+        !poll1 ||
+        poll2 ||
+        !exports.some(
+          (entry) => entry.name === "__wasm_fork_user_poll_abi" && entry.kind === "function",
+        )
+      )
+        return false;
+    }
     if (
       ![
         ["__wasm_user_poll_abi", "function"],

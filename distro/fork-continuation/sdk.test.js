@@ -83,7 +83,7 @@ test("finalizer applies whole-link Asyncify with the explicit checkpoint import"
   assert.ok(args.includes("--asyncify"));
   assert.ok(
     args.includes(
-      "--pass-arg=asyncify-imports@linux_fork_v1.checkpoint,linux.syscall,linux.syscall_v2",
+      "--pass-arg=asyncify-imports@linux_fork_v1.checkpoint,linux.syscall,linux.syscall_v2,linux_user_poll_v1.checkpoint",
     ),
   );
   assert.ok(args.includes("--pass-arg=asyncify-asserts"));

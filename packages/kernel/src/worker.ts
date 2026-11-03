@@ -353,15 +353,18 @@ function user_imports({
       };
     const checkpoint = () => {
       if (!created) return -95;
+      if (fork && !fork.userPollAllowed(signal_depth !== 0)) return 0;
       const before = instance;
-      const result = call_user_poll(
-        kernel_instance.exports,
-        created.exports,
-        context.memory,
-        kernel_address,
-        !!fork || !!context.dynamic,
-        signal_depth !== 0,
-      );
+      const invoke = () =>
+        call_user_poll(
+          kernel_instance.exports,
+          created.exports,
+          context.memory,
+          kernel_address,
+          !!context.dynamic,
+          signal_depth !== 0,
+        );
+      const result = fork ? fork.kernelCall(invoke) : invoke();
       if (instance !== before) {
         call_entry = call_start;
         throw HALT_USER;

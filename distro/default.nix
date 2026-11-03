@@ -752,6 +752,22 @@ lib.makeScope (scope: lib.callPackageWith ({ inherit lib pkgs; } // scope)) (
       extraChecks = vtimeChecks vtimeVm64 self.toolchain-smoke-wasm64 self.fork-continuation-wasm64;
     };
     sdk-fork-continuation = callPackage ./fork-continuation/sdk.nix { };
+    sdk-fork-cooperative-poll = self.sdk-fork-continuation.override { cooperativePoll = true; };
+    sdk-fork-cooperative-poll-wasm64 = self.sdk-fork-continuation-wasm64.override {
+      cooperativePoll = true;
+    };
+    fork-poll = callPackage ./fork-poll/package.nix {
+      extraChecks.both = pkgs.runCommand "fork-poll-both-widths" { passthru.ci.heavy = true; } ''
+        test -e ${self.fork-poll.checks.runtime}
+        test -e ${self.fork-poll-wasm64.checks.runtime}
+        touch $out
+      '';
+    };
+    fork-poll-wasm64 = callPackage ./fork-poll/package.nix {
+      platform = self.platform-wasm64;
+      sdk-fork-cooperative-poll = self.sdk-fork-cooperative-poll-wasm64;
+      vm-test = vmTestWasm64;
+    };
     sdk-fork-continuation-wasm64 = callPackage ./fork-continuation/sdk.nix {
       platform = self.platform-wasm64;
       musl = self.musl-wasm64;
