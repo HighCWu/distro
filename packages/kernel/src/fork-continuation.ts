@@ -400,7 +400,11 @@ export class ForkContinuation {
         typeof this.e.__wasm_fork_clone3_features === "function"
           ? this.call("__wasm_fork_clone3_features")
           : 0;
-      if ((!native && !legacy) || !validFeatureBits(features) || !(features & 4096)) return -95;
+      const required =
+        (BigInt(request.tracingFlags) & 0x800000n ? 4096 : 0) |
+        (BigInt(request.tracingFlags) & 0x2000n ? 8192 : 0);
+      if ((!native && !legacy) || !validFeatureBits(features) || (features & required) !== required)
+        return -95;
     }
     if (request.parentFlags !== undefined) {
       const features =

@@ -19,7 +19,7 @@ export interface CloneForkRequest {
 const namespaceMask = 0x7e020000n;
 const sharingMask = 0x80040600n; // FS | FILES | SYSVSEM | IO, independent mm.
 const parentMask = 0x8000n;
-const tracingMask = 0x800000n; // CLONE_UNTRACED: Linux owns ptrace event policy.
+const tracingMask = 0x802000n; // UNTRACED | PTRACE: Linux owns tracing policy.
 const tidMask = 0x01300000n;
 const clearSighand = 0x100000000n;
 const newTime = 0x80n;
@@ -54,7 +54,7 @@ function fork_options(
     options.sharingFlags = address === "i64" ? flags & sharingMask : Number(flags & sharingMask);
   if (flags & parentMask) options.parentFlags = address === "i64" ? parentMask : Number(parentMask);
   if (flags & tracingMask)
-    options.tracingFlags = address === "i64" ? tracingMask : Number(tracingMask);
+    options.tracingFlags = address === "i64" ? flags & tracingMask : Number(flags & tracingMask);
   if (flags & (clearSighand | newTime | intoCgroup | noNewPrivs | autoReap | autoKill | emptyMount))
     options.flags64 =
       flags & (clearSighand | newTime | intoCgroup | noNewPrivs | autoReap | autoKill | emptyMount);

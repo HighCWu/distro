@@ -5,6 +5,7 @@
 #endif
 #include <errno.h>
 #include <linux/sched.h>
+#include <poll.h>
 #include <signal.h>
 #include <stdint.h>
 #include <stdio.h>
@@ -24,11 +25,13 @@ static long trace(int request, pid_t pid, uintptr_t data)
 {
     return ptrace(request, pid, (void *)0, (void *)data);
 }
-static pid_t create(int legacy, int untraced)
+static pid_t create(int legacy, unsigned long flags)
 {
-    unsigned long flags = untraced ? CLONE_UNTRACED : 0;
 #ifdef DROP_UNTRACED
-    flags = 0; // Negative control must detect a silently dropped flag.
+    flags &= ~CLONE_UNTRACED;
+#endif
+#ifdef DROP_PTRACE
+    flags &= ~CLONE_PTRACE;
 #endif
     if (legacy)
         return syscall(SYS_clone, (long)(flags | SIGCHLD), 0L, 0L, 0L, 0L, 0L);
@@ -46,7 +49,7 @@ static void scenario(int legacy, int untraced)
         require(trace(PTRACE_TRACEME, 0, 0) == 0, "trace caller");
         require(syscall(SYS_tkill, (long)getpid(), (long)SIGSTOP, 0L, 0L, 0L, 0L) == 0,
                 "stop before clone");
-        pid_t child = create(legacy, untraced);
+        pid_t child = create(legacy, untraced ? CLONE_UNTRACED : 0);
         require(child >= 0, "clone under active fork tracing");
         if (!child) _exit(37);
         require(write(report[1], &child, sizeof child) == sizeof child, "report actual clone PID");
@@ -100,6 +103,52 @@ static void scenario(int legacy, int untraced)
     require(waitpid(-1, &status, __WALL | WNOHANG) == -1 && errno == ECHILD,
             "no traced or ordinary children remain");
 }
+static void explicit_trace(int legacy, int untraced)
+{
+    int report[2], status;
+    require(pipe(report) == 0, "explicit tracing identity pipe");
+    pid_t caller = fork();
+    require(caller >= 0, "explicit tracing caller");
+    if (!caller) {
+        close(report[0]);
+        sigset_t blocked;
+        sigemptyset(&blocked); sigaddset(&blocked, SIGCHLD);
+        require(sigprocmask(SIG_BLOCK, &blocked, NULL) == 0, "block caller exit notification during handshake");
+        require(trace(PTRACE_TRACEME, 0, 0) == 0 &&
+                syscall(SYS_tkill, (long)getpid(), (long)SIGSTOP, 0L, 0L, 0L, 0L) == 0,
+                "explicit caller initial stop");
+        pid_t child = create(legacy, CLONE_PTRACE | (untraced ? CLONE_UNTRACED : 0));
+        require(child >= 0, "explicit ptrace clone");
+        if (!child) _exit(41);
+        require(write(report[1], &child, sizeof child) == sizeof child, "publish explicit child PID");
+        require(waitpid(child, &status, 0) == child && WIFEXITED(status) && WEXITSTATUS(status) == 41,
+                "caller reaps explicit child after tracer detaches");
+        _exit(42);
+    }
+    close(report[1]);
+    require(waitpid(caller, &status, 0) == caller && WIFSTOPPED(status) && WSTOPSIG(status) == SIGSTOP,
+            "explicit caller stopped before clone");
+    // No TRACEFORK option: inheritance must come from the caller's flag.
+    require(trace(PTRACE_SETOPTIONS, caller, PTRACE_O_EXITKILL) == 0 &&
+            trace(PTRACE_CONT, caller, 0) == 0, "continue without forced fork tracing");
+    struct pollfd ready = { .fd = report[0], .events = POLLIN };
+    require(poll(&ready, 1, 5000) == 1 && (ready.revents & POLLIN), "bounded explicit child report");
+    pid_t child;
+    require(read(report[0], &child, sizeof child) == sizeof child && child > 0 && child != caller,
+            "read explicit child identity");
+    pid_t waited = waitpid(child, &status, __WALL);
+    if (waited != child || !WIFSTOPPED(status))
+        fprintf(stderr, "clone untraced: explicit child wait returned %d expected %d status=%#x errno=%d\n",
+                waited, child, status, errno);
+    require(waited == child && WIFSTOPPED(status) && WSTOPSIG(status) == SIGSTOP &&
+            !((unsigned)status >> 16), "explicit PTRACE child inherits SIGSTOP without forced event");
+    require(trace(PTRACE_DETACH, child, 0) == 0, "detach explicitly inherited child");
+    require(waitpid(caller, &status, 0) == caller && WIFEXITED(status) && WEXITSTATUS(status) == 42,
+            "explicit caller completes after own reaping");
+    require(close(report[0]) == 0, "close explicit tracing report");
+    errno = 0;
+    require(waitpid(-1, &status, __WALL | WNOHANG) == -1 && errno == ECHILD, "explicit tracing cleanup");
+}
 int main(void)
 {
     setvbuf(stdout, NULL, _IONBF, 0);
@@ -111,6 +160,14 @@ int main(void)
     scenario(1, 0);
     scenario(1, 1);
     puts("clone untraced: legacy clone reports ordinary fork and suppresses UNTRACED event pass");
+#ifdef __wasm__
+    explicit_trace(0, 0);
+    explicit_trace(0, 1);
+    puts("clone untraced: native explicit PTRACE inherits tracing with and without UNTRACED pass");
+#endif
+    explicit_trace(1, 0);
+    explicit_trace(1, 1);
+    puts("clone untraced: legacy explicit PTRACE inherits tracing with and without UNTRACED pass");
     scenario(1, 0);
     puts("clone untraced: later ordinary tracing and process cleanup recover pass");
     puts("::vm-test::pass");

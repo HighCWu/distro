@@ -17,6 +17,11 @@ for (const address of ["i32", "i64"] as const)
       pidfd: null,
       tracingFlags: p(0x800000),
     });
+    for (const flags of [0x2000, 0x802000])
+      assert.deepEqual(parse([17 | flags, 0, -1, -1, -1, -1]), {
+        pidfd: null,
+        tracingFlags: p(flags),
+      });
     assert.deepEqual(parse([17 | 0x40000, 0, 0, 0, 0, 0]), {
       pidfd: null,
       sharingFlags: p(0x40000),
@@ -111,6 +116,10 @@ for (const address of ["i32", "i64"] as const)
     reset();
     view.setBigUint64(256, 0x800000n, true);
     assert.deepEqual(parse(88), { pidfd: null, tracingFlags: p(0x800000) });
+    for (const flags of [0x2000, 0x802000]) {
+      view.setBigUint64(256, BigInt(flags), true);
+      assert.deepEqual(parse(88), { pidfd: null, tracingFlags: p(flags) });
+    }
     reset();
     view.setBigUint64(256, 0x2000000000n, true);
     assert.deepEqual(parse(88), { pidfd: null, flags64: 0x2000000000n });
