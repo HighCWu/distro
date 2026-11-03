@@ -239,6 +239,7 @@ function may_write(flags: number) {
 
 class Node {
   parts: string[];
+  identity: string | undefined;
   attached = true;
   readonly files = new Set<FileHandle>();
 
@@ -282,6 +283,7 @@ export class NodeFS implements FS<Node, Handle> {
   readonly readOnly: boolean;
   readonly #root_path: Promise<string>;
   readonly #nodes = new Map<string, Node>();
+  readonly #inodes = new Map<string, Node>();
   readonly #ownedNodes = new WeakSet<Node>();
   #path_tail = Promise.resolve();
 
@@ -309,15 +311,38 @@ export class NodeFS implements FS<Node, Handle> {
     if (this.readOnly) throw new FSError("EROFS", "filesystem is read-only");
   }
 
-  #node(parts: string[]) {
+  #node(parts: string[], stats: BigIntStats) {
     const key = parts.join("/");
+    const identity = `${stats.dev}:${stats.ino}`;
     let node = this.#nodes.get(key);
+    if (node && node.identity !== undefined && node.identity !== identity) {
+      this.#forget(parts);
+      node = undefined;
+    }
+    // Directory aliases are not hard links and keep their path topology.
+    // An open, unlinked inode cannot be reused by the host filesystem.
+    const share = !stats.isDirectory() && stats.ino !== 0n;
+    if (!node && share) node = this.#inodes.get(identity);
     if (!node) {
       node = new Node(parts);
       this.#ownedNodes.add(node);
-      this.#nodes.set(key, node);
     }
+    node.identity = identity;
+    node.parts = parts;
+    node.attached = true;
+    this.#nodes.set(key, node);
+    if (share) this.#inodes.set(identity, node);
     return node;
+  }
+
+  #collect_inode(node: Node) {
+    if (
+      !node.attached &&
+      !node.files.size &&
+      node.identity &&
+      this.#inodes.get(node.identity) === node
+    )
+      this.#inodes.delete(node.identity);
   }
 
   #owned_node(node: Node) {
@@ -401,15 +426,15 @@ export class NodeFS implements FS<Node, Handle> {
       }
     }
     node.attached = false;
+    this.#collect_inode(node);
   }
 
   async lookup(parent: Node, name: string) {
     return await this.#path_operation(async () => {
       const parts = [...this.#parts(parent), valid_name(name)];
-      const node = this.#node(parts);
       try {
-        await this.#stats(node);
-        return node;
+        const stats = await node_call(lstat(await this.#validated_path(parts), { bigint: true }));
+        return this.#node(parts, stats);
       } catch (error) {
         if (error instanceof FSError && (error as { readonly errno: number }).errno === 2) {
           this.#forget(parts);
@@ -449,7 +474,10 @@ export class NodeFS implements FS<Node, Handle> {
     return await this.#path_operation(async () => {
       const parts = [...this.#parts(parent), valid_name(name)];
       await node_call(symlink(target, await this.#validated_path(parts)));
-      return this.#node(parts);
+      return this.#node(
+        parts,
+        await node_call(lstat(await this.#validated_path(parts), { bigint: true })),
+      );
     });
   }
 
@@ -538,8 +566,13 @@ export class NodeFS implements FS<Node, Handle> {
       const parts = [...this.#parts(parent), valid_name(name)];
       const target = await this.#validated_path(parts);
       const file = await node_call(open(target, host_flags, context.mode & 0o7777));
-      const node = this.#node(parts);
-      return { node, handle: new Handle(node, file) };
+      try {
+        const node = this.#node(parts, await node_call(file.stat({ bigint: true })));
+        return { node, handle: new Handle(node, file) };
+      } catch (error) {
+        await file.close().catch(() => {});
+        throw error;
+      }
     });
   }
 
@@ -582,6 +615,7 @@ export class NodeFS implements FS<Node, Handle> {
         await node_call(file.close());
       } finally {
         node.files.delete(file);
+        this.#collect_inode(node);
       }
     });
   }
@@ -622,7 +656,12 @@ export class NodeFS implements FS<Node, Handle> {
       for (const entry of await node_call(readdir(target, { withFileTypes: true }))) {
         result.push({
           name: entry.name,
-          node: this.#node([...parts, entry.name]),
+          node: this.#node(
+            [...parts, entry.name],
+            await node_call(
+              lstat(await this.#validated_path([...parts, entry.name]), { bigint: true }),
+            ),
+          ),
           type: entry.isFile()
             ? "file"
             : entry.isDirectory()
@@ -653,7 +692,10 @@ export class NodeFS implements FS<Node, Handle> {
           mode: context.mode & 0o7777,
         }),
       );
-      return this.#node(parts);
+      return this.#node(
+        parts,
+        await node_call(lstat(await this.#validated_path(parts), { bigint: true })),
+      );
     });
   }
 
@@ -661,7 +703,7 @@ export class NodeFS implements FS<Node, Handle> {
     this.#writable();
     await this.#path_operation(async () => {
       const parts = [...this.#parts(parent), valid_name(name)];
-      await this.#stats(this.#node(parts));
+      await node_call(lstat(await this.#validated_path(parts), { bigint: true }));
       await node_call(unlink(await this.#validated_path(parts)));
       this.#forget(parts);
     });
@@ -671,7 +713,7 @@ export class NodeFS implements FS<Node, Handle> {
     this.#writable();
     await this.#path_operation(async () => {
       const parts = [...this.#parts(parent), valid_name(name)];
-      await this.#stats(this.#node(parts));
+      await node_call(lstat(await this.#validated_path(parts), { bigint: true }));
       await node_call(rmdir(await this.#validated_path(parts)));
       this.#forget(parts);
     });

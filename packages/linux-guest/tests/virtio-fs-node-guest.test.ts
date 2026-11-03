@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: MIT
 import assert from "node:assert/strict";
-import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
+import { link, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { fileSystemDevice } from "@lowland/kernel";
@@ -19,6 +19,44 @@ guest_test("Node directory sharing through Linux", async (t, fixture) => {
   await guest.mount("node-test", "/tmp/shared", { type: "virtiofs" });
 
   try {
+    await t.test(
+      "host-created hard links have one Linux inode across lookup and readdir",
+      async () => {
+        await writeFile(path.join(shared, "host-source"), "original");
+        await link(path.join(shared, "host-source"), path.join(shared, "host-alias"));
+        const source = await guest.fs.stat("/tmp/shared/host-source");
+        const alias = await guest.fs.stat("/tmp/shared/host-alias");
+        assert.equal(alias.ino, source.ino);
+        assert.equal(alias.nlink, 2);
+        const held = await guest.fs.open("/tmp/shared/host-source", { read: true, write: true });
+        try {
+          const process = await guest.exec([
+            "sh",
+            "-c",
+            "test /tmp/shared/host-source -ef /tmp/shared/host-alias && ls -i /tmp/shared/host-source /tmp/shared/host-alias",
+          ]);
+          const stdout = new Response(process.stdout).text();
+          const stderr = new Response(process.stderr).text();
+          assert.equal((await process.status).success, true, await stderr);
+          const rows = (await stdout)
+            .trim()
+            .split("\n")
+            .map((row) => row.trim().split(/\s+/));
+          assert.equal(rows.length, 2);
+          assert.equal(rows[0]![0], rows[1]![0]);
+          await guest.fs.remove("/tmp/shared/host-source");
+          assert.equal((await held.stat()).nlink, 1);
+          assert.equal((await guest.fs.stat("/tmp/shared/host-alias")).ino, source.ino);
+          await held.seek(0, SeekMode.Start);
+          assert.equal(await held.write(new TextEncoder().encode("O")), 1);
+          await held.sync();
+          assert.equal(await readFile(path.join(shared, "host-alias"), "utf8"), "Original");
+        } finally {
+          await held.close();
+        }
+      },
+    );
+
     await t.test(
       "standard ln preserves hard-link inode, alias rename and open lifetime",
       async () => {

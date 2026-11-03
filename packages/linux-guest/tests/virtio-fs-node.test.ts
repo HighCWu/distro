@@ -87,6 +87,57 @@ test("node hard links preserve symlink identity without following its target", a
   assert.equal((await fs.getattr(source)).nlink, 1);
 });
 
+test("host aliases discovered after unlink retain the open inode and enumeration identity", async () => {
+  const directory = await mkdtemp(path.join(temporary, "discovered-links-"));
+  await writeFile(path.join(directory, "source"), "original");
+  await link(path.join(directory, "source"), path.join(directory, "alias"));
+  const fs = new NodeFS(directory);
+  const node = (await fs.lookup(fs.root, "source"))!;
+  const handle = await fs.open(node, linux_open.readwrite);
+  try {
+    await fs.unlink(fs.root, "source");
+    assert.equal((await fs.getattr(node)).nlink, 1);
+    const alias = await fs.lookup(fs.root, "alias");
+    assert.equal(
+      alias,
+      node,
+      "an open inode is still the same object when another name is discovered",
+    );
+    const dir = await fs.opendir(fs.root);
+    try {
+      const entries = await fs.readdir(fs.root, dir);
+      assert.equal(entries.find(({ name }) => name === "alias")?.node, node);
+    } finally {
+      await fs.releasedir(fs.root, dir);
+    }
+    await fs.write(node, handle, 0n, new TextEncoder().encode("O"));
+    assert.equal(await readFile(path.join(directory, "alias"), "utf8"), "Original");
+    await fs.unlink(fs.root, "alias");
+    await writeFile(path.join(directory, "alias"), "new");
+    assert.notEqual(await fs.lookup(fs.root, "alias"), node);
+    assert.equal((await fs.getattr(node)).nlink, 0);
+  } finally {
+    await fs.release(node, handle);
+  }
+});
+
+test("host replacement of a cached pathname does not rebind an open old inode", async () => {
+  const directory = await mkdtemp(path.join(temporary, "replaced-host-inode-"));
+  await writeFile(path.join(directory, "file"), "old");
+  await writeFile(path.join(directory, "staging"), "new");
+  const fs = new NodeFS(directory);
+  const old = (await fs.lookup(fs.root, "file"))!;
+  const handle = await fs.open(old, linux_open.readonly);
+  try {
+    await rename(path.join(directory, "staging"), path.join(directory, "file"));
+    assert.notEqual(await fs.lookup(fs.root, "file"), old);
+    assert.equal((await fs.getattr(old)).nlink, 0);
+    assert.equal(new TextDecoder().decode(await fs.read(old, handle, 0n, 3)), "old");
+  } finally {
+    await fs.release(old, handle);
+  }
+});
+
 test("node virtio-fs directory entries preserve file, directory and symlink kinds", async () => {
   const directory = await mkdtemp(path.join(temporary, "entry-types-"));
   await writeFile(path.join(directory, "file"), "data");
@@ -554,6 +605,7 @@ test("node virtio-fs hard-link rename keeps both names and cached nodes attached
   const left = await fs.lookup(fs.root, source);
   const right = await fs.lookup(fs.root, destination);
   assert(left && right);
+  assert.equal(left, right, "host-created hard links share the same backend inode");
   const handle = await fs.open(right, linux_open.readwrite);
   try {
     await fs.rename(fs.root, source, fs.root, destination);
@@ -562,7 +614,7 @@ test("node virtio-fs hard-link rename keeps both names and cached nodes attached
     assert.equal((await fs.getattr(left)).nlink, 2);
     assert.equal((await fs.getattr(right)).nlink, 2);
     await fs.unlink(fs.root, source);
-    await assert.rejects(fs.getattr(left), { errno: 2 });
+    assert.equal((await fs.getattr(left)).nlink, 1);
     assert.equal((await fs.getattr(right)).nlink, 1);
     assert.equal(await fs.write(right, handle, 0n, new TextEncoder().encode("O")), 1);
     assert.equal(await readFile(path.join(shared, destination), "utf8"), "Original");
