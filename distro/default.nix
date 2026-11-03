@@ -188,6 +188,13 @@ lib.makeScope (scope: lib.callPackageWith ({ inherit lib pkgs; } // scope)) (
       vm-test = vmTestWasm64;
       busybox = self.busybox-wasm64;
     };
+    landlock = callPackage ./landlock/package.nix { };
+    landlock-wasm64 = callPackage ./landlock/package.nix {
+      platform = self.platform-wasm64;
+      llvm-toolchain = self.llvm-toolchain-wasm64;
+      sysroot = self.sysroot-wasm64;
+      vm-test = vmTestWasm64;
+    };
     public-syscall = callPackage ./public-syscall/package.nix { };
     fuse-passthrough = callPackage ./fuse-passthrough/package.nix { };
     procps-vmstat = callPackage ./procps-vmstat/package.nix { };

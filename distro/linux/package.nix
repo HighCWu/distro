@@ -18,8 +18,8 @@
     inherit pkgs;
     owner = "HighCWu";
     repo = "linux";
-    rev = "c7b4f97efbc0bfcdcad20c15c5767e683b36a5ff";
-    hash = "sha256-J+IGyXgtAuYZ3NXirlLqh0bwCsBI25lLZOelghBwak4=";
+    rev = "45a10e5996cec705c5850e21f541b1ae787029f0";
+    hash = "sha256-zWc7zqO5BohnH61GHYRK8og0J1W6dSsZ2xeNwt/oVWI=";
   },
 }:
 
@@ -192,6 +192,10 @@ pkgs.stdenvNoCC.mkDerivation (finalAttrs: {
     done
     ! grep -qx 'CONFIG_CRYPTO_USER_API_RNG_CAVP=y' .config
     grep -qx 'CONFIG_FHANDLE=y' .config
+    for option in SECURITY SECURITY_NETWORK SECURITY_PATH SECURITY_LANDLOCK; do
+      grep -qx "CONFIG_$option=y" .config
+    done
+    grep -E '^CONFIG_LSM="([^",]+,)*landlock(,[^",]+)*"$' .config
     grep -qx 'CONFIG_HAVE_ARCH_SECCOMP=y' .config
     grep -qx 'CONFIG_SECCOMP=y' .config
     ! grep -qx 'CONFIG_HAVE_ARCH_SECCOMP_FILTER=y' .config
