@@ -7,7 +7,11 @@ import { fileSystemDevice } from "@lowland/kernel";
 import { NodeFS } from "../src/node.ts";
 import { SeekMode, SystemError } from "../src/index.ts";
 import { guest_test } from "./fixture.ts";
-import { load_file_timestamps, load_open_file_metadata } from "./assets.ts";
+import {
+  load_file_timestamps,
+  load_open_file_metadata,
+  load_file_creation_modes,
+} from "./assets.ts";
 
 guest_test("Node directory sharing through Linux", async (t, fixture) => {
   const shared = await mkdtemp(path.join(tmpdir(), "linux-guest-node-mount-"));
@@ -20,6 +24,20 @@ guest_test("Node directory sharing through Linux", async (t, fixture) => {
   await guest.mount("node-test", "/tmp/shared", { type: "virtiofs" });
 
   try {
+    await t.test("Linux creation umask is not filtered again by the host", async () => {
+      await guest.fs.writeFile("/tmp/file-creation-modes", await load_file_creation_modes());
+      await guest.fs.chmod("/tmp/file-creation-modes", 0o755);
+      const process = await guest.exec(["/tmp/file-creation-modes", "/tmp/shared"]);
+      const stdout = new Response(process.stdout).text();
+      const stderr = new Response(process.stderr).text();
+      assert.equal((await process.status).success, true, await stderr);
+      assert.deepEqual((await stdout).trim().split("\n"), [
+        "creation modes: zero Linux umask retains requested file and directory permissions pass",
+        "creation modes: existing O_CREAT preserves mode and exclusive collision changes nothing pass",
+        "creation modes: Linux umask still removes requested permissions and cleanup recovers pass",
+      ]);
+    });
+
     await t.test(
       "descriptor metadata survives unlink without retargeting a replacement",
       async () => {

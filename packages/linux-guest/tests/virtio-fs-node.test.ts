@@ -165,6 +165,59 @@ test("inode SETATTR without FH changes only the unlinked open file", async () =>
   await assert.rejects(fs.setattr(node, { mode: 0o777 }), { errno: 2 });
 });
 
+test(
+  "creation mode uses the Linux caller's mask without modifying host umask",
+  { concurrency: false },
+  async () => {
+    const directory = await mkdtemp(path.join(temporary, "creation-mask-"));
+    const fs = new NodeFS(directory);
+    // This test runner is isolated. Production NodeFS must never change this
+    // process-global value; a restrictive host mask exposes double filtering.
+    const original = process.umask(0o077);
+    const context = { mode: 0o666, uid: 0, gid: 0 };
+    try {
+      const made = await fs.create(
+        fs.root,
+        "file",
+        linux_open.readwrite | linux_open.exclusive,
+        context,
+      );
+      try {
+        assert.equal((await fs.getattr(made.node)).mode & 0o777, 0o666);
+      } finally {
+        await fs.release(made.node, made.handle);
+      }
+      const child = await fs.mkdir(fs.root, "directory", { ...context, mode: 0o777 });
+      assert.equal((await fs.getattr(child)).mode & 0o777, 0o777);
+      if (process.platform === "linux") {
+        await fs.setattr(child, { mode: 0o2770 });
+        const nested = await fs.mkdir(child, "nested", { ...context, mode: 0o777 });
+        assert.equal((await fs.getattr(nested)).mode & 0o2777, 0o2777, "retain inherited setgid");
+      }
+      await fs.setattr(made.node, { mode: 0o640 });
+      const existing = await fs.create(
+        fs.root,
+        "file",
+        linux_open.readwrite | linux_open.truncate,
+        { ...context, mode: 0o777 },
+      );
+      try {
+        assert.equal((await fs.getattr(existing.node)).mode & 0o777, 0o640);
+      } finally {
+        await fs.release(existing.node, existing.handle);
+      }
+      await assert.rejects(
+        fs.create(fs.root, "file", linux_open.readwrite | linux_open.exclusive, context),
+        { errno: 17 },
+      );
+      assert.equal((await fs.getattr(made.node)).mode & 0o777, 0o640);
+      assert.equal(process.umask(), 0o077);
+    } finally {
+      process.umask(original);
+    }
+  },
+);
+
 test("node virtio-fs directory entries preserve file, directory and symlink kinds", async () => {
   const directory = await mkdtemp(path.join(temporary, "entry-types-"));
   await writeFile(path.join(directory, "file"), "data");

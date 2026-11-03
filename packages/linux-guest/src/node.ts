@@ -572,9 +572,36 @@ export class NodeFS implements FS<Node, Handle> {
     return await this.#path_operation(async () => {
       const parts = [...this.#parts(parent), valid_name(name)];
       const target = await this.#validated_path(parts);
-      const file = await node_call(open(target, host_flags, context.mode & 0o7777));
+      let file: FileHandle;
+      let created = false;
+      for (;;) {
+        try {
+          file = await open(target, host_flags | constants.O_EXCL, context.mode & 0o7777);
+          created = true;
+          break;
+        } catch (error) {
+          if (host_flags & constants.O_EXCL || (error as NodeJS.ErrnoException)?.code !== "EEXIST")
+            filesystem_error(error);
+        }
+        try {
+          file = await open(target, host_flags & ~(constants.O_CREAT | constants.O_EXCL));
+          break;
+        } catch (error) {
+          // An external unlink can race the EEXIST observation. Retry actual
+          // creation rather than applying creation mode to an existing inode.
+          if ((error as NodeJS.ErrnoException)?.code !== "ENOENT") filesystem_error(error);
+        }
+      }
       try {
-        const node = this.#node(parts, await node_call(file.stat({ bigint: true })));
+        const stats = await node_call(file.stat({ bigint: true }));
+        if (created) {
+          // FUSE already applied the Linux caller's umask. Undo only the
+          // host umask's extra permission filtering, preserving inherited
+          // or kernel-filtered special bits and never changing global umask.
+          const mode = (Number(stats.mode) & 0o7000) | (context.mode & 0o777);
+          if ((Number(stats.mode) & 0o7777) !== mode) await node_call(file.chmod(mode));
+        }
+        const node = this.#node(parts, stats);
         return { node, handle: new Handle(node, file) };
       } catch (error) {
         await file.close().catch(() => {});
@@ -694,15 +721,16 @@ export class NodeFS implements FS<Node, Handle> {
     this.#writable();
     return await this.#path_operation(async () => {
       const parts = [...this.#parts(parent), valid_name(name)];
+      const target = await this.#validated_path(parts);
       await node_call(
-        mkdir(await this.#validated_path(parts), {
+        mkdir(target, {
           mode: context.mode & 0o7777,
         }),
       );
-      return this.#node(
-        parts,
-        await node_call(lstat(await this.#validated_path(parts), { bigint: true })),
-      );
+      const stats = await node_call(lstat(target, { bigint: true }));
+      const mode = (Number(stats.mode) & 0o7000) | (context.mode & 0o777);
+      if ((Number(stats.mode) & 0o7777) !== mode) await node_call(chmod(target, mode));
+      return this.#node(parts, stats);
     });
   }
 

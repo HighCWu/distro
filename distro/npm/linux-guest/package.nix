@@ -34,6 +34,7 @@ let
   getdents-inode = test-program "getdents-inode" ../../guest-tests/getdents-inode.c;
   file-timestamps = test-program "file-timestamps" ../../guest-tests/file-timestamps.c;
   open-file-metadata = test-program "open-file-metadata" ../../guest-tests/open-file-metadata.c;
+  file-creation-modes = test-program "file-creation-modes" ../../guest-tests/file-creation-modes.c;
 
   lifecycle-rootfs = vm-test.installedDisk {
     name = "linux-guest-lifecycle";
@@ -55,6 +56,7 @@ let
     "getdents-inode" = "${getdents-inode}/bin/getdents-inode";
     "file-timestamps" = "${file-timestamps}/bin/file-timestamps";
     "open-file-metadata" = "${open-file-metadata}/bin/open-file-metadata";
+    "file-creation-modes" = "${file-creation-modes}/bin/file-creation-modes";
   };
 
   package = pkgs.stdenvNoCC.mkDerivation {
