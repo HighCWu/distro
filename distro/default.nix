@@ -256,6 +256,26 @@ lib.makeScope (scope: lib.callPackageWith ({ inherit lib pkgs; } // scope)) (
       sdk-cooperative-poll = self.sdk-cooperative-poll-wasm64;
       vm-test = vmTestWasm64;
     };
+    cooperative-poll-cpu = self.cooperative-poll.override {
+      vm-test = vtimeVm32;
+      cpuTimers = true;
+      extraChecks.both =
+        pkgs.runCommand "cooperative-poll-cpu-both-widths"
+          {
+            passthru.ci.heavy = true;
+          }
+          ''
+            test -e ${self.cooperative-poll.checks.runtime}
+            test -e ${self.cooperative-poll-wasm64.checks.runtime}
+            test -e ${self.cooperative-poll-cpu.checks.runtime}
+            test -e ${self.cooperative-poll-cpu-wasm64.checks.runtime}
+            touch $out
+          '';
+    };
+    cooperative-poll-cpu-wasm64 = self.cooperative-poll-wasm64.override {
+      vm-test = vtimeVm64;
+      cpuTimers = true;
+    };
     sdk-brk-syscall = callPackage ./brk-syscall/sdk.nix { };
     brk-syscall = callPackage ./brk-syscall/package.nix {
       extraChecks.runtime-both =

@@ -4,11 +4,13 @@
   platform,
   sdk-cooperative-poll,
   vm-test,
+  cpuTimers ? false,
   extraChecks ? { },
 }:
 let
+  suffix = if cpuTimers then "-cpu" else "";
   program =
-    pkgs.runCommand "cooperative-poll-${platform.wasmArch}"
+    pkgs.runCommand "cooperative-poll${suffix}-${platform.wasmArch}"
       {
         nativeBuildInputs = [
           sdk-cooperative-poll
@@ -16,7 +18,7 @@ let
         ];
         passthru.checks = {
           runtime = vm-test.rawInitramfsTest {
-            name = "cooperative-poll-${platform.wasmArch}";
+            name = "cooperative-poll${suffix}-${platform.wasmArch}";
             init = "${program}/cooperative-poll.wasm";
             files."/poll-helper" = "${program}/cooperative-poll.wasm";
             cpus = 2;
@@ -26,7 +28,8 @@ let
       }
       ''
         mkdir $out
-        wasm-linux-cc -O2 -pthread -Wall -Wextra -Werror ${./runtime.c} -o $out/cooperative-poll.wasm
+        wasm-linux-cc ${if cpuTimers then "-DCOOPERATIVE_CPU_TIMERS=1" else ""} \
+          -O2 -pthread -Wall -Wextra -Werror ${./runtime.c} -o $out/cooperative-poll.wasm
         node ${../busybox/check-binary.mjs} ${../../packages/kernel/src/wasm_binary.ts} \
           $out/cooperative-poll.wasm ${toString platform.addressBits} ${toString platform.maximumMemoryBytes}
         chmod 0755 $out/cooperative-poll.wasm

@@ -12,12 +12,13 @@
 #include <stdlib.h>
 #include <string.h>
 #include <sys/prctl.h>
+#include <sys/resource.h>
 #include <sys/syscall.h>
 #include <sys/time.h>
 #include <sys/wait.h>
 #include <unistd.h>
 
-static _Thread_local volatile sig_atomic_t received, bad_handler, jump_enabled;
+static _Thread_local volatile sig_atomic_t received, bad_handler, jump_enabled, computing, expected_signal;
 static _Thread_local volatile unsigned marker = 11;
 static sigjmp_buf jump;
 static atomic_int ready;
@@ -31,14 +32,19 @@ static void require(int ok, const char *what)
 
 static void handler(int sig)
 {
-    if ((sig == SIGALRM && marker != 11) || (sig == SIGUSR1 && marker != 22)) bad_handler = 1;
+    if (!computing || sig != expected_signal ||
+        (sig == SIGUSR1 ? marker != 22 : marker != 11)) bad_handler = 1;
     received++;
-    if (jump_enabled) siglongjmp(jump, 1);
+    if (jump_enabled) {
+        computing = 0;
+        siglongjmp(jump, 1);
+    }
 }
 
 static void arm(void)
 {
     struct itimerval timer = { .it_value = { .tv_usec = 50000 } };
+    expected_signal = SIGALRM;
     require(setitimer(ITIMER_REAL, &timer, NULL) == 0, "arm timer");
 }
 
@@ -47,7 +53,13 @@ static void arm(void)
 static int spin(void)
 {
     uint64_t count = 0;
-    while (!received && count < (UINT64_C(1) << 34)) count++;
+    computing = 1;
+    while (!received && count < (UINT64_C(1) << 34)) {
+        count++;
+        /* Publish only after the child has entered its computation loop. */
+        if (marker == 22 && count == 4096) atomic_store(&ready, 1);
+    }
+    computing = 0;
     return received && !bad_handler;
 }
 
@@ -55,7 +67,7 @@ static void *thread_main(void *arg)
 {
     (void)arg;
     marker = 22;
-    atomic_store(&ready, 1);
+    expected_signal = SIGUSR1;
     return (void *)(uintptr_t)(!spin() || marker != 22);
 }
 
@@ -111,6 +123,26 @@ int main(int argc, char **argv)
     errno = 0;
     require(waitpid(child, &status, WNOHANG) == -1 && errno == ECHILD, "single reaping");
     puts("cooperative poll: strict seccomp pure-loop timer, raw exit and single reaping pass");
+#ifdef COOPERATIVE_CPU_TIMERS
+    require(sigaction(SIGVTALRM, &action, NULL) == 0 &&
+            sigaction(SIGPROF, &action, NULL) == 0, "install CPU timer handlers");
+    for (int timer = ITIMER_VIRTUAL; timer <= ITIMER_PROF; timer++) {
+        received = 0;
+        expected_signal = timer == ITIMER_VIRTUAL ? SIGVTALRM : SIGPROF;
+        struct rusage before, after;
+        require(getrusage(RUSAGE_SELF, &before) == 0, "initial CPU accounting");
+        struct itimerval value = { .it_value = { .tv_usec = 50000 } };
+        require(setitimer(timer, &value, NULL) == 0, "arm standard CPU timer");
+        require(spin(), "CPU timer in pure computation");
+        require(getrusage(RUSAGE_SELF, &after) == 0, "final CPU accounting");
+        long long user_us = (after.ru_utime.tv_sec - before.ru_utime.tv_sec) * 1000000LL +
+            after.ru_utime.tv_usec - before.ru_utime.tv_usec;
+        require(user_us >= 10000, "pure computation charged to user CPU time");
+        puts(timer == ITIMER_VIRTUAL ?
+            "cooperative poll: pure computation virtual timer and user CPU accounting pass" :
+            "cooperative poll: pure computation profiling timer and user CPU accounting pass");
+    }
+#endif
     puts("::vm-test::pass");
     for (;;) pause();
 }

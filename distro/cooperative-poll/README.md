@@ -38,6 +38,18 @@ TLS isolation, and a strict-seccomp child with a pure loop and raw thread exit.
 It must finish all four stages and machine shutdown before acceptance. Local
 compiler/host models do not establish this target result.
 
+`cooperative-poll-cpu` and `cooperative-poll-cpu-wasm64` pair the same application
+SDK with the existing separate generic virtual CPU-accounting kernel. They add
+ITIMER_VIRTUAL and ITIMER_PROF delivery from a syscall-free loop and require
+user CPU-time accumulation. `cooperative-poll-cpu-check-both` also includes the
+ordinary accounting configuration's two runtimes. This changes no default
+kernel configuration. Generic accounting measures logical scheduled intervals;
+it does not subtract host pauses/GC or promise native physical CPU accuracy.
+
+The consumer marks the compute interval and refuses a signal received before
+that interval. The child publishes its readiness from inside the loop, so a
+targeted signal cannot pass merely by arriving at thread startup.
+
 Existing uninstrumented library loops, custom coverage hooks, C++ exception
 interaction, dynamic loading, fork combinations and overhead need separate
 treatment. The current candidate primarily covers static C and ordinary pthread
