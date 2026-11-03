@@ -15,6 +15,7 @@ export const processStages = {
     "dynamic loader: cross-module SIMD signatures and typed forward calls pass",
     "dynamic loader: first-thread private TLS initialization, isolation and resident reuse pass",
     "dynamic loader: constructor dlopen, nested rejection recovery and single initialization pass",
+    "dynamic loader: real link maps, dependency scopes and metadata error recovery pass",
     "dynamic loader: missing/malformed rejection, descriptor recovery and cleanup pass",
   ],
   resolver: [

@@ -334,6 +334,7 @@ function user_imports({
     created = new WebAssembly.Instance(context.module, {
       linux_dlopen_v1: {
         abi: () => 1,
+        link_map_abi: () => 1,
         open: (path: WasmAddress, flags: number) => loader().open(path, flags),
         symbol: (handle: WasmAddress, name: WasmAddress) => loader().symbol(handle, name),
         valid: (handle: WasmAddress) => loader().valid(handle),

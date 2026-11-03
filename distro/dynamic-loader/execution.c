@@ -4,12 +4,21 @@
 #include <errno.h>
 #include <fcntl.h>
 #include <limits.h>
+#include <link.h>
+#include <stddef.h>
 #include <stdint.h>
 #include <stdlib.h>
 #include <sys/auxv.h>
 #include <sys/stat.h>
 #include <sys/statvfs.h>
 #include <unistd.h>
+
+_Static_assert(sizeof(struct link_map) == 5 * sizeof(void *) &&
+    sizeof(((struct link_map *)0)->l_addr) == sizeof(void *) &&
+    offsetof(struct link_map, l_name) == sizeof(void *) &&
+    offsetof(struct link_map, l_ld) == 2 * sizeof(void *) &&
+    offsetof(struct link_map, l_next) == 3 * sizeof(void *) &&
+    offsetof(struct link_map, l_prev) == 4 * sizeof(void *), "Wasm link_map execution ABI");
 
 #ifdef __wasm__
 #define EXPORT(name) __attribute__((export_name(name)))
@@ -25,10 +34,19 @@ static uint64_t file[5]; /* data, size, device, inode, positive errno */
 static char origin[PATH_MAX];
 static int current_fd = -1;
 
+#ifdef __wasm__
+__attribute__((import_module("linux_dlopen_v1"), import_name("link_map_abi")))
+extern int dynamic_link_map_abi(void);
+#endif
+
 EXPORT("__wasm_dlopen_io_v1")
 int __wasm_dlopen_io_v1(void)
 {
+#ifdef __wasm__
+	return dynamic_link_map_abi() == 1;
+#else
 	return 1;
+#endif
 }
 
 EXPORT("__wasm_dlopen_read")

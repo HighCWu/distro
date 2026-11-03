@@ -267,6 +267,56 @@ test("userspace modules may only import the supported host ABI", () => {
   assert.equal(user_module_imports_supported(unsupported), false);
 });
 
+test("link-map capability is explicitly named and still requires the complete dynamic bridge", () => {
+  const leb = (n: number) => {
+    const bytes: number[] = [];
+    do {
+      let byte = n & 127;
+      n = Math.floor(n / 128);
+      if (n) byte |= 128;
+      bytes.push(byte);
+    } while (n);
+    return bytes;
+  };
+  const text = (s: string) => [...leb(s.length), ...new TextEncoder().encode(s)];
+  const section = (id: number, bytes: number[]) => [id, ...leb(bytes.length), ...bytes];
+  const module = (feature: string, complete = true, kind = 0) => {
+    const names = complete
+      ? ["io_v1", "read", "read_release", "origin", "fd", "allocate", "deallocate", "library_path"]
+      : [];
+    return new WebAssembly.Module(
+      new Uint8Array([
+        0,
+        97,
+        115,
+        109,
+        1,
+        0,
+        0,
+        0,
+        ...section(1, [1, 0x60, 0, 1, 0x7f]),
+        ...section(2, [
+          1,
+          ...text("linux_dlopen_v1"),
+          ...text(feature),
+          kind,
+          ...(kind === 0 ? [0] : [0x7f, 0]),
+        ]),
+        ...section(3, [1, 0]),
+        ...section(7, [
+          names.length,
+          ...names.flatMap((name) => [...text("__wasm_dlopen_" + name), 0, kind === 0 ? 1 : 0]),
+        ]),
+        ...section(10, [1, 4, 0, 0x41, 1, 0x0b]),
+      ]),
+    );
+  };
+  assert.equal(user_module_imports_supported(module("link_map_abi")), true);
+  assert.equal(user_module_imports_supported(module("link_map_abi", false)), false);
+  assert.equal(user_module_imports_supported(module("link_map_abi", true, 3)), false);
+  assert.equal(user_module_imports_supported(module("link_map_abi_v2")), false);
+});
+
 test("userspace memory must match the kernel address width", () => {
   const memory32 = Uint8Array.from(
     "0061736d0100000002100103656e76066d656d6f727902030101".match(/../g)!,

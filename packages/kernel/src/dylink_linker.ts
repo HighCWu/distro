@@ -192,6 +192,7 @@ export function link_dylink_graph(options: {
     "__wasm_apply_tls_relocs",
     "__wasm_apply_global_tls_relocs",
   ]);
+  let objectFunctionCount = 0;
   for (const name of scope) {
     const record = modules.get(name)!;
     const flags = new Map(record.metadata.exports.map((symbol) => [symbol.name, symbol.flags]));
@@ -200,11 +201,41 @@ export function link_dylink_graph(options: {
       if (internal.has(symbol.name)) continue;
       const attributes = flags.get(symbol.name) ?? 0;
       if (attributes & 6) continue;
+      if (symbol.kind === "function") objectFunctionCount++;
       const definition: Symbol = { owner: record, kind: symbol.kind };
       if (!symbols.has(symbol.name)) symbols.set(symbol.name, definition);
       if (!ownSymbols.has(symbol.name)) ownSymbols.set(symbol.name, definition);
     }
   }
+  const scopeFrom = (root: string) => {
+    if (!modules.has(root)) throw new Error("unknown dynamic object");
+    const names = [root],
+      seen = new Set(names);
+    for (let index = 0; index < names.length; index++)
+      for (const name of modules.get(names[index]!)!.dependencies)
+        if (!seen.has(name)) {
+          seen.add(name);
+          names.push(name);
+        }
+    return names;
+  };
+  const symbolsFrom = (root: string) => {
+    if (root === options.root) return ownSymbols;
+    const found = new Map<string, Symbol>();
+    for (const name of scopeFrom(root)) {
+      const record = modules.get(name)!;
+      const flags = new Map(record.metadata.exports.map((symbol) => [symbol.name, symbol.flags]));
+      for (const entry of record.exports)
+        if (
+          (entry.kind === "function" || entry.kind === "global") &&
+          !internal.has(entry.name) &&
+          !((flags.get(entry.name) ?? 0) & 6) &&
+          !found.has(entry.name)
+        )
+          found.set(entry.name, { owner: record, kind: entry.kind });
+    }
+    return found;
+  };
   const functionGOT = new Set<string>();
   for (const record of fresh)
     for (const entry of record.imports) {
@@ -323,9 +354,7 @@ export function link_dylink_graph(options: {
         ...records[0]!.metadata,
         memorySize: 0,
         memoryAlignment: 0,
-        tableSize:
-          functionGOT.size +
-          [...ownSymbols.values()].filter((symbol) => symbol.kind === "function").length,
+        tableSize: functionGOT.size + objectFunctionCount,
         tableAlignment: 0,
       },
     ],
@@ -483,9 +512,12 @@ export function link_dylink_graph(options: {
     throw new DylinkInitializationError(error);
   }
   let initialized = false;
-  const ensureInitialized = () => {
+  const ensureInitializedFrom = (root: string) => {
     try {
-      for (const record of records) {
+      const reachable = new Set(scopeFrom(root));
+      for (const name of order) {
+        if (!reachable.has(name)) continue;
+        const record = modules.get(name)!;
         const initialization = record.initialization;
         if (initialization.state === "failed")
           throw new Error("dynamic constructor previously failed");
@@ -506,6 +538,17 @@ export function link_dylink_graph(options: {
         ? error
         : new DylinkInitializationError(error);
     }
+  };
+  const ensureInitialized = () => ensureInitializedFrom(options.root);
+  const lookupFrom = (root: string, name: string): DylinkExternalSymbol | undefined => {
+    const symbol = symbolsFrom(root).get(name);
+    if (!symbol) return undefined;
+    const value = valueOf(symbol, name)!;
+    const address =
+      typeof value === "function"
+        ? functionPointer(value)
+        : symbol.owner!.base + BigInt((value as WebAssembly.Global).value);
+    return { value, address, signature: signatureOf(symbol, name) };
   };
   return {
     order,
@@ -529,15 +572,10 @@ export function link_dylink_graph(options: {
     /** Handle-local lookup excludes main/global preemption. Imports above still
      * honor that scope; explicit dlsym(handle, name) uses the object's own group. */
     lookup(name: string): DylinkExternalSymbol | undefined {
-      const symbol = ownSymbols.get(name);
-      if (!symbol) return undefined;
-      const value = valueOf(symbol, name)!;
-      const address =
-        typeof value === "function"
-          ? functionPointer(value)
-          : symbol.owner!.base + BigInt((value as WebAssembly.Global).value);
-      return { value, address, signature: signatureOf(symbol, name) };
+      return lookupFrom(options.root, name);
     },
+    lookupFrom,
+    symbolNamesFrom: (root: string) => [...symbolsFrom(root).keys()],
     initialize() {
       if (initialized) throw new Error("dynamic constructors cannot be retried");
       initialized = true;
@@ -547,5 +585,6 @@ export function link_dylink_graph(options: {
      * initializer reaches it. Running/done modules are skipped, failed ones
      * stay poisoned; a fresh traversal never retries a constructor. */
     ensureInitialized,
+    ensureInitializedFrom,
   };
 }

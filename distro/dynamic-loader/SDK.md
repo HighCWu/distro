@@ -74,6 +74,18 @@ RTLD_NEXT, reference-value
 function signatures, dynamic symbol versions, cross-module setjmp/longjmp and C++ exceptions
 and cross-Worker publication still need implementation and acceptance.
 Names/paths currently use UTF-8; strings are bounded to 4096 bytes.
+
+Handles now point to allocator-backed `struct link_map` objects, so the
+existing musl `dlinfo(RTLD_DI_LINKMAP)` body returns readable metadata. The
+main and every dependency appear once in the bidirectional resident list;
+inode aliases keep the same handle and name. A dependency handle searches
+only its own dependency scope. The SDK asserts the five-word C layout.
+`l_addr` describes the module's linear data base; `l_ld` is NULL because
+these files have no ELF dynamic section. This is not ELF loading or program
+header support. The new nine-stage Linux/browser combination still needs
+acceptance; no new musl wrapper or public header is added. The private
+`linux_dlopen_v1.link_map_abi` import makes older hosts reject this SDK before
+exec commits, rather than accepting it with the old integer-handle behavior.
 UTF-8 decoding uses an owned byte snapshot, since browser TextDecoder
 implementations can reject views over shared Wasm memory even when isolated.
 Individual files and new graph input are bounded to 64 MiB, with at most 1024 cached

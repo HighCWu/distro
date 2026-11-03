@@ -7,6 +7,8 @@
 #include <dlfcn.h>
 #include <errno.h>
 #include <fcntl.h>
+#include <link.h>
+#include <stdint.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -167,6 +169,44 @@ int main(void)
             !dlclose(recursive) && !dlclose(recursive_leaf) && descriptors() == baseline,
             "recursive resident reuse and descriptor cleanup");
     puts("dynamic loader: constructor dlopen, nested rejection recovery and single initialization pass");
+
+    struct link_map *head = 0;
+    require(!dlinfo(self, RTLD_DI_LINKMAP, &head) && head == (struct link_map *)self &&
+            !((uintptr_t)head % _Alignof(struct link_map)), "main handle is an actual link_map");
+    require(!head->l_prev && !head->l_addr && head->l_name && !*head->l_name && !head->l_ld,
+            "static Wasm main metadata has no ELF dynamic section");
+    struct link_map *previous = 0, *entry = head;
+    unsigned maps = 0, found_dependency = 0, found_root = 0;
+    while (entry && maps < 16) {
+        struct link_map *same = 0;
+        require(entry->l_prev == previous && entry->l_name && !entry->l_ld &&
+                !dlinfo(entry, RTLD_DI_LINKMAP, &same) && same == entry,
+                "every mapped dependency has stable bidirectional metadata and valid handle");
+        if (entry == (struct link_map *)dependency) {
+            found_dependency++;
+            require(!strcmp(entry->l_name, "/plugins/deps/libplugin-a.so") && entry->l_addr &&
+                    (uintptr_t)data() >= entry->l_addr &&
+                    (uintptr_t)data() - entry->l_addr < 64 * 1024 * 1024,
+                    "dependency path and linear data base");
+        }
+        if (entry == (struct link_map *)plugin) {
+            found_root++;
+            require(!strcmp(entry->l_name, "/plugins/libplugin-b.so"), "inode alias preserves object name");
+        }
+        previous = entry;
+        entry = entry->l_next;
+        maps++;
+    }
+    require(!entry && maps == 7 && found_dependency == 1 && found_root == 1,
+            "main, all dependencies and recursive objects appear exactly once, rejected files absent");
+    require(!dlsym(dependency, "plugin_run") && dlerror(), "dependency handle excludes its consumer scope");
+    struct link_map *unchanged = (void *)3;
+    require(dlinfo((void *)3, RTLD_DI_LINKMAP, &unchanged) == -1 && dlerror() &&
+            unchanged == (void *)3 && dlinfo(self, -777, &unchanged) == -1 && dlerror() &&
+            unchanged == (void *)3, "invalid handle and unsupported request preserve output");
+    require(!dlinfo(alias, RTLD_DI_LINKMAP, &unchanged) && unchanged == (struct link_map *)plugin &&
+            descriptors() == baseline, "resident close and alias keep stable metadata without fd leaks");
+    puts("dynamic loader: real link maps, dependency scopes and metadata error recovery pass");
 
     require(!dlopen("missing.so", RTLD_NOW) && dlerror(), "missing library failure");
     int fd = open("/plugins/bad.so", O_CREAT | O_TRUNC | O_WRONLY, 0600);

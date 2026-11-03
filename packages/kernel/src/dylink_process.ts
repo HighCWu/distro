@@ -22,6 +22,7 @@ import {
 } from "./wasm.ts";
 
 type Group = ReturnType<typeof link_dylink_graph>;
+type ObjectHandle = { group: Group; root: string; handle: bigint };
 type File = {
   pin: number;
   key: string;
@@ -30,6 +31,7 @@ type File = {
   module: WebAssembly.Module;
   metadata: WasmDylink;
   dependencies: Map<string, string>;
+  handle?: bigint;
 };
 type Options = {
   main: WebAssembly.Instance;
@@ -60,8 +62,10 @@ export class ProcessDylink {
   readonly #files = new Map<string, File>();
   readonly #aliases = new Map<string, string>();
   readonly #reuse = new Map<string, DylinkModuleRecord>();
-  readonly #groups = new Map<string, { group: Group; handle: number }>();
-  readonly #handles = new Map<number, Group>();
+  readonly #groups = new Map<string, ObjectHandle>();
+  readonly #handles = new Map<bigint, ObjectHandle>();
+  #mainHandle = 0n;
+  #lastMap = 0n;
   #cursor: bigint;
   #busy = false;
   #error = "Dynamic loader failure";
@@ -232,10 +236,46 @@ export class ProcessDylink {
     symbol.address = pointer;
     return pointer;
   }
-  #promote(group: Group) {
-    const pending = group.names
+  #linkMap(name: string, base: bigint): bigint {
+    // The public musl link_map consists of five pointer-width words. The SDK
+    // checks this layout at compile time. Wasm has no ELF dynamic section:
+    // l_ld is NULL; l_addr describes data, never a native instruction address.
+    const wordBytes = this.#options.address === "i64" ? 8 : 4;
+    const encoded = new TextEncoder().encode(name + "\0");
+    const pointer = this.#call(
+      "__wasm_dlopen_allocate",
+      this.#word(BigInt(5 * wordBytes + encoded.length)),
+      this.#word(BigInt(wordBytes)),
+    );
+    const address = this.#unsigned(pointer);
+    if (!address) throw new Error("cannot allocate dynamic object metadata");
+    const bytes = memory_bytes(this.#options.memory, pointer, 5 * wordBytes + encoded.length);
+    const previous = this.#lastMap
+      ? memory_bytes(this.#options.memory, this.#word(this.#lastMap), 5 * wordBytes)
+      : undefined;
+    if (!bytes || (this.#lastMap && !previous))
+      throw new DylinkInitializationError(new Error("invalid dynamic object metadata backing"));
+    const store = (target: Uint8Array, slot: number, value: bigint) => {
+      const view = new DataView(target.buffer, target.byteOffset, target.byteLength);
+      if (wordBytes === 8) view.setBigUint64(slot * wordBytes, value, true);
+      else view.setUint32(slot * wordBytes, Number(value), true);
+    };
+    bytes.fill(0);
+    store(bytes, 0, base);
+    store(bytes, 1, address + BigInt(5 * wordBytes));
+    store(bytes, 4, this.#lastMap);
+    bytes.set(encoded, 5 * wordBytes);
+    if (previous) store(previous, 3, address);
+    this.#lastMap = address;
+    return address;
+  }
+  #promote(group: Group, root?: string) {
+    const pending = (root === undefined ? group.names : group.symbolNamesFrom(root))
       .filter((name) => !this.#symbols.has(name))
-      .map((name) => [name, group.lookup(name)!] as const);
+      .map(
+        (name) =>
+          [name, root === undefined ? group.lookup(name)! : group.lookupFrom(root, name)!] as const,
+      );
     for (const [name, symbol] of pending) this.#symbols.set(name, symbol);
   }
   open(pathPointer: WasmAddress, flags: number): WasmAddress {
@@ -245,10 +285,12 @@ export class ProcessDylink {
     const pins: number[] = [];
     try {
       if (flags & ~0x1107 || !(flags & 3)) throw new Error("invalid dlopen mode");
-      if (!this.#unsigned(pathPointer)) return this.#word(1n);
+      if (!this.#unsigned(pathPointer) && this.#mainHandle) return this.#word(this.#mainHandle);
       if (this.#busy) throw new Error("recursive dynamic loading is not supported yet");
       this.#busy = true;
       acquired = true;
+      if (!this.#mainHandle) this.#mainHandle = this.#linkMap("", 0n);
+      if (!this.#unsigned(pathPointer)) return this.#word(this.#mainHandle);
       const path = this.#string(pathPointer);
       const local = new Map(this.#files);
       const aliases = new Map(this.#aliases);
@@ -306,12 +348,12 @@ export class ProcessDylink {
       const root = find(path);
       const old = this.#groups.get(root.key);
       if (old) {
-        if (flags & 256) this.#promote(old.group);
+        if (flags & 256) this.#promote(old.group, old.root);
         for (const [name, key] of aliases) this.#aliases.set(name, key);
         this.#busy = false;
         acquired = false;
-        old.group.ensureInitialized();
-        return this.#word(BigInt(old.handle));
+        old.group.ensureInitializedFrom(old.root);
+        return this.#word(old.handle);
       }
       if (flags & 4 && !this.#reuse.has(root.key))
         throw new Error("library is not loaded (RTLD_NOLOAD)");
@@ -403,9 +445,13 @@ export class ProcessDylink {
       if (this.#cursor === tableEnd || group.layout.tableEnd > this.#cursor)
         this.#cursor = group.layout.tableEnd;
       committed = true;
-      const handle = this.#handles.size + 2;
-      this.#handles.set(handle, group);
-      this.#groups.set(root.key, { group, handle });
+      for (const file of files) {
+        if (file.handle !== undefined) continue;
+        file.handle = this.#linkMap(file.path, group.records.get(file.key)!.base);
+        const object = { group, root: file.key, handle: file.handle };
+        this.#handles.set(file.handle, object);
+        this.#groups.set(file.key, object);
+      }
       for (const file of files) this.#files.set(file.key, file);
       for (const [name, key] of aliases) this.#aliases.set(name, key);
       for (const [key, record] of group.records) this.#reuse.set(key, record);
@@ -418,7 +464,7 @@ export class ProcessDylink {
       this.#busy = false;
       acquired = false;
       group.ensureInitialized();
-      return this.#word(BigInt(handle));
+      return this.#word(root.handle!);
     } catch (error) {
       if (committed && !this.#options.isControlFlow(error))
         return this.#failure(
@@ -446,8 +492,11 @@ export class ProcessDylink {
     try {
       const key = this.#unsigned(handle);
       const name = this.#string(namePointer);
+      const object = this.#handles.get(key);
       const symbol =
-        key < 2n ? this.#symbols.get(name) : this.#handles.get(Number(key))?.lookup(name);
+        key === 0n || key === this.#mainHandle
+          ? this.#symbols.get(name)
+          : object?.group.lookupFrom(object.root, name);
       if (!symbol) throw new Error(`symbol not found or invalid handle: ${name}`);
       return this.#word(this.#address(symbol));
     } catch (error) {
@@ -456,7 +505,7 @@ export class ProcessDylink {
   }
   valid(handle: WasmAddress): number {
     const key = this.#unsigned(handle);
-    const valid = key === 1n || this.#handles.has(Number(key));
+    const valid = (key !== 0n && key === this.#mainHandle) || this.#handles.has(key);
     if (!valid) this.#error = "Invalid dynamic library handle";
     return valid ? 1 : 0;
   }

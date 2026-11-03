@@ -164,6 +164,35 @@ test("reentrant groups share pending, running, completed and poisoned constructo
     ["peer enter", "root", "peer leave"],
     "running dependency is skipped, pending root runs once, outer traversal then skips it",
   );
+  const scopedEvents: string[] = [];
+  const scoped = link_dylink_graph({
+    ...setup(files),
+    hostFunctions: new Map([
+      [
+        "env",
+        new Map([
+          [
+            "root_ctor",
+            () => {
+              scopedEvents.push("root");
+              return 0;
+            },
+          ],
+          [
+            "peer_ctor",
+            () => {
+              scopedEvents.push("peer");
+              return 0;
+            },
+          ],
+        ]),
+      ],
+    ]),
+  });
+  scoped.ensureInitializedFrom("peer");
+  assert.deepEqual(scopedEvents, ["peer"], "a dependency handle must not initialize its consumer");
+  scoped.ensureInitialized();
+  assert.deepEqual(scopedEvents, ["peer", "root"]);
   let calls = 0;
   const failingOptions = setup(new Map([["root", ctor("fail")]]));
   const failing = link_dylink_graph({
@@ -241,6 +270,24 @@ test("forwarded imports cannot hide incompatible Wasm function signatures", () =
   assert.deepEqual(new Uint8Array(options.memory.buffer), before);
   const reexport = binary({ imports, functionImports: 1, reexport: true });
   assert.throws(() => link_dylink_graph(setup(new Map([["root", reexport]]))), /re-exports/);
+});
+
+test("object handles use their own dependency scope and reserve distinct shadowed function pointers", () => {
+  const linked = link_dylink_graph(
+    setup(
+      new Map([
+        ["root", binary({ needed: ["dep"], exportName: "shadow" })],
+        ["dep", binary({ exportName: "shadow" })],
+      ]),
+    ),
+  );
+  const root = linked.lookupFrom("root", "shadow")!;
+  const dependency = linked.lookupFrom("dep", "shadow")!;
+  assert.notEqual(root.value, dependency.value);
+  assert.notEqual(root.address, dependency.address, "each provider has a canonical table slot");
+  assert.equal(linked.lookupFrom("dep", "shadow")!.address, dependency.address);
+  assert.deepEqual(linked.symbolNamesFrom("dep"), ["shadow"]);
+  assert.throws(() => linked.lookupFrom("unknown", "shadow"), /unknown dynamic object/);
 });
 
 test("first-thread TLS requires explicit ownership, stays private and validates the initialized image", () => {

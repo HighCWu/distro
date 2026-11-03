@@ -162,6 +162,7 @@ const supported_user_module_imports = new Set([
   "linux_mmap_init_v1\0copy\0function",
   "linux_fork_v1\0checkpoint\0function",
   "linux_dlopen_v1\0abi\0function",
+  "linux_dlopen_v1\0link_map_abi\0function",
   "linux_dlopen_v1\0open\0function",
   "linux_dlopen_v1\0symbol\0function",
   "linux_dlopen_v1\0valid\0function",
