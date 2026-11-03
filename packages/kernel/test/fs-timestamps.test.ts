@@ -9,25 +9,24 @@ test("FUSE SETATTR decodes signed time64 without changing unsigned sizes or NOW 
   const node = {};
   let observed: FSSetAttributes = {};
   let seconds = 0n;
+  const attributes = () => ({
+    mode: 0o100600,
+    size: 0n,
+    atime: { seconds },
+    mtime: { seconds },
+    ctime: { seconds },
+  });
   const device = fileSystemDevice(
     {
       root,
       lookup() {
         return node;
       },
-      getattr() {
-        return {
-          mode: 0o100600,
-          size: 0n,
-          atime: { seconds },
-          mtime: { seconds },
-          ctime: { seconds },
-        };
-      },
+      getattr: attributes,
       setattr(_node: object, changes: FSSetAttributes) {
         assert.equal(_node, node);
         observed = changes;
-        return this.getattr();
+        return attributes();
       },
     },
     { tag: "timestamps" },
