@@ -100,6 +100,7 @@ let
         "CLONE_FS"
         "CLONE_FILES"
         "CLONE_SYSVSEM"
+        "CLONE_IO"
       ];
       cloneNamespaceTransport = true;
       cloneParentTransport = true;

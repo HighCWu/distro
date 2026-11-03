@@ -142,6 +142,12 @@ object preserves the u64 flag; Linux implies NEWNS and selects the empty mount
 view and initial root/cwd. It retains the kernel's CLONE_FS conflict and namespace
 permissions. This does not add an unshare fallback or host-side mount changes.
 
+CLONE_IO requires private capability bit 11 and native clone3 or the legacy
+options helper. It shares the existing Linux io_context with independent user
+memory. An I/O context must already exist for sharing; Linux retains allocation,
+permission and lifetime semantics. This does not promise host/browser physical
+I/O scheduling behavior or introduce ioprio libc wrappers.
+
 `share/linux-wasm-fork-sdk/profile.json` records the experimental profile.
 
 CLONE_CLEAR_SIGHAND requires the optional `__wasm_fork_clone3_flags64` export

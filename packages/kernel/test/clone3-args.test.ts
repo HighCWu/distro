@@ -8,6 +8,10 @@ for (const address of ["i32", "i64"] as const)
     const p = (n: number) => (address === "i64" ? BigInt(n) : n);
     const memory = new WebAssembly.Memory({ initial: 1 });
     const parse = (args: number[]) => clone_fork_request(memory, address, args.map(p));
+    assert.deepEqual(parse([-2147483631, 0, 0, 0, 0, 0]), {
+      pidfd: null,
+      sharingFlags: p(0x80000000),
+    });
     assert.deepEqual(parse([17 | 0x8000, 0, 0, 0, 0, 0]), { pidfd: null, parentFlags: p(0x8000) });
     assert.deepEqual(parse([17 | 0x40000, 0, 0, 0, 0, 0]), {
       pidfd: null,

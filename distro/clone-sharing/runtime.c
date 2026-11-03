@@ -3,6 +3,7 @@
 #include <errno.h>
 #include <fcntl.h>
 #include <linux/sched.h>
+#include <linux/ioprio.h>
 #include <signal.h>
 #include <stdint.h>
 #include <stdio.h>
@@ -136,6 +137,43 @@ static void share_semundo(int legacy, int shared)
     cleanup_semid = -1;
 }
 
+static long io_priority(void)
+{
+    return syscall(SYS_ioprio_get, (long)IOPRIO_WHO_PROCESS, 0L, 0L, 0L, 0L, 0L);
+}
+static void set_io_priority(long priority)
+{
+    require(syscall(SYS_ioprio_set, (long)IOPRIO_WHO_PROCESS, 0L, priority, 0L, 0L, 0L) == 0,
+            "set kernel I/O context priority");
+}
+static void share_io(int legacy)
+{
+    long original = io_priority();
+    require(original >= 0, "read original I/O priority");
+    long initial = IOPRIO_PRIO_VALUE(IOPRIO_CLASS_BE, 4);
+    long changed = IOPRIO_PRIO_VALUE(IOPRIO_CLASS_BE, 6);
+    /* Allocate a real io_context before clone; an absent context cannot be
+     * shared and would be created independently on the child's first set. */
+    set_io_priority(initial);
+    pid_t child = create(legacy, CLONE_IO);
+    require(child >= 0, "clone with shared I/O context");
+    if (!child) {
+        private_value = 99;
+        require(io_priority() == initial, "child inherits initialized I/O priority");
+        set_io_priority(changed);
+        _exit(41);
+    }
+    reap(child, 41);
+    require(io_priority() == changed, "shared I/O priority reaches parent");
+    set_io_priority(initial);
+    child = create(legacy, 0);
+    require(child >= 0, "private I/O context control");
+    if (!child) { private_value = 99; set_io_priority(changed); _exit(42); }
+    reap(child, 42);
+    require(io_priority() == initial, "ordinary clone I/O priority remains private");
+    set_io_priority(original);
+}
+
 int main(void)
 {
     require(setvbuf(stdout, NULL, _IONBF, 0) == 0, "unbuffered stages");
@@ -174,6 +212,9 @@ int main(void)
 #endif
         puts(legacy ? "clone sharing: legacy clone SEM_UNDO ownership and last-exit recovery pass"
                     : "clone sharing: native clone3 SEM_UNDO ownership and last-exit recovery pass");
+        share_io(legacy);
+        puts(legacy ? "clone sharing: legacy clone shares IO priority while private control stays isolated pass"
+                    : "clone sharing: native clone3 shares IO priority while private control stays isolated pass");
     }
     fd = open(ROOT "/data", O_RDONLY | O_CLOEXEC);
     require(fd >= 0, "ordinary fork parent descriptor");

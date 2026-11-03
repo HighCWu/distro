@@ -433,7 +433,8 @@ export class ForkContinuation {
         (!native && !legacy) ||
         !validFeatureBits(features) ||
         (BigInt(request.sharingFlags) & 0x600n ? !(features & 8) : false) ||
-        (BigInt(request.sharingFlags) & 0x40000n ? !(features & 16) : false)
+        (BigInt(request.sharingFlags) & 0x40000n ? !(features & 16) : false) ||
+        (BigInt(request.sharingFlags) & 0x80000000n ? !(features & 2048) : false)
       )
         return -95;
     }

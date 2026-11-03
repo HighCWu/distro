@@ -184,7 +184,7 @@ for (const address of ["i32", "i64"] as const)
 
 for (const address of ["i32", "i64"] as const)
   for (const native of [true, false])
-    for (const sharing of [0x600, 0x40000, 0x40600])
+    for (const sharing of [0x600, 0x40000, 0x40600, 0x80000000, 0x80040600])
       test(`${address}: ${native ? "clone3" : "clone"} resource sharing ${sharing} is explicit and never lost on fallback`, () => {
         const {
           controller,
@@ -223,6 +223,7 @@ for (const address of ["i32", "i64"] as const)
           NaN,
           8.5,
           ...(sharing & 0x40000 ? [8, 15] : []),
+          ...(sharing & 0x80000000 ? [2047, -1] : []),
         ]) {
           Object.assign(exports, {
             __wasm_fork_clone3_features: feature === undefined ? undefined : () => feature,
@@ -231,7 +232,8 @@ for (const address of ["i32", "i64"] as const)
           assert.equal(calls.descriptors, 0);
         }
         Object.assign(exports, {
-          __wasm_fork_clone3_features: () => (sharing === 0x40000 ? 16 : 31),
+          __wasm_fork_clone3_features: () =>
+            sharing === 0x40000 ? 16 : sharing === 0x80000000 ? 2048 : 4095,
         });
         assert.equal(enter(), 0);
         controller.suspend();
