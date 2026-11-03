@@ -69,6 +69,11 @@ const functions = [
 ];
 const globals = ["__stack_pointer", "__tls_base"];
 
+function validFeatureBits(value: unknown): value is number {
+  // This private capability is an exported C int, never a pointer or errno.
+  return typeof value === "number" && Number.isInteger(value) && value >= 0 && value <= 0x7fffffff;
+}
+
 export function uses_fork_continuation(module: WebAssembly.Module): boolean {
   return (
     WebAssembly.Module.imports(module).some((e) => e.module === "linux_fork_v1") ||
@@ -344,8 +349,7 @@ export class ForkContinuation {
           : 0;
       if (
         !native ||
-        typeof features !== "number" ||
-        !Number.isInteger(features) ||
+        !validFeatureBits(features) ||
         !(features & 4) ||
         typeof this.e.__wasm_fork_clone3_set_tid !== "function" ||
         typeof this.e.__wasm_fork_clone3_pid_select !== "function"
@@ -360,8 +364,7 @@ export class ForkContinuation {
       if (
         !native ||
         typeof this.e.__wasm_fork_clone3_cgroup !== "function" ||
-        typeof features !== "number" ||
-        !Number.isInteger(features) ||
+        !validFeatureBits(features) ||
         !(features & 2)
       )
         return -95;
@@ -373,10 +376,19 @@ export class ForkContinuation {
         typeof this.e.__wasm_fork_clone3_features === "function"
           ? this.call("__wasm_fork_clone3_features")
           : 0;
-      if (typeof features !== "number" || !Number.isInteger(features) || !(features & 1))
-        return -95;
+      if (!validFeatureBits(features) || !(features & 1)) return -95;
     }
     const legacy = !clone3 && typeof this.e.__wasm_fork_clone_options === "function";
+    if ((request.flags64 ?? 0n) & 0x1400000000n) {
+      const features =
+        typeof this.e.__wasm_fork_clone3_features === "function"
+          ? this.call("__wasm_fork_clone3_features")
+          : 0;
+      const required =
+        ((request.flags64 ?? 0n) & 0x400000000n ? 128 : 0) |
+        ((request.flags64 ?? 0n) & 0x1000000000n ? 256 : 0);
+      if (!native || !validFeatureBits(features) || (features & required) !== required) return -95;
+    }
     if (request.exitSignal !== undefined) {
       const features =
         typeof this.e.__wasm_fork_clone3_features === "function"
@@ -385,8 +397,7 @@ export class ForkContinuation {
       if (
         !native ||
         typeof this.e.__wasm_fork_clone3_exit_signal !== "function" ||
-        typeof features !== "number" ||
-        !Number.isInteger(features) ||
+        !validFeatureBits(features) ||
         !(features & 64)
       )
         return -95;
@@ -396,13 +407,7 @@ export class ForkContinuation {
         typeof this.e.__wasm_fork_clone3_features === "function"
           ? this.call("__wasm_fork_clone3_features")
           : 0;
-      if (
-        !native ||
-        typeof features !== "number" ||
-        !Number.isInteger(features) ||
-        !(features & 32)
-      )
-        return -95;
+      if (!native || !validFeatureBits(features) || !(features & 32)) return -95;
     }
     if (request.sharingFlags !== undefined) {
       const features =
@@ -411,8 +416,7 @@ export class ForkContinuation {
           : 0;
       if (
         (!native && !legacy) ||
-        typeof features !== "number" ||
-        !Number.isInteger(features) ||
+        !validFeatureBits(features) ||
         (BigInt(request.sharingFlags) & 0x600n ? !(features & 8) : false) ||
         (BigInt(request.sharingFlags) & 0x40000n ? !(features & 16) : false)
       )

@@ -395,6 +395,50 @@ for (const address of ["i32", "i64"] as const)
   });
 
 for (const address of ["i32", "i64"] as const)
+  test(`${address}: PIDFD lifetime flags require every capability and clear after refusal`, () => {
+    const {
+      controller: c,
+      exports,
+      memory,
+      pointer: p,
+      calls,
+    } = fixture(address, true, 2, true, undefined, true);
+    const view = new DataView(memory.buffer);
+    view.setBigUint64(8192, 0x1c00001000n, true);
+    view.setBigUint64(8200, 9000n, true);
+    view.setBigUint64(8224, 0n, true);
+    let expectedFlags = 0x1c00000000n,
+      expectedSignal = 0;
+    Object.assign(exports, {
+      __wasm_fork_clone3_exit_signal: (signal: number) => {
+        assert.equal(signal, expectedSignal);
+        return 0;
+      },
+      __wasm_fork_clone3_flags64: (...args: WasmAddress[]) => {
+        assert.deepEqual(args, [expectedFlags, expectedFlags ? p(9000) : p(0), p(0), p(0)]);
+        return p(-22);
+      },
+    });
+    for (const features of [0, -1, 2 ** 40 + 511, 511.5, 127, 255, 383, 447, 479]) {
+      Object.assign(exports, { __wasm_fork_clone3_features: () => features });
+      assert.equal(c.clone3Checkpoint(p(8192), p(88), true), -95);
+      assert.equal(calls.descriptors, 0);
+    }
+    Object.assign(exports, { __wasm_fork_clone3_features: () => 511 });
+    for (const flags of [0x1c00001000n, 0n]) {
+      expectedFlags = flags & ~0x1000n;
+      expectedSignal = flags ? 0 : 17;
+      view.setBigUint64(8192, flags, true);
+      view.setBigUint64(8224, BigInt(expectedSignal), true);
+      assert.equal(c.clone3Checkpoint(p(8192), p(88), true), 0);
+      c.suspend();
+      assert.equal(c.clone(), p(-22));
+      c.resumeParent(p(-22));
+      assert.equal(c.clone3Checkpoint(p(0), p(0), true), -22);
+    }
+  });
+
+for (const address of ["i32", "i64"] as const)
   test(`${address}: nondefault clone3 exit signals need explicit transport and reset after failure`, () => {
     const {
       controller: c,

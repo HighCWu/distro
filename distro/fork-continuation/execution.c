@@ -122,7 +122,7 @@ static long clone3_native(uint64_t flags, uintptr_t pidfd,
 		uint64_t stack, stack_size, tls, set_tid, set_tid_size, cgroup;
 	} args __attribute__((aligned(8)));
 	_Static_assert(sizeof args == 88, "Linux clone_args aligned u64 ABI");
-	const uint64_t allowed = UINT64_C(0xb7f360680);
+	const uint64_t allowed = UINT64_C(0x1f7f360680);
 	if (flags & ~allowed)
 		return -EOPNOTSUPP;
 	if (count > 32)
@@ -186,9 +186,10 @@ long __wasm_fork_clone3_pid_select(uint64_t flags, uintptr_t pidfd,
 
 /* Private object capability, not a libc/application API. Bit 0 admits
  * CLONE_NEWTIME; bit 1 cgroup; bit 2 set_tid; bit 3 CLONE_FS/FILES;
- * bit 4 CLONE_SYSVSEM; bit 5 native CLONE_NNP; bit 6 exit_signal staging. */
+ * bit 4 CLONE_SYSVSEM; bit 5 native CLONE_NNP; bit 6 exit_signal staging;
+ * bit 7 CLONE_AUTOREAP; bit 8 CLONE_PIDFD_AUTOKILL. */
 __attribute__((export_name("__wasm_fork_clone3_features")))
 int __wasm_fork_clone3_features(void)
 {
-	return 127;
+	return 511;
 }

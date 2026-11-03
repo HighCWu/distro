@@ -21,6 +21,8 @@ const clearSighand = 0x100000000n;
 const newTime = 0x80n;
 const intoCgroup = 0x200000000n;
 const noNewPrivs = 0x800000000n;
+const autoReap = 0x400000000n;
+const autoKill = 0x1000000000n;
 
 function unsigned_word(value: WasmAddress, address: WasmAddressType): bigint {
   if (
@@ -45,8 +47,9 @@ function fork_options(
     : {};
   if (flags & sharingMask)
     options.sharingFlags = address === "i64" ? flags & sharingMask : Number(flags & sharingMask);
-  if (flags & (clearSighand | newTime | intoCgroup | noNewPrivs))
-    options.flags64 = flags & (clearSighand | newTime | intoCgroup | noNewPrivs);
+  if (flags & (clearSighand | newTime | intoCgroup | noNewPrivs | autoReap | autoKill))
+    options.flags64 =
+      flags & (clearSighand | newTime | intoCgroup | noNewPrivs | autoReap | autoKill);
   if (flags & tidMask) {
     // Linux performs TID stores (including its own fault behavior). Refuse
     // only addresses that the Wasm architecture cannot represent faithfully.
@@ -157,6 +160,8 @@ export function clone3_fork_request(
       newTime |
       intoCgroup |
       noNewPrivs |
+      autoReap |
+      autoKill |
       0x1000n
     )
   )

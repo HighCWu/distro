@@ -600,6 +600,18 @@ lib.makeScope (scope: lib.callPackageWith ({ inherit lib pkgs; } // scope)) (
         touch $out
       '';
     };
+    clone-lifecycle = callPackage ./clone-lifecycle/package.nix {
+      extraChecks.both = pkgs.runCommand "clone-lifecycle-both-widths" { passthru.ci.heavy = true; } ''
+        test -e ${self.clone-lifecycle.checks.runtime}
+        test -e ${self.clone-lifecycle-wasm64.checks.runtime}
+        touch $out
+      '';
+    };
+    clone-lifecycle-wasm64 = callPackage ./clone-lifecycle/package.nix {
+      platform = self.platform-wasm64;
+      sdk-fork-continuation = self.sdk-fork-continuation-wasm64;
+      vm-test = vmTestWasm64;
+    };
     clone-exit-signal = callPackage ./clone-exit-signal/package.nix {
       extraChecks.both = pkgs.runCommand "clone-exit-signal-both-widths" { passthru.ci.heavy = true; } ''
         test -e ${self.clone-exit-signal.checks.runtime}

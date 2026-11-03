@@ -126,6 +126,11 @@ Linux __WCLONE/__WALL wait options. Every native request stages its own signal,
 and the execution object consumes it once, restoring SIGCHLD even on errors.
 The legacy callback/flags clone transports retain their SIGCHLD-only subset.
 
+Native CLONE_AUTOREAP and CLONE_PIDFD_AUTOKILL require bits 7 and 8 respectively.
+Linux retains flag-combination, permission and exit-signal validation. AUTOKILL
+applies to the owning file description's last reference; an independent pidfd_open
+does not acquire that flag. The host performs no synthetic reaping or kill.
+
 `share/linux-wasm-fork-sdk/profile.json` records the experimental profile.
 
 CLONE_CLEAR_SIGHAND requires the optional `__wasm_fork_clone3_flags64` export

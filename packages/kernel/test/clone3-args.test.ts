@@ -94,6 +94,9 @@ for (const address of ["i32", "i64"] as const)
     );
     view.setBigUint64(256, 0x800000000n, true);
     assert.deepEqual(parse(88), { pidfd: null, flags64: 0x800000000n });
+    view.setBigUint64(256, 0x1c00000000n, true);
+    view.setBigUint64(256 + 32, 0n, true);
+    assert.deepEqual(parse(88), { pidfd: null, flags64: 0x1c00000000n, exitSignal: 0 });
     reset();
     for (const size of [0, 1, 63]) assert.equal(parse(size), -22);
     for (const size of [65537, -1]) assert.equal(parse(size), -7);

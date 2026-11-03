@@ -106,6 +106,8 @@ let
       clone3WideFlags = [
         "CLONE_CLEAR_SIGHAND"
         "CLONE_NNP"
+        "CLONE_AUTOREAP"
+        "CLONE_PIDFD_AUTOKILL"
       ];
       clone3ExitSignal = {
         minimum = 0;
