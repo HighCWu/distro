@@ -7,6 +7,7 @@
   musl,
   vm-test,
   busybox,
+  extraChecks ? { },
 }:
 
 let
@@ -362,6 +363,7 @@ let
             contents = [ busybox ];
           };
         }
+        // extraChecks
         // lib.optionalAttrs (platform.addressBits == 32) {
           user-access-upper32 = vm-test.rawInitramfsTest {
             name = "user-access-upper-half-wasm32";

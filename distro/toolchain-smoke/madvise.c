@@ -22,7 +22,10 @@ static void require(int ok, const char *message)
 int main(void)
 {
 	size_t page = sysconf(_SC_PAGESIZE);
-	require(page && page <= 65536, "page size");
+	if (!page || page > 65536) {
+		require(0, "page size");
+		return 1;
+	}
 	unsigned char *base = mmap(NULL, 3 * page, PROT_READ | PROT_WRITE,
 		MAP_PRIVATE | MAP_ANONYMOUS, -1, 0);
 	require(base != MAP_FAILED, "private mapping");
@@ -46,6 +49,28 @@ int main(void)
 		MAP_PRIVATE | MAP_ANONYMOUS | MAP_FIXED_NOREPLACE, -1, 0) == MAP_FAILED && errno == EEXIST,
 		"discard retains address reservation");
 	puts("madvise: anonymous discard zeroes rounded pages, preserves neighbors and keeps reservations pass");
+	memset(base, 0x72, 3 * page);
+	require(madvise(base + page, 1, MADV_FREE) == 0, "FREE anonymous middle page");
+	for (size_t i = 0; i < 3 * page; i++) {
+		if (i < page || i >= 2 * page)
+			require(base[i] == 0x72, "FREE preserves neighboring pages");
+		else {
+#ifdef __wasm__
+			require(base[i] == 0, "direct FREE immediately discards old contents");
+#else
+			require(base[i] == 0 || base[i] == 0x72, "native FREE may defer reclaim");
+#endif
+		}
+	}
+	memset(base + page, 0x63, page);
+	require(madvise(base, 3 * page, MADV_NORMAL) == 0, "hint after FREE");
+	for (size_t i = page; i < 2 * page; i++)
+		require(base[i] == 0x63, "FREE cannot erase later writes");
+	errno = 0;
+	require(mmap(base + page, page, PROT_READ | PROT_WRITE,
+		MAP_PRIVATE | MAP_ANONYMOUS | MAP_FIXED_NOREPLACE, -1, 0) == MAP_FAILED && errno == EEXIST,
+		"FREE keeps address reservation");
+	puts("madvise: FREE discards anonymous contents, preserves later writes and keeps reservations pass");
 	require(madvise(NULL, 0, MADV_DONTNEED) == 0, "zero length");
 	errno = 0;
 	require(madvise(base + 1, 0, MADV_NORMAL) == -1 && errno == EINVAL, "unaligned zero length");
@@ -54,6 +79,8 @@ int main(void)
 	require(munmap(base + page, page) == 0, "split mapping");
 	errno = 0;
 	require(madvise(base, 3 * page, MADV_NORMAL) == -1 && errno == ENOMEM, "hole rejects hint");
+	errno = 0;
+	require(madvise(base, 3 * page, MADV_FREE) == -1 && errno == ENOMEM, "hole rejects FREE");
 	require(mmap(base + page, page, PROT_READ | PROT_WRITE,
 		MAP_PRIVATE | MAP_ANONYMOUS | MAP_FIXED_NOREPLACE, -1, 0) == base + page, "restore hole");
 	memset(base, 19, 3 * page);

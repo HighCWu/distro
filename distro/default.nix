@@ -119,7 +119,20 @@ lib.makeScope (scope: lib.callPackageWith ({ inherit lib pkgs; } // scope)) (
       platform = self.platform-wasm64;
       llvm-runtimes = self.llvm-runtimes-wasm64;
     };
-    toolchain-smoke = callPackage ./toolchain-smoke/package.nix { };
+    toolchain-smoke = callPackage ./toolchain-smoke/package.nix {
+      extraChecks.madvise-free-both =
+        pkgs.runCommand "madvise-free-both-widths"
+          {
+            passthru.ci.heavy = true;
+          }
+          ''
+            test -e ${self.toolchain-smoke.checks.madvise}
+            test -e ${self.toolchain-smoke-wasm64.checks.madvise}
+            test -e ${self.file-mmap-stream.checks.runtime}
+            test -e ${self.file-mmap-stream-wasm64.checks.runtime}
+            touch $out
+          '';
+    };
     sdk = callPackage ./sdk/package.nix { };
     sdk-dynamic-loader = callPackage ./dynamic-loader/sdk.nix { };
     sdk-dynamic-loader-wasm64 = callPackage ./dynamic-loader/sdk.nix {

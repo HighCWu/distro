@@ -84,6 +84,9 @@ int main(void)
     rejected(fd, 3 * page, PROT_READ, MAP_PRIVATE, 1, EINVAL);
     require(madvise(first, rounded, MADV_DONTNEED) == -1 && errno == EOPNOTSUPP &&
             msync(first, rounded, MS_SYNC) == 0, "copied file provenance preserved");
+    errno = 0;
+    require(madvise(first, rounded, MADV_FREE) == -1 && errno == EINVAL,
+            "FREE refuses private file copies");
     require(close(fd) == 0 && unlink("/stream-file") == 0, "close and unlink source");
     content(first, rounded, 0, size);
     require(munmap(first, page) == 0 && munmap(first + page, rounded - page) == 0 &&
