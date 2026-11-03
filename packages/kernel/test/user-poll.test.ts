@@ -1,11 +1,53 @@
 // SPDX-License-Identifier: MIT
 import assert from "node:assert/strict";
 import test from "node:test";
-import { call_user_poll } from "../src/user-poll.ts";
+import { call_user_poll, user_poll_thread } from "../src/user-poll.ts";
 import { call_kernel_entry, call_user_callback } from "../src/signal-stack.ts";
 import { user_module_imports_supported, type Instance } from "../src/wasm.ts";
 
 for (const address of ["i32", "i64"] as const) {
+  test(`${address}: thread readiness starts empty and publishes only the kernel-owned TP`, () => {
+    const word = (n: number) => (address === "i64" ? BigInt(n) : n);
+    let current = word(17),
+      reads = 0,
+      fail = false;
+    const read = () => {
+      reads++;
+      if (fail) throw new Error("kernel TP unavailable");
+      return current;
+    };
+    const first = user_poll_thread(address, read),
+      second = user_poll_thread(address, read);
+    assert.equal(reads, 0);
+    assert.equal(first.global.value, word(0));
+    first.refresh();
+    assert.equal(first.global.value, word(17));
+    assert.equal(second.global.value, word(0));
+    current = word(23);
+    second.refresh();
+    assert.equal(first.global.value, word(17));
+    assert.equal(second.global.value, word(23));
+    assert.throws(
+      () =>
+        first.suspend(() => {
+          assert.equal(first.global.value, word(0));
+          first.publish(word(99));
+          first.refresh();
+          first.suspend(() => assert.equal(first.global.value, word(0)));
+          assert.equal(first.global.value, word(0));
+          throw new Error("callback unwind");
+        }),
+      /callback unwind/,
+    );
+    assert.equal(first.global.value, word(17));
+    fail = true;
+    assert.throws(() => first.refresh(), /TP unavailable/);
+    assert.equal(first.global.value, word(17));
+    fail = false;
+    current = word(0);
+    first.refresh();
+    assert.equal(first.global.value, word(0));
+  });
   test(`${address}: user checkpoints defer live callbacks and restore nonlocal kernel state`, () => {
     const word = (n: number) => (address === "i64" ? BigInt(n) : n);
     const stack = () => new WebAssembly.Global({ value: address, mutable: true }, word(128));
@@ -150,6 +192,62 @@ test("poll module admission requires explicit ABI/globals and rejects fork/dynam
         ...section(2, [variant === "dynamic" ? 2 : 1, ...imports]),
         ...section(6, [2, 0x7f, 1, 0x41, 0, 0x0b, 0x7f, 1, 0x41, 0, 0x0b]),
         ...section(7, [variant === "no-abi" ? 2 : variant === "fork" ? 4 : 3, ...exports]),
+      ]),
+    );
+    assert.equal(user_module_imports_supported(module), variant === "normal", variant);
+  }
+});
+
+test("poll ABI2 admission requires both imports and refuses mixed execution versions", () => {
+  const text = (value: string) => [value.length, ...new TextEncoder().encode(value)];
+  const leb = (n: number): number[] => (n < 128 ? [n] : [(n & 127) | 128, ...leb(n >>> 7)]);
+  const section = (id: number, bytes: number[]) => [id, ...leb(bytes.length), ...bytes];
+  for (const variant of ["normal", "no-tp", "no-checkpoint", "mixed", "future"] as const) {
+    const imports: number[][] = [];
+    let functions = 0;
+    if (variant !== "no-checkpoint") {
+      imports.push([...text("linux_user_poll_v2"), ...text("checkpoint"), 0, 0]);
+      functions++;
+    }
+    if (variant !== "no-tp")
+      imports.push([...text("linux_user_poll_v2"), ...text("thread_pointer"), 3, 0x7f, 1]);
+    if (variant === "mixed" || variant === "future") {
+      imports.push([
+        ...text(variant === "mixed" ? "linux_user_poll_v1" : "linux_user_poll_v3"),
+        ...text("checkpoint"),
+        0,
+        0,
+      ]);
+      functions++;
+    }
+    const offset = variant === "no-tp" ? 0 : 1;
+    const module = new WebAssembly.Module(
+      new Uint8Array([
+        0,
+        97,
+        115,
+        109,
+        1,
+        0,
+        0,
+        0,
+        ...section(1, [1, 0x60, 0, 1, 0x7f]),
+        ...section(2, [imports.length, ...imports.flat()]),
+        ...section(3, [1, 0]),
+        ...section(6, [2, 0x7f, 1, 0x41, 0, 0x0b, 0x7f, 1, 0x41, 0, 0x0b]),
+        ...section(7, [
+          3,
+          ...text("__wasm_user_poll_abi"),
+          0,
+          functions,
+          ...text("__tls_base"),
+          3,
+          offset,
+          ...text("__stack_pointer"),
+          3,
+          offset + 1,
+        ]),
+        ...section(10, [1, 4, 0, 0x41, 2, 0x0b]),
       ]),
     );
     assert.equal(user_module_imports_supported(module), variant === "normal", variant);

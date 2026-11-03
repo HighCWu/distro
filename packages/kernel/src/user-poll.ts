@@ -5,7 +5,37 @@ import {
   user_callback_active,
   read_signal_stack_pointer,
 } from "./signal-stack.ts";
-import type { Instance, WasmAddressType } from "./wasm.ts";
+import type { Instance, WasmAddress, WasmAddressType } from "./wasm.ts";
+
+/** Per-instance readiness; never inherit an old exec or another Worker's TP. */
+export function user_poll_thread(address: WasmAddressType, read: () => WasmAddress) {
+  let suspended = 0;
+  const global = new WebAssembly.Global(
+    { value: address, mutable: true },
+    address === "i64" ? 0n : 0,
+  );
+  const publish = (value: WasmAddress) => {
+    if (!suspended) global.value = value;
+  };
+  return {
+    global,
+    publish,
+    refresh: () => {
+      if (!suspended) publish(read());
+    },
+    suspend<T>(invoke: () => T): T {
+      const before = global.value;
+      global.value = address === "i64" ? 0n : 0;
+      suspended++;
+      try {
+        return invoke();
+      } finally {
+        suspended--;
+        global.value = before;
+      }
+    },
+  };
+}
 
 /** Private compiler execution entry. It never manufactures a Linux syscall. */
 export function call_user_poll(

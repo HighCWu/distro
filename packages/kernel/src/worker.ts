@@ -37,7 +37,7 @@ import {
 } from "./user-mmap.ts";
 import { FileMmapCopy } from "./file-mmap-copy.ts";
 import { user_brk_layout, user_brk_update } from "./user-brk.ts";
-import { call_user_poll } from "./user-poll.ts";
+import { call_user_poll, user_poll_thread } from "./user-poll.ts";
 import {
   read_signal_stack_pointer,
   call_on_signal_stack,
@@ -176,6 +176,7 @@ function user_imports({
 
   let context: UserContext | null = parent;
   let instance: WebAssembly.Instance | null = null;
+  const poll_threads = new WeakMap<WebAssembly.Instance, ReturnType<typeof user_poll_thread>>();
   let pending_module_bytes: Uint8Array<ArrayBuffer> | null = null;
   let pending: UserContext | null = null;
   let fork: ForkContinuation | null = null;
@@ -240,11 +241,21 @@ function user_imports({
 
   function user_callback<T>(invoke: () => T): T {
     register_remote_memory();
-    return call_user_callback(get_kernel_instance().exports, kernel_address, invoke);
+    const run = () => call_user_callback(get_kernel_instance().exports, kernel_address, invoke);
+    const thread = instance ? poll_threads.get(instance) : undefined;
+    return thread ? thread.suspend(run) : run();
   }
 
   function create_instance(context: UserContext): WebAssembly.Instance {
     const kernel_instance = get_kernel_instance();
+    const poll2 = WebAssembly.Module.imports(context.module).some(
+      (entry) => entry.module === "linux_user_poll_v2",
+    );
+    const poll_thread = poll2
+      ? user_poll_thread(context.address, () =>
+          kernel_leaf(() => kernel_instance.exports.get_thread_area()),
+        )
+      : undefined;
     let created: WebAssembly.Instance;
     let dynamic: ProcessDylink | undefined;
     const control = (error: unknown) => error === HALT_KERNEL || error === HALT_USER;
@@ -332,28 +343,34 @@ function user_imports({
           call_entry = call_start;
           throw HALT_USER;
         }
+        // Publish after TLS installation or clone's pre-callback gettid return.
+        // Other startup syscalls may still see the old exec image's TP.
+        // Always read the kernel value, never a possibly rejected argument.
+        if (nr === 244 || nr === 244n || nr === 178 || nr === 178n) poll_thread?.refresh();
         return ret;
       };
+    const checkpoint = () => {
+      if (!created) return -95;
+      const before = instance;
+      const result = call_user_poll(
+        kernel_instance.exports,
+        created.exports,
+        context.memory,
+        kernel_address,
+        !!fork || !!context.dynamic,
+        signal_depth !== 0,
+      );
+      if (instance !== before) {
+        call_entry = call_start;
+        throw HALT_USER;
+      }
+      return result;
+    };
     created = new WebAssembly.Instance(context.module, {
-      linux_user_poll_v1: {
-        checkpoint: () => {
-          if (!created) return -95;
-          const before = instance;
-          const result = call_user_poll(
-            kernel_instance.exports,
-            created.exports,
-            context.memory,
-            kernel_address,
-            !!fork || !!context.dynamic,
-            signal_depth !== 0,
-          );
-          if (instance !== before) {
-            call_entry = call_start;
-            throw HALT_USER;
-          }
-          return result;
-        },
-      },
+      linux_user_poll_v1: { checkpoint },
+      ...(poll_thread
+        ? { linux_user_poll_v2: { checkpoint, thread_pointer: poll_thread.global } }
+        : {}),
       linux_dlopen_v1: {
         abi: () => 1,
         link_map_abi: () => 1,
@@ -394,7 +411,9 @@ function user_imports({
         syscall_v2: syscall("flags-v2"),
         get_thread_area: () => {
           const invoke = () => kernel_leaf(() => kernel_instance.exports.get_thread_area());
-          return fork ? fork.kernelCall(invoke) : invoke();
+          const value = fork ? fork.kernelCall(invoke) : invoke();
+          poll_thread?.publish(value);
+          return value;
         },
         copy_siginfo: (to: WasmAddress) => {
           const invoke = () => kernel_leaf(() => kernel_instance.exports.copy_siginfo(to));
@@ -426,15 +445,16 @@ function user_imports({
     });
     if (
       WebAssembly.Module.imports(context.module).some(
-        (entry) => entry.module === "linux_user_poll_v1",
+        (entry) => entry.module === "linux_user_poll_v1" || entry.module === "linux_user_poll_v2",
       )
     ) {
       const abi = created.exports.__wasm_user_poll_abi;
       assert(
-        typeof abi === "function" && abi.length === 0 && abi() === 1,
+        typeof abi === "function" && abi.length === 0 && abi() === (poll2 ? 2 : 1),
         "invalid compiler user poll execution ABI",
       );
     }
+    if (poll_thread) poll_threads.set(created, poll_thread);
     return created;
   }
 
@@ -548,7 +568,8 @@ function user_imports({
           }
           if (
             WebAssembly.Module.imports(module).some(
-              (entry) => entry.module === "linux_user_poll_v1",
+              (entry) =>
+                entry.module === "linux_user_poll_v1" || entry.module === "linux_user_poll_v2",
             )
           ) {
             const exports = get_kernel_instance().exports;

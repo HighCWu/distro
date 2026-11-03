@@ -41,12 +41,33 @@ prevents a child temporarily using its parent's TLS from spending the parent's
 budget. The owner remains read-only after that claim, including while another
 instance inspects it. New native TLS starts with no owner and a fresh budget.
 
-No released SDK selects this macro, and the Worker still rejects ABI 2 imports.
-The small artifact probe verifies the gate and separate instance state; it does
-not establish host readiness publication, parallel Linux pthread startup, or
-safe libc instrumentation. Those must be implemented and accepted together
-before enabling coverage in library builds. This is an execution ABI experiment,
-not a new application or libc interface.
+The separate `sdk-cooperative-poll-libc` / `sdk-cooperative-poll-libc-wasm64`
+candidates select ABI 2 and rebuild the same musl source with coverage. The
+Worker starts each instance's TP global at zero, publishing the actual kernel
+value after TLS installation, clone's gettid boundary, or an existing TP read.
+Unrelated early exec syscalls cannot publish the old image's TP. Admission
+requires both ABI 2 imports, refuses mixed versions and checks the exported ABI.
+Allocator/startup callbacks suspend that global before any compiler TLS access;
+nested calls and nonlocal exits restore it without publishing a TP mid-callback.
+
+Clone and pthread/C11 startup translation units remain uninstrumented until
+native TLS has been initialized. This also avoids reading an inherited TLS
+block after the parent could release it. Other C library compilation units are
+instrumented; the compiler runtime and C++ libraries are not rebuilt with
+coverage. The default and application-only SDKs are unchanged. Raw custom clone
+startup still needs separate review.
+The candidate's independent Wasm compatibility patch clears native TLS base
+before detached self-unmap frees its stack/TLS for reuse. It preserves the
+separate Linux/musl TP during exit and adds no libc function or declaration.
+
+`cooperative-poll-libc-check-both` requires both widths to complete the five
+ordinary stages and a sixth stage in a real libc memchr loop. That stage's caller
+has no compiler checkpoints and uses a volatile function pointer to prevent
+builtin substitution. The timer must arrive during the search interval; later
+ordinary polling must recover. The small artifact/IR probes are prerequisites,
+not Linux acceptance. These candidates require actual six-stage and shutdown
+results before library polling is accepted. This is an execution ABI, not a new
+application or libc interface.
 
 The `cooperative-poll-check-both` target verifies real Linux timer delivery in
 pure computation, siglongjmp and later recovery, targeted pthread signals and
@@ -69,7 +90,7 @@ The consumer marks the compute interval and refuses a signal received before
 that interval. The child publishes its readiness from inside the loop, so a
 targeted signal cannot pass merely by arriving at thread startup.
 
-Existing uninstrumented library loops, custom coverage hooks, C++ exception
+Other uninstrumented libraries, custom coverage hooks, C++ exception
 interaction, dynamic loading, fork combinations and overhead need separate
 treatment. The current candidate primarily covers static C and ordinary pthread
 application entries. No public libc API is added. MIT execution source, recipe

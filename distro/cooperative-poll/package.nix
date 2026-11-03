@@ -5,10 +5,17 @@
   sdk-cooperative-poll,
   vm-test,
   cpuTimers ? false,
+  libraryCoverage ? false,
   extraChecks ? { },
 }:
 let
-  suffix = if cpuTimers then "-cpu" else "";
+  suffix =
+    if cpuTimers then
+      "-cpu"
+    else if libraryCoverage then
+      "-libc"
+    else
+      "";
   program =
     pkgs.runCommand "cooperative-poll${suffix}-${platform.wasmArch}"
       {
@@ -29,6 +36,7 @@ let
       ''
         mkdir $out
         wasm-linux-cc ${if cpuTimers then "-DCOOPERATIVE_CPU_TIMERS=1" else ""} \
+          ${if libraryCoverage then "-DCOOPERATIVE_LIBRARY_POLL=1" else ""} \
           -O2 -pthread -Wall -Wextra -Werror ${./runtime.c} -o $out/cooperative-poll.wasm
         node ${../busybox/check-binary.mjs} ${../../packages/kernel/src/wasm_binary.ts} \
           $out/cooperative-poll.wasm ${toString platform.addressBits} ${toString platform.maximumMemoryBytes}

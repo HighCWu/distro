@@ -25,6 +25,10 @@ static sigjmp_buf jump;
 static atomic_int ready;
 static timer_t nested_timer;
 static _Thread_local volatile sig_atomic_t nesting, nested_waiting, nested_seen;
+#ifdef COOPERATIVE_LIBRARY_POLL
+static volatile sig_atomic_t library_test, library_active;
+static void *(*volatile search_bytes)(const void *, int, size_t) = memchr;
+#endif
 
 static void require(int ok, const char *what)
 {
@@ -35,6 +39,9 @@ static void require(int ok, const char *what)
 
 static void handler(int sig)
 {
+#ifdef COOPERATIVE_LIBRARY_POLL
+    if (library_test && !library_active) bad_handler = 1;
+#endif
     if (nesting) {
         if (!computing || marker != 11) bad_handler = 1;
         if (sig == SIGALRM && !nested_waiting) {
@@ -91,6 +98,26 @@ static void *thread_main(void *arg)
     expected_signal = SIGUSR1;
     return (void *)(uintptr_t)(!spin() || marker != 22);
 }
+
+#ifdef COOPERATIVE_LIBRARY_POLL
+/* This caller has no checkpoints. Only the actual libc search loop can return
+ * to Linux; the volatile function pointer also prevents builtin substitution. */
+__attribute__((noinline))
+#ifdef __clang__
+__attribute__((no_sanitize("coverage")))
+#endif
+static int library_spin(const void *bytes, size_t size)
+{
+    computing = 1;
+    library_active = 1;
+    for (unsigned i = 0; i < 512 && !received; i++) {
+        if (search_bytes(bytes, 0xff, size)) bad_handler = 1;
+    }
+    library_active = 0;
+    computing = 0;
+    return received && !bad_handler;
+}
+#endif
 
 int main(int argc, char **argv)
 {
@@ -177,6 +204,22 @@ int main(int argc, char **argv)
     arm();
     require(spin() && !bad_handler, "ordinary checkpoints recover after nested handlers");
     puts("cooperative poll: nested handler computation receives unblocked signal and later timer recovers pass");
+#ifdef COOPERATIVE_LIBRARY_POLL
+    size_t bytes = 8 * 1024 * 1024;
+    unsigned char *data = malloc(bytes);
+    require(data != NULL, "allocate library computation input");
+    memset(data, 0x11, bytes);
+    library_test = 1;
+    received = 0;
+    arm();
+    require(library_spin(data, bytes), "timer must interrupt actual libc search computation");
+    library_test = 0;
+    free(data);
+    received = 0;
+    arm();
+    require(spin() && marker == 11, "application polling recovers after library signal");
+    puts("cooperative poll: libc search loop receives timer without application checkpoints and later recovers pass");
+#endif
     puts("::vm-test::pass");
     for (;;) pause();
 }

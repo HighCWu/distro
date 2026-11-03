@@ -159,6 +159,8 @@ const supported_user_module_imports = new Set([
   "linux\0syscall\0function",
   "linux\0syscall_v2\0function",
   "linux_user_poll_v1\0checkpoint\0function",
+  "linux_user_poll_v2\0checkpoint\0function",
+  "linux_user_poll_v2\0thread_pointer\0global",
   "linux\0get_thread_area\0function",
   "linux\0copy_siginfo\0function",
   "linux_signal_v1\0frame\0function",
@@ -177,7 +179,17 @@ const supported_user_module_imports = new Set([
 /** Whether every import can be supplied when a userspace module is instantiated. */
 export function user_module_imports_supported(module: WebAssembly.Module): boolean {
   const imports = WebAssembly.Module.imports(module);
-  if (imports.some((entry) => entry.module === "linux_user_poll_v1")) {
+  const poll1 = imports.some((entry) => entry.module === "linux_user_poll_v1");
+  const poll2 = imports.some((entry) => entry.module === "linux_user_poll_v2");
+  if (poll1 && poll2) return false;
+  if (
+    poll2 &&
+    !["checkpoint", "thread_pointer"].every((name) =>
+      imports.some((entry) => entry.module === "linux_user_poll_v2" && entry.name === name),
+    )
+  )
+    return false;
+  if (poll1 || poll2) {
     if (
       imports.some(
         (entry) => entry.module === "linux_fork_v1" || entry.module === "linux_dlopen_v1",

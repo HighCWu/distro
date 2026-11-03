@@ -238,6 +238,27 @@ lib.makeScope (scope: lib.callPackageWith ({ inherit lib pkgs; } // scope)) (
       llvm-toolchain = self.llvm-toolchain-wasm64;
       sysroot = self.sysroot-wasm64;
       sdk = self.sdk-wasm64;
+      musl = self.musl-wasm64;
+      sysroot-base = self.sysroot-base-wasm64;
+    };
+    sdk-cooperative-poll-libc = self.sdk-cooperative-poll.override { libraryCoverage = true; };
+    sdk-cooperative-poll-libc-wasm64 = self.sdk-cooperative-poll-wasm64.override {
+      libraryCoverage = true;
+    };
+    cooperative-poll-libc = self.cooperative-poll.override {
+      libraryCoverage = true;
+      sdk-cooperative-poll = self.sdk-cooperative-poll-libc;
+      extraChecks.both =
+        pkgs.runCommand "cooperative-poll-libc-both-widths" { passthru.ci.heavy = true; }
+          ''
+            test -e ${self.cooperative-poll-libc.checks.runtime}
+            test -e ${self.cooperative-poll-libc-wasm64.checks.runtime}
+            touch $out
+          '';
+    };
+    cooperative-poll-libc-wasm64 = self.cooperative-poll-wasm64.override {
+      libraryCoverage = true;
+      sdk-cooperative-poll = self.sdk-cooperative-poll-libc-wasm64;
     };
     cooperative-poll = callPackage ./cooperative-poll/package.nix {
       extraChecks.both =

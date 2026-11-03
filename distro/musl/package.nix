@@ -7,6 +7,7 @@
   enableForkContinuation ? false,
   enableDynamicLoader ? false,
   enableBrkSyscall ? false,
+  enableCooperativePoll ? false,
   llvm-toolchain-unwrapped,
   src ? pkgs.fetchFromGitHub {
     owner = "HighCWu";
@@ -24,10 +25,11 @@ assert builtins.elem wasmBits [
   64
 ];
 assert !(enableForkContinuation && enableDynamicLoader);
+assert !(enableCooperativePoll && (enableForkContinuation || enableDynamicLoader));
 
 pkgs.stdenvNoCC.mkDerivation (
   {
-    name = "musl-wasm${toString wasmBits}";
+    name = "musl-wasm${toString wasmBits}${lib.optionalString enableCooperativePoll "-poll"}";
     inherit src;
 
     nativeBuildInputs = [ llvm-toolchain-unwrapped ];
@@ -48,8 +50,17 @@ pkgs.stdenvNoCC.mkDerivation (
       LDFLAGS_AUTO=-Wl,--unresolved-symbols=import-dynamic,--shared-memory,--import-memory,--max-memory=${toString platform.maximumMemoryBytes}
       CFLAGS=${lib.optionalString debug "-g"}${
         lib.optionalString (!deduplicateMmapSearch) " -DWASM_MMAP_DEDUP_SEARCH=0"
-      }${lib.optionalString enableForkContinuation " -DWASM_FORK_CONTINUATION=1"}${lib.optionalString enableDynamicLoader " -DWASM_DYNAMIC_LOADER=1"}${lib.optionalString enableBrkSyscall " -DWASM_BRK_SYSCALL=1"}
+      }${lib.optionalString enableForkContinuation " -DWASM_FORK_CONTINUATION=1"}${lib.optionalString enableDynamicLoader " -DWASM_DYNAMIC_LOADER=1"}${lib.optionalString enableBrkSyscall " -DWASM_BRK_SYSCALL=1"}${lib.optionalString enableCooperativePoll " -fsanitize-coverage=trace-pc,no-prune,edge"}
       EOF
+
+      ${lib.optionalString enableCooperativePoll ''
+        # Keep the clone/native-TLS transition free of compiler callbacks. Its
+        # inherited parent TLS may cease to be live before the child owns TLS.
+        # Both pthread and C11 startup initialize native TLS before other calls.
+        cat >>config.mak <<'EOF'
+        obj/src/thread/wasm32/clone.o obj/src/thread/wasm32/clone.lo obj/src/thread/pthread_create.o obj/src/thread/pthread_create.lo: CFLAGS_ALL += -fno-sanitize-coverage=trace-pc,no-prune,edge
+        EOF
+      ''}
 
       runHook postConfigure
     '';
@@ -68,9 +79,10 @@ pkgs.stdenvNoCC.mkDerivation (
       runHook postInstall
     '';
   }
-  // lib.optionalAttrs (enableForkContinuation || enableDynamicLoader) {
+  // lib.optionalAttrs (enableForkContinuation || enableDynamicLoader || enableCooperativePoll) {
     patches =
       lib.optional enableForkContinuation ./fork-continuation.patch
-      ++ lib.optional enableDynamicLoader ./dynamic-loader.patch;
+      ++ lib.optional enableDynamicLoader ./dynamic-loader.patch
+      ++ lib.optional enableCooperativePoll ./cooperative-poll.patch;
   }
 )

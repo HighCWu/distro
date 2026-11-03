@@ -1,0 +1,27 @@
+# SPDX-License-Identifier: MIT
+diff --git a/src/thread/__unmapself.c b/src/thread/__unmapself.c
+--- a/src/thread/__unmapself.c
++++ b/src/thread/__unmapself.c
+@@ -26,8 +26,10 @@
+ #else
+ #if __SIZEOF_POINTER__ == 8
+ __asm__(".globaltype __stack_pointer, i64\n");
++__asm__(".globaltype __tls_base, i64\n");
+ #else
+ __asm__(".globaltype __stack_pointer, i32\n");
++__asm__(".globaltype __tls_base, i32\n");
+ #endif
+ /* __pthread_exit holds the thread-list lock until the kernel clears its
+  * clear_child_tid word. Thus only one exiting thread can use this stack,
+@@ -46,6 +48,11 @@
+ {
+ 	(void)size;
+ 	exit_base = base;
++	/* Compiler polling must not touch native TLS after free publishes it
++	 * for reuse. Linux/musl's separate TP remains available during exit. */
++	uintptr_t no_native_tls = 0;
++	__asm__ volatile("local.get %0\nglobal.set __tls_base"
++			 :: "r"(no_native_tls) : "memory");
+ 	void *top = exit_stack + sizeof exit_stack;
+ 	__asm__ volatile("local.get %0\n"
+ 			 "global.set __stack_pointer" :: "r"(top) : "memory");
