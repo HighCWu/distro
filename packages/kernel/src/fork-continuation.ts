@@ -385,7 +385,8 @@ export class ForkContinuation {
         (!native && !legacy) ||
         typeof features !== "number" ||
         !Number.isInteger(features) ||
-        !(features & 8)
+        (BigInt(request.sharingFlags) & 0x600n ? !(features & 8) : false) ||
+        (BigInt(request.sharingFlags) & 0x40000n ? !(features & 16) : false)
       )
         return -95;
     }

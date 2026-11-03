@@ -105,6 +105,11 @@ addresses, while legacy clone aliases that register and Linux rejects the
 PIDFD/PARENT_SETTID alias. Child TIDs use the child's PID namespace; parent
 TIDs use the parent's namespace. Private memory remains private, so a child
 clear-TID action does not create a shared-memory wakeup facility for its parent.
+CLONE_SYSVSEM additionally requires bit 4 of the private execution object's
+`__wasm_fork_clone3_features`. It shares Linux's SEM_UNDO list while retaining
+independent user memory. Older objects are refused before continuation unwind;
+the existing CLONE_FS/CLONE_FILES bit 3 is unchanged. Linux owns undo application
+at the last sharer's exit and rejects incompatible CLONE_NEWIPC combinations.
 Custom stacks, TLS flags and multithreaded fork remain unsupported. Actual
 target acceptance of this increment is recorded separately from host checks.
 

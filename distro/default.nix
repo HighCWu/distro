@@ -596,7 +596,13 @@ lib.makeScope (scope: lib.callPackageWith ({ inherit lib pkgs; } // scope)) (
     clone-flags64 = callPackage ./clone-flags64/package.nix { };
     clone-timens = callPackage ./clone-timens/package.nix { };
     clone-pid-select = callPackage ./clone-pid-select/package.nix { };
-    clone-sharing = callPackage ./clone-sharing/package.nix { };
+    clone-sharing = callPackage ./clone-sharing/package.nix {
+      extraChecks.both = pkgs.runCommand "clone-sharing-both-widths" { passthru.ci.heavy = true; } ''
+        test -e ${self.clone-sharing.checks.runtime}
+        test -e ${self.clone-sharing-wasm64.checks.runtime}
+        touch $out
+      '';
+    };
     timezone = callPackage ./timezone/package.nix { };
     file-mmap-stream = callPackage ./file-mmap-stream/package.nix {
       vm-test = self.vm-test.override {

@@ -14,7 +14,7 @@ export interface CloneForkRequest {
 }
 
 const namespaceMask = 0x7e020000n;
-const sharingMask = 0x600n; // CLONE_FS | CLONE_FILES, with an independent mm.
+const sharingMask = 0x40600n; // CLONE_FS | CLONE_FILES | CLONE_SYSVSEM, independent mm.
 const tidMask = 0x01300000n;
 const clearSighand = 0x100000000n;
 const newTime = 0x80n;

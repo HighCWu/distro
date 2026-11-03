@@ -99,6 +99,7 @@ let
       cloneResourceSharingFlags = [
         "CLONE_FS"
         "CLONE_FILES"
+        "CLONE_SYSVSEM"
       ];
       cloneNamespaceTransport = true;
       nativeClone3Transport = true;

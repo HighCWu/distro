@@ -7,6 +7,7 @@
   musl,
   llvm-runtimes,
   vm-test,
+  extraChecks ? { },
 }:
 pkgs.stdenvNoCC.mkDerivation (finalAttrs: {
   pname = "clone-sharing";
@@ -42,9 +43,12 @@ pkgs.stdenvNoCC.mkDerivation (finalAttrs: {
     runHook postInstall
   '';
   meta.license = lib.licenses.mit;
-  passthru.checks.runtime = vm-test.rawInitramfsTest {
-    name = "clone-sharing-${platform.wasmArch}";
-    init = "${finalAttrs.finalPackage}/clone-sharing.wasm";
-    cpus = 2;
-  };
+  passthru.checks = {
+    runtime = vm-test.rawInitramfsTest {
+      name = "clone-sharing-${platform.wasmArch}";
+      init = "${finalAttrs.finalPackage}/clone-sharing.wasm";
+      cpus = 2;
+    };
+  }
+  // extraChecks;
 })

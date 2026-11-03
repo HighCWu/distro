@@ -1,8 +1,5 @@
 // SPDX-License-Identifier: MIT
 #define _GNU_SOURCE
-#ifndef __wasm__
-#error "Run only in the isolated Linux/Wasm sharing image"
-#endif
 #include <errno.h>
 #include <fcntl.h>
 #include <linux/sched.h>
@@ -12,12 +9,20 @@
 #include <stdlib.h>
 #include <string.h>
 #include <sys/stat.h>
+#include <sys/sem.h>
 #include <sys/syscall.h>
 #include <sys/wait.h>
 #include <unistd.h>
 
+#ifndef ROOT
 #define ROOT "/clone-sharing"
+#endif
 static volatile int private_value = 61;
+static int cleanup_semid = -1;
+static void cleanup_semaphore(void)
+{
+    if (cleanup_semid >= 0) (void)semctl(cleanup_semid, 0, IPC_RMID);
+}
 
 static void require(int ok, const char *what)
 {
@@ -95,14 +100,57 @@ static void share_files(int legacy, int detach)
     }
 }
 
+static void sem_adjust(int id)
+{
+    struct sembuf operation = { .sem_num = 0, .sem_op = -1, .sem_flg = SEM_UNDO };
+    require(semop(id, &operation, 1) == 0, "record kernel semaphore undo adjustment");
+}
+
+static void share_semundo(int legacy, int shared)
+{
+    int id = semget(IPC_PRIVATE, 1, IPC_CREAT | 0600);
+    require(id >= 0, "private semaphore set");
+    cleanup_semid = id;
+    union { int val; struct semid_ds *buf; unsigned short *array; } argument = { .val = 5 };
+    require(semctl(id, 0, SETVAL, argument) == 0, "initial semaphore value");
+    pid_t owner = fork();
+    require(owner >= 0, "isolated undo owner");
+    if (!owner) {
+        sem_adjust(id);
+        require(semctl(id, 0, GETVAL) == 4, "owner adjustment visible");
+        pid_t child = create(legacy, shared ? CLONE_SYSVSEM : 0);
+        require(child >= 0, "clone with selected semaphore undo ownership");
+        if (!child) {
+            private_value = 99;
+            sem_adjust(id);
+            _exit(37);
+        }
+        reap(child, 37);
+        require(semctl(id, 0, GETVAL) == (shared ? 3 : 4),
+                "shared undo survives child exit; private undo applies immediately");
+        _exit(40);
+    }
+    reap(owner, 40);
+    require(semctl(id, 0, GETVAL) == 5, "last owner exit restores all kernel undo adjustments");
+    require(semctl(id, 0, IPC_RMID) == 0, "remove semaphore set");
+    cleanup_semid = -1;
+}
+
 int main(void)
 {
     require(setvbuf(stdout, NULL, _IONBF, 0) == 0, "unbuffered stages");
+    require(atexit(cleanup_semaphore) == 0, "semaphore failure cleanup");
     cwd_is("/");
     require(mkdir(ROOT, 0755) == 0 && mkdir(ROOT "/sub", 0755) == 0, "filesystem fixtures");
     int fd = open(ROOT "/data", O_RDWR | O_CREAT | O_EXCL | O_CLOEXEC, 0600);
     require(fd >= 0 && write(fd, "alpha", 5) == 5 && close(fd) == 0, "write exact fixture");
-    for (int legacy = 0; legacy < 2; legacy++) {
+    for (int legacy =
+#ifdef __wasm__
+         0
+#else
+         1 /* Native reference uses clone; host sandbox may deny clone3. */
+#endif
+         ; legacy < 2; legacy++) {
         share_fs(legacy);
         share_files(legacy, 0);
         share_files(legacy, 1);
@@ -113,6 +161,19 @@ int main(void)
         cwd_is("/");
         puts(legacy ? "clone sharing: legacy clone cwd/umask, shared close and UNSHARE pass"
                     : "clone sharing: native clone3 cwd/umask, shared close and UNSHARE pass");
+        share_semundo(legacy, 0);
+        share_semundo(legacy, 1);
+#ifdef __wasm__
+        /* The native reference's host sandbox can reject NEWIPC before Linux
+         * reaches its flag-conflict check. Require the exact kernel result
+         * in the isolated target instead. */
+        errno = 0;
+        rejected = create(legacy, CLONE_SYSVSEM | CLONE_NEWIPC);
+        if (!rejected) _exit(90);
+        require(rejected == -1 && errno == EINVAL, "Linux rejects SYSVSEM/NEWIPC conflict");
+#endif
+        puts(legacy ? "clone sharing: legacy clone SEM_UNDO ownership and last-exit recovery pass"
+                    : "clone sharing: native clone3 SEM_UNDO ownership and last-exit recovery pass");
     }
     fd = open(ROOT "/data", O_RDONLY | O_CLOEXEC);
     require(fd >= 0, "ordinary fork parent descriptor");
@@ -130,5 +191,9 @@ int main(void)
             "filesystem cleanup");
     puts("clone sharing: ordinary fork isolation, error recovery and cleanup pass");
     puts("::vm-test::pass");
+#ifdef __wasm__
     for (;;) pause();
+#else
+    return 0;
+#endif
 }

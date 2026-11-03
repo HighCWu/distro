@@ -184,63 +184,74 @@ for (const address of ["i32", "i64"] as const)
 
 for (const address of ["i32", "i64"] as const)
   for (const native of [true, false])
-    test(`${address}: ${native ? "clone3" : "clone"} resource sharing is explicit and never lost on fallback`, () => {
-      const {
-        controller,
-        exports,
-        memory,
-        pointer: p,
-        calls,
-      } = fixture(address, true, 2, true, undefined, true);
-      const view = new DataView(memory.buffer);
-      view.setBigUint64(8192, 0x600n, true);
-      view.setBigUint64(8224, 17n, true);
-      let forwarded = 0;
-      Object.assign(exports, {
-        __wasm_fork_clone3_flags64: (...args: WasmAddress[]) => {
-          assert.ok(native);
-          assert.deepEqual(args, [0x600n, p(0), p(0), p(0)]);
-          forwarded++;
-          return p(-11);
-        },
-        __wasm_fork_clone_options: (...args: WasmAddress[]) => {
-          assert.ok(!native);
-          assert.deepEqual(args, [p(0x600), p(0), p(0)]);
-          forwarded++;
-          return p(-11);
-        },
-      });
-      const enter = () =>
-        native
-          ? controller.clone3Checkpoint(p(8192), p(88), true)
-          : controller.cloneCheckpoint([p(0x611), p(0), p(-1), p(-1), p(-1), p(-1)], true);
-      for (const feature of [undefined, 0, 7, 8n, NaN, 8.5]) {
+    for (const sharing of [0x600, 0x40000, 0x40600])
+      test(`${address}: ${native ? "clone3" : "clone"} resource sharing ${sharing} is explicit and never lost on fallback`, () => {
+        const {
+          controller,
+          exports,
+          memory,
+          pointer: p,
+          calls,
+        } = fixture(address, true, 2, true, undefined, true);
+        const view = new DataView(memory.buffer);
+        view.setBigUint64(8192, BigInt(sharing), true);
+        view.setBigUint64(8224, 17n, true);
+        let forwarded = 0;
         Object.assign(exports, {
-          __wasm_fork_clone3_features: feature === undefined ? undefined : () => feature,
+          __wasm_fork_clone3_flags64: (...args: WasmAddress[]) => {
+            assert.ok(native);
+            assert.deepEqual(args, [BigInt(sharing), p(0), p(0), p(0)]);
+            forwarded++;
+            return p(-11);
+          },
+          __wasm_fork_clone_options: (...args: WasmAddress[]) => {
+            assert.ok(!native);
+            assert.deepEqual(args, [p(sharing), p(0), p(0)]);
+            forwarded++;
+            return p(-11);
+          },
         });
-        assert.equal(enter(), -95);
-        assert.equal(calls.descriptors, 0);
-      }
-      Object.assign(exports, { __wasm_fork_clone3_features: () => 15 });
-      assert.equal(enter(), 0);
-      controller.suspend();
-      assert.equal(controller.clone(), p(-11));
-      controller.resumeParent(p(-11));
-      assert.equal(enter(), -11);
-      assert.equal(forwarded, 1);
-      Object.assign(exports, {
-        __wasm_fork_clone3_flags64: (...args: WasmAddress[]) => {
-          assert.deepEqual(args, [0n, p(0), p(0), p(0)]);
-          return p(-9);
-        },
+        const enter = () =>
+          native
+            ? controller.clone3Checkpoint(p(8192), p(88), true)
+            : controller.cloneCheckpoint([p(sharing | 17), p(0), p(-1), p(-1), p(-1), p(-1)], true);
+        for (const feature of [
+          undefined,
+          0,
+          7,
+          8n,
+          NaN,
+          8.5,
+          ...(sharing & 0x40000 ? [8, 15] : []),
+        ]) {
+          Object.assign(exports, {
+            __wasm_fork_clone3_features: feature === undefined ? undefined : () => feature,
+          });
+          assert.equal(enter(), -95);
+          assert.equal(calls.descriptors, 0);
+        }
+        Object.assign(exports, {
+          __wasm_fork_clone3_features: () => (sharing === 0x40000 ? 16 : 31),
+        });
+        assert.equal(enter(), 0);
+        controller.suspend();
+        assert.equal(controller.clone(), p(-11));
+        controller.resumeParent(p(-11));
+        assert.equal(enter(), -11);
+        assert.equal(forwarded, 1);
+        Object.assign(exports, {
+          __wasm_fork_clone3_flags64: (...args: WasmAddress[]) => {
+            assert.deepEqual(args, [0n, p(0), p(0), p(0)]);
+            return p(-9);
+          },
+        });
+        view.setBigUint64(8192, 0n, true);
+        assert.equal(controller.clone3Checkpoint(p(8192), p(88), true), 0);
+        controller.suspend();
+        assert.equal(controller.clone(), p(-9));
+        controller.resumeParent(p(-9));
+        assert.equal(controller.clone3Checkpoint(p(0), p(0), true), -9);
       });
-      view.setBigUint64(8192, 0n, true);
-      assert.equal(controller.clone3Checkpoint(p(8192), p(88), true), 0);
-      controller.suspend();
-      assert.equal(controller.clone(), p(-9));
-      controller.resumeParent(p(-9));
-      assert.equal(controller.clone3Checkpoint(p(0), p(0), true), -9);
-    });
 
 for (const address of ["i32", "i64"] as const)
   test(`${address}: clone3 PID selection requires capture support and clears after kernel refusal`, () => {
