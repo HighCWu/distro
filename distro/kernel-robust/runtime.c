@@ -72,8 +72,13 @@ static void *waiter(void *pointer)
     struct node *node = pointer;
     uint32_t owner = atomic_load(&node->owner);
     atomic_store(&waiter_tid, (int)raw(SYS_gettid, 0, 0, 0, 0, 0, 0));
-    struct timespec timeout = { .tv_sec = 5 };
-    long result = raw(SYS_futex, (long)&node->owner, FUTEX_WAIT, owner, (long)&timeout, 0, 0);
+    long long timeout[2] = { 5, 0 }; /* Linux time64 layout, including wasm32. */
+#if __SIZEOF_LONG__ == 4
+    const long number = SYS_futex_time64;
+#else
+    const long number = SYS_futex;
+#endif
+    long result = raw(number, (long)&node->owner, FUTEX_WAIT, owner, (long)timeout, 0, 0);
     return (void *)(uintptr_t)(result != 0);
 }
 static void wait_sleeping(void)
