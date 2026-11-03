@@ -200,6 +200,16 @@ lib.makeScope (scope: lib.callPackageWith ({ inherit lib pkgs; } // scope)) (
     landlock = callPackage ./landlock/package.nix { };
     sdk-brk-syscall = callPackage ./brk-syscall/sdk.nix { };
     brk-syscall = callPackage ./brk-syscall/package.nix {
+      extraChecks.runtime-both =
+        pkgs.runCommand "brk-syscall-runtime-both-widths"
+          {
+            passthru.ci.heavy = true;
+          }
+          ''
+            test -e ${self.brk-syscall.checks.runtime}
+            test -e ${self.brk-syscall-wasm64.checks.runtime}
+            touch $out
+          '';
       extraChecks.both =
         pkgs.runCommand "brk-syscall-both-widths"
           {
@@ -227,6 +237,7 @@ lib.makeScope (scope: lib.callPackageWith ({ inherit lib pkgs; } // scope)) (
     };
     brk-syscall-wasm64 = callPackage ./brk-syscall/package.nix {
       platform = self.platform-wasm64;
+      llvm-toolchain = self.llvm-toolchain-wasm64;
       sdk-brk-syscall = self.sdk-brk-syscall-wasm64;
       vm-test = vmTestWasm64;
     };

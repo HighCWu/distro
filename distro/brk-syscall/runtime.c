@@ -11,8 +11,20 @@
 #include <sys/syscall.h>
 #include <unistd.h>
 
-static _Thread_local unsigned char tls_probe[8192];
+static _Thread_local volatile unsigned char tls_probe[8192];
 static void *slots[2][64];
+
+static void fill_tls(unsigned char value)
+{
+    for (size_t i = 0; i < sizeof tls_probe; i++) tls_probe[i] = value;
+}
+
+static int check_tls(unsigned char value)
+{
+    for (size_t i = 0; i < sizeof tls_probe; i++)
+        if (tls_probe[i] != value) return 0;
+    return 1;
+}
 
 static void require(int ok, const char *what)
 {
@@ -36,15 +48,14 @@ static uintptr_t current_break(void)
 static void *allocate_slots(void *argument)
 {
     size_t id = (uintptr_t)argument;
-    tls_probe[0] = 0x20 + id;
-    tls_probe[8191] = 0x30 + id;
+    fill_tls(0x20 + id);
     for (size_t i = 0; i < 64; i++) {
         void *pointer = sbrk(64);
         if (pointer == (void *)-1) return (void *)1;
         slots[id][i] = pointer;
         memset(pointer, 0x40 + id, 64);
     }
-    return tls_probe[0] == 0x20 + id && tls_probe[8191] == 0x30 + id ? NULL : (void *)2;
+    return check_tls(0x20 + id) ? NULL : (void *)2;
 }
 
 int main(void)
@@ -95,8 +106,7 @@ int main(void)
                                   MAP_PRIVATE | MAP_ANONYMOUS, -1, 0);
     require(mapping != MAP_FAILED, "mmap through the shared allocator");
     memset(mapping, 0x5a, 2 * page);
-    tls_probe[0] = 0x11;
-    tls_probe[8191] = 0x12;
+    fill_tls(0x11);
     pthread_t threads[2];
     for (size_t id = 0; id < 2; id++)
         require(!pthread_create(&threads[id], NULL, allocate_slots, (void *)(uintptr_t)id), "thread creation");
@@ -114,7 +124,7 @@ int main(void)
                         require(slots[id][i] != slots[other][j], "concurrent libc increments never alias");
         }
     }
-    require(tls_probe[0] == 0x11 && tls_probe[8191] == 0x12, "main TLS isolation");
+    require(check_tls(0x11), "main TLS isolation");
     mapping = mremap(mapping, 2 * page, 4 * page, MREMAP_MAYMOVE);
     require(mapping != MAP_FAILED, "mremap after syscall-routed heap allocations");
     for (size_t i = 0; i < 4 * page; i++)
