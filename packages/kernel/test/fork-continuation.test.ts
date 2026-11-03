@@ -157,6 +157,56 @@ function fixture(
 }
 
 for (const address of ["i32", "i64"] as const)
+  for (const fatal of [false, true])
+    test(`${address}: child return work runs only after rewind and propagates control transfer=${fatal}`, () => {
+      const parent = fixture(address, true, 2);
+      const child = fixture(address, true, 2, true, undefined, true, false);
+      const p = child.pointer;
+      assert.equal(parent.controller.syscallCheckpoint(true), 0);
+      const snapshot = parent.controller.suspend();
+      let calls = 0;
+      const transfer = Symbol("fatal child return work");
+      const controller = new ForkContinuation(
+        { exports: child.exports } as unknown as WebAssembly.Instance,
+        child.memory,
+        address,
+        () => {
+          throw new Error("ignored timing diagnostic");
+        },
+        true,
+        true,
+        () => {
+          calls++;
+          assert.equal(child.exports.asyncify_get_state(), 0);
+          assert.equal(child.exports.__stack_pointer.value, snapshot.stack);
+          assert.equal(child.exports.__tls_base.value, snapshot.tls);
+          assert.equal(
+            controller.userPollAllowed(),
+            false,
+            "ordinary fork needs no compiler polling marker",
+          );
+          controller.kernelCall(() => assert.equal(controller.syscallCheckpoint(true), -95));
+          if (fatal) throw transfer;
+        },
+      );
+      controller.resumeChild(snapshot);
+      assert.equal(calls, 0, "startup and active rewind defer return work");
+      if (fatal)
+        assert.throws(
+          () => controller.syscallCheckpoint(true),
+          (error) => error === transfer,
+        );
+      else assert.equal(controller.syscallCheckpoint(true), 0);
+      assert.equal(calls, 1);
+      assert.equal(child.exports.asyncify_get_state(), 0);
+      assert.equal(controller.syscallCheckpoint(true), 0, "descriptor was cleared before callback");
+      controller.suspend();
+      controller.resumeParent(p(-11));
+      assert.equal(controller.syscallCheckpoint(true), -11);
+      assert.equal(calls, 1, "parent rewind must never repeat child return work");
+    });
+
+for (const address of ["i32", "i64"] as const)
   test(`${address}: fork polling requires capability and defers every snapshot transition`, () => {
     assert.equal(fixture(address).controller.userPollAllowed(), false);
     const { controller: c, pointer: p } = fixture(address, false, 1, true, undefined, false, true);

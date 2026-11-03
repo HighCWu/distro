@@ -1,11 +1,66 @@
 // SPDX-License-Identifier: MIT
 import assert from "node:assert/strict";
 import test from "node:test";
-import { call_user_poll, user_poll_thread } from "../src/user-poll.ts";
+import {
+  call_user_poll,
+  user_poll_thread,
+  call_fork_child_return,
+  fork_child_return_supported,
+} from "../src/user-poll.ts";
 import { call_kernel_entry, call_user_callback } from "../src/signal-stack.ts";
 import { user_module_imports_supported, type Instance } from "../src/wasm.ts";
 
 for (const address of ["i32", "i64"] as const) {
+  test(`${address}: mandatory fork return work cannot silently defer startup callbacks`, () => {
+    const word = (n: number) => (address === "i64" ? BigInt(n) : n);
+    const memory = new WebAssembly.Memory({ initial: 1 });
+    const user = {
+      __stack_pointer: new WebAssembly.Global({ value: address, mutable: true }, word(128)),
+    };
+    let phase = 1,
+      polls = 0;
+    const transfer = Symbol("child signal control transfer");
+    let fail = false;
+    const kernel = {
+      user_context_v1(mode: number) {
+        const old = phase;
+        if (mode !== 2) phase = mode;
+        return old;
+      },
+      user_poll_v1() {
+        polls++;
+        assert.equal(call_fork_child_return(kernel, user, memory, address), -16);
+        if (fail) throw transfer;
+        return 0;
+      },
+      syscall() {
+        throw new Error("return work must never manufacture a syscall");
+      },
+    } as unknown as Instance["exports"];
+    assert.equal(fork_child_return_supported(kernel), true);
+    assert.equal(fork_child_return_supported({ user_context_v1: kernel.user_context_v1! }), false);
+    assert.equal(fork_child_return_supported({ ...kernel, user_context_v1: () => 1 }), false);
+    assert.equal(call_fork_child_return(kernel, user, memory, address), 0);
+    assert.equal(polls, 1);
+    call_kernel_entry(kernel, address, () =>
+      assert.equal(call_fork_child_return(kernel, user, memory, address), -16),
+    );
+    call_user_callback(kernel, address, () =>
+      assert.equal(call_fork_child_return(kernel, user, memory, address), -16),
+    );
+    assert.equal(polls, 1);
+    phase = 0;
+    assert.equal(call_fork_child_return(kernel, user, memory, address), -11);
+    phase = 1;
+    fail = true;
+    assert.throws(
+      () => call_fork_child_return(kernel, user, memory, address),
+      (error) => error === transfer,
+    );
+    assert.equal(polls, 2);
+    assert.equal(phase, 1);
+  });
+
   test(`${address}: thread readiness starts empty and publishes only the kernel-owned TP`, () => {
     const word = (n: number) => (address === "i64" ? BigInt(n) : n);
     let current = word(17),

@@ -613,6 +613,19 @@ lib.makeScope (scope: lib.callPackageWith ({ inherit lib pkgs; } // scope)) (
       vm-test = vmTestWasm64;
     };
     clone-untraced = callPackage ./clone-untraced/package.nix {
+      extraChecks.return-work =
+        pkgs.runCommand "fork-first-return-both-widths" { passthru.ci.heavy = true; }
+          ''
+            test -e ${self.clone-untraced.checks.runtime}
+            test -e ${self.clone-untraced-wasm64.checks.runtime}
+            test -e ${self.fork-continuation.checks.runtime}
+            test -e ${self.fork-continuation-wasm64.checks.runtime}
+            test -e ${self.fork-continuation.checks.child-signals}
+            test -e ${self.fork-continuation-wasm64.checks.child-signals}
+            test -e ${self.fork-continuation.checks.resume-signals}
+            test -e ${self.fork-continuation-wasm64.checks.resume-signals}
+            touch $out
+          '';
       extraChecks.both = pkgs.runCommand "clone-untraced-both-widths" { passthru.ci.heavy = true; } ''
         test -e ${self.clone-untraced.checks.runtime}
         test -e ${self.clone-untraced-wasm64.checks.runtime}

@@ -73,7 +73,11 @@ static void scenario(int legacy, int untraced)
         event_child = (pid_t)event;
         require(event_child > 0 && (unsigned long)event_child == event && event_child != caller,
                 "event child PID fits pid_t");
-        require(waitpid(event_child, &status, __WALL) == event_child && WIFSTOPPED(status),
+        pid_t waited = waitpid(event_child, &status, __WALL);
+        if (waited != event_child || !WIFSTOPPED(status))
+            fprintf(stderr, "clone untraced: initial child wait returned %d expected %d status=%#x errno=%d\n",
+                    waited, event_child, status, errno);
+        require(waited == event_child && WIFSTOPPED(status),
                 "ordinary child inherits ptrace stop");
         require(trace(PTRACE_DETACH, event_child, 0) == 0 && trace(PTRACE_CONT, caller, 0) == 0,
                 "release traced child and caller");

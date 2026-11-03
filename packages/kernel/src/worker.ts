@@ -37,7 +37,12 @@ import {
 } from "./user-mmap.ts";
 import { FileMmapCopy } from "./file-mmap-copy.ts";
 import { user_brk_layout, user_brk_update } from "./user-brk.ts";
-import { call_user_poll, user_poll_thread } from "./user-poll.ts";
+import {
+  call_user_poll,
+  user_poll_thread,
+  call_fork_child_return,
+  fork_child_return_supported,
+} from "./user-poll.ts";
 import {
   read_signal_stack_pointer,
   call_on_signal_stack,
@@ -481,6 +486,23 @@ function user_imports({
           profile ? () => profile.childRewound() : undefined,
           get_kernel_instance().exports.fork_worker_abort_abi?.() === 1,
           get_kernel_instance().exports.native_clone3_fork_abi?.() === 1,
+          () => {
+            assert(instance && context && fork);
+            const before = instance;
+            const result = fork.kernelCall(() =>
+              call_fork_child_return(
+                get_kernel_instance().exports,
+                before.exports,
+                context!.memory,
+                kernel_address,
+              ),
+            );
+            if (instance !== before) {
+              call_entry = call_start;
+              throw HALT_USER;
+            }
+            assert(result === 0, `fork child return work failed (${result})`);
+          },
         )
       : null;
   }
@@ -574,6 +596,11 @@ function user_imports({
           ) {
             return -8; // exec format error
           }
+          if (
+            uses_fork_continuation(module) &&
+            !fork_child_return_supported(get_kernel_instance().exports)
+          )
+            return -8;
           if (
             WebAssembly.Module.imports(module).some(
               (entry) =>

@@ -184,6 +184,7 @@ export class ForkContinuation {
   private tracingFlags: WasmAddress | undefined;
   private rewindingChild = false;
   private readonly childRewound: (() => void) | undefined;
+  private readonly childReturnWork: (() => void) | undefined;
   private readonly e: WebAssembly.Exports;
   private readonly memory: WebAssembly.Memory;
   private readonly address: WasmAddressType;
@@ -198,10 +199,12 @@ export class ForkContinuation {
     childRewound?: () => void,
     pidfdSupported = false,
     nativeClone3Supported = false,
+    childReturnWork?: () => void,
   ) {
     this.nativeClone3Supported = nativeClone3Supported;
     this.pidfdSupported = pidfdSupported;
     this.childRewound = childRewound;
+    this.childReturnWork = childReturnWork;
     this.e = instance.exports;
     this.userPollSupported = typeof this.e.__wasm_fork_user_poll_abi === "function";
     if (this.userPollSupported) {
@@ -295,6 +298,10 @@ export class ForkContinuation {
         try {
           this.childRewound?.();
         } catch {}
+        // The stack and native TLS are restored and Asyncify is idle now.
+        // Unlike timing diagnostics, signal/ptrace return work is mandatory:
+        // preserve fatal exit, exec and non-local handler control transfers.
+        this.childReturnWork?.();
       }
       return result;
     }

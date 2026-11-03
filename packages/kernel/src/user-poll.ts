@@ -37,6 +37,27 @@ export function user_poll_thread(address: WasmAddressType, read: () => WasmAddre
   };
 }
 
+/** Required first return after a fork rewind, independent of compiler polling.
+ * A live startup callback must fail rather than silently defer this work. */
+export function call_fork_child_return(
+  kernel: Instance["exports"],
+  user: WebAssembly.Exports,
+  memory: WebAssembly.Memory,
+  address: WasmAddressType,
+): number {
+  if (user_callback_active(kernel) || kernel_entry_active(kernel)) return -16;
+  return call_user_poll(kernel, user, memory, address, false);
+}
+
+export function fork_child_return_supported(kernel: WebAssembly.Exports): boolean {
+  return (
+    typeof kernel.user_poll_v1 === "function" &&
+    kernel.user_poll_v1.length === 0 &&
+    typeof kernel.user_context_v1 === "function" &&
+    kernel.user_context_v1.length === 1
+  );
+}
+
 /** Private compiler execution entry. It never manufactures a Linux syscall. */
 export function call_user_poll(
   kernel: Instance["exports"],
