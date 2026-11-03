@@ -23,7 +23,8 @@ pkgs.stdenvNoCC.mkDerivation (finalAttrs: {
   ];
   buildPhase = ''
     runHook preBuild
-    wasm-linux-cc -O2 -Wall -Wextra -Werror ${./runtime.c} -o timezone.wasm
+    wasm-linux-cc -O2 -Wall -Wextra -Werror ${./runtime.c} \
+      -Wl,--wrap=__mmap,--wrap=__munmap -o timezone.wasm
     node ${../busybox/check-binary.mjs} ${../../packages/kernel/src/wasm_binary.ts} \
       timezone.wasm ${toString platform.addressBits} ${toString platform.maximumMemoryBytes}
     runHook postBuild

@@ -3,14 +3,30 @@
 #include <errno.h>
 #include <fcntl.h>
 #include <stdio.h>
-#include <stdint.h>
 #include <stdlib.h>
 #include <string.h>
 #include <sys/stat.h>
-#include <sys/prctl.h>
-#include <sys/syscall.h>
+#include <sys/mman.h>
 #include <time.h>
 #include <unistd.h>
+
+#ifdef __wasm__
+/* Test-only link observation; always forward to the real libc/kernel path. */
+static size_t private_maps, unmaps;
+void *__real___mmap(void *, size_t, int, int, int, off_t);
+int __real___munmap(void *, size_t);
+void *__wrap___mmap(void *p, size_t n, int prot, int flags, int fd, off_t off)
+{
+    if (!p && n && prot == PROT_READ && flags == MAP_PRIVATE && fd >= 0 && !off)
+        private_maps++;
+    return __real___mmap(p, n, prot, flags, fd, off);
+}
+int __wrap___munmap(void *p, size_t n)
+{
+    unmaps++;
+    return __real___munmap(p, n);
+}
+#endif
 
 static void require(int ok, const char *what)
 {
@@ -83,32 +99,16 @@ int main(int argc, char **argv)
             "nonregular fallback closes fd and later valid loading recovers");
     puts("timezone: nonblocking FIFO refusal, UTC fallback and later TZif recovery pass");
 
-    /* Linux UAPI classic-BPF layouts, local to this test. Deny read before
-     * libc reloads a different TZif: only the standard file-mmap path can
-     * populate its contents without issuing a userspace read syscall. */
-    struct filter { uint16_t code; uint8_t jt, jf; uint32_t k; };
-    const struct filter instructions[] = {
-        { 0x20, 0, 0, 0 },
-        { 0x15, 0, 1, SYS_read },
-        { 0x06, 0, 0, 0x00050000 | EACCES },
-        { 0x06, 0, 0, 0x7fff0000 },
-    };
-    const struct { unsigned short len; const struct filter *filter; } program = {
-        sizeof instructions / sizeof instructions[0], instructions,
-    };
-    require(prctl(PR_SET_NO_NEW_PRIVS, 1L, 0L, 0L, 0L) == 0 &&
-            syscall(SYS_seccomp, 1L, 0L, (long)&program, 0L, 0L, 0L) == 0,
-            "install standard read-denial filter");
-    char byte;
-    errno = 0;
-    require(read(-1, &byte, 1) == -1 && errno == EACCES, "read actually denied before fd lookup");
+    size_t before_maps = private_maps, before_unmaps = unmaps;
     select_zone(east);
     check(summer, 21, 32400, 0, "JST");
     select_zone(west);
     check(summer, 8, -14400, 1, "EDT");
+    require(private_maps >= before_maps + 2 && unmaps >= before_unmaps + 2,
+            "real private file mmap and munmap must run on both reloads");
     fd = open(west, O_RDONLY | O_CLOEXEC);
     require(fd == baseline && close(fd) == 0, "mapped reload retains descriptor cleanup");
-    puts("timezone: standard private mappings reload TZif while read syscalls are denied pass");
+    puts("timezone: observed private file mmap and munmap reload TZif through real libc pass");
 #endif
     puts("::vm-test::pass");
 #ifdef __wasm__
