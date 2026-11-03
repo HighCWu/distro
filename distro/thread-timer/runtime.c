@@ -18,6 +18,14 @@ static _Thread_local volatile int marker = 41;
 static pthread_key_t key;
 static sem_t finished;
 static atomic_int callbacks, destructors, bad, mode;
+static atomic_int helper_status = -999;
+extern int __real_pthread_create(pthread_t *, const pthread_attr_t *, void *(*)(void *), void *);
+int __wrap_pthread_create(pthread_t *thread, const pthread_attr_t *attr, void *(*start)(void *), void *arg)
+{
+    int status = __real_pthread_create(thread, attr, start, arg);
+    atomic_store(&helper_status, status);
+    return status;
+}
 static void require(int ok, const char *what)
 {
     if (ok) return;
@@ -93,7 +101,12 @@ int main(void)
         .sigev_notify_function = notify, .sigev_value.sival_ptr = &finished };
     timer_t timer;
     errno = 0;
-    require(timer_create((clockid_t)0x40000000, &event, &timer) == -1 && errno == EINVAL,
+    int created = timer_create((clockid_t)0x40000000, &event, &timer);
+    int creation_errno = errno;
+    if (created != -1 || creation_errno != EINVAL)
+        fprintf(stderr, "thread timer: rejected clock diagnostics result=%d errno=%d helper_status=%d\n",
+                created, creation_errno, atomic_load(&helper_status));
+    require(created == -1 && creation_errno == EINVAL,
             "invalid kernel clock rolls back helper creation");
     wait_workers(baseline);
     puts("thread timer: rejected clock rolls back helper thread and kernel timer pass");

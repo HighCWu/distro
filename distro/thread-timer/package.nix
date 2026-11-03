@@ -27,7 +27,8 @@ let
       }
       ''
         mkdir -p $out/share/thread-timer
-        wasm-linux-cc -O2 -pthread -Wall -Wextra -Werror ${./runtime.c} -o $out/runtime.wasm
+        wasm-linux-cc -O2 -pthread -Wall -Wextra -Werror ${./runtime.c} \
+          -Wl,--wrap=pthread_create -o $out/runtime.wasm
         node ${../busybox/check-binary.mjs} ${../../packages/kernel/src/wasm_binary.ts} \
           $out/runtime.wasm ${toString platform.addressBits} ${toString platform.maximumMemoryBytes}
         chmod 0755 $out/runtime.wasm

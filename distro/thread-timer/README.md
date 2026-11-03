@@ -22,3 +22,11 @@ The independent tiny-module check runs the actual timer/TLS-reset bodies under
 Clang22 with modeled delivery. Missing SjLj traps; missing native reset fails
 the per-callback initial-value assertion. This is separate from real Linux
 timer, pthread and signal-delivery acceptance, which requires the public CI.
+
+The Wasm create path preserves the raw kernel error across helper semaphore
+handshake, translating it only after cleanup. A failed sem_trywait can set
+EAGAIN while the original timer request failed with EINVAL. The tiny-module
+check runs the actual create/error-return code and rejects lost-errno behavior.
+The target's transparent pthread_create link wrapper records its actual result
+for failure diagnostics; it forwards the call unchanged and does not implement
+timer behavior or change the expected EINVAL result.
