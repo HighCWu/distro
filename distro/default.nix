@@ -233,6 +233,23 @@ lib.makeScope (scope: lib.callPackageWith ({ inherit lib pkgs; } // scope)) (
       };
     };
     sdk-cooperative-poll = callPackage ./cooperative-poll/sdk.nix { };
+    exec-thread-state = callPackage ./exec-thread-state/package.nix {
+      extraChecks.both = pkgs.runCommand "exec-thread-state-both-widths" { passthru.ci.heavy = true; } ''
+        test -e ${self.exec-thread-state.checks.runtime}
+        test -e ${self.exec-thread-state-wasm64.checks.runtime}
+        test -e ${self.cooperative-poll.checks.runtime}
+        test -e ${self.cooperative-poll-wasm64.checks.runtime}
+        test -e ${self.fork-continuation.checks.exec-fd}
+        test -e ${self.fork-continuation-wasm64.checks.exec-fd}
+        touch $out
+      '';
+    };
+    exec-thread-state-wasm64 = callPackage ./exec-thread-state/package.nix {
+      platform = self.platform-wasm64;
+      sdk = self.sdk-wasm64;
+      llvm-toolchain = self.llvm-toolchain-wasm64;
+      vm-test = vmTestWasm64;
+    };
     sdk-cooperative-poll-wasm64 = callPackage ./cooperative-poll/sdk.nix {
       platform = self.platform-wasm64;
       llvm-toolchain = self.llvm-toolchain-wasm64;
