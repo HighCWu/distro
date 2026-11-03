@@ -45,7 +45,18 @@ int main(int argc, char **argv)
     int current = open(argv[1], O_RDONLY | O_CLOEXEC);
     require(current >= 0 && read(current, bytes, sizeof bytes) == 3 &&
             bytes[0] == 'r' && bytes[1] == 'e' && bytes[2] == 'p' &&
-            close(current) == 0 && close(fd) == 0, "replacement read and descriptor cleanup");
+            close(fd) == 0, "replacement read and original descriptor cleanup");
     puts("external metadata: replacement metadata, read and cleanup remain independent pass");
+    require(truncate(argv[1], 3) == 0 && fstat(current, &replacement) == 0 &&
+            replacement.st_size == 3, "path truncate works while a read-only fd is held");
+    errno = 0;
+    require(ftruncate(current, 0) == -1 && errno == EINVAL,
+            "explicit read-only fd cannot truncate");
+    int writable = open(argv[1], O_WRONLY | O_CLOEXEC);
+    require(writable >= 0 && pwrite(writable, "replacement", 11, 0) == 11 &&
+            close(writable) == 0 && fstat(current, &replacement) == 0 &&
+            replacement.st_size == 11 && close(current) == 0,
+            "restore replacement data and close independent handles");
+    puts("external metadata: path truncate with read-only fd, explicit EINVAL and write recovery pass");
     return 0;
 }

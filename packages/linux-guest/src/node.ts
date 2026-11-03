@@ -256,6 +256,7 @@ class Node {
   identity: string | undefined;
   attached = true;
   readonly files = new Set<FileHandle>();
+  readonly writableFiles = new Set<FileHandle>();
 
   constructor(parts: string[]) {
     this.parts = parts;
@@ -266,13 +267,16 @@ class Handle {
   readonly node: Node;
   readonly file: FileHandle | undefined;
   readonly directory: boolean;
+  readonly writable: boolean;
   closed = false;
 
-  constructor(node: Node, file?: FileHandle, directory = false) {
+  constructor(node: Node, file?: FileHandle, directory = false, writable = false) {
     this.node = node;
     this.file = file;
     this.directory = directory;
+    this.writable = writable;
     if (file) node.files.add(file);
+    if (file && writable) node.writableFiles.add(file);
   }
 }
 
@@ -416,7 +420,17 @@ export class NodeFS implements FS<Node, Handle> {
   }
 
   async #stats(node: Node) {
-    return await node_call(lstat(await this.#validated_path(this.#parts(node)), { bigint: true }));
+    for (;;) {
+      const parts = this.#parts(node);
+      const stats = await node_call(lstat(await this.#validated_path(parts), { bigint: true }));
+      const identity = `${stats.dev}:${stats.ino}`;
+      if (node.identity === undefined) node.identity = identity;
+      if (node.identity === identity) return stats;
+      // A completed host replacement must not rebind a cached inode. Remove
+      // this stale alias; another known hard link can still identify it.
+      this.#forget(parts);
+      if (!node.attached) throw new FSError("ENOENT", "cached inode pathname was replaced");
+    }
   }
 
   #forget(parts: readonly string[]) {
@@ -476,9 +490,10 @@ export class NodeFS implements FS<Node, Handle> {
   }
 
   async readlink(node: Node) {
-    return await this.#path_operation(async () =>
-      node_call(readlink(await this.#validated_path(this.#parts(node)))),
-    );
+    return await this.#path_operation(async () => {
+      await this.#stats(node);
+      return await node_call(readlink(await this.#validated_path(this.#parts(node))));
+    });
   }
 
   async symlink(parent: Node, name: string, target: string, _context: FSCreateContext) {
@@ -498,6 +513,7 @@ export class NodeFS implements FS<Node, Handle> {
       typeof changes.atime === "object" ? timestamp_argument(changes.atime) : undefined;
     const explicit_mtime =
       typeof changes.mtime === "object" ? timestamp_argument(changes.mtime) : undefined;
+    if (!file) await this.#stats(node);
     const target = file ? undefined : await this.#validated_path(this.#parts(node));
     const current = async () =>
       file ? await node_call(file.stat({ bigint: true })) : await this.#stats(node);
@@ -522,7 +538,7 @@ export class NodeFS implements FS<Node, Handle> {
         const size = checked_offset(changes.size);
         if (file) await file.truncate(size);
         else {
-          const temporary = await open(target!, constants.O_WRONLY | constants.O_NOFOLLOW);
+          const temporary = await this.#open_file(node, linux_open.writeonly);
           try {
             await temporary.truncate(size);
           } finally {
@@ -555,6 +571,8 @@ export class NodeFS implements FS<Node, Handle> {
   async setattr(node: Node, changes: FSSetAttributes, handle?: Handle) {
     this.#writable();
     if (handle !== undefined) this.#handle(node, handle);
+    if (handle !== undefined && changes.size !== undefined && !handle.writable)
+      throw new FSError("EINVAL", "file handle is not writable for truncation");
     if (handle?.file) {
       return await this.#setattr(node, changes, handle.file);
     }
@@ -563,18 +581,48 @@ export class NodeFS implements FS<Node, Handle> {
       // Like GETATTR, SETATTR may omit FH while a host replacement has not
       // yet been observed by LOOKUP. Prefer this inode's live descriptor
       // even while its cached name is still marked attached.
-      const file = node.files.values().next().value;
+      const file = (changes.size === undefined ? node.files : node.writableFiles)
+        .values()
+        .next().value;
       return await this.#setattr(node, changes, file);
     });
   }
 
   async open(node: Node, flags: number) {
     if (this.readOnly && may_write(flags)) this.#writable();
+    return await this.#path_operation(
+      async () =>
+        new Handle(
+          node,
+          await this.#open_file(node, flags),
+          false,
+          (flags & linux_open.access) !== linux_open.readonly,
+        ),
+    );
+  }
+
+  async #open_file(node: Node, flags: number) {
     const host_flags = translate_open_flags(flags) | constants.O_NOFOLLOW;
-    return await this.#path_operation(async () => {
-      const target = await this.#validated_path(this.#parts(node));
-      return new Handle(node, await node_call(open(target, host_flags)));
-    });
+    const expected = await this.#stats(node);
+    const target = await this.#validated_path(this.#parts(node));
+    const truncate = expected.isFile() && !!(host_flags & constants.O_TRUNC);
+    let checked_flags = truncate ? host_flags & ~constants.O_TRUNC : host_flags;
+    // Verify the opened inode before any truncation. Linux O_RDONLY|O_TRUNC
+    // also requires write permission; keep its logical handle read-only even
+    // though truncating that verified descriptor requires a writable host fd.
+    const writable = (flags & linux_open.access) !== linux_open.readonly;
+    if (truncate && !writable) checked_flags |= constants.O_RDWR;
+    const file = await node_call(open(target, checked_flags));
+    try {
+      const actual = await node_call(file.stat({ bigint: true }));
+      if (actual.dev !== expected.dev || actual.ino !== expected.ino)
+        throw new FSError("ENOENT", "opened file no longer identifies the cached inode");
+      if (truncate) await node_call(file.truncate(0));
+      return file;
+    } catch (error) {
+      await file.close().catch(() => {});
+      throw error;
+    }
   }
 
   async create(parent: Node, name: string, flags: number, context: FSCreateContext) {
@@ -614,7 +662,15 @@ export class NodeFS implements FS<Node, Handle> {
           if ((Number(stats.mode) & 0o7777) !== mode) await node_call(file.chmod(mode));
         }
         const node = this.#node(parts, stats);
-        return { node, handle: new Handle(node, file) };
+        return {
+          node,
+          handle: new Handle(
+            node,
+            file,
+            false,
+            (flags & linux_open.access) !== linux_open.readonly,
+          ),
+        };
       } catch (error) {
         await file.close().catch(() => {});
         throw error;
@@ -633,6 +689,7 @@ export class NodeFS implements FS<Node, Handle> {
   async write(node: Node, handle: Handle, offset: bigint, data: Uint8Array) {
     this.#writable();
     const file = this.#file(node, handle);
+    if (!handle.writable) throw new FSError("EBADF", "file handle is not writable");
     const start = checked_range(offset, data.byteLength);
     const { bytesWritten } = await node_call(file.write(data, 0, data.byteLength, start));
     return bytesWritten;
@@ -661,6 +718,7 @@ export class NodeFS implements FS<Node, Handle> {
         await node_call(file.close());
       } finally {
         node.files.delete(file);
+        node.writableFiles.delete(file);
         this.#collect_inode(node);
       }
     });

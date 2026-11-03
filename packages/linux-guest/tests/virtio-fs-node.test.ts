@@ -144,6 +144,142 @@ test("host replacement of a cached pathname does not rebind an open old inode", 
   }
 });
 
+test("stale inode paths reject completed host replacement before destructive operations", async () => {
+  for (const operation of [
+    "open",
+    "truncate",
+    "getattr",
+    "chmod",
+    "resize",
+    "access",
+    "readlink",
+  ]) {
+    const directory = await mkdtemp(path.join(temporary, "stale-path-"));
+    const target = path.join(directory, "file"),
+      staging = path.join(directory, "staging");
+    if (operation === "readlink") {
+      await symlink("old-target", target);
+      await symlink("new-target", staging);
+    } else {
+      await writeFile(target, "old");
+      await writeFile(staging, "replacement");
+    }
+    const fs = new NodeFS(directory);
+    const old = (await fs.lookup(fs.root, "file"))!;
+    await rename(staging, target);
+    const before = await lstat(target);
+    await assert.rejects(
+      async () => {
+        switch (operation) {
+          case "open":
+          case "truncate": {
+            const handle = await fs.open(
+              old,
+              operation === "open"
+                ? linux_open.readonly
+                : linux_open.writeonly | linux_open.truncate,
+            );
+            await fs.release(old, handle);
+            break;
+          }
+          case "getattr":
+            await fs.getattr(old);
+            break;
+          case "chmod":
+            await fs.setattr(old, { mode: 0o600 });
+            break;
+          case "resize":
+            await fs.setattr(old, { size: 0n });
+            break;
+          case "access":
+            await fs.access(old, constants.R_OK);
+            break;
+          case "readlink":
+            await fs.readlink(old);
+            break;
+        }
+      },
+      (error) => error instanceof FSError && error.errno === 2,
+      operation,
+    );
+    const after = await lstat(target);
+    assert.deepEqual([after.ino, after.mode, after.size], [before.ino, before.mode, before.size]);
+    const fresh = (await fs.lookup(fs.root, "file"))!;
+    assert.notEqual(fresh, old);
+    if (operation === "readlink") {
+      assert.equal(await fs.readlink(fresh), "new-target");
+    } else {
+      assert.equal(await readFile(target, "utf8"), "replacement");
+      const handle = await fs.open(fresh, linux_open.readonly);
+      try {
+        assert.equal(new TextDecoder().decode(await fs.read(fresh, handle, 0n, 11)), "replacement");
+      } finally {
+        await fs.release(fresh, handle);
+      }
+    }
+  }
+});
+
+test("stale selected hard-link alias falls back to another known alias of the same inode", async () => {
+  const directory = await mkdtemp(path.join(temporary, "stale-hard-link-"));
+  await writeFile(path.join(directory, "source"), "old");
+  await link(path.join(directory, "source"), path.join(directory, "alias"));
+  const fs = new NodeFS(directory);
+  const node = (await fs.lookup(fs.root, "source"))!;
+  assert.equal(await fs.lookup(fs.root, "alias"), node);
+  await writeFile(path.join(directory, "staging"), "replacement");
+  await rename(path.join(directory, "staging"), path.join(directory, "alias"));
+  const handle = await fs.open(node, linux_open.readonly);
+  try {
+    assert.equal(new TextDecoder().decode(await fs.read(node, handle, 0n, 3)), "old");
+  } finally {
+    await fs.release(node, handle);
+  }
+  assert.equal(await fs.lookup(fs.root, "source"), node);
+  assert.notEqual(await fs.lookup(fs.root, "alias"), node);
+  assert.equal(await readFile(path.join(directory, "alias"), "utf8"), "replacement");
+});
+
+test("verified regular-file truncation preserves read-only logical access and normal writes", async () => {
+  const directory = await mkdtemp(path.join(temporary, "verified-truncate-"));
+  await writeFile(path.join(directory, "file"), "original");
+  const fs = new NodeFS(directory);
+  const node = (await fs.lookup(fs.root, "file"))!;
+  const readonly = await fs.open(node, linux_open.readonly | linux_open.truncate);
+  try {
+    assert.equal((await fs.getattr(node)).size, 0n);
+    assert.equal((await fs.read(node, readonly, 0n, 8)).length, 0);
+    await assert.rejects(fs.write(node, readonly, 0n, new Uint8Array([1])), { errno: 9 });
+    await assert.rejects(fs.setattr(node, { size: 8n }, readonly), { errno: 22 });
+  } finally {
+    await fs.release(node, readonly);
+  }
+  const writable = await fs.open(node, linux_open.writeonly | linux_open.truncate);
+  try {
+    assert.equal(await fs.write(node, writable, 0n, new TextEncoder().encode("new")), 3);
+  } finally {
+    await fs.release(node, writable);
+  }
+  assert.equal(await readFile(path.join(directory, "file"), "utf8"), "new");
+});
+
+test("path truncation works while an existing read-only descriptor keeps its inode open", async () => {
+  const directory = await mkdtemp(path.join(temporary, "path-truncate-readonly-"));
+  await writeFile(path.join(directory, "file"), "original");
+  const fs = new NodeFS(directory);
+  const node = (await fs.lookup(fs.root, "file"))!;
+  const readonly = await fs.open(node, linux_open.readonly);
+  try {
+    await fs.setattr(node, { size: 3n });
+    assert.equal((await fs.getattr(node)).size, 3n);
+    assert.equal(new TextDecoder().decode(await fs.read(node, readonly, 0n, 8)), "ori");
+    await assert.rejects(fs.setattr(node, { size: 0n }, readonly), { errno: 22 });
+    assert.equal(await readFile(path.join(directory, "file"), "utf8"), "ori");
+  } finally {
+    await fs.release(node, readonly);
+  }
+});
+
 test("inode SETATTR without FH changes only the unlinked open file", async () => {
   const directory = await mkdtemp(path.join(temporary, "unlinked-setattr-"));
   await writeFile(path.join(directory, "file"), "old");

@@ -71,6 +71,7 @@ guest_test("Node directory sharing through Linux", async (t, fixture) => {
         "external metadata: fstat retains replaced open inode without fresh pathname lookup pass",
         "external metadata: mode, timestamps and data stay on original descriptor pass",
         "external metadata: replacement metadata, read and cleanup remain independent pass",
+        "external metadata: path truncate with read-only fd, explicit EINVAL and write recovery pass",
       ]);
       assert.equal(await readFile(target, "utf8"), "replacement");
       assert.equal((await stat(target)).mode & 0o777, 0o640);
