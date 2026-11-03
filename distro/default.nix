@@ -67,22 +67,9 @@ lib.makeScope (scope: lib.callPackageWith ({ inherit lib pkgs; } // scope)) (
       llvm-toolchain = self.llvm-toolchain-wasm64;
       sysroot = self.sysroot-wasm64;
     };
-    symbolVersionToolchain = self.llvm-toolchain-unwrapped.override {
-      src = import ./symbol-versions/source.nix { inherit pkgs; };
-    };
     sharedDriverToolchain = self.llvm-toolchain-unwrapped.override {
       includeHostBackend = false;
       patches = [ ./dynamic-loader/linux-shared.patch ];
-    };
-    symbolVersionSdk32 = self.sdk.override {
-      llvm-toolchain = self.llvm-toolchain.override {
-        llvm-toolchain-unwrapped = symbolVersionToolchain;
-      };
-    };
-    symbolVersionSdk64 = self.sdk-wasm64.override {
-      llvm-toolchain = self.llvm-toolchain-wasm64.override {
-        llvm-toolchain-unwrapped = symbolVersionToolchain;
-      };
     };
   in
   {
@@ -178,14 +165,14 @@ lib.makeScope (scope: lib.callPackageWith ({ inherit lib pkgs; } // scope)) (
     };
     toolchain-smoke-runtime-wasm64 = self.toolchain-smoke-wasm64.checks.c-runtime;
     symbol-versions = callPackage ./symbol-versions/package.nix {
-      sdk = symbolVersionSdk32;
+      sdk = self.sdk;
       extraChecks.both =
         pkgs.runCommand "symbol-versions-both-widths"
           {
             passthru.ci.heavy = true;
           }
           ''
-            # One build graph shares the candidate compiler between both widths.
+            # Verify the ordinary SDK and its runtimes at both widths together.
             test -e ${self.symbol-versions.checks.profile}
             test -e ${self.symbol-versions-wasm64.checks.profile}
             test -e ${self.symbol-versions.checks.cxx-runtime}
@@ -197,7 +184,7 @@ lib.makeScope (scope: lib.callPackageWith ({ inherit lib pkgs; } // scope)) (
     };
     symbol-versions-wasm64 = callPackage ./symbol-versions/package.nix {
       platform = self.platform-wasm64;
-      sdk = symbolVersionSdk64;
+      sdk = self.sdk-wasm64;
       vm-test = vmTestWasm64;
       busybox = self.busybox-wasm64;
     };

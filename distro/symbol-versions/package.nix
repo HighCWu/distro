@@ -13,7 +13,7 @@ let
       {
         nativeBuildInputs = [ pkgs.nodejs ];
         passthru = {
-          # The opt-in SDK reuses the accepted libc/runtimes; no default pin moves.
+          # Exercise the ordinary SDK; no separate compiler or libc override.
           inherit sdk;
           apk.license = "MIT AND Apache-2.0 WITH LLVM-exception";
           checks = {

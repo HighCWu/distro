@@ -6,8 +6,8 @@
   src ? pkgs.fetchFromGitHub {
     owner = "HighCWu";
     repo = "llvm-project";
-    rev = "137009e264eb237b5f5adcbae1b7e209f79291f5";
-    hash = "sha256-Rms9gK6XU3cN7muwE9kHTIe+DB++amxC6MeJcyciPS8=";
+    rev = "90352668f9244889a82254abf71ca9c46a2e8996";
+    hash = "sha256-/l/16+htX8HXUrQS6ehSCpWr1Hc8Szl7awt5bpeqFNw=";
   },
   llvm-toolchain-unwrapped,
   sysroot-base,
