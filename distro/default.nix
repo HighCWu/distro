@@ -612,6 +612,18 @@ lib.makeScope (scope: lib.callPackageWith ({ inherit lib pkgs; } // scope)) (
       sdk-fork-continuation = self.sdk-fork-continuation-wasm64;
       vm-test = vmTestWasm64;
     };
+    pidfd-getfd = callPackage ./pidfd-getfd/package.nix {
+      extraChecks.both = pkgs.runCommand "pidfd-getfd-both-widths" { passthru.ci.heavy = true; } ''
+        test -e ${self.pidfd-getfd.checks.runtime}
+        test -e ${self.pidfd-getfd-wasm64.checks.runtime}
+        touch $out
+      '';
+    };
+    pidfd-getfd-wasm64 = callPackage ./pidfd-getfd/package.nix {
+      platform = self.platform-wasm64;
+      sdk-fork-continuation = self.sdk-fork-continuation-wasm64;
+      vm-test = vmTestWasm64;
+    };
     clone-untraced = callPackage ./clone-untraced/package.nix {
       extraChecks.return-work =
         pkgs.runCommand "fork-first-return-both-widths" { passthru.ci.heavy = true; }
