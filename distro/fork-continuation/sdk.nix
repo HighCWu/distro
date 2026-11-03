@@ -104,6 +104,7 @@ let
       ];
       cloneNamespaceTransport = true;
       cloneParentTransport = true;
+      cloneUntracedTransport = true;
       nativeClone3Transport = true;
       clone3WideFlags = [
         "CLONE_CLEAR_SIGHAND"

@@ -612,6 +612,19 @@ lib.makeScope (scope: lib.callPackageWith ({ inherit lib pkgs; } // scope)) (
       sdk-fork-continuation = self.sdk-fork-continuation-wasm64;
       vm-test = vmTestWasm64;
     };
+    clone-untraced = callPackage ./clone-untraced/package.nix {
+      extraChecks.both = pkgs.runCommand "clone-untraced-both-widths" { passthru.ci.heavy = true; } ''
+        test -e ${self.clone-untraced.checks.runtime}
+        test -e ${self.clone-untraced-wasm64.checks.runtime}
+        touch $out
+      '';
+    };
+    clone-untraced-wasm64 = callPackage ./clone-untraced/package.nix {
+      platform = self.platform-wasm64;
+      sdk-fork-continuation = self.sdk-fork-continuation-wasm64;
+      vm-test = vmTestWasm64;
+    };
+
     clone-parent = callPackage ./clone-parent/package.nix {
       extraChecks.both = pkgs.runCommand "clone-parent-both-widths" { passthru.ci.heavy = true; } ''
         test -e ${self.clone-parent.checks.runtime}

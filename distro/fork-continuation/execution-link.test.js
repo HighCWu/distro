@@ -173,7 +173,7 @@ for (const width of [32, 64]) {
       p(-95),
     );
     assert.equal(calls.length, 4, "unknown high flags never reach Linux");
-    assert.equal(instance.exports.__wasm_fork_clone3_features(), 4095);
+    assert.equal(instance.exports.__wasm_fork_clone3_features(), 8191);
     assert.equal(
       instance.exports.__wasm_fork_clone3_flags64(0x100000080n, pointer, parent, child),
       p(-11),
@@ -293,6 +293,11 @@ for (const width of [32, 64]) {
     );
     const io = new DataView(instance.exports.memory.buffer, Number(calls[21][1]), 88);
     assert.equal(io.getBigUint64(0, true), 0x80000000n);
+    assert.equal(instance.exports.__wasm_fork_clone_options(p(0x800000), p(0), p(0)), p(-11));
+    assert.equal(BigInt(calls[22][3]), 0x800011n);
+    assert.equal(instance.exports.__wasm_fork_clone3_flags64(0x800000n, p(0), p(0), p(0)), p(-11));
+    const untraced = new DataView(instance.exports.memory.buffer, Number(calls[23][1]), 88);
+    assert.equal(untraced.getBigUint64(0, true), 0x800000n);
     const collision = join(dir, "collision.c");
     writeFileSync(
       collision,
