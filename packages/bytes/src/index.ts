@@ -4,7 +4,9 @@ function assert(condition: unknown): asserts condition {
   if (!condition) throw new Error("Assertion failed");
 }
 
-const utf8 = new TextDecoder("utf-8", { fatal: true });
+// Protocol strings are data, not text files: a leading U+FEFF belongs to the
+// filename/target and must not be interpreted as an optional encoding marker.
+const utf8 = new TextDecoder("utf-8", { fatal: true, ignoreBOM: true });
 
 export interface Type<T> {
   get(dv: DataView, offset: number): T;

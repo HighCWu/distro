@@ -533,13 +533,13 @@ class GuestClient {
     const session = await this.#connect();
     await using fd = await openat(session, path, O.PATH | O.CLOEXEC, 0);
     const target = await readlinkat(session, `/proc/self/fd/${fd.fd}`, 4096);
-    return new TextDecoder("utf-8", { fatal: true }).decode(target);
+    return new TextDecoder("utf-8", { fatal: true, ignoreBOM: true }).decode(target);
   }
 
   async readLink(path: string) {
     const target = await readlinkat(await this.#connect(), path, 4096);
     if (target.byteLength === 4096) throw new SystemError(E.NAMETOOLONG);
-    return new TextDecoder("utf-8", { fatal: true }).decode(target);
+    return new TextDecoder("utf-8", { fatal: true, ignoreBOM: true }).decode(target);
   }
 
   async symlink(target: string, path: string) {

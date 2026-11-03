@@ -24,6 +24,37 @@ guest_test("Node directory sharing through Linux", async (t, fixture) => {
   await guest.mount("node-test", "/tmp/shared", { type: "virtiofs" });
 
   try {
+    await t.test(
+      "leading U+FEFF names and link targets remain distinct through Linux",
+      async () => {
+        const marked = "\uFEFFbom-victim",
+          renamed = "\uFEFFbom-renamed";
+        const base = "/tmp/shared/";
+        await writeFile(path.join(shared, "bom-victim"), "plain");
+        await writeFile(path.join(shared, "bom-renamed"), "sentinel");
+        await writeFile(path.join(shared, marked), "marked");
+        assert.equal(await guest.fs.readTextFile(base + marked), "marked");
+        await guest.fs.symlink(marked, base + "\uFEFFbom-link");
+        assert.equal(await guest.fs.readLink(base + "\uFEFFbom-link"), marked);
+        assert.equal(await guest.fs.readTextFile(base + "\uFEFFbom-link"), "marked");
+        const entries = [];
+        for await (const entry of guest.fs.readDir("/tmp/shared")) entries.push(entry.name);
+        for (const name of [marked, "bom-victim", "bom-renamed", "\uFEFFbom-link"])
+          assert(entries.includes(name));
+        await guest.fs.rename(base + marked, base + renamed);
+        assert.equal(await readFile(path.join(shared, renamed), "utf8"), "marked");
+        assert.equal(await readFile(path.join(shared, "bom-victim"), "utf8"), "plain");
+        assert.equal(await readFile(path.join(shared, "bom-renamed"), "utf8"), "sentinel");
+        await assert.rejects(
+          guest.fs.readTextFile(base + "\uFEFFbom-link"),
+          (error) => error instanceof SystemError && error.code === "ENOENT",
+        );
+        await guest.fs.remove(base + renamed);
+        assert.equal(await readFile(path.join(shared, "bom-renamed"), "utf8"), "sentinel");
+        await guest.fs.remove(base + "\uFEFFbom-link");
+      },
+    );
+
     await t.test("Linux creation umask is not filtered again by the host", async () => {
       await guest.fs.writeFile("/tmp/file-creation-modes", await load_file_creation_modes());
       await guest.fs.chmod("/tmp/file-creation-modes", 0o755);

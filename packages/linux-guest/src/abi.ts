@@ -431,7 +431,7 @@ const wait_checks: ExprCheck[] = [
  *  "." and "..". Throws {@link ProtocolError} on a malformed record. */
 export function parse_dirents(buf: Uint8Array): { name: string; dtype: number }[] {
   const entries: { name: string; dtype: number }[] = [];
-  const decoder = new TextDecoder("utf-8", { fatal: true });
+  const decoder = new TextDecoder("utf-8", { fatal: true, ignoreBOM: true });
   let offset = 0;
   while (offset + dirent_name_offset <= buf.byteLength) {
     const header = new Dirent(buf.subarray(offset));

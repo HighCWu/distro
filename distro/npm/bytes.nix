@@ -19,6 +19,7 @@ pkgs.stdenvNoCC.mkDerivation {
     runHook preBuild
 
     pnpm --filter=@lowland/bytes check
+    node --test packages/bytes/test/reader.test.js
     pnpm --filter=@lowland/bytes build
 
     runHook postBuild
