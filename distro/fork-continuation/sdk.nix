@@ -109,6 +109,7 @@ let
         "CLONE_NNP"
         "CLONE_AUTOREAP"
         "CLONE_PIDFD_AUTOKILL"
+        "CLONE_EMPTY_MNTNS"
       ];
       clone3ExitSignal = {
         minimum = 0;

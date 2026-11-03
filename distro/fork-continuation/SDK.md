@@ -137,6 +137,11 @@ exit notification; the host does not reparent tasks. clone3 requires exit_signal
 zero for this flag, retaining that field's independent transport gate. Namespace
 init and invalid combinations are rejected by Linux. User memory stays private.
 
+Native CLONE_EMPTY_MNTNS requires private capability bit 10. The execution
+object preserves the u64 flag; Linux implies NEWNS and selects the empty mount
+view and initial root/cwd. It retains the kernel's CLONE_FS conflict and namespace
+permissions. This does not add an unshare fallback or host-side mount changes.
+
 `share/linux-wasm-fork-sdk/profile.json` records the experimental profile.
 
 CLONE_CLEAR_SIGHAND requires the optional `__wasm_fork_clone3_flags64` export

@@ -598,6 +598,7 @@ for (const address of ["i32", "i64"] as const)
   for (const [flag, capability] of [
     [0x80n, 1],
     [0x800000000n, 32],
+    [0x2000000000n, 1024],
   ] as const)
     test(`${address}: native flag ${flag} needs an explicit object capability`, () => {
       const {
@@ -617,7 +618,7 @@ for (const address of ["i32", "i64"] as const)
           return dispatch_fork_syscall(controller, p(435), [], true, () => p(-11));
         },
         __wasm_fork_clone_options: () => {
-          throw new Error("NEWTIME used legacy CSIGNAL");
+          throw new Error("native-only flag used legacy clone");
         },
       });
       for (const features of [
@@ -628,6 +629,7 @@ for (const address of ["i32", "i64"] as const)
         NaN,
         1.5,
         ...(capability === 32 ? [1, 15, 31] : []),
+        ...(capability === 1024 ? [1023, -1, 1024n] : []),
       ]) {
         Object.assign(exports, {
           __wasm_fork_clone3_features: features === undefined ? undefined : () => features,

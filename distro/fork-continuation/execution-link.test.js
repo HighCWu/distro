@@ -173,7 +173,7 @@ for (const width of [32, 64]) {
       p(-95),
     );
     assert.equal(calls.length, 4, "unknown high flags never reach Linux");
-    assert.equal(instance.exports.__wasm_fork_clone3_features(), 1023);
+    assert.equal(instance.exports.__wasm_fork_clone3_features(), 2047);
     assert.equal(
       instance.exports.__wasm_fork_clone3_flags64(0x100000080n, pointer, parent, child),
       p(-11),
@@ -274,6 +274,17 @@ for (const width of [32, 64]) {
     const parentRequest = new DataView(instance.exports.memory.buffer, Number(calls[18][1]), 88);
     assert.equal(parentRequest.getBigUint64(0, true), 0x8000n);
     assert.equal(parentRequest.getBigUint64(32, true), 0n);
+    assert.equal(
+      instance.exports.__wasm_fork_clone3_flags64(0x2000000000n, p(0), p(0), p(0)),
+      p(-11),
+    );
+    const emptyMount = new DataView(instance.exports.memory.buffer, Number(calls[19][1]), 88);
+    assert.equal(
+      emptyMount.getBigUint64(0, true),
+      0x2000000000n,
+      "Linux, not the host, implies NEWNS",
+    );
+    assert.equal(emptyMount.getBigUint64(32, true), 17n);
     const collision = join(dir, "collision.c");
     writeFileSync(
       collision,

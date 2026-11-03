@@ -101,6 +101,17 @@ for (const address of ["i32", "i64"] as const)
     view.setBigUint64(256, 0x8000n, true);
     assert.deepEqual(parse(88), { pidfd: null, parentFlags: p(0x8000), exitSignal: 0 });
     reset();
+    view.setBigUint64(256, 0x2000000000n, true);
+    assert.deepEqual(parse(88), { pidfd: null, flags64: 0x2000000000n });
+    view.setBigUint64(256, 0x2000000200n, true);
+    assert.deepEqual(parse(88), { pidfd: null, flags64: 0x2000000000n, sharingFlags: p(0x200) });
+    view.setBigUint64(256, 0x2000020000n, true);
+    assert.deepEqual(parse(88), {
+      pidfd: null,
+      flags64: 0x2000000000n,
+      namespaceFlags: p(0x20000),
+    });
+    reset();
     for (const size of [0, 1, 63]) assert.equal(parse(size), -22);
     for (const size of [65537, -1]) assert.equal(parse(size), -7);
     for (const pointer of [0, -1, 131072 - 63]) assert.equal(parse(64, pointer), -14);
