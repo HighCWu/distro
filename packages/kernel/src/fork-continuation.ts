@@ -180,6 +180,7 @@ export class ForkContinuation {
   private kernelDepth = 0;
   private readonly userPollSupported: boolean;
   private exitSignal = 17;
+  private parentFlags: WasmAddress | undefined;
   private rewindingChild = false;
   private readonly childRewound: (() => void) | undefined;
   private readonly e: WebAssembly.Exports;
@@ -379,6 +380,13 @@ export class ForkContinuation {
       if (!validFeatureBits(features) || !(features & 1)) return -95;
     }
     const legacy = !clone3 && typeof this.e.__wasm_fork_clone_options === "function";
+    if (request.parentFlags !== undefined) {
+      const features =
+        typeof this.e.__wasm_fork_clone3_features === "function"
+          ? this.call("__wasm_fork_clone3_features")
+          : 0;
+      if ((!native && !legacy) || !validFeatureBits(features) || !(features & 512)) return -95;
+    }
     if ((request.flags64 ?? 0n) & 0x1400000000n) {
       const features =
         typeof this.e.__wasm_fork_clone3_features === "function"
@@ -451,6 +459,7 @@ export class ForkContinuation {
       this.cgroup = request.cgroup;
       this.setTid = request.setTid;
       this.exitSignal = request.exitSignal ?? 17;
+      this.parentFlags = request.parentFlags;
     }
     return result;
   }
@@ -508,6 +517,7 @@ export class ForkContinuation {
         const flags =
           BigInt(this.namespaceFlags ?? zero) |
           BigInt(this.sharingFlags ?? zero) |
+          BigInt(this.parentFlags ?? zero) |
           BigInt(this.tids?.flags ?? zero) |
           this.flags64;
         if (this.setTid !== undefined) {
@@ -550,6 +560,7 @@ export class ForkContinuation {
         const flags =
           BigInt(this.namespaceFlags ?? zero) |
           BigInt(this.sharingFlags ?? zero) |
+          BigInt(this.parentFlags ?? zero) |
           BigInt(this.tids?.flags ?? zero) |
           (this.pidfd === null ? 0n : 0x1000n);
         return this.call(
@@ -581,6 +592,7 @@ export class ForkContinuation {
       this.cgroup = undefined;
       this.setTid = undefined;
       this.exitSignal = 17;
+      this.parentFlags = undefined;
     }
   }
 

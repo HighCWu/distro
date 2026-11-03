@@ -102,6 +102,7 @@ let
         "CLONE_SYSVSEM"
       ];
       cloneNamespaceTransport = true;
+      cloneParentTransport = true;
       nativeClone3Transport = true;
       clone3WideFlags = [
         "CLONE_CLEAR_SIGHAND"

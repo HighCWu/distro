@@ -131,6 +131,12 @@ Linux retains flag-combination, permission and exit-signal validation. AUTOKILL
 applies to the owning file description's last reference; an independent pidfd_open
 does not acquire that flag. The host performs no synthetic reaping or kill.
 
+CLONE_PARENT requires private capability bit 9 and either the native clone3 or
+legacy options helper. Linux assigns the caller's real parent and its inherited
+exit notification; the host does not reparent tasks. clone3 requires exit_signal
+zero for this flag, retaining that field's independent transport gate. Namespace
+init and invalid combinations are rejected by Linux. User memory stays private.
+
 `share/linux-wasm-fork-sdk/profile.json` records the experimental profile.
 
 CLONE_CLEAR_SIGHAND requires the optional `__wasm_fork_clone3_flags64` export

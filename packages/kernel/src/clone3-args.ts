@@ -12,10 +12,12 @@ export interface CloneForkRequest {
   cgroup?: bigint;
   setTid?: number[];
   exitSignal?: number;
+  parentFlags?: WasmAddress;
 }
 
 const namespaceMask = 0x7e020000n;
 const sharingMask = 0x40600n; // CLONE_FS | CLONE_FILES | CLONE_SYSVSEM, independent mm.
+const parentMask = 0x8000n;
 const tidMask = 0x01300000n;
 const clearSighand = 0x100000000n;
 const newTime = 0x80n;
@@ -47,6 +49,7 @@ function fork_options(
     : {};
   if (flags & sharingMask)
     options.sharingFlags = address === "i64" ? flags & sharingMask : Number(flags & sharingMask);
+  if (flags & parentMask) options.parentFlags = address === "i64" ? parentMask : Number(parentMask);
   if (flags & (clearSighand | newTime | intoCgroup | noNewPrivs | autoReap | autoKill))
     options.flags64 =
       flags & (clearSighand | newTime | intoCgroup | noNewPrivs | autoReap | autoKill);
@@ -84,7 +87,10 @@ export function clone_fork_request(
   } catch {
     return -95;
   }
-  if ((flags & 0xffn) !== 17n || flags & ~(namespaceMask | sharingMask | tidMask | 0x1000n | 0xffn))
+  if (
+    (flags & 0xffn) !== 17n ||
+    flags & ~(namespaceMask | sharingMask | parentMask | tidMask | 0x1000n | 0xffn)
+  )
     return -95;
   if (!(flags & (0x1000n | tidMask))) {
     // No supported flag requests parent/child TID or TLS updates. Linux
@@ -155,6 +161,7 @@ export function clone3_fork_request(
     ~(
       namespaceMask |
       sharingMask |
+      parentMask |
       tidMask |
       clearSighand |
       newTime |

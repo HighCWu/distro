@@ -90,7 +90,7 @@ long __wasm_fork_clone_namespaces(uintptr_t namespaces, uintptr_t pidfd)
 __attribute__((export_name("__wasm_fork_clone_options")))
 long __wasm_fork_clone_options(uintptr_t flags, uintptr_t parent, uintptr_t child)
 {
-	const uintptr_t allowed = UINT32_C(0x7f361600);
+	const uintptr_t allowed = UINT32_C(0x7f369600);
 	if (flags & ~allowed)
 		return -EOPNOTSUPP;
 	return fork_callback_syscall(SYS_clone, (long)fork_child, 0,
@@ -122,7 +122,7 @@ static long clone3_native(uint64_t flags, uintptr_t pidfd,
 		uint64_t stack, stack_size, tls, set_tid, set_tid_size, cgroup;
 	} args __attribute__((aligned(8)));
 	_Static_assert(sizeof args == 88, "Linux clone_args aligned u64 ABI");
-	const uint64_t allowed = UINT64_C(0x1f7f360680);
+	const uint64_t allowed = UINT64_C(0x1f7f368680);
 	if (flags & ~allowed)
 		return -EOPNOTSUPP;
 	if (count > 32)
@@ -143,7 +143,7 @@ __attribute__((export_name("__wasm_fork_clone3_native")))
 long __wasm_fork_clone3_native(uintptr_t flags, uintptr_t pidfd,
 	uintptr_t parent_tid, uintptr_t child_tid)
 {
-	if (flags & ~(uintptr_t)UINT32_C(0x7f360600))
+	if (flags & ~(uintptr_t)UINT32_C(0x7f368600))
 		return -EOPNOTSUPP;
 	return clone3_native(flags, pidfd, parent_tid, child_tid, 0, 0);
 }
@@ -187,9 +187,9 @@ long __wasm_fork_clone3_pid_select(uint64_t flags, uintptr_t pidfd,
 /* Private object capability, not a libc/application API. Bit 0 admits
  * CLONE_NEWTIME; bit 1 cgroup; bit 2 set_tid; bit 3 CLONE_FS/FILES;
  * bit 4 CLONE_SYSVSEM; bit 5 native CLONE_NNP; bit 6 exit_signal staging;
- * bit 7 CLONE_AUTOREAP; bit 8 CLONE_PIDFD_AUTOKILL. */
+ * bit 7 CLONE_AUTOREAP; bit 8 CLONE_PIDFD_AUTOKILL; bit 9 CLONE_PARENT. */
 __attribute__((export_name("__wasm_fork_clone3_features")))
 int __wasm_fork_clone3_features(void)
 {
-	return 511;
+	return 1023;
 }
