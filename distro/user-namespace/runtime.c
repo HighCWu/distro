@@ -4,6 +4,7 @@
 #include <spawn.h>
 #include <stdio.h>
 #include <stdlib.h>
+#include <sys/mount.h>
 #include <sys/stat.h>
 #include <sys/wait.h>
 #include <unistd.h>
@@ -18,6 +19,8 @@ static void require(int ok, const char *what)
 int main(void)
 {
     setvbuf(stdout, NULL, _IONBF, 0);
+    require(!mkdir("/proc", 0555) || errno == EEXIST, "procfs mountpoint");
+    require(!mount("proc", "/proc", "proc", 0, NULL), "procfs fixture mount");
     struct stat before, after;
     require(getuid() == 0 && getgid() == 0 && !stat("/proc/self/ns/user", &before),
             "initial root namespace");
@@ -38,6 +41,7 @@ int main(void)
     require(!stat("/proc/self/ns/user", &after) && before.st_ino == after.st_ino &&
             getuid() == 0 && getgid() == 0 && getgroups(0, NULL) == groups,
             "parent namespace and groups unaffected");
+    require(!umount("/proc"), "procfs fixture cleanup");
     puts("user namespace: parent namespace, groups, single reap and cleanup pass");
     puts("::vm-test::pass");
     for (;;) pause();
