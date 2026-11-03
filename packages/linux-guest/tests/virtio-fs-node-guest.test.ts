@@ -1,6 +1,17 @@
 // SPDX-License-Identifier: MIT
 import assert from "node:assert/strict";
-import { chmod, link, mkdtemp, readFile, rename, rm, stat, writeFile } from "node:fs/promises";
+import {
+  chmod,
+  link,
+  mkdir,
+  mkdtemp,
+  readFile,
+  readdir,
+  rename,
+  rm,
+  stat,
+  writeFile,
+} from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { fileSystemDevice } from "@lowland/kernel";
@@ -41,10 +52,18 @@ guest_test("Node directory sharing through Linux", async (t, fixture) => {
       await writeFile(target, "old");
       await writeFile(staging, "replacement");
       await chmod(staging, 0o640);
+      const directory = path.join(shared, "external-directory"),
+        moved = path.join(shared, "external-moved");
+      await mkdir(directory);
+      await writeFile(path.join(directory, "old-entry"), "original");
       await guest.fs.writeFile("/tmp/external-file-metadata", await load_external_file_metadata());
       await guest.fs.chmod("/tmp/external-file-metadata", 0o755);
       const process = await guest.exec(
-        ["/tmp/external-file-metadata", "/tmp/shared/external-metadata"],
+        [
+          "/tmp/external-file-metadata",
+          "/tmp/shared/external-metadata",
+          "/tmp/shared/external-directory",
+        ],
         { stdinMode: "streaming" },
       );
       const stderr = new Response(process.stderr).text();
@@ -58,6 +77,9 @@ guest_test("Node directory sharing through Linux", async (t, fixture) => {
         // No Linux lookup after this host-side rename, before releasing the C
         // consumer to fstat/fchmod/futimens its already open descriptor.
         await rename(staging, target);
+        await rename(directory, moved);
+        await mkdir(directory);
+        await writeFile(path.join(directory, "new-entry"), "replacement");
         await writer.write(new TextEncoder().encode("x"));
       } finally {
         await writer.close();
@@ -68,9 +90,13 @@ guest_test("Node directory sharing through Linux", async (t, fixture) => {
         "external metadata: mode, timestamps and data stay on original descriptor pass",
         "external metadata: replacement metadata, read and cleanup remain independent pass",
         "external metadata: path truncate with read-only fd, explicit EINVAL and write recovery pass",
+        "external metadata: moved directory enumeration, child identity and relative operations pass",
       ]);
       assert.equal(await readFile(target, "utf8"), "replacement");
       assert.equal((await stat(target)).mode & 0o777, 0o640);
+      assert.deepEqual(await readdir(moved), ["old-entry"]);
+      assert.deepEqual(await readdir(directory), ["new-entry"]);
+      assert.equal(await readFile(path.join(directory, "new-entry"), "utf8"), "replacement");
     });
 
     await t.test(

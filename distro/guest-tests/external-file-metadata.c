@@ -1,9 +1,11 @@
 // SPDX-License-Identifier: MIT
 #define _GNU_SOURCE
 #include <errno.h>
+#include <dirent.h>
 #include <fcntl.h>
 #include <stdio.h>
 #include <stdlib.h>
+#include <string.h>
 #include <sys/stat.h>
 #include <unistd.h>
 
@@ -17,7 +19,13 @@ static void require(int ok, const char *what)
 int main(int argc, char **argv)
 {
     setvbuf(stdout, NULL, _IONBF, 0);
-    require(argc == 2, "expected shared file path");
+    require(argc == 3, "expected shared file and directory paths");
+    DIR *directory = opendir(argv[2]);
+    struct stat old_child;
+    require(directory != NULL, "open original directory");
+    int directory_fd = dirfd(directory);
+    require(directory_fd >= 0 && fstatat(directory_fd, "old-entry", &old_child, 0) == 0,
+            "open original directory and cache child before host replacement");
     int fd = open(argv[1], O_RDONLY | O_CLOEXEC);
     struct stat before, held, replacement;
     require(fd >= 0 && fstat(fd, &before) == 0, "open and capture original inode");
@@ -58,5 +66,28 @@ int main(int argc, char **argv)
             replacement.st_size == 11 && close(current) == 0,
             "restore replacement data and close independent handles");
     puts("external metadata: path truncate with read-only fd, explicit EINVAL and write recovery pass");
+    unsigned entries = 0;
+    struct dirent *entry;
+    errno = 0;
+    while ((entry = readdir(directory))) {
+        if (!strcmp(entry->d_name, ".") || !strcmp(entry->d_name, "..")) continue;
+        require(!strcmp(entry->d_name, "old-entry"), "old directory must not enumerate replacement");
+        entries++;
+    }
+    require(errno == 0 && entries == 1, "enumerate exactly one original child");
+    int original = openat(directory_fd, "old-entry", O_RDONLY | O_CLOEXEC);
+    char original_bytes[8];
+    struct stat original_stat;
+    require(original >= 0 && fstat(original, &original_stat) == 0 &&
+            original_stat.st_ino == old_child.st_ino &&
+            read(original, original_bytes, sizeof original_bytes) == sizeof original_bytes &&
+            !memcmp(original_bytes, "original", sizeof original_bytes) && close(original) == 0,
+            "relative open retains original child identity and data");
+    int created = openat(directory_fd, "created", O_WRONLY | O_CREAT | O_EXCL | O_CLOEXEC, 0600);
+    require(created >= 0 && close(created) == 0 &&
+            renameat(directory_fd, "created", directory_fd, "renamed") == 0 &&
+            unlinkat(directory_fd, "renamed", 0) == 0 && closedir(directory) == 0,
+            "relative create rename unlink and directory close");
+    puts("external metadata: moved directory enumeration, child identity and relative operations pass");
     return 0;
 }

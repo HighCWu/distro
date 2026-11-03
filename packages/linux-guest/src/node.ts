@@ -292,6 +292,8 @@ export interface NodeFSOptions {
  * Symbolic links are returned without following their final targets; the guest
  * kernel resolves them inside the guest namespace. Path and symlink escapes are
  * rejected when the host directory is stable.
+ * On Linux, live directory descriptors can recover in-root host renames via
+ * procfs; moved-outside-root and deleted-directory traversal are not provided.
  *
  * Use an application-owned directory. This is not a sandbox against another
  * host process concurrently restructuring the shared tree: standard Node APIs
@@ -338,14 +340,15 @@ export class NodeFS implements FS<Node, Handle> {
       this.#forget(parts);
       node = undefined;
     }
-    // Directory aliases are not hard links and keep their path topology.
     // An open, unlinked inode cannot be reused by the host filesystem.
-    const share = !stats.isDirectory() && stats.ino !== 0n;
+    const share = stats.ino !== 0n;
     if (!node && share) node = this.#inodes.get(identity);
     if (!node) {
       node = new Node(parts);
       this.#ownedNodes.add(node);
     }
+    // A directory seen under a new name is a move, not a hard-link alias.
+    if (stats.isDirectory() && node.parts.join("/") !== key) this.#move_directory(node, parts);
     node.identity = identity;
     node.parts = parts;
     node.attached = true;
@@ -435,11 +438,63 @@ export class NodeFS implements FS<Node, Handle> {
   }
 
   async #directory_parts(node: Node) {
+    this.#owned_node(node);
+    const file = node.files.values().next().value;
+    if (process.platform === "linux" && file) {
+      // Keep the normal case independent of procfs, and leave cached child
+      // bindings intact until a moved directory has been located.
+      if (node.attached) {
+        try {
+          const target = await this.#validated_path(node.parts, true);
+          const current = await node_call(lstat(target, { bigint: true }));
+          if (`${current.dev}:${current.ino}` === node.identity && current.isDirectory())
+            return node.parts;
+        } catch (error) {
+          if (!(error instanceof FSError)) throw error;
+        }
+      }
+      const opened = await node_call(file.stat({ bigint: true }));
+      if (opened.isDirectory()) {
+        // Linux procfs resolves this live descriptor after a host rename.
+        // Verify the resulting pathname still denotes that descriptor before
+        // rebasing cached children. This does not make pathname I/O race-free.
+        const target = await node_call(realpath(`/proc/self/fd/${file.fd}`));
+        const root = await this.#root_path;
+        const relative = path.relative(root, target);
+        if (relative === ".." || relative.startsWith(`..${path.sep}`) || path.isAbsolute(relative))
+          throw new FSError("EACCES", "open directory moved outside the shared root");
+        const actual = await node_call(lstat(target, { bigint: true }));
+        if (actual.dev !== opened.dev || actual.ino !== opened.ino)
+          throw new FSError("ENOENT", "open directory pathname was replaced");
+        const parts = relative ? relative.split(path.sep) : [];
+        if (!node.attached || node.parts.join("/") !== parts.join("/"))
+          this.#move_directory(node, parts);
+      }
+    }
     // Parent node IDs identify an inode, not whichever directory happens to
     // occupy its old pathname. Validate before resolving a child operation.
     await this.#validated_path(this.#parts(node), true);
     if (!(await this.#stats(node)).isDirectory()) throw new FSError("ENOTDIR");
     return this.#parts(node);
+  }
+
+  #move_directory(node: Node, parts: string[]) {
+    const old = node.parts.join("/");
+    const destination = parts.join("/");
+    const relocateChildren = node.attached && this.#nodes.get(old) === node;
+    this.#forget(parts);
+    const affected = new Set<Node>();
+    for (const [key, child] of [...this.#nodes]) {
+      if (relocateChildren && (key === old || key.startsWith(`${old}/`))) {
+        this.#nodes.delete(key);
+        const moved = [...parts, ...key.split("/").slice(node.parts.length)];
+        this.#nodes.set(moved.join("/"), child);
+        affected.add(child);
+      }
+    }
+    this.#nodes.set(destination, node);
+    affected.add(node);
+    for (const child of affected) this.#refresh_path(child);
   }
 
   #forget(parts: readonly string[]) {
@@ -762,7 +817,7 @@ export class NodeFS implements FS<Node, Handle> {
       // A release already ahead of this read may have closed the handle
       // after its initial admission check, including when close reports error.
       this.#handle(node, handle);
-      const parts = this.#parts(node);
+      const parts = await this.#directory_parts(node);
       const target = await this.#validated_path(parts);
       const result: FSDirectoryEntry<Node>[] = [];
       for (const entry of await node_call(readdir(target, { withFileTypes: true }))) {

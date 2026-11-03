@@ -38,6 +38,71 @@ await mkdir(shared);
 await mkdir(outside);
 after(() => rm(temporary, { recursive: true, force: true }));
 
+test(
+  "open directories retain enumeration and relative operations after an in-root host rename",
+  { skip: process.platform !== "linux" },
+  async () => {
+    for (const order of [
+      "handle-first",
+      "moved-lookup-first",
+      "replacement-lookup-first",
+    ] as const) {
+      const directory = await mkdtemp(path.join(temporary, "open-directory-move-"));
+      const target = path.join(directory, "parent"),
+        moved = path.join(directory, "moved");
+      await mkdir(target);
+      await writeFile(path.join(target, "old-entry"), "original");
+      const fs = new NodeFS(directory);
+      const parent = (await fs.lookup(fs.root, "parent"))!;
+      const child = (await fs.lookup(parent, "old-entry"))!;
+      const handle = await fs.opendir(parent);
+      let replacement: typeof parent | undefined, newChild: typeof child | undefined;
+      try {
+        await rename(target, moved);
+        await mkdir(target);
+        await writeFile(path.join(target, "new-entry"), "replacement");
+        if (order === "moved-lookup-first") assert.equal(await fs.lookup(fs.root, "moved"), parent);
+        if (order === "replacement-lookup-first") {
+          replacement = (await fs.lookup(fs.root, "parent"))!;
+          newChild = (await fs.lookup(replacement, "new-entry"))!;
+        }
+        const entries = await fs.readdir(parent, handle);
+        assert.deepEqual(
+          entries.map((entry) => entry.name),
+          ["old-entry"],
+        );
+        if (order !== "replacement-lookup-first") assert.equal(entries[0]!.node, child);
+        const original = (await fs.lookup(parent, "old-entry"))!;
+        const file = await fs.open(original, linux_open.readonly);
+        try {
+          assert.equal(new TextDecoder().decode(await fs.read(original, file, 0n, 8)), "original");
+        } finally {
+          await fs.release(original, file);
+        }
+        const context = { mode: 0o100600, uid: process.getuid!(), gid: process.getgid!() };
+        const created = await fs.create(parent, "created", linux_open.writeonly, context);
+        await fs.release(created.node, created.handle);
+        await fs.rename(parent, "created", parent, "renamed");
+        await fs.unlink(parent, "renamed");
+        assert.deepEqual(
+          (await fs.readdir(parent, handle)).map((entry) => entry.name),
+          ["old-entry"],
+        );
+        assert.equal(await readFile(path.join(target, "new-entry"), "utf8"), "replacement");
+        assert.equal(await fs.lookup(fs.root, "moved"), parent);
+        if (replacement) {
+          assert.equal(await fs.lookup(fs.root, "parent"), replacement);
+          assert.equal(await fs.lookup(replacement, "new-entry"), newChild);
+        } else assert.notEqual(await fs.lookup(fs.root, "parent"), parent);
+      } finally {
+        await fs.releasedir(parent, handle);
+      }
+      // The recovered path binding remains usable after closing the directory FD.
+      assert.equal((await fs.getattr((await fs.lookup(parent, "old-entry"))!)).size, 8n);
+    }
+  },
+);
+
 test("stale parent inode requests never act on a host replacement directory", async () => {
   const context = { mode: 0o100600, uid: process.getuid!(), gid: process.getgid!() };
   for (const operation of [
