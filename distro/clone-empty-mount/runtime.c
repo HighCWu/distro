@@ -13,6 +13,7 @@
 #include <string.h>
 #include <sys/mount.h>
 #include <sys/stat.h>
+#include <sys/statfs.h>
 #include <sys/syscall.h>
 #include <sys/wait.h>
 #include <unistd.h>
@@ -72,11 +73,28 @@ static void parent_view(void)
 }
 static void scenario(uint64_t flags, int empty)
 {
+    /* Fixed Linux UAPI: OPEN_TREE_CLONE=1, MOVE_MOUNT_F_EMPTY_PATH=4.
+     * Keep standard syscall use local rather than adding libc wrappers.
+     * This nonrecursive clone keeps rootfs data but not its child mounts. */
+    int rootfd = empty ? syscall(SYS_open_tree, (long)AT_FDCWD,
+                                (long)(uintptr_t)"/", (long)(1 | O_CLOEXEC), 0L, 0L, 0L) : -1;
+    require(!empty || rootfd >= 0, "prepare detached nonrecursive root mount");
     pid_t child = create(flags);
     require(child >= 0, "native clone3 mount namespace");
     if (!child) {
         if (empty) {
             cwd("/");
+            struct statfs root;
+            require(statfs("/", &root) == 0 && (unsigned long)root.f_type == 0x4e554c4cUL,
+                    "empty namespace exposes the immutable nullfs root");
+            missing("/init");
+            missing(A);
+            missing(B);
+            require(syscall(SYS_move_mount, (long)rootfd, (long)(uintptr_t)"",
+                            (long)AT_FDCWD, (long)(uintptr_t)"/", 4L, 0L) == 0,
+                    "populate empty namespace with detached root through move_mount");
+            require(fchdir(rootfd) == 0 && chroot(".") == 0 && chdir("/") == 0 && close(rootfd) == 0,
+                    "select attached root and release child mount descriptor");
             identity(A "/under", &underlying);
             missing(A "/mounted");
             missing(B "/mounted");
@@ -89,6 +107,7 @@ static void scenario(uint64_t flags, int empty)
         _exit(37);
     }
     reap(child);
+    require(!empty || close(rootfd) == 0, "release parent detached-mount descriptor");
     parent_view();
 }
 int main(void)
@@ -106,9 +125,9 @@ int main(void)
     scenario(CLONE_NEWNS, 0);
     puts("clone empty mount: ordinary NEWNS retains copied mounts and cwd with isolated child mount pass");
     scenario(CLONE_EMPTY_MNTNS, 1);
-    puts("clone empty mount: EMPTY_MNTNS implies new namespace, removes child mounts and resets cwd pass");
+    puts("clone empty mount: EMPTY_MNTNS exposes empty nullfs then accepts explicit root population pass");
     scenario(CLONE_EMPTY_MNTNS | CLONE_NEWNS, 1);
-    puts("clone empty mount: explicit NEWNS combination retains only root and preserves parent view pass");
+    puts("clone empty mount: explicit NEWNS combination permits isolated population and preserves parent view pass");
     errno = 0;
     pid_t rejected = create(CLONE_EMPTY_MNTNS | CLONE_FS);
     if (!rejected) _exit(99);
