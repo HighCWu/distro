@@ -466,13 +466,11 @@ export class NodeFS implements FS<Node, Handle> {
     }
     return await this.#path_operation(async () => {
       this.#owned_node(node);
-      // Linux's inode getattr does not necessarily supply FUSE_GETATTR_FH,
-      // even for fstat. An unlinked/replaced inode is still addressable by its
-      // nodeid while open; never resolve its former pathname to a new inode.
-      if (!node.attached) {
-        const file = node.files.values().next().value;
-        if (file) return attributes(await node_call(file.stat({ bigint: true })));
-      }
+      // Linux can omit FH even for fstat. A host rename may replace this
+      // pathname before LOOKUP notices and detaches the cached generation.
+      // A live descriptor identifies the requested inode in either case.
+      const file = node.files.values().next().value;
+      if (file) return attributes(await node_call(file.stat({ bigint: true })));
       return attributes(await this.#stats(node));
     });
   }
@@ -562,10 +560,10 @@ export class NodeFS implements FS<Node, Handle> {
     }
     return await this.#path_operation(async () => {
       this.#owned_node(node);
-      // fchmod/fchown use inode SETATTR without necessarily supplying FH.
-      // After unlink/replacement only this inode's live descriptor is valid;
-      // its former pathname may already name an unrelated new file.
-      const file = !node.attached ? node.files.values().next().value : undefined;
+      // Like GETATTR, SETATTR may omit FH while a host replacement has not
+      // yet been observed by LOOKUP. Prefer this inode's live descriptor
+      // even while its cached name is still marked attached.
+      const file = node.files.values().next().value;
       return await this.#setattr(node, changes, file);
     });
   }

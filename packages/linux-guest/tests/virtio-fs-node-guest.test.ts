@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: MIT
 import assert from "node:assert/strict";
-import { link, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
+import { chmod, link, mkdtemp, readFile, rename, rm, stat, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { fileSystemDevice } from "@lowland/kernel";
@@ -12,6 +12,7 @@ import {
   load_open_file_metadata,
   load_file_creation_modes,
   load_readonly_access,
+  load_external_file_metadata,
 } from "./assets.ts";
 
 guest_test("Node directory sharing through Linux", async (t, fixture) => {
@@ -29,6 +30,52 @@ guest_test("Node directory sharing through Linux", async (t, fixture) => {
   await guest.mount("node-test", "/tmp/shared", { type: "virtiofs" });
 
   try {
+    await t.test("open inode metadata survives a host replacement before new lookup", async () => {
+      const target = path.join(shared, "external-metadata"),
+        staging = path.join(shared, "external-staging");
+      await writeFile(target, "old");
+      await writeFile(staging, "replacement");
+      await chmod(staging, 0o640);
+      await guest.fs.writeFile("/tmp/external-file-metadata", await load_external_file_metadata());
+      await guest.fs.chmod("/tmp/external-file-metadata", 0o755);
+      const process = await guest.exec(
+        ["/tmp/external-file-metadata", "/tmp/shared/external-metadata"],
+        { stdinMode: "streaming" },
+      );
+      const stderr = new Response(process.stderr).text();
+      const reader = process.stdout.getReader();
+      const writer = process.stdin.getWriter();
+      let ready = "";
+      try {
+        while (!ready.includes("\n")) {
+          const next = await reader.read();
+          assert.equal(
+            next.done,
+            false,
+            "consumer must open the old inode before host replacement",
+          );
+          ready += new TextDecoder().decode(next.value);
+        }
+        assert.equal(ready, "external metadata: ready for host replacement\n");
+        // No Linux lookup after this host-side rename, before releasing the C
+        // consumer to fstat/fchmod/futimens its already open descriptor.
+        await rename(staging, target);
+        await writer.write(new TextEncoder().encode("x"));
+      } finally {
+        reader.releaseLock();
+        await writer.close();
+      }
+      const stdout = new Response(process.stdout).text();
+      assert.equal((await process.status).success, true, await stderr);
+      assert.deepEqual((await stdout).trim().split("\n"), [
+        "external metadata: fstat retains replaced open inode without fresh pathname lookup pass",
+        "external metadata: mode, timestamps and data stay on original descriptor pass",
+        "external metadata: replacement metadata, read and cleanup remain independent pass",
+      ]);
+      assert.equal(await readFile(target, "utf8"), "replacement");
+      assert.equal((await stat(target)).mode & 0o777, 0o640);
+    });
+
     await t.test("standard access probes honor backend read-only policy", async () => {
       await writeFile(path.join(shared, "access-probe"), "readable");
       await guest.fs.mkdir("/tmp/readonly-shared");

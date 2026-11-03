@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import { constants } from "node:fs";
 import {
+  chmod,
   lstat,
   link,
   mkdir,
@@ -125,13 +126,18 @@ test("host replacement of a cached pathname does not rebind an open old inode", 
   const directory = await mkdtemp(path.join(temporary, "replaced-host-inode-"));
   await writeFile(path.join(directory, "file"), "old");
   await writeFile(path.join(directory, "staging"), "new");
+  await chmod(path.join(directory, "staging"), 0o640);
   const fs = new NodeFS(directory);
   const old = (await fs.lookup(fs.root, "file"))!;
   const handle = await fs.open(old, linux_open.readonly);
   try {
     await rename(path.join(directory, "staging"), path.join(directory, "file"));
-    assert.notEqual(await fs.lookup(fs.root, "file"), old);
+    // No lookup of the replaced name may be needed to preserve the old fd.
     assert.equal((await fs.getattr(old)).nlink, 0);
+    await fs.setattr(old, { mode: 0o600 });
+    assert.equal((await fs.getattr(old)).mode & 0o777, 0o600);
+    assert.equal((await stat(path.join(directory, "file"))).mode & 0o777, 0o640);
+    assert.notEqual(await fs.lookup(fs.root, "file"), old);
     assert.equal(new TextDecoder().decode(await fs.read(old, handle, 0n, 3)), "old");
   } finally {
     await fs.release(old, handle);
