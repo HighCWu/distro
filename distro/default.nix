@@ -232,6 +232,30 @@ lib.makeScope (scope: lib.callPackageWith ({ inherit lib pkgs; } // scope)) (
         };
       };
     };
+    sdk-cooperative-poll = callPackage ./cooperative-poll/sdk.nix { };
+    sdk-cooperative-poll-wasm64 = callPackage ./cooperative-poll/sdk.nix {
+      platform = self.platform-wasm64;
+      llvm-toolchain = self.llvm-toolchain-wasm64;
+      sysroot = self.sysroot-wasm64;
+      sdk = self.sdk-wasm64;
+    };
+    cooperative-poll = callPackage ./cooperative-poll/package.nix {
+      extraChecks.both =
+        pkgs.runCommand "cooperative-poll-both-widths"
+          {
+            passthru.ci.heavy = true;
+          }
+          ''
+            test -e ${self.cooperative-poll.checks.runtime}
+            test -e ${self.cooperative-poll-wasm64.checks.runtime}
+            touch $out
+          '';
+    };
+    cooperative-poll-wasm64 = callPackage ./cooperative-poll/package.nix {
+      platform = self.platform-wasm64;
+      sdk-cooperative-poll = self.sdk-cooperative-poll-wasm64;
+      vm-test = vmTestWasm64;
+    };
     sdk-brk-syscall = callPackage ./brk-syscall/sdk.nix { };
     brk-syscall = callPackage ./brk-syscall/package.nix {
       extraChecks.runtime-both =

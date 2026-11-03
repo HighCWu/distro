@@ -37,6 +37,7 @@ import {
 } from "./user-mmap.ts";
 import { FileMmapCopy } from "./file-mmap-copy.ts";
 import { user_brk_layout, user_brk_update } from "./user-brk.ts";
+import { call_user_poll } from "./user-poll.ts";
 import {
   read_signal_stack_pointer,
   call_on_signal_stack,
@@ -334,6 +335,24 @@ function user_imports({
         return ret;
       };
     created = new WebAssembly.Instance(context.module, {
+      linux_user_poll_v1: {
+        checkpoint: () => {
+          if (!created) return -95;
+          const before = instance;
+          const result = call_user_poll(
+            kernel_instance.exports,
+            created.exports,
+            context.memory,
+            kernel_address,
+            signal_depth !== 0 || !!fork || !!context.dynamic,
+          );
+          if (instance !== before) {
+            call_entry = call_start;
+            throw HALT_USER;
+          }
+          return result;
+        },
+      },
       linux_dlopen_v1: {
         abi: () => 1,
         link_map_abi: () => 1,
@@ -404,6 +423,17 @@ function user_imports({
       },
       linux_signal_cancel_v1: { abi: () => 1 },
     });
+    if (
+      WebAssembly.Module.imports(context.module).some(
+        (entry) => entry.module === "linux_user_poll_v1",
+      )
+    ) {
+      const abi = created.exports.__wasm_user_poll_abi;
+      assert(
+        typeof abi === "function" && abi.length === 0 && abi() === 1,
+        "invalid compiler user poll execution ABI",
+      );
+    }
     return created;
   }
 
@@ -514,6 +544,19 @@ function user_imports({
             !fork_continuation_exports_supported(module)
           ) {
             return -8; // exec format error
+          }
+          if (
+            WebAssembly.Module.imports(module).some(
+              (entry) => entry.module === "linux_user_poll_v1",
+            )
+          ) {
+            const exports = get_kernel_instance().exports;
+            if (
+              typeof exports.user_poll_v1 !== "function" ||
+              exports.user_poll_v1.length !== 0 ||
+              typeof exports.user_context_v1 !== "function"
+            )
+              return -8;
           }
 
           minimum = Number(memory_import.type.minimum);

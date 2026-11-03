@@ -14,6 +14,8 @@ export interface Instance extends WebAssembly.Instance {
     seccomp_strict_v1?(): number;
     /** Private execution phase: 0 kernel, 1 user, 2 query; returns old phase. */
     user_context_v1?(mode: number): number;
+    /** Private interrupt-return checkpoint; fixed i32 result for both widths. */
+    user_poll_v1?(): number;
     __indirect_function_table: WebAssembly.Table;
     boot(): void;
     trigger_irq(irq: number): void;
@@ -154,6 +156,7 @@ const supported_user_module_imports = new Set([
   "env\0memory\0memory",
   "linux\0syscall\0function",
   "linux\0syscall_v2\0function",
+  "linux_user_poll_v1\0checkpoint\0function",
   "linux\0get_thread_area\0function",
   "linux\0copy_siginfo\0function",
   "linux_signal_v1\0frame\0function",
@@ -172,6 +175,24 @@ const supported_user_module_imports = new Set([
 /** Whether every import can be supplied when a userspace module is instantiated. */
 export function user_module_imports_supported(module: WebAssembly.Module): boolean {
   const imports = WebAssembly.Module.imports(module);
+  if (imports.some((entry) => entry.module === "linux_user_poll_v1")) {
+    if (
+      imports.some(
+        (entry) => entry.module === "linux_fork_v1" || entry.module === "linux_dlopen_v1",
+      )
+    )
+      return false;
+    const exports = WebAssembly.Module.exports(module);
+    if (exports.some((entry) => entry.name === "__wasm_fork_abi")) return false;
+    if (
+      ![
+        ["__wasm_user_poll_abi", "function"],
+        ["__tls_base", "global"],
+        ["__stack_pointer", "global"],
+      ].every(([name, kind]) => exports.some((entry) => entry.name === name && entry.kind === kind))
+    )
+      return false;
+  }
   if (imports.some((entry) => entry.module === "linux_dlopen_v1")) {
     const exports = WebAssembly.Module.exports(module);
     if (

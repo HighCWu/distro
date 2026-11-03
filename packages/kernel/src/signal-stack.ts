@@ -11,6 +11,11 @@ import {
 
 const kernel_depth = new WeakMap<WebAssembly.Exports, number>();
 
+/** Compiler checkpoints cannot run pending return work inside a live callback. */
+export function kernel_entry_active(exports: WebAssembly.Exports): boolean {
+  return (kernel_depth.get(exports) ?? 0) !== 0;
+}
+
 function context_bridge(exports: WebAssembly.Exports) {
   const bridge = exports.user_context_v1;
   if (bridge === undefined) return null; // Old kernels retain their old contract.
