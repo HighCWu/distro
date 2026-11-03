@@ -102,7 +102,6 @@ for (const address of ["i32", "i64"] as const)
       [0, 17n, -22],
       [0, 0x100n, -95],
       [0, 0x100000800n, -22],
-      [4, 0n, -95],
       [4, 65n, -22],
       [4, 0x100000011n, -22],
       [5, 1n, -22],
@@ -114,6 +113,11 @@ for (const address of ["i32", "i64"] as const)
       reset();
       view.setBigUint64(256 + index * 8, value, true);
       assert.equal(parse(96), error, `field ${index}`);
+    }
+    reset();
+    for (const signal of [0, 10, 64]) {
+      view.setBigUint64(256 + 32, BigInt(signal), true);
+      assert.deepEqual(parse(88), { pidfd: null, exitSignal: signal });
     }
     reset();
     for (const index of [1, 2, 3, 7, 10])

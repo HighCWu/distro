@@ -173,7 +173,7 @@ for (const width of [32, 64]) {
       p(-95),
     );
     assert.equal(calls.length, 4, "unknown high flags never reach Linux");
-    assert.equal(instance.exports.__wasm_fork_clone3_features(), 63);
+    assert.equal(instance.exports.__wasm_fork_clone3_features(), 127);
     assert.equal(
       instance.exports.__wasm_fork_clone3_flags64(0x100000080n, pointer, parent, child),
       p(-11),
@@ -243,6 +243,21 @@ for (const width of [32, 64]) {
     );
     const nnp = new DataView(instance.exports.memory.buffer, Number(calls[13][1]), 88);
     assert.equal(nnp.getBigUint64(0, true), 0x800000000n);
+    assert.equal(instance.exports.__wasm_fork_clone3_exit_signal(-1), -22);
+    assert.equal(instance.exports.__wasm_fork_clone3_exit_signal(65), -22);
+    assert.equal(instance.exports.__wasm_fork_clone3_exit_signal(0), 0);
+    assert.equal(instance.exports.__wasm_fork_clone3_flags64(0n, p(0), p(0), p(0)), p(-11));
+    const selectedSignal = new DataView(instance.exports.memory.buffer, Number(calls[14][1]), 88);
+    assert.equal(selectedSignal.getBigUint64(32, true), 0n);
+    assert.equal(instance.exports.__wasm_fork_clone3_exit_signal(10), 0);
+    assert.equal(instance.exports.__wasm_fork_clone3_flags64(1n << 63n, p(0), p(0), p(0)), p(-95));
+    assert.equal(instance.exports.__wasm_fork_clone3_flags64(0n, p(0), p(0), p(0)), p(-11));
+    const restoredSignal = new DataView(instance.exports.memory.buffer, Number(calls[15][1]), 88);
+    assert.equal(
+      restoredSignal.getBigUint64(32, true),
+      17n,
+      "failed C request consumes staged signal",
+    );
     const collision = join(dir, "collision.c");
     writeFileSync(
       collision,

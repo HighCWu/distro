@@ -395,6 +395,64 @@ for (const address of ["i32", "i64"] as const)
   });
 
 for (const address of ["i32", "i64"] as const)
+  test(`${address}: nondefault clone3 exit signals need explicit transport and reset after failure`, () => {
+    const {
+      controller: c,
+      exports,
+      memory,
+      pointer: p,
+      calls,
+    } = fixture(address, true, 2, true, undefined, true);
+    const view = new DataView(memory.buffer);
+    view.setBigUint64(8224, 0n, true);
+    const staged: number[] = [];
+    Object.assign(exports, {
+      __wasm_fork_clone3_flags64: (...args: WasmAddress[]) => {
+        assert.deepEqual(args, [0n, p(0), p(0), p(0)]);
+        return p(-11);
+      },
+    });
+    for (const feature of [undefined, 0, 63, 64n, NaN]) {
+      Object.assign(exports, {
+        __wasm_fork_clone3_features: feature === undefined ? undefined : () => feature,
+      });
+      assert.equal(c.clone3Checkpoint(p(8192), p(88), true), -95);
+    }
+    Object.assign(exports, { __wasm_fork_clone3_features: () => 64 });
+    assert.equal(
+      c.clone3Checkpoint(p(8192), p(88), true),
+      -95,
+      "capability without setter is incomplete",
+    );
+    assert.equal(calls.descriptors, 0);
+    Object.assign(exports, {
+      __wasm_fork_clone3_exit_signal: (signal: number) => {
+        staged.push(signal);
+        return 0;
+      },
+    });
+    const oldKernel = new ForkContinuation(
+      { exports } as unknown as WebAssembly.Instance,
+      memory,
+      address,
+      undefined,
+      true,
+      false,
+    );
+    assert.equal(oldKernel.clone3Checkpoint(p(8192), p(88), true), -95);
+    for (const signal of [0, 10, 17]) {
+      view.setBigUint64(8224, BigInt(signal), true);
+      assert.equal(c.clone3Checkpoint(p(8192), p(88), true), 0);
+      c.suspend();
+      assert.equal(c.clone(), p(-11));
+      assert.equal(staged.at(-1), signal);
+      c.resumeParent(p(-11));
+      assert.equal(c.clone3Checkpoint(p(0), p(0), true), -11);
+    }
+    assert.deepEqual(staged, [0, 10, 17]);
+  });
+
+for (const address of ["i32", "i64"] as const)
   test(`${address}: clone3 high flags require wide transport and clear after failure`, () => {
     const {
       controller,

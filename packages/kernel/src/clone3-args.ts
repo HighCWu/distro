@@ -11,6 +11,7 @@ export interface CloneForkRequest {
   flags64?: bigint;
   cgroup?: bigint;
   setTid?: number[];
+  exitSignal?: number;
 }
 
 const namespaceMask = 0x7e020000n;
@@ -143,7 +144,6 @@ export function clone3_fork_request(
   if ((stack === 0n) !== (stackSize === 0n)) return -22;
   if (tidCount > 32n || (tids === 0n) !== (tidCount === 0n)) return -22;
   if (flags & intoCgroup && (length < 88n || field(10) > 0x7fffffffn)) return -22;
-  if (signal !== 17n) return -95;
   // Linux owns namespace configuration, capabilities and flag combinations.
   // Namespace/TID bits fit the old transport. CLEAR_SIGHAND and NEWTIME
   // require native transport: NEWTIME aliases a legacy CSIGNAL bit.
@@ -175,6 +175,7 @@ export function clone3_fork_request(
     flags & 0x100000n ? field(3) : 0n,
     flags & 0x1200000n ? field(2) : 0n,
   );
+  if (typeof request !== "number" && signal !== 17n) request.exitSignal = Number(signal);
   if (typeof request !== "number" && flags & intoCgroup) request.cgroup = field(10);
   if (typeof request !== "number" && tidCount) {
     if (tids > BigInt(Number.MAX_SAFE_INTEGER) || (address === "i32" && tids > 0xffffffffn))

@@ -174,6 +174,7 @@ export class ForkContinuation {
   private setTid: number[] | undefined;
   private kernelDepth = 0;
   private readonly userPollSupported: boolean;
+  private exitSignal = 17;
   private rewindingChild = false;
   private readonly childRewound: (() => void) | undefined;
   private readonly e: WebAssembly.Exports;
@@ -376,6 +377,20 @@ export class ForkContinuation {
         return -95;
     }
     const legacy = !clone3 && typeof this.e.__wasm_fork_clone_options === "function";
+    if (request.exitSignal !== undefined) {
+      const features =
+        typeof this.e.__wasm_fork_clone3_features === "function"
+          ? this.call("__wasm_fork_clone3_features")
+          : 0;
+      if (
+        !native ||
+        typeof this.e.__wasm_fork_clone3_exit_signal !== "function" ||
+        typeof features !== "number" ||
+        !Number.isInteger(features) ||
+        !(features & 64)
+      )
+        return -95;
+    }
     if ((request.flags64 ?? 0n) & 0x800000000n) {
       const features =
         typeof this.e.__wasm_fork_clone3_features === "function"
@@ -431,6 +446,7 @@ export class ForkContinuation {
       this.flags64 = request.flags64 ?? 0n;
       this.cgroup = request.cgroup;
       this.setTid = request.setTid;
+      this.exitSignal = request.exitSignal ?? 17;
     }
     return result;
   }
@@ -479,6 +495,11 @@ export class ForkContinuation {
     try {
       if (this.nativeRequest) {
         this.nativeActive = true;
+        if (typeof this.e.__wasm_fork_clone3_exit_signal === "function")
+          this.require(
+            this.call("__wasm_fork_clone3_exit_signal", this.exitSignal) === 0,
+            "clone3 exit signal staging failed",
+          );
         const zero = this.address === "i64" ? 0n : 0;
         const flags =
           BigInt(this.namespaceFlags ?? zero) |
@@ -555,6 +576,7 @@ export class ForkContinuation {
       this.flags64 = 0n;
       this.cgroup = undefined;
       this.setTid = undefined;
+      this.exitSignal = 17;
     }
   }
 

@@ -107,6 +107,11 @@ let
         "CLONE_CLEAR_SIGHAND"
         "CLONE_NNP"
       ];
+      clone3ExitSignal = {
+        minimum = 0;
+        maximum = 64;
+        requiresNativeTransport = true;
+      };
       clone3NativeOnlyFlags = [
         "CLONE_NEWTIME"
         "CLONE_INTO_CGROUP"

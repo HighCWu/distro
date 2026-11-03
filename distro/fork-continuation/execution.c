@@ -102,10 +102,21 @@ long __wasm_fork_clone_options(uintptr_t flags, uintptr_t parent, uintptr_t chil
  * has already suspended this single-thread caller; Linux alone writes TIDs
  * and allocates/publishes PIDFDs. No libc or application API is added. */
 static int32_t selected_tids[32];
+static unsigned clone3_exit_signal = SIGCHLD;
+
+__attribute__((export_name("__wasm_fork_clone3_exit_signal")))
+int __wasm_fork_clone3_exit_signal(int signal)
+{
+	if (signal < 0 || signal > 64) return -EINVAL;
+	clone3_exit_signal = signal;
+	return 0;
+}
 
 static long clone3_native(uint64_t flags, uintptr_t pidfd,
 	uintptr_t parent_tid, uintptr_t child_tid, uint64_t cgroup, unsigned count)
 {
+	unsigned signal = clone3_exit_signal;
+	clone3_exit_signal = SIGCHLD;
 	static struct {
 		uint64_t flags, pidfd, child_tid, parent_tid, exit_signal;
 		uint64_t stack, stack_size, tls, set_tid, set_tid_size, cgroup;
@@ -120,7 +131,7 @@ static long clone3_native(uint64_t flags, uintptr_t pidfd,
 	args.pidfd = pidfd;
 	args.child_tid = child_tid;
 	args.parent_tid = parent_tid;
-	args.exit_signal = SIGCHLD;
+	args.exit_signal = signal;
 	args.cgroup = cgroup;
 	args.set_tid = count ? (uintptr_t)selected_tids : 0;
 	args.set_tid_size = count;
@@ -175,9 +186,9 @@ long __wasm_fork_clone3_pid_select(uint64_t flags, uintptr_t pidfd,
 
 /* Private object capability, not a libc/application API. Bit 0 admits
  * CLONE_NEWTIME; bit 1 cgroup; bit 2 set_tid; bit 3 CLONE_FS/FILES;
- * bit 4 CLONE_SYSVSEM; bit 5 native CLONE_NNP. */
+ * bit 4 CLONE_SYSVSEM; bit 5 native CLONE_NNP; bit 6 exit_signal staging. */
 __attribute__((export_name("__wasm_fork_clone3_features")))
 int __wasm_fork_clone3_features(void)
 {
-	return 63;
+	return 127;
 }

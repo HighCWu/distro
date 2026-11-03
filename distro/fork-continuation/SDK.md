@@ -119,6 +119,13 @@ Linux installs no_new_privs before child execution and retains its standard
 fork/exec inheritance and inability to clear the restriction. Older objects or
 non-native clone3 transport refuse the flag before continuation unwind.
 
+Native clone3 exit_signal values 0..64 require capability bit 6 and the private
+fixed-i32 staging export for values other than SIGCHLD. Linux owns notification
+and wait-class semantics; zero or non-SIGCHLD children need the corresponding
+Linux __WCLONE/__WALL wait options. Every native request stages its own signal,
+and the execution object consumes it once, restoring SIGCHLD even on errors.
+The legacy callback/flags clone transports retain their SIGCHLD-only subset.
+
 `share/linux-wasm-fork-sdk/profile.json` records the experimental profile.
 
 CLONE_CLEAR_SIGHAND requires the optional `__wasm_fork_clone3_flags64` export
