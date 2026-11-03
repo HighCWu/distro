@@ -29,6 +29,9 @@ static long raw(long n, long a, long b, long c, long d, long e, long f)
 }
 #endif
 enum { direct_exit, killed_waiter, pending, bad_next, bad_head };
+/* Outside Linux's ERR_PTR range: get_robust_list propagates values in that
+ * range as errors. The address is still outside bounded user linear memory. */
+#define BAD_LIST_ADDRESS ((void *)(uintptr_t)-8192)
 struct node { struct robust_list link; _Atomic uint32_t owner; };
 struct state {
     struct robust_list_head head;
@@ -52,7 +55,7 @@ static int child(void *pointer)
     /* No pthread return/exit wrapper or userspace robust-list walk. The
      * shared-VM callback uses no libc allocation, native TLS or errno. */
     struct state *s = pointer;
-    struct robust_list_head *head = s->mode == bad_head ? (void *)(uintptr_t)-8 : &s->head;
+    struct robust_list_head *head = s->mode == bad_head ? BAD_LIST_ADDRESS : &s->head;
     long tid = raw(SYS_gettid, 0, 0, 0, 0, 0, 0);
     if (raw(SYS_set_robust_list, (long)head, sizeof(*head)-1, 0, 0, 0, 0) != -EINVAL)
         raw_exit(101);
@@ -110,7 +113,7 @@ static void scenario(int mode)
     state.head.list.next = mode == pending ? &state.head.list : &state.node.link;
     state.head.futex_offset = offsetof(struct node, owner) - offsetof(struct node, link);
     state.head.list_op_pending = mode == pending ? &state.node.link : NULL;
-    state.node.link.next = mode == bad_next ? (void *)(uintptr_t)-8 : &state.head.list;
+    state.node.link.next = mode == bad_next ? BAD_LIST_ADDRESS : &state.head.list;
     require(pipe(state.ready) == 0 && pipe(state.release) == 0, "control pipes");
     size_t size = 1024 * 1024;
     void *stack = malloc(size);
@@ -124,10 +127,13 @@ static void scenario(int mode)
     require((original & FUTEX_TID_MASK) == (uint32_t)pid, "kernel TID owns word");
     struct robust_list_head *registered = NULL;
     size_t length = 0;
-    require(raw(SYS_get_robust_list, pid, (long)&registered, (long)&length, 0, 0, 0) == 0 &&
-            length == sizeof state.head, "query actual child robust registration");
+    long query = raw(SYS_get_robust_list, pid, (long)&registered, (long)&length, 0, 0, 0);
+    if (query || length != sizeof state.head)
+        fprintf(stderr, "kernel robust: registration mode=%d raw=%ld length=%zu expected=%zu\n",
+                mode, query, length, sizeof state.head);
+    require(query == 0 && length == sizeof state.head, "query actual child robust registration");
 #ifndef ROBUST_SKIP_REGISTRATION
-    require(registered == (mode == bad_head ? (void *)(uintptr_t)-8 : &state.head), "registered list identity");
+    require(registered == (mode == bad_head ? BAD_LIST_ADDRESS : &state.head), "registered list identity");
 #endif
     pthread_t thread;
     if (mode == killed_waiter) {
