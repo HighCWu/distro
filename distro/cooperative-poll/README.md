@@ -33,6 +33,21 @@ libc/startup code with this profile or insert instrumented callbacks before TLS
 initialization. A nonzero TLS base alone is insufficient to establish ownership
 during early clone startup. Raw custom clone startup needs separate review.
 
+`WASM_POLL_THREAD_GLOBAL` is a compiler-component prototype for eventually
+instrumenting library code. It selects private ABI 2 and imports a mutable,
+pointer-width `linux_user_poll_v2.thread_pointer` global. Zero defers before any
+TLS access. A TLS owner word, claimed once before clone publishes the block,
+prevents a child temporarily using its parent's TLS from spending the parent's
+budget. The owner remains read-only after that claim, including while another
+instance inspects it. New native TLS starts with no owner and a fresh budget.
+
+No released SDK selects this macro, and the Worker still rejects ABI 2 imports.
+The small artifact probe verifies the gate and separate instance state; it does
+not establish host readiness publication, parallel Linux pthread startup, or
+safe libc instrumentation. Those must be implemented and accepted together
+before enabling coverage in library builds. This is an execution ABI experiment,
+not a new application or libc interface.
+
 The `cooperative-poll-check-both` target verifies real Linux timer delivery in
 pure computation, siglongjmp and later recovery, targeted pthread signals and
 TLS isolation, and a strict-seccomp child with a pure loop and raw thread exit.
