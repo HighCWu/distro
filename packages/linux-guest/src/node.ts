@@ -734,10 +734,9 @@ export class NodeFS implements FS<Node, Handle> {
       if (process.platform === "win32" || constants.O_DIRECTORY === undefined) {
         return new Handle(node, undefined, true);
       }
-      const target = await this.#validated_path(this.#parts(node));
-      const file = await node_call(
-        open(target, constants.O_RDONLY | constants.O_DIRECTORY | constants.O_NOFOLLOW),
-      );
+      // A host replacement can occur after the directory preflight too.
+      // Use the ordinary verified open before publishing a directory handle.
+      const file = await this.#open_file(node, linux_open.directory);
       return new Handle(node, file, true);
     });
   }
