@@ -244,6 +244,31 @@ lib.makeScope (scope: lib.callPackageWith ({ inherit lib pkgs; } // scope)) (
         touch $out
       '';
     };
+    thread-timer = callPackage ./thread-timer/package.nix {
+      extraChecks.both = pkgs.runCommand "thread-timer-both-widths" { passthru.ci.heavy = true; } ''
+        test -e ${self.thread-timer.checks.runtime}
+        test -e ${self.thread-timer-wasm64.checks.runtime}
+        test -e ${self.thread-timer-libc.checks.runtime}
+        test -e ${self.thread-timer-libc-wasm64.checks.runtime}
+        test -e ${self.cooperative-poll.checks.runtime}
+        test -e ${self.cooperative-poll-wasm64.checks.runtime}
+        touch $out
+      '';
+    };
+    thread-timer-wasm64 = callPackage ./thread-timer/package.nix {
+      platform = self.platform-wasm64;
+      sdk = self.sdk-wasm64;
+      vm-test = vmTestWasm64;
+    };
+    thread-timer-libc = self.thread-timer.override {
+      sdk = self.sdk-cooperative-poll-libc;
+      libraryCoverage = true;
+      extraChecks = { };
+    };
+    thread-timer-libc-wasm64 = self.thread-timer-wasm64.override {
+      sdk = self.sdk-cooperative-poll-libc-wasm64;
+      libraryCoverage = true;
+    };
     exec-thread-state-wasm64 = callPackage ./exec-thread-state/package.nix {
       platform = self.platform-wasm64;
       sdk = self.sdk-wasm64;
