@@ -546,7 +546,14 @@ export class NodeFS implements FS<Node, Handle> {
     if (handle?.file) {
       return await this.#setattr(node, changes, handle.file);
     }
-    return await this.#path_operation(async () => this.#setattr(node, changes));
+    return await this.#path_operation(async () => {
+      this.#owned_node(node);
+      // fchmod/fchown use inode SETATTR without necessarily supplying FH.
+      // After unlink/replacement only this inode's live descriptor is valid;
+      // its former pathname may already name an unrelated new file.
+      const file = !node.attached ? node.files.values().next().value : undefined;
+      return await this.#setattr(node, changes, file);
+    });
   }
 
   async open(node: Node, flags: number) {

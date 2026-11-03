@@ -92,6 +92,7 @@ export const getdents_inode = await readFile(join(directory, "getdents-inode"));
 // Load only for the Node shared-directory suite; browser asset bundles do not
 // need to carry this independent syscall consumer.
 export const load_file_timestamps = () => readFile(join(directory, "file-timestamps"));
+export const load_open_file_metadata = () => readFile(join(directory, "open-file-metadata"));
 
 const lifecycle_rootfs = await readFile(join(directory, "lifecycle-rootfs.erofs"));
 

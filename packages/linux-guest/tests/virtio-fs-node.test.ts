@@ -138,6 +138,33 @@ test("host replacement of a cached pathname does not rebind an open old inode", 
   }
 });
 
+test("inode SETATTR without FH changes only the unlinked open file", async () => {
+  const directory = await mkdtemp(path.join(temporary, "unlinked-setattr-"));
+  await writeFile(path.join(directory, "file"), "old");
+  const fs = new NodeFS(directory);
+  const node = (await fs.lookup(fs.root, "file"))!;
+  const held = await fs.open(node, linux_open.readonly);
+  try {
+    const before = await fs.getattr(node);
+    await fs.unlink(fs.root, "file");
+    await writeFile(path.join(directory, "file"), "new", { mode: 0o644 });
+    const replacement = (await fs.lookup(fs.root, "file"))!;
+    const replacementBefore = await fs.getattr(replacement);
+    await fs.setattr(node, { mode: 0o600 });
+    await fs.setattr(node, { uid: before.uid!, gid: before.gid! });
+    assert.equal((await fs.getattr(node)).mode & 0o777, 0o600);
+    assert.equal((await fs.getattr(node)).nlink, 0);
+    assert.equal((await fs.getattr(replacement)).mode, replacementBefore.mode);
+    assert.equal(await readFile(path.join(directory, "file"), "utf8"), "new");
+    assert.equal(new TextDecoder().decode(await fs.read(node, held, 0n, 3)), "old");
+    const other = new NodeFS(directory);
+    await assert.rejects(other.setattr(node, { mode: 0o777 }), { errno: 22 });
+  } finally {
+    await fs.release(node, held);
+  }
+  await assert.rejects(fs.setattr(node, { mode: 0o777 }), { errno: 2 });
+});
+
 test("node virtio-fs directory entries preserve file, directory and symlink kinds", async () => {
   const directory = await mkdtemp(path.join(temporary, "entry-types-"));
   await writeFile(path.join(directory, "file"), "data");

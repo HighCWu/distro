@@ -7,7 +7,7 @@ import { fileSystemDevice } from "@lowland/kernel";
 import { NodeFS } from "../src/node.ts";
 import { SeekMode, SystemError } from "../src/index.ts";
 import { guest_test } from "./fixture.ts";
-import { load_file_timestamps } from "./assets.ts";
+import { load_file_timestamps, load_open_file_metadata } from "./assets.ts";
 
 guest_test("Node directory sharing through Linux", async (t, fixture) => {
   const shared = await mkdtemp(path.join(tmpdir(), "linux-guest-node-mount-"));
@@ -20,6 +20,25 @@ guest_test("Node directory sharing through Linux", async (t, fixture) => {
   await guest.mount("node-test", "/tmp/shared", { type: "virtiofs" });
 
   try {
+    await t.test(
+      "descriptor metadata survives unlink without retargeting a replacement",
+      async () => {
+        await guest.fs.writeTextFile("/tmp/shared/metadata-file", "old");
+        await guest.fs.writeFile("/tmp/open-file-metadata", await load_open_file_metadata());
+        await guest.fs.chmod("/tmp/open-file-metadata", 0o755);
+        const process = await guest.exec(["/tmp/open-file-metadata", "/tmp/shared/metadata-file"]);
+        const stdout = new Response(process.stdout).text();
+        const stderr = new Response(process.stderr).text();
+        assert.equal((await process.status).success, true, await stderr);
+        assert.deepEqual((await stdout).trim().split("\n"), [
+          "open metadata: fchmod updates unlinked inode and leaves same-name replacement unchanged pass",
+          "open metadata: owner and timestamp operations retain old inode and independent data pass",
+          "open metadata: closed descriptor fails and replacement remains usable pass",
+        ]);
+        assert.equal(await readFile(path.join(shared, "metadata-file"), "utf8"), "new");
+      },
+    );
+
     await t.test("standard utimensat and futimens retain signed file timestamps", async () => {
       await guest.fs.writeTextFile("/tmp/shared/timestamp-file", "unchanged");
       await guest.fs.writeFile("/tmp/file-timestamps", await load_file_timestamps());

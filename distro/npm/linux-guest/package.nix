@@ -33,6 +33,7 @@ let
   user-trap = test-program "user-trap" ../../guest-tests/user-trap.c;
   getdents-inode = test-program "getdents-inode" ../../guest-tests/getdents-inode.c;
   file-timestamps = test-program "file-timestamps" ../../guest-tests/file-timestamps.c;
+  open-file-metadata = test-program "open-file-metadata" ../../guest-tests/open-file-metadata.c;
 
   lifecycle-rootfs = vm-test.installedDisk {
     name = "linux-guest-lifecycle";
@@ -53,6 +54,7 @@ let
     "user-trap" = "${user-trap}/bin/user-trap";
     "getdents-inode" = "${getdents-inode}/bin/getdents-inode";
     "file-timestamps" = "${file-timestamps}/bin/file-timestamps";
+    "open-file-metadata" = "${open-file-metadata}/bin/open-file-metadata";
   };
 
   package = pkgs.stdenvNoCC.mkDerivation {
