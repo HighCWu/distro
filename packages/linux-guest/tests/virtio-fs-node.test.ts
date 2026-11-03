@@ -727,8 +727,13 @@ test("node virtio-fs adapter enforces read-only shares in the backend", async ()
   assert(node);
   const handle = await filesystem.open!(node, linux_open.readonly | linux_open.closeOnExec);
   assert.equal(new TextDecoder().decode(await filesystem.read!(node, handle, 0n, 8)), "readable");
+  await filesystem.access(node, constants.F_OK);
+  await filesystem.access(node, constants.R_OK);
 
   for (const operation of [
+    () => filesystem.access(node, constants.W_OK),
+    () => filesystem.access(node, constants.R_OK | constants.W_OK),
+    () => filesystem.access(filesystem.root, constants.W_OK),
     () => filesystem.open!(node, linux_open.writeonly),
     () => filesystem.open!(node, linux_open.readonly | linux_open.truncate),
     () => filesystem.write!(node, handle, 0n, new Uint8Array([1])),

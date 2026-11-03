@@ -11,6 +11,7 @@ import {
   load_file_timestamps,
   load_open_file_metadata,
   load_file_creation_modes,
+  load_readonly_access,
 } from "./assets.ts";
 
 guest_test("Node directory sharing through Linux", async (t, fixture) => {
@@ -19,11 +20,39 @@ guest_test("Node directory sharing through Linux", async (t, fixture) => {
   const filesystem = new NodeFS(shared);
   const guest = await fixture.spawn([
     fileSystemDevice(filesystem, { tag: "node-test", cache: false }),
+    fileSystemDevice(new NodeFS(shared, { readOnly: true }), {
+      tag: "node-readonly",
+      cache: false,
+    }),
   ]);
   await guest.fs.mkdir("/tmp/shared", { recursive: true });
   await guest.mount("node-test", "/tmp/shared", { type: "virtiofs" });
 
   try {
+    await t.test("standard access probes honor backend read-only policy", async () => {
+      await writeFile(path.join(shared, "access-probe"), "readable");
+      await guest.fs.mkdir("/tmp/readonly-shared");
+      // Deliberately do not set a read-only mount flag: the server's access
+      // policy must agree with its open/write policy on this ordinary mount.
+      await guest.mount("node-readonly", "/tmp/readonly-shared", { type: "virtiofs" });
+      await guest.fs.writeFile("/tmp/readonly-access", await load_readonly_access());
+      await guest.fs.chmod("/tmp/readonly-access", 0o755);
+      const process = await guest.exec([
+        "/tmp/readonly-access",
+        "/tmp/readonly-shared/access-probe",
+        "/tmp/readonly-shared",
+      ]);
+      const stdout = new Response(process.stdout).text();
+      const stderr = new Response(process.stderr).text();
+      assert.equal((await process.status).success, true, await stderr);
+      assert.deepEqual((await stdout).trim().split("\n"), [
+        "readonly access: existence and read probes succeed on the read-only backend pass",
+        "readonly access: file, directory, mixed and effective-ID write probes return EROFS pass",
+        "readonly access: actual open policy, read recovery and missing-path errors remain correct pass",
+      ]);
+      assert.equal(await readFile(path.join(shared, "access-probe"), "utf8"), "readable");
+    });
+
     await t.test(
       "leading U+FEFF names and link targets remain distinct through Linux",
       async () => {

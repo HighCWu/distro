@@ -94,6 +94,7 @@ export const getdents_inode = await readFile(join(directory, "getdents-inode"));
 export const load_file_timestamps = () => readFile(join(directory, "file-timestamps"));
 export const load_open_file_metadata = () => readFile(join(directory, "open-file-metadata"));
 export const load_file_creation_modes = () => readFile(join(directory, "file-creation-modes"));
+export const load_readonly_access = () => readFile(join(directory, "readonly-access"));
 
 const lifecycle_rootfs = await readFile(join(directory, "lifecycle-rootfs.erofs"));
 

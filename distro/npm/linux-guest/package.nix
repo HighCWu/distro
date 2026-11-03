@@ -35,6 +35,7 @@ let
   file-timestamps = test-program "file-timestamps" ../../guest-tests/file-timestamps.c;
   open-file-metadata = test-program "open-file-metadata" ../../guest-tests/open-file-metadata.c;
   file-creation-modes = test-program "file-creation-modes" ../../guest-tests/file-creation-modes.c;
+  readonly-access = test-program "readonly-access" ../../guest-tests/readonly-access.c;
 
   lifecycle-rootfs = vm-test.installedDisk {
     name = "linux-guest-lifecycle";
@@ -57,6 +58,7 @@ let
     "file-timestamps" = "${file-timestamps}/bin/file-timestamps";
     "open-file-metadata" = "${open-file-metadata}/bin/open-file-metadata";
     "file-creation-modes" = "${file-creation-modes}/bin/file-creation-modes";
+    "readonly-access" = "${readonly-access}/bin/readonly-access";
   };
 
   package = pkgs.stdenvNoCC.mkDerivation {

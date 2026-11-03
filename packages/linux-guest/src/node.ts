@@ -815,6 +815,7 @@ export class NodeFS implements FS<Node, Handle> {
       if ((await this.#stats(node)).isSymbolicLink()) {
         throw new FSError("ELOOP");
       }
+      if (mask & constants.W_OK) this.#writable();
       await node_call(access(await this.#validated_path(this.#parts(node)), mask));
     });
   }
