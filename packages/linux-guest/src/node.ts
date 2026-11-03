@@ -404,14 +404,14 @@ export class NodeFS implements FS<Node, Handle> {
     return result;
   }
 
-  async #validated_path(parts: readonly string[]) {
+  async #validated_path(parts: readonly string[], directory = false) {
     // This proves containment only for the namespace observed now. The later
     // Node pathname syscall resolves ancestors again, so this cannot be a
     // security boundary against concurrent host mutation. Closing that race
     // requires descriptor-relative/openat2 operations Node does not expose.
     const root = await this.#root_path;
     const result = await this.#path(parts);
-    const parent = parts.length === 0 ? result : path.dirname(result);
+    const parent = directory || parts.length === 0 ? result : path.dirname(result);
     const actual_parent = await node_call(realpath(parent));
     const relative = path.relative(root, actual_parent);
     if (relative === ".." || relative.startsWith(`..${path.sep}`) || path.isAbsolute(relative)) {
@@ -432,6 +432,14 @@ export class NodeFS implements FS<Node, Handle> {
       this.#forget(parts);
       if (!node.attached) throw new FSError("ENOENT", "cached inode pathname was replaced");
     }
+  }
+
+  async #directory_parts(node: Node) {
+    // Parent node IDs identify an inode, not whichever directory happens to
+    // occupy its old pathname. Validate before resolving a child operation.
+    await this.#validated_path(this.#parts(node), true);
+    if (!(await this.#stats(node)).isDirectory()) throw new FSError("ENOTDIR");
+    return this.#parts(node);
   }
 
   #forget(parts: readonly string[]) {
@@ -460,7 +468,7 @@ export class NodeFS implements FS<Node, Handle> {
 
   async lookup(parent: Node, name: string) {
     return await this.#path_operation(async () => {
-      const parts = [...this.#parts(parent), valid_name(name)];
+      const parts = [...(await this.#directory_parts(parent)), valid_name(name)];
       try {
         const stats = await node_call(lstat(await this.#validated_path(parts), { bigint: true }));
         return this.#node(parts, stats);
@@ -500,7 +508,7 @@ export class NodeFS implements FS<Node, Handle> {
   async symlink(parent: Node, name: string, target: string, _context: FSCreateContext) {
     this.#writable();
     return await this.#path_operation(async () => {
-      const parts = [...this.#parts(parent), valid_name(name)];
+      const parts = [...(await this.#directory_parts(parent)), valid_name(name)];
       await node_call(symlink(target, await this.#validated_path(parts)));
       return this.#node(
         parts,
@@ -631,7 +639,7 @@ export class NodeFS implements FS<Node, Handle> {
     const host_flags =
       translate_open_flags(flags | linux_open.create) | constants.O_CREAT | constants.O_NOFOLLOW;
     return await this.#path_operation(async () => {
-      const parts = [...this.#parts(parent), valid_name(name)];
+      const parts = [...(await this.#directory_parts(parent)), valid_name(name)];
       const target = await this.#validated_path(parts);
       let file: FileHandle;
       let created = false;
@@ -790,7 +798,7 @@ export class NodeFS implements FS<Node, Handle> {
   async mkdir(parent: Node, name: string, context: FSCreateContext) {
     this.#writable();
     return await this.#path_operation(async () => {
-      const parts = [...this.#parts(parent), valid_name(name)];
+      const parts = [...(await this.#directory_parts(parent)), valid_name(name)];
       const target = await this.#validated_path(parts);
       await node_call(
         mkdir(target, {
@@ -807,7 +815,7 @@ export class NodeFS implements FS<Node, Handle> {
   async unlink(parent: Node, name: string) {
     this.#writable();
     await this.#path_operation(async () => {
-      const parts = [...this.#parts(parent), valid_name(name)];
+      const parts = [...(await this.#directory_parts(parent)), valid_name(name)];
       await node_call(lstat(await this.#validated_path(parts), { bigint: true }));
       await node_call(unlink(await this.#validated_path(parts)));
       this.#forget(parts);
@@ -817,7 +825,7 @@ export class NodeFS implements FS<Node, Handle> {
   async rmdir(parent: Node, name: string) {
     this.#writable();
     await this.#path_operation(async () => {
-      const parts = [...this.#parts(parent), valid_name(name)];
+      const parts = [...(await this.#directory_parts(parent)), valid_name(name)];
       await node_call(lstat(await this.#validated_path(parts), { bigint: true }));
       await node_call(rmdir(await this.#validated_path(parts)));
       this.#forget(parts);
@@ -827,8 +835,8 @@ export class NodeFS implements FS<Node, Handle> {
   async rename(oldParent: Node, oldName: string, newParent: Node, newName: string) {
     this.#writable();
     await this.#path_operation(async () => {
-      const old_parts = [...this.#parts(oldParent), valid_name(oldName)];
-      const new_parts = [...this.#parts(newParent), valid_name(newName)];
+      const old_parts = [...(await this.#directory_parts(oldParent)), valid_name(oldName)];
+      const new_parts = [...(await this.#directory_parts(newParent)), valid_name(newName)];
       const source = await this.#validated_path(old_parts);
       const source_stats = await node_call(lstat(source, { bigint: true }));
       const destination = await this.#validated_path(new_parts);
@@ -871,7 +879,7 @@ export class NodeFS implements FS<Node, Handle> {
       const source = await this.#validated_path(this.#parts(node));
       const stats = await node_call(lstat(source, { bigint: true }));
       if (stats.isDirectory()) throw new FSError("EPERM", "cannot hard-link a directory");
-      const parts = [...this.#parts(newParent), valid_name(newName)];
+      const parts = [...(await this.#directory_parts(newParent)), valid_name(newName)];
       const destination = await this.#validated_path(parts);
       // Node link uses the source directory entry itself, including symlinks.
       // The Linux caller resolves AT_SYMLINK_FOLLOW before issuing FUSE_LINK.

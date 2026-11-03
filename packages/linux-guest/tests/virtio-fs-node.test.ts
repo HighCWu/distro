@@ -38,6 +38,83 @@ await mkdir(shared);
 await mkdir(outside);
 after(() => rm(temporary, { recursive: true, force: true }));
 
+test("stale parent inode requests never act on a host replacement directory", async () => {
+  const context = { mode: 0o100600, uid: process.getuid!(), gid: process.getgid!() };
+  for (const operation of [
+    "unlink",
+    "rmdir",
+    "lookup",
+    "create",
+    "mkdir",
+    "symlink",
+    "link",
+    "rename-source",
+    "rename-target",
+  ] as const) {
+    const directory = await mkdtemp(path.join(temporary, "stale-parent-"));
+    const target = path.join(directory, "parent"),
+      moved = path.join(directory, "moved");
+    await mkdir(target);
+    await writeFile(path.join(target, "victim"), "old");
+    await writeFile(path.join(directory, "source"), "source");
+    const fs = new NodeFS(directory);
+    const parent = (await fs.lookup(fs.root, "parent"))!;
+    const source = (await fs.lookup(fs.root, "source"))!;
+    await rename(target, moved);
+    await mkdir(target);
+    await mkdir(path.join(target, "empty"));
+    await writeFile(path.join(target, "victim"), "replacement");
+    await assert.rejects(
+      async () => {
+        switch (operation) {
+          case "unlink":
+            return await fs.unlink(parent, "victim");
+          case "rmdir":
+            return await fs.rmdir(parent, "empty");
+          case "lookup":
+            return await fs.lookup(parent, "victim");
+          case "create": {
+            const opened = await fs.create(
+              parent,
+              "victim",
+              linux_open.writeonly | linux_open.truncate,
+              context,
+            );
+            await fs.release(opened.node, opened.handle);
+            return;
+          }
+          case "mkdir":
+            return await fs.mkdir(parent, "created", { ...context, mode: 0o40700 });
+          case "symlink":
+            return await fs.symlink(parent, "created", "victim", context);
+          case "link":
+            return await fs.link(source, parent, "created");
+          case "rename-source":
+            return await fs.rename(parent, "victim", fs.root, "destination");
+          case "rename-target":
+            return await fs.rename(fs.root, "source", parent, "victim");
+        }
+      },
+      { errno: 2 },
+      operation,
+    );
+    assert.equal(await readFile(path.join(target, "victim"), "utf8"), "replacement", operation);
+    assert.equal(await readFile(path.join(moved, "victim"), "utf8"), "old", operation);
+    assert.equal(await readFile(path.join(directory, "source"), "utf8"), "source", operation);
+    assert.equal((await stat(path.join(target, "empty"))).isDirectory(), true, operation);
+    await assert.rejects(lstat(path.join(target, "created")), { code: "ENOENT" });
+    const fresh = (await fs.lookup(fs.root, "parent"))!;
+    assert.notEqual(fresh, parent);
+    const child = (await fs.lookup(fresh, "victim"))!;
+    const held = await fs.open(child, linux_open.readonly);
+    try {
+      assert.equal(new TextDecoder().decode(await fs.read(child, held, 0n, 11)), "replacement");
+    } finally {
+      await fs.release(child, held);
+    }
+  }
+});
+
 test("node hard links keep aliases, rename and the last open inode coherent", async () => {
   const directory = await mkdtemp(path.join(temporary, "hard-links-"));
   await writeFile(path.join(directory, "source"), "original");
