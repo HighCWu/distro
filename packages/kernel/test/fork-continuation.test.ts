@@ -615,6 +615,51 @@ for (const address of ["i32", "i64"] as const)
   });
 
 for (const address of ["i32", "i64"] as const)
+  test(`${address}: legacy CSIGNAL keeps clone transport, gates older helpers and clears failures`, () => {
+    const { controller: c, exports, pointer: p, calls } = fixture(address, true, 2);
+    let selected = 0;
+    const enter = () =>
+      c.cloneCheckpoint([p(selected | 0x1000), p(0), p(9000), p(-1), p(-1), p(777)], true);
+    Object.assign(exports, { __wasm_fork_clone_options: () => p(-11) });
+    assert.equal(enter(), -95);
+    Object.assign(exports, { __wasm_fork_clone3_features: () => 16384 });
+    assert.equal(enter(), -95, "capability alone cannot supply the transport");
+    assert.equal(calls.descriptors, 0);
+    let failWithTrap = false;
+    Object.assign(exports, {
+      __wasm_fork_clone_exit_signal: (...args: WasmAddress[]) => {
+        assert.deepEqual(args, [p(0x1000), p(9000), p(0), selected]);
+        if (failWithTrap) throw new Error("legacy clone trap");
+        return p(-11);
+      },
+      __wasm_fork_clone3_flags64: () => {
+        throw new Error("legacy request must not use clone3");
+      },
+    });
+    for (const signal of [0, 10, 255]) {
+      selected = signal;
+      assert.equal(enter(), 0);
+      c.suspend();
+      assert.equal(c.clone(), p(-11));
+      c.resumeParent(p(-11));
+      assert.equal(enter(), -11);
+    }
+    selected = 10;
+    assert.equal(enter(), 0);
+    c.suspend();
+    failWithTrap = true;
+    assert.throws(() => c.clone(), /legacy clone trap/);
+    c.resumeParent(p(-11));
+    assert.equal(enter(), -11);
+    selected = 17;
+    assert.equal(enter(), 0);
+    c.suspend();
+    assert.equal(c.clone(), p(-11), "ordinary SIGCHLD uses the original helper after a trap");
+    c.resumeParent(p(-11));
+    assert.equal(enter(), -11);
+  });
+
+for (const address of ["i32", "i64"] as const)
   test(`${address}: nondefault clone3 exit signals need explicit transport and reset after failure`, () => {
     const {
       controller: c,

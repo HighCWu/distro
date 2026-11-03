@@ -173,7 +173,7 @@ for (const width of [32, 64]) {
       p(-95),
     );
     assert.equal(calls.length, 4, "unknown high flags never reach Linux");
-    assert.equal(instance.exports.__wasm_fork_clone3_features(), 16383);
+    assert.equal(instance.exports.__wasm_fork_clone3_features(), 32767);
     assert.equal(
       instance.exports.__wasm_fork_clone3_flags64(0x100000080n, pointer, parent, child),
       p(-11),
@@ -303,6 +303,26 @@ for (const width of [32, 64]) {
     assert.equal(instance.exports.__wasm_fork_clone3_flags64(0x802000n, p(0), p(0), p(0)), p(-11));
     const explicitTrace = new DataView(instance.exports.memory.buffer, Number(calls[25][1]), 88);
     assert.equal(explicitTrace.getBigUint64(0, true), 0x802000n);
+    for (const signal of [0, 10, 17, 255]) {
+      const before = calls.length;
+      assert.equal(
+        instance.exports.__wasm_fork_clone_exit_signal(p(0x1000), pointer, child, signal),
+        p(-11),
+      );
+      const actual = calls[before];
+      assert.equal(actual[0], p(220));
+      assert.equal(actual[3], p(0x1000 | signal));
+      assert.equal(actual[4], pointer);
+      assert.equal(actual[5], child);
+    }
+    const beforeInvalid = calls.length;
+    for (const signal of [-1, 256])
+      assert.equal(
+        instance.exports.__wasm_fork_clone_exit_signal(p(0), p(0), p(0), signal),
+        p(-22),
+      );
+    assert.equal(instance.exports.__wasm_fork_clone_exit_signal(p(0x100), p(0), p(0), 0), p(-95));
+    assert.equal(calls.length, beforeInvalid, "invalid execution requests never reach the kernel");
     const collision = join(dir, "collision.c");
     writeFileSync(
       collision,

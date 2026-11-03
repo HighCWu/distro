@@ -84,8 +84,8 @@ int raw_clone_continuation_probe(void)
 	long parent = raw_linux_syscall(SYS_getpid, 0, 0, 0, 0, 0, 0);
 	// Unsupported variants fail before creating a process or changing frames.
 	if (raw_linux_syscall(SYS_clone, SIGCHLD, 9, 0, 0, 0, 0) != -95 ||
-		raw_linux_syscall(SYS_clone, 0, 0, SIGCHLD, 0, 0, 0) != -95 ||
-		raw_linux_syscall(SYS_clone, 0, 0, 0, 0, 0, 0) != -95) return 0;
+		raw_linux_syscall(SYS_clone, SIGCHLD | 0x100, 0, 0, 0, 0, 0) != -95 ||
+		raw_linux_syscall(SYS_clone, SIGCHLD | 0x80000, 0, 0, 0, 0, 0) != -95) return 0;
 	for (int attempt = 0; attempt < 2; attempt++) {
 		volatile int local = 43 + attempt;
 		long child = raw_linux_syscall(SYS_clone, SIGCHLD, 0, 0, 0, 0, 0);

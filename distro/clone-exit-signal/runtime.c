@@ -15,6 +15,7 @@
 static volatile sig_atomic_t notifications;
 static volatile sig_atomic_t child_notifications;
 static volatile int private_value = 61;
+static int use_legacy;
 static void require(int ok, const char *what)
 {
     if (ok) return;
@@ -29,6 +30,9 @@ static void notified(int signal)
 static pid_t create(int signal, int *fd)
 {
 #ifdef __wasm__
+    if (use_legacy)
+        return syscall(SYS_clone, (long)(CLONE_PIDFD | signal), 0L,
+                       (long)(uintptr_t)fd, 0L, 0L, 0L);
     struct clone_args args = { .flags = CLONE_PIDFD, .pidfd = (uintptr_t)fd,
                               .exit_signal = signal };
     return syscall(SYS_clone3, (long)(uintptr_t)&args, (long)sizeof args, 0L, 0L, 0L, 0L);
@@ -75,30 +79,53 @@ int main(void)
     sigemptyset(&action.sa_mask);
     require(sigaction(SIGUSR1, &action, &old) == 0, "install exit notification handler");
     require(sigaction(SIGCHLD, &action, &old_child) == 0, "observe standard child notifications");
+    for (int phase = 0; phase <
+#ifdef __wasm__
+         2
+#else
+         1
+#endif
+         ; phase++) {
+    use_legacy = phase;
+    notifications = child_notifications = 0;
     scenario(0);
     require(notifications == 0 && child_notifications == 0, "zero exit signal sends neither notification");
-    puts("clone exit signal: zero notification preserves PIDFD exit and WCLONE reaping pass");
+    puts(use_legacy ? "legacy clone exit signal: zero notification preserves PIDFD exit and WCLONE reaping pass" :
+         "clone exit signal: zero notification preserves PIDFD exit and WCLONE reaping pass");
     scenario(SIGUSR1);
     require(notifications == 1 && child_notifications == 0, "kernel delivers exactly one selected exit signal");
-    puts("clone exit signal: selected notification reaches parent and ordinary wait excludes child pass");
+    puts(use_legacy ? "legacy clone exit signal: selected notification reaches parent and ordinary wait excludes child pass" :
+         "clone exit signal: selected notification reaches parent and ordinary wait excludes child pass");
     scenario(SIGCHLD);
     require(notifications == 1 && child_notifications == 1, "later SIGCHLD does not reuse prior signal");
 #ifdef __wasm__
     /* clone3 validates exit_signal independently; legacy clone on the native
      * reference kernel does not provide the same validation contract. */
-    int fd = -9;
-    errno = 0;
-    pid_t rejected = create(65, &fd);
-    if (!rejected) _exit(99);
-    require(rejected == -1 && errno == EINVAL && fd == -9, "invalid signal leaves PIDFD unchanged");
+    if (!use_legacy) {
+        int fd = -9;
+        errno = 0;
+        pid_t rejected = create(65, &fd);
+        if (!rejected) _exit(99);
+        require(rejected == -1 && errno == EINVAL && fd == -9, "invalid signal leaves PIDFD unchanged");
+    }
 #endif
     int status;
     errno = 0;
     require(waitpid(-1, &status, __WALL | WNOHANG) == -1 && errno == ECHILD,
             "all child wait classes empty after rejection");
+    pid_t recovered = fork();
+    require(recovered >= 0, "ordinary fork after selected signal requests");
+    if (!recovered) _exit(42);
+    pid_t waited;
+    do { waited = waitpid(recovered, &status, 0); } while (waited < 0 && errno == EINTR);
+    require(waited == recovered && WIFEXITED(status) && WEXITSTATUS(status) == 42 &&
+            notifications == 1 && child_notifications == 2,
+            "ordinary fork resets SIGCHLD and recovers exact wait");
+    puts(use_legacy ? "legacy clone exit signal: later SIGCHLD wait and request cleanup recover pass" :
+         "clone exit signal: later SIGCHLD wait and request cleanup recover pass");
+    }
     require(sigaction(SIGUSR1, &old, NULL) == 0, "restore parent handler");
     require(sigaction(SIGCHLD, &old_child, NULL) == 0, "restore standard child handler");
-    puts("clone exit signal: later SIGCHLD wait and request cleanup recover pass");
     puts("::vm-test::pass");
 #ifdef __wasm__
     for (;;) pause();

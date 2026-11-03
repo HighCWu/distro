@@ -429,10 +429,11 @@ export class ForkContinuation {
           ? this.call("__wasm_fork_clone3_features")
           : 0;
       if (
-        !native ||
-        typeof this.e.__wasm_fork_clone3_exit_signal !== "function" ||
+        (clone3
+          ? !native || typeof this.e.__wasm_fork_clone3_exit_signal !== "function"
+          : !legacy || typeof this.e.__wasm_fork_clone_exit_signal !== "function") ||
         !validFeatureBits(features) ||
-        !(features & 64)
+        !(features & (clone3 ? 64 : 16384))
       )
         return -95;
     }
@@ -593,6 +594,14 @@ export class ForkContinuation {
           BigInt(this.tracingFlags ?? zero) |
           BigInt(this.tids?.flags ?? zero) |
           (this.pidfd === null ? 0n : 0x1000n);
+        if (this.exitSignal !== 17)
+          return this.call(
+            "__wasm_fork_clone_exit_signal",
+            this.address === "i64" ? flags : Number(flags),
+            this.pidfd ?? this.tids?.parent ?? zero,
+            this.tids?.child ?? zero,
+            this.exitSignal,
+          );
         return this.call(
           "__wasm_fork_clone_options",
           this.address === "i64" ? flags : Number(flags),

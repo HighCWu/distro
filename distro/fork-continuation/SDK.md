@@ -124,7 +124,13 @@ fixed-i32 staging export for values other than SIGCHLD. Linux owns notification
 and wait-class semantics; zero or non-SIGCHLD children need the corresponding
 Linux __WCLONE/__WALL wait options. Every native request stages its own signal,
 and the execution object consumes it once, restoring SIGCHLD even on errors.
-The legacy callback/flags clone transports retain their SIGCHLD-only subset.
+The null-callback legacy checkpoint keeps its SIGCHLD-only subset. Flags-first
+clone admits a nondefault CSIGNAL byte only with capability bit 14 and the
+optional `__wasm_fork_clone_exit_signal` helper. It still uses syscall 220,
+preserves the aliased parent_tid/PIDFD slot and does not emulate clone3 rules.
+The CSIGNAL byte is excluded from namespace parsing, including its bit 7.
+Earlier SIGCHLD-only descriptions above remain the baseline for old helpers;
+default stack, independent user memory and single-thread restrictions remain.
 
 Native CLONE_AUTOREAP and CLONE_PIDFD_AUTOKILL require bits 7 and 8 respectively.
 Linux retains flag-combination, permission and exit-signal validation. AUTOKILL

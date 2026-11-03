@@ -97,6 +97,19 @@ long __wasm_fork_clone_options(uintptr_t flags, uintptr_t parent, uintptr_t chil
 		(long)flags | SIGCHLD, (long)parent, (long)child, 0);
 }
 
+/* Keep nondefault CSIGNAL on legacy clone, including its aliased PIDFD slot.
+ * Do not translate through clone3: its validation and CLONE_PARENT rules differ. */
+__attribute__((export_name("__wasm_fork_clone_exit_signal")))
+long __wasm_fork_clone_exit_signal(uintptr_t flags, uintptr_t parent,
+	uintptr_t child, int signal)
+{
+	const uintptr_t allowed = UINT32_C(0xffb6b600);
+	if (flags & ~allowed) return -EOPNOTSUPP;
+	if (signal < 0 || signal > 255) return -EINVAL;
+	return fork_callback_syscall(SYS_clone, (long)fork_child, 0,
+		(long)flags | signal, (long)parent, (long)child, 0);
+}
+
 /* Private execution transport into Linux's original clone3 implementation.
  * Keep the canonical structure outside active Asyncify frames. The loader
  * has already suspended this single-thread caller; Linux alone writes TIDs
@@ -189,9 +202,9 @@ long __wasm_fork_clone3_pid_select(uint64_t flags, uintptr_t pidfd,
  * bit 4 CLONE_SYSVSEM; bit 5 native CLONE_NNP; bit 6 exit_signal staging;
  * bit 7 CLONE_AUTOREAP; bit 8 CLONE_PIDFD_AUTOKILL; bit 9 CLONE_PARENT;
  * bit 10 CLONE_EMPTY_MNTNS; bit 11 CLONE_IO; bit 12 CLONE_UNTRACED;
- * bit 13 CLONE_PTRACE. */
+ * bit 13 CLONE_PTRACE; bit 14 legacy clone CSIGNAL transport. */
 __attribute__((export_name("__wasm_fork_clone3_features")))
 int __wasm_fork_clone3_features(void)
 {
-	return 16383;
+	return 32767;
 }

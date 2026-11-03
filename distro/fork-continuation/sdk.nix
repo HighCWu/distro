@@ -106,6 +106,7 @@ let
       cloneParentTransport = true;
       cloneUntracedTransport = true;
       clonePtraceTransport = true;
+      legacyCloneExitSignalTransport = true;
       nativeClone3Transport = true;
       clone3WideFlags = [
         "CLONE_CLEAR_SIGHAND"

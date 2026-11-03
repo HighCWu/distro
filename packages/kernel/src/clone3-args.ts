@@ -92,22 +92,26 @@ export function clone_fork_request(
   } catch {
     return -95;
   }
-  if (
-    (flags & 0xffn) !== 17n ||
-    flags & ~(namespaceMask | sharingMask | parentMask | tracingMask | tidMask | 0x1000n | 0xffn)
-  )
+  if (flags & ~(namespaceMask | sharingMask | parentMask | tracingMask | tidMask | 0x1000n | 0xffn))
     return -95;
+  const finish = (request: number | CloneForkRequest) => {
+    // Legacy clone consumes the full CSIGNAL byte. Unlike clone3, Linux
+    // does not validate it as an independent signal-number field here.
+    if (typeof request !== "number" && (flags & 0xffn) !== 17n)
+      request.exitSignal = Number(flags & 0xffn);
+    return request;
+  };
   if (!(flags & (0x1000n | tidMask))) {
     // No supported flag requests parent/child TID or TLS updates. Linux
     // ignores those registers (often unspecified in short syscall calls).
-    return fork_options(memory, address, flags, 0n);
+    return finish(fork_options(memory, address, flags & ~0xffn, 0n));
   }
   let pidfd: bigint;
   try {
     pidfd = flags & 0x1000n ? unsigned_word(args[2]!, address) : 0n;
     const parent = flags & 0x100000n ? unsigned_word(args[2]!, address) : 0n;
     const child = flags & 0x1200000n ? unsigned_word(args[3]!, address) : 0n;
-    return fork_options(memory, address, flags, pidfd, parent, child);
+    return finish(fork_options(memory, address, flags & ~0xffn, pidfd, parent, child));
   } catch {
     return -14;
   }

@@ -52,7 +52,9 @@ for (const address of ["i32", "i64"] as const)
       pidfd: p(8193),
       namespaceFlags: p(0x0c020000),
     });
-    for (const flags of [0, 7, 17 | 0x80, 17 | 0x100, 17 | 0x80000])
+    for (const signal of [0, 7, 10, 64, 65, 145, 255])
+      assert.deepEqual(parse([signal, 0, -1, -1, -1, 999]), { pidfd: null, exitSignal: signal });
+    for (const flags of [17 | 0x100, 17 | 0x80000])
       assert.equal(parse([flags, 0, 0, 0, 0, 0]), -95);
     assert.deepEqual(
       parse([17, 0, -1, -1, -1, 999]),
@@ -66,7 +68,11 @@ for (const address of ["i32", "i64"] as const)
     );
     for (const pointer of [0, -1, 65533])
       assert.equal(parse([17 | 0x1000, 0, pointer, 0, 0, 0]), -14);
-    assert.equal(parse([0, 0, 17, 0, 0, 0]), -95, "callback tuple is never guessed as flags-first");
+    assert.deepEqual(
+      parse([0, 0, 17, 0, 0, 0]),
+      { pidfd: null, exitSignal: 0 },
+      "explicit v2 import means flags-first even when its numbers resemble a callback tuple",
+    );
     assert.equal(parse([17, 0, 0, 0, 0]), -95);
   });
 
