@@ -40,6 +40,11 @@ pkgs.stdenvNoCC.mkDerivation (finalAttrs: {
   buildPhase = ''
     runHook preBuild
     cmp ${coreutils.src}/src/split.c src/split.c
+    # Automake only prepares BUILT_SOURCES automatically for all/check/install,
+    # not an individual program target in a clean tree. Keep the upstream
+    # generator rules; do not replace gnulib's generated headers with libc's.
+    printf 'sdk-generated-headers: $(BUILT_SOURCES)\n' > sdk-generated-headers.mk
+    make -f Makefile -f sdk-generated-headers.mk -j$NIX_BUILD_CORES sdk-generated-headers
     make -j$NIX_BUILD_CORES src/split
     cmp ${coreutils.src}/src/split.c src/split.c
     sha256sum src/split.c > program-source.sha256
