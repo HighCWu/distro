@@ -7,6 +7,12 @@ const prefixStage =
   "user-access: partial boundary copies preserve file positions, suffixes and pipe accounting pass";
 const recoveryStage = "user-access: zero lengths, valid retries and descriptor recovery pass";
 export const processStages = {
+  poll: [
+    "cooperative poll: pure computation receives standard timer signal pass",
+    "cooperative poll: siglongjmp restores execution and later timer delivery pass",
+    "cooperative poll: targeted pthread signal and independent native TLS pass",
+    "cooperative poll: strict seccomp pure-loop timer, raw exit and single reaping pass",
+  ],
   dylink: [
     "dynamic loader: main symbols, canonical pointers and dlerror pass",
     "dynamic loader: Linux files, RUNPATH dependencies, GOT and constructors pass",

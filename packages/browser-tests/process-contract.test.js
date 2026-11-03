@@ -29,6 +29,7 @@ for (const corpus of Object.keys(processStages))
   });
 
 for (const corpus of [
+  "poll",
   "dylink",
   "resolver",
   "dash",

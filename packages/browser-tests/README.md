@@ -375,7 +375,8 @@ publication, concurrent copies, fd reuse and survival after source unmount.
 The browser watchdog bounds execution; a delayed boot is closed if it completes
 after the timeout. These suites do not enable test features in the ordinary
 browser checks and do not prove safety of cancellation during actual device I/O.
-Standard file mmap remains unsupported. The initial copy-only four-engine/profile
+These historical copy-only suites do not establish ordinary private file-mmap
+support; use the separate process-mmapstream suites for that path. The initial copy-only four-engine/profile
 CI matrix passed after the harness formatting correction. The expanded matrix,
 including real EIO, valid-prefix rollback and fstat metadata checks, is pending.
 The same error C program also runs in separate Node
@@ -385,6 +386,24 @@ recorded separately; a pass in one host does not establish coverage in the other
 The engine versions are pinned by nixpkgs and the matching Playwright driver.
 No experimental browser feature flags are set by this suite; a pass does not
 establish compatibility with every browser vendor's latest distribution.
+
+## Cooperative computation and signals
+
+The process-poll suites select the independent cooperative application SDK and
+the ordinary kernel. They cover wasm32/wasm64 in Chromium and Firefox, with two
+CPUs and two fresh machines on the same page. Each machine must complete the
+four C stages: pure-compute timer delivery, siglongjmp recovery, targeted pthread
+signal/TLS isolation, and a strict-seccomp child's timer and raw exit. The
+consumer rejects early signals outside the compute interval and publishes
+thread readiness from inside the loop.
+
+For example, use the public CI heavy-check name
+`browser-tests-check-process-poll-wasm64-chromium`; replace the width/engine for
+the other three checks. The runner requires exact ordered stages, a unique pass,
+machine shutdown and final browser shutdown without late errors. Exposing the
+checks does not certify a browser result. GEN CPU timers remain in a separate
+Node configuration; these browser checks do not select GEN accounting, dynamic
+loading, continuation fork or instrument libc startup.
 
 ## Headless graphics
 

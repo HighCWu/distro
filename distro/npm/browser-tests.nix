@@ -3,6 +3,8 @@
   bash-fork-wasm64,
   guest-agent,
   bytes,
+  cooperative-poll,
+  cooperative-poll-wasm64,
   curl,
   curl-wasm64,
   dash-fork,
@@ -399,6 +401,10 @@ let
           "process-dylink-wasm32-firefox"
           "process-dylink-wasm64-chromium"
           "process-dylink-wasm64-firefox"
+          "process-poll-wasm32-chromium"
+          "process-poll-wasm32-firefox"
+          "process-poll-wasm64-chromium"
+          "process-poll-wasm64-firefox"
         ]
         (
           name:
@@ -426,6 +432,8 @@ let
                 "resolver"
               else if lib.hasInfix "-dylink-" name then
                 "dylink"
+              else if lib.hasInfix "-poll-" name then
+                "poll"
               else
                 "pidfd";
             bits = if lib.hasInfix "-wasm32-" name then 32 else 64;
@@ -586,6 +594,8 @@ let
           (if bits == 64 then curl-wasm64 else curl).checks.resolver.runtimeAssets
         else if corpus == "dylink" then
           (if bits == 64 then dynamic-loader-wasm64 else dynamic-loader).checks.runtime.runtimeAssets
+        else if corpus == "poll" then
+          (if bits == 64 then cooperative-poll-wasm64 else cooperative-poll).checks.runtime.runtimeAssets
         else
           throw "unknown process browser corpus: ${corpus}";
       profile = pkgs.writeText "process-profile.json" (
