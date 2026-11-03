@@ -11,6 +11,19 @@ import { user_module_imports_supported } from "../../packages/kernel/src/wasm.ts
 import { user_function_imports_supported } from "../../packages/kernel/src/user-functions.ts";
 
 for (const bits of [32, 64]) {
+  test(`wasm${bits}: executable entry must exist with the exact no-argument void ABI`, () => {
+    const address = bits === 64 ? "i64" : "i32";
+    for (const mode of ["good", "entry-missing", "entry-argument", "entry-result", "entry-kind"]) {
+      const bytes = image(bits, mode),
+        module = new WebAssembly.Module(bytes);
+      assert(user_module_imports_supported(module));
+      assert(
+        user_function_imports_supported(bytes, address),
+        "old import-only gate admits invalid entries",
+      );
+      assert.equal(user_function_imports_supported(bytes, address, true), mode === "good");
+    }
+  });
   test(`wasm${bits}: typed imports reject erased JS ABI mismatches without executing a start section`, () => {
     const address = bits === 64 ? "i64" : "i32",
       word = (n) => (bits === 64 ? BigInt(n) : n);

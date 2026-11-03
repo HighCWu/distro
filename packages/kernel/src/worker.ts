@@ -569,7 +569,7 @@ function user_imports({
           }
           if (
             !user_module_imports_supported(module) ||
-            !user_function_imports_supported(bytes, kernel_address) ||
+            !user_function_imports_supported(bytes, kernel_address, true) ||
             !fork_continuation_exports_supported(module)
           ) {
             return -8; // exec format error

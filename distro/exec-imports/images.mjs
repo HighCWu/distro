@@ -23,6 +23,10 @@ export function image(bits, mode, withStart = false) {
       "syscall-result",
       "syscall-arity",
       "poll-result",
+      "entry-missing",
+      "entry-argument",
+      "entry-result",
+      "entry-kind",
     ].includes(mode)
   )
     throw new Error("expected pointer width and explicit fixture mode");
@@ -66,8 +70,8 @@ export function image(bits, mode, withStart = false) {
       1,
       syscallResult,
       0x60,
-      0,
-      0,
+      ...(mode === "entry-argument" ? [1, word] : [0]),
+      ...(mode === "entry-result" ? [1, word] : [0]),
       0x60,
       0,
       1,
@@ -104,13 +108,13 @@ export function image(bits, mode, withStart = false) {
     ...section(3, [2, 0, 2]),
     ...section(6, [2, word, 1, constant, 0, 0x0b, word, 1, constant, ...signed(65536), 0x0b]),
     ...section(7, [
-      4,
+      mode === "entry-missing" ? 3 : 4,
       ...string("__wasm_user_poll_abi"),
       0,
       2,
-      ...string("_start"),
-      0,
-      3,
+      ...(mode === "entry-missing"
+        ? []
+        : [...string("_start"), mode === "entry-kind" ? 3 : 0, mode === "entry-kind" ? 1 : 3]),
       ...string("__tls_base"),
       3,
       1,
@@ -136,6 +140,10 @@ if (process.argv[1] === fileURLToPath(import.meta.url)) {
     "syscall-result",
     "syscall-arity",
     "poll-result",
+    "entry-missing",
+    "entry-argument",
+    "entry-result",
+    "entry-kind",
   ])
     writeFileSync(`${output}/${mode}.wasm`, image(bits, mode), { mode: 0o755 });
 }

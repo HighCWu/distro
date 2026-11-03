@@ -61,6 +61,13 @@ int main(void)
         reject("/exec-import-poll-result", original, fd);
     }
     puts("exec imports: syscall and checkpoint function types return ENOEXEC before commit pass");
+    for (int i = 0; i < 2; i++) {
+        reject("/exec-import-entry-missing", original, fd);
+        reject("/exec-import-entry-argument", original, fd);
+        reject("/exec-import-entry-result", original, fd);
+        reject("/exec-import-entry-kind", original, fd);
+    }
+    puts("exec imports: missing or incompatible entry returns ENOEXEC before image commit pass");
     accepted();
     require(thread_pointer() == original && marker == 29 && fcntl(fd, F_GETFD) == FD_CLOEXEC,
             "parent state after matching image");

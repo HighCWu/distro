@@ -27,6 +27,10 @@ let
               "/exec-import-syscall-result" = "${program}/syscall-result.wasm";
               "/exec-import-syscall-arity" = "${program}/syscall-arity.wasm";
               "/exec-import-poll-result" = "${program}/poll-result.wasm";
+              "/exec-import-entry-missing" = "${program}/entry-missing.wasm";
+              "/exec-import-entry-argument" = "${program}/entry-argument.wasm";
+              "/exec-import-entry-result" = "${program}/entry-result.wasm";
+              "/exec-import-entry-kind" = "${program}/entry-kind.wasm";
             };
           };
         }
@@ -36,7 +40,7 @@ let
         mkdir -p $out/share/exec-imports
         node ${./images.mjs} ${toString platform.addressBits} $out
         wasm-linux-cc -O2 -Wall -Wextra -Werror ${./runtime.c} -o $out/runtime.wasm
-        for mode in runtime good immutable width float syscall-width syscall-result syscall-arity poll-result; do
+        for mode in runtime good immutable width float syscall-width syscall-result syscall-arity poll-result entry-missing entry-argument entry-result entry-kind; do
           node ${../busybox/check-binary.mjs} ${../../packages/kernel/src/wasm_binary.ts} \
             $out/$mode.wasm ${toString platform.addressBits} ${toString platform.maximumMemoryBytes}
           chmod 0755 $out/$mode.wasm

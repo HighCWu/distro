@@ -18,7 +18,7 @@ function typed_providers(address: "i32" | "i64") {
   if (cached) return cached;
   const w = address === "i64" ? 0x7e : 0x7f,
     i = 0x7f;
-  const signatures: [string, string, number[], number][] = [
+  const signatures: [string, string, number[], number | null][] = [
     ["linux", "syscall", Array(7).fill(w), w],
     ["linux", "syscall_v2", Array(7).fill(w), w],
     ["linux", "get_thread_area", [], w],
@@ -36,9 +36,10 @@ function typed_providers(address: "i32" | "i64") {
     ["linux_dlopen_v1", "symbol", [w, w], w],
     ["linux_dlopen_v1", "valid", [w], i],
     ["linux_dlopen_v1", "error", [w, w], i],
+    ["_execution", "_start", [], null],
   ];
   const code = signatures.flatMap(([, , , result]) => {
-    const body = [0, result === 0x7e ? 0x42 : 0x41, 0, 0x0b];
+    const body = result === null ? [0, 0x0b] : [0, result === 0x7e ? 0x42 : 0x41, 0, 0x0b];
     return [...leb(body.length), ...body];
   });
   const module = new WebAssembly.Module(
@@ -50,8 +51,7 @@ function typed_providers(address: "i32" | "i64") {
           0x60,
           ...leb(args.length),
           ...args,
-          1,
-          result,
+          ...(result === null ? [0] : [1, result]),
         ]),
       ]),
       ...section(3, [signatures.length, ...signatures.map((_, n) => n)]),
@@ -76,8 +76,16 @@ function typed_providers(address: "i32" | "i64") {
  * type section verbatim and link a function-import-only module against inert
  * typed providers. No user function, start section, data or memory is present.
  * The engine checks parameter/result types, including same-arity mismatches. */
-export function user_function_imports_supported(bytes: Uint8Array, address: "i32" | "i64") {
-  const { types, functions } = read_wasm_function_import_probe(bytes);
+export function user_function_imports_supported(
+  bytes: Uint8Array,
+  address: "i32" | "i64",
+  requireEntry = false,
+) {
+  const { types, functions, entryType } = read_wasm_function_import_probe(bytes);
+  if (requireEntry) {
+    if (entryType === undefined) return false;
+    functions.push({ module: "_execution", name: "_start", typeIndex: entryType });
+  }
   if (!functions.length) return true;
   const imports = functions.flatMap(({ module, name, typeIndex }) => [
     ...string(module),

@@ -25,10 +25,16 @@ typed gate rejects them; positive controls execute the matching image. A start
 section negative control runs only when the original executable is instantiated,
 never during the new admission check.
 
+Executable admission additionally requires `_start` to export a function with
+the existing no-argument, no-result entry ABI. Missing entries, non-function
+exports and incompatible parameter/result types return ENOEXEC before commit.
+The function index is resolved through the import and function sections; its
+type is linked through the same inert engine probe, without running the entry.
+
 The ordinary-SDK workload requires repeated incompatible images to return
 ENOEXEC while preserving actual kernel TP, native TLS, a CLOEXEC descriptor and
 its offset. A matching image must execute and exit through the standard syscall;
-later rejection/spawn/wait must recover. Both widths require all four stages,
+later rejection/spawn/wait must recover. Both widths require all five stages,
 one final pass and machine shutdown. This covers supplied import types, not
 exported ABI version values, arbitrary program behavior or every executable
 initialization error. It adds no libc API or Linux syscall number.

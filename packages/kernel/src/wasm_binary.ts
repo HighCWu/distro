@@ -281,13 +281,36 @@ export function read_wasm_function_import_probe(module: Uint8Array) {
     if (bytes.byte() !== expected) bytes.fail("invalid WebAssembly header");
   let types: Uint8Array = new Uint8Array();
   const functions: { module: string; name: string; typeIndex: number }[] = [];
+  const definitions: number[] = [];
+  let entry: { kind: number; index: number } | undefined;
   while (!bytes.done) {
     const id = bytes.byte(),
       part = bytes.span();
     if (id === 1) types = part.view();
     if (id === 2) read_imports(part, [], undefined, functions);
+    if (id === 3) {
+      const count = part.u32();
+      for (let i = 0; i < count; i++) definitions.push(part.u32());
+      part.expect_done("function section");
+    }
+    if (id === 7) {
+      const count = part.u32();
+      for (let i = 0; i < count; i++) {
+        const name = part.span().text(),
+          kind = part.byte(),
+          index = part.u32();
+        if (name === "_start") entry = { kind, index };
+      }
+      part.expect_done("export section");
+    }
   }
-  return { types, functions };
+  const entryType =
+    entry?.kind === 0
+      ? entry.index < functions.length
+        ? functions[entry.index]?.typeIndex
+        : definitions[entry.index - functions.length]
+      : undefined;
+  return { types, functions, entryType };
 }
 
 function read_definitions(bytes: Cursor, definitions: WasmMemoryType[]) {
