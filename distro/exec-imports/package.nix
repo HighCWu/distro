@@ -23,6 +23,10 @@ let
               "/exec-import-immutable" = "${program}/immutable.wasm";
               "/exec-import-width" = "${program}/width.wasm";
               "/exec-import-float" = "${program}/float.wasm";
+              "/exec-import-syscall-width" = "${program}/syscall-width.wasm";
+              "/exec-import-syscall-result" = "${program}/syscall-result.wasm";
+              "/exec-import-syscall-arity" = "${program}/syscall-arity.wasm";
+              "/exec-import-poll-result" = "${program}/poll-result.wasm";
             };
           };
         }
@@ -32,7 +36,7 @@ let
         mkdir -p $out/share/exec-imports
         node ${./images.mjs} ${toString platform.addressBits} $out
         wasm-linux-cc -O2 -Wall -Wextra -Werror ${./runtime.c} -o $out/runtime.wasm
-        for mode in runtime good immutable width float; do
+        for mode in runtime good immutable width float syscall-width syscall-result syscall-arity poll-result; do
           node ${../busybox/check-binary.mjs} ${../../packages/kernel/src/wasm_binary.ts} \
             $out/$mode.wasm ${toString platform.addressBits} ${toString platform.maximumMemoryBytes}
           chmod 0755 $out/$mode.wasm

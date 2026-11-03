@@ -81,6 +81,7 @@ import {
   type WasmGlobalImport,
 } from "./wasm_binary.ts";
 import { ProcessDylink } from "./dylink_process.ts";
+import { user_function_imports_supported } from "./user-functions.ts";
 import {
   allocate_shared_memory,
   HALT_KERNEL,
@@ -568,6 +569,7 @@ function user_imports({
           }
           if (
             !user_module_imports_supported(module) ||
+            !user_function_imports_supported(bytes, kernel_address) ||
             !fork_continuation_exports_supported(module)
           ) {
             return -8; // exec format error

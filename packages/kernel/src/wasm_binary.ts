@@ -219,7 +219,12 @@ function skip_limits(bytes: Cursor) {
   if (flags & 0x01) read_limit();
 }
 
-function read_imports(bytes: Cursor, imports: WasmMemoryImport[], globals?: WasmGlobalImport[]) {
+function read_imports(
+  bytes: Cursor,
+  imports: WasmMemoryImport[],
+  globals?: WasmGlobalImport[],
+  functions?: { module: string; name: string; typeIndex: number }[],
+) {
   const count = bytes.u32();
   for (let i = 0; i < count; i++) {
     // Keep names as spans until we know this is a memory import. Typical Linux
@@ -227,9 +232,12 @@ function read_imports(bytes: Cursor, imports: WasmMemoryImport[], globals?: Wasm
     const module = bytes.span();
     const name = bytes.span();
     switch (bytes.byte()) {
-      case 0x00: // function
-        bytes.u32();
+      case 0x00: {
+        // function
+        const typeIndex = bytes.u32();
+        functions?.push({ module: module.text(), name: name.text(), typeIndex });
         break;
+      }
       case 0x01: // table
         skip_reference_type(bytes);
         skip_limits(bytes);
@@ -263,6 +271,23 @@ function read_imports(bytes: Cursor, imports: WasmMemoryImport[], globals?: Wasm
     }
   }
   bytes.expect_done("import section");
+}
+
+/** Preserve engine-owned function types, including recursive/reference types.
+ * A caller may link only these imports without running user start/data/code. */
+export function read_wasm_function_import_probe(module: Uint8Array) {
+  const bytes = new Cursor(module);
+  for (const expected of [0, 97, 115, 109, 1, 0, 0, 0])
+    if (bytes.byte() !== expected) bytes.fail("invalid WebAssembly header");
+  let types: Uint8Array = new Uint8Array();
+  const functions: { module: string; name: string; typeIndex: number }[] = [];
+  while (!bytes.done) {
+    const id = bytes.byte(),
+      part = bytes.span();
+    if (id === 1) types = part.view();
+    if (id === 2) read_imports(part, [], undefined, functions);
+  }
+  return { types, functions };
 }
 
 function read_definitions(bytes: Cursor, definitions: WasmMemoryType[]) {

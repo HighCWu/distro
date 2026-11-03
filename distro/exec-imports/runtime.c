@@ -23,7 +23,7 @@ static void reject(const char *path, uintptr_t tp, int fd)
     char *args[] = { (char *)path, NULL }, *env[] = { NULL };
     errno = 0;
     require(execve(path, args, env) == -1 && errno == ENOEXEC,
-            "incompatible global returns ENOEXEC before image commit");
+            "incompatible import returns ENOEXEC before image commit");
     require(thread_pointer() == tp && marker == 29 &&
             fcntl(fd, F_GETFD) == FD_CLOEXEC && lseek(fd, 0, SEEK_CUR) == 1,
             "old TP, native TLS, CLOEXEC descriptor and offset survive");
@@ -54,6 +54,13 @@ int main(void)
         reject("/exec-import-float", original, fd);
     }
     puts("exec imports: valid Wasm with incompatible global type or mutability returns ENOEXEC pass");
+    for (int i = 0; i < 2; i++) {
+        reject("/exec-import-syscall-width", original, fd);
+        reject("/exec-import-syscall-result", original, fd);
+        reject("/exec-import-syscall-arity", original, fd);
+        reject("/exec-import-poll-result", original, fd);
+    }
+    puts("exec imports: syscall and checkpoint function types return ENOEXEC before commit pass");
     accepted();
     require(thread_pointer() == original && marker == 29 && fcntl(fd, F_GETFD) == FD_CLOEXEC,
             "parent state after matching image");

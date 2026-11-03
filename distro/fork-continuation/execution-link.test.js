@@ -7,6 +7,7 @@ import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { spawnSync } from "node:child_process";
 import test from "node:test";
+import { user_function_imports_supported } from "../../packages/kernel/src/user-functions.ts";
 
 const compiler = process.env.FORK_LINK_CLANG || "clang";
 for (const width of [32, 64]) {
@@ -79,6 +80,7 @@ for (const width of [32, 64]) {
     const linked = run([callbackObject, rawObject, memoryObject, ...flags, "-o", output]);
     assert.equal(linked.status, 0, linked.stderr || String(linked.error));
     const module = new WebAssembly.Module(readFileSync(output));
+    assert(user_function_imports_supported(readFileSync(output), width === 64 ? "i64" : "i32"));
     assert.equal(
       WebAssembly.Module.exports(module).some((x) => x.name === "__wasm_fork_user_poll_abi"),
       false,
