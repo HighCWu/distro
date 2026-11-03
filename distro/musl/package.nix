@@ -16,6 +16,9 @@
   },
 }:
 
+let
+  platform = import ../platform.nix { inherit lib wasmBits; };
+in
 assert builtins.elem wasmBits [
   32
   64
@@ -39,6 +42,10 @@ pkgs.stdenvNoCC.mkDerivation (
       WASM_BITS=${toString wasmBits}
       prefix=$out
       syslibdir=$out
+      # LLVM 22 requires an explicit policy for the executable-owned heap
+      # globals and SjLj tag used by the retained PIC libc.so output. This
+      # affects its link only; ordinary executables keep strict resolution.
+      LDFLAGS_AUTO=-Wl,--unresolved-symbols=import-dynamic,--shared-memory,--import-memory,--max-memory=${toString platform.maximumMemoryBytes}
       CFLAGS=${lib.optionalString debug "-g"}${
         lib.optionalString (!deduplicateMmapSearch) " -DWASM_MMAP_DEDUP_SEARCH=0"
       }${lib.optionalString enableForkContinuation " -DWASM_FORK_CONTINUATION=1"}${lib.optionalString enableDynamicLoader " -DWASM_DYNAMIC_LOADER=1"}${lib.optionalString enableBrkSyscall " -DWASM_BRK_SYSCALL=1"}
