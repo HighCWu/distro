@@ -287,6 +287,18 @@ lib.makeScope (scope: lib.callPackageWith ({ inherit lib pkgs; } // scope)) (
       sdk = self.sdk-wasm64;
       vm-test = vmTestWasm64;
     };
+    kernel-robust = callPackage ./kernel-robust/package.nix {
+      extraChecks.both = pkgs.runCommand "kernel-robust-both-widths" { passthru.ci.heavy = true; } ''
+        test -e ${self.kernel-robust.checks.runtime}
+        test -e ${self.kernel-robust-wasm64.checks.runtime}
+        touch $out
+      '';
+    };
+    kernel-robust-wasm64 = callPackage ./kernel-robust/package.nix {
+      platform = self.platform-wasm64;
+      sdk = self.sdk-wasm64;
+      vm-test = vmTestWasm64;
+    };
     sdk-cooperative-poll-wasm64 = callPackage ./cooperative-poll/sdk.nix {
       platform = self.platform-wasm64;
       llvm-toolchain = self.llvm-toolchain-wasm64;
