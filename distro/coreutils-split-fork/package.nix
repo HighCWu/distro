@@ -62,7 +62,7 @@ pkgs.stdenvNoCC.mkDerivation (finalAttrs: {
     cp ${../sdk/LICENSE.MIT} "$notices/LOCAL-ADDITIONS.MIT"
     cp ${musl.src}/COPYRIGHT "$notices/musl-COPYRIGHT"
     cp ${llvm-runtimes.src}/compiler-rt/LICENSE.TXT "$notices/compiler-rt-LICENSE.TXT"
-    cp config.h config.log program-source.sha256 ${./package.nix} ${./runtime-test.sh} \
+    cp lib/config.h config.log program-source.sha256 ${./package.nix} ${./runtime-test.sh} \
       $buildMaterials/share/coreutils-split-fork-materials/
     ln -s $src $buildMaterials/share/coreutils-split-fork-materials/source
     ln -s ${sdk-fork-continuation.buildMaterials} $buildMaterials/share/coreutils-split-fork-materials/sdk
