@@ -89,6 +89,10 @@ export const user_trap = await readFile(join(directory, "user-trap"));
 /** A static guest executable that compares raw getdents64 and held-directory inode numbers. */
 export const getdents_inode = await readFile(join(directory, "getdents-inode"));
 
+// Load only for the Node shared-directory suite; browser asset bundles do not
+// need to carry this independent syscall consumer.
+export const load_file_timestamps = () => readFile(join(directory, "file-timestamps"));
+
 const lifecycle_rootfs = await readFile(join(directory, "lifecycle-rootfs.erofs"));
 
 export const lifecycle_assets = {

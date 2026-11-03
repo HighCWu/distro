@@ -957,19 +957,24 @@ export function fileSystemDevice<TNode extends object, THandle, T extends FS<TNo
         if (request.valid & FuseSetattrFlags.GID) changes.gid = request.gid;
         if (request.valid & FuseSetattrFlags.SIZE) changes.size = request.size;
         if (request.valid & FuseSetattrFlags.ATIME) {
+          // Linux time64 seconds use signed two's-complement values in
+          // FUSE's u64 wire slots; sizes and identifiers remain unsigned.
           changes.atime =
             request.valid & FuseSetattrFlags.ATIME_NOW
               ? "now"
-              : { seconds: request.atime, nanoseconds: request.atimensec };
+              : { seconds: BigInt.asIntN(64, request.atime), nanoseconds: request.atimensec };
         }
         if (request.valid & FuseSetattrFlags.MTIME) {
           changes.mtime =
             request.valid & FuseSetattrFlags.MTIME_NOW
               ? "now"
-              : { seconds: request.mtime, nanoseconds: request.mtimensec };
+              : { seconds: BigInt.asIntN(64, request.mtime), nanoseconds: request.mtimensec };
         }
         if (request.valid & FuseSetattrFlags.CTIME) {
-          changes.ctime = { seconds: request.ctime, nanoseconds: request.ctimensec };
+          changes.ctime = {
+            seconds: BigInt.asIntN(64, request.ctime),
+            nanoseconds: request.ctimensec,
+          };
         }
         const open =
           request.valid & FuseSetattrFlags.FH

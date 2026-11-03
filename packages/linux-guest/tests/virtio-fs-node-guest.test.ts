@@ -7,6 +7,7 @@ import { fileSystemDevice } from "@lowland/kernel";
 import { NodeFS } from "../src/node.ts";
 import { SeekMode, SystemError } from "../src/index.ts";
 import { guest_test } from "./fixture.ts";
+import { load_file_timestamps } from "./assets.ts";
 
 guest_test("Node directory sharing through Linux", async (t, fixture) => {
   const shared = await mkdtemp(path.join(tmpdir(), "linux-guest-node-mount-"));
@@ -19,6 +20,22 @@ guest_test("Node directory sharing through Linux", async (t, fixture) => {
   await guest.mount("node-test", "/tmp/shared", { type: "virtiofs" });
 
   try {
+    await t.test("standard utimensat and futimens retain signed file timestamps", async () => {
+      await guest.fs.writeTextFile("/tmp/shared/timestamp-file", "unchanged");
+      await guest.fs.writeFile("/tmp/file-timestamps", await load_file_timestamps());
+      await guest.fs.chmod("/tmp/file-timestamps", 0o755);
+      const process = await guest.exec(["/tmp/file-timestamps", "/tmp/shared/timestamp-file"]);
+      const stdout = new Response(process.stdout).text();
+      const stderr = new Response(process.stderr).text();
+      assert.equal((await process.status).success, true, await stderr);
+      const stages = (await stdout).trim().split("\n");
+      assert.deepEqual(stages, [
+        "file timestamps: utimensat preserves negative time64 seconds and fractions pass",
+        "file timestamps: futimens preserves negative seconds and invalid nanoseconds leave times unchanged pass",
+        "file timestamps: UTIME_OMIT retains atime and later positive timestamp recovers pass",
+      ]);
+    });
+
     await t.test(
       "host-created hard links have one Linux inode across lookup and readdir",
       async () => {

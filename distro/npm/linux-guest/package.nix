@@ -32,6 +32,7 @@ let
   network-test = test-program "network-test" ../../guest-tests/network-test.c;
   user-trap = test-program "user-trap" ../../guest-tests/user-trap.c;
   getdents-inode = test-program "getdents-inode" ../../guest-tests/getdents-inode.c;
+  file-timestamps = test-program "file-timestamps" ../../guest-tests/file-timestamps.c;
 
   lifecycle-rootfs = vm-test.installedDisk {
     name = "linux-guest-lifecycle";
@@ -51,6 +52,7 @@ let
     "network-test" = "${network-test}/bin/network-test";
     "user-trap" = "${user-trap}/bin/user-trap";
     "getdents-inode" = "${getdents-inode}/bin/getdents-inode";
+    "file-timestamps" = "${file-timestamps}/bin/file-timestamps";
   };
 
   package = pkgs.stdenvNoCC.mkDerivation {
