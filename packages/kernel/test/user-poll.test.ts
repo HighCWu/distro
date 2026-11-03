@@ -2,7 +2,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import { call_user_poll } from "../src/user-poll.ts";
-import { call_kernel_entry } from "../src/signal-stack.ts";
+import { call_kernel_entry, call_user_callback } from "../src/signal-stack.ts";
 import { user_module_imports_supported, type Instance } from "../src/wasm.ts";
 
 for (const address of ["i32", "i64"] as const) {
@@ -65,6 +65,52 @@ for (const address of ["i32", "i64"] as const) {
       () => call_user_poll({ ...kernel, user_poll_v1: () => NaN }, user, memory, address, false),
       /invalid user poll/,
     );
+  });
+  test(`${address}: handler nesting requires capability and never crosses an allocator callback`, () => {
+    const memory = new WebAssembly.Memory({ initial: 1 });
+    const user = {
+      __stack_pointer: new WebAssembly.Global(
+        { value: address, mutable: true },
+        address === "i64" ? 128n : 128,
+      ),
+    };
+    let calls = 0,
+      phase = 1;
+    const kernel = {
+      user_context_v1(mode: number) {
+        const old = phase;
+        if (mode !== 2) phase = mode;
+        return old;
+      },
+      user_poll_v1() {
+        calls++;
+        return 0;
+      },
+    } as unknown as Instance["exports"];
+    const enter = () =>
+      call_kernel_entry(kernel, address, () =>
+        call_user_poll(kernel, user, memory, address, false, true),
+      );
+    for (const capability of [undefined, () => 0, () => 2, (_unused: number) => 1]) {
+      kernel.user_poll_nested_v1 = capability as (() => number) | undefined;
+      assert.equal(enter(), 0);
+      assert.equal(calls, 0);
+    }
+    kernel.user_poll_nested_v1 = () => 1;
+    assert.equal(enter(), 0);
+    assert.equal(calls, 1);
+    const jump = Symbol("allocator left nonlocally");
+    assert.throws(
+      () =>
+        call_user_callback(kernel, address, () => {
+          assert.equal(enter(), 0);
+          assert.equal(calls, 1);
+          throw jump;
+        }),
+      (error) => error === jump,
+    );
+    assert.equal(enter(), 0);
+    assert.equal(calls, 2, "callback marker is cleared after nonlocal exit");
   });
 }
 

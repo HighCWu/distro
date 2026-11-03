@@ -16,6 +16,8 @@ export interface Instance extends WebAssembly.Instance {
     user_context_v1?(mode: number): number;
     /** Private interrupt-return checkpoint; fixed i32 result for both widths. */
     user_poll_v1?(): number;
+    /** Reviewed pending-return work from a handler without live allocator callbacks. */
+    user_poll_nested_v1?(): number;
     __indirect_function_table: WebAssembly.Table;
     boot(): void;
     trigger_irq(irq: number): void;

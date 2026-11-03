@@ -2,6 +2,7 @@
 import {
   call_kernel_entry,
   kernel_entry_active,
+  user_callback_active,
   read_signal_stack_pointer,
 } from "./signal-stack.ts";
 import type { Instance, WasmAddressType } from "./wasm.ts";
@@ -13,8 +14,14 @@ export function call_user_poll(
   memory: WebAssembly.Memory,
   address: WasmAddressType,
   blocked: boolean,
+  inside_signal = false,
 ): number {
-  if (blocked || kernel_entry_active(kernel)) return 0;
+  if (blocked || user_callback_active(kernel)) return 0;
+  if (kernel_entry_active(kernel)) {
+    const nested = kernel.user_poll_nested_v1;
+    if (!inside_signal || typeof nested !== "function" || nested.length !== 0 || nested() !== 1)
+      return 0;
+  }
   if (typeof kernel.user_poll_v1 !== "function" || kernel.user_poll_v1.length !== 0) return -95;
   if (typeof kernel.user_context_v1 !== "function" || kernel.user_context_v1(2) !== 1) return -11;
   if (read_signal_stack_pointer(user, memory, address) === null) return -14;

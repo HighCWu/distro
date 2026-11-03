@@ -392,8 +392,9 @@ establish compatibility with every browser vendor's latest distribution.
 The process-poll suites select the independent cooperative application SDK and
 the ordinary kernel. They cover wasm32/wasm64 in Chromium and Firefox, with two
 CPUs and two fresh machines on the same page. Each machine must complete the
-four C stages: pure-compute timer delivery, siglongjmp recovery, targeted pthread
-signal/TLS isolation, and a strict-seccomp child's timer and raw exit. The
+five C stages: pure-compute timer delivery, siglongjmp recovery, targeted pthread
+signal/TLS isolation, a strict-seccomp child's timer and raw exit, and nested
+handler computation interrupted by an unblocked timer signal. The
 consumer rejects early signals outside the compute interval and publishes
 thread readiness from inside the loop.
 

@@ -16,12 +16,15 @@
 #include <sys/syscall.h>
 #include <sys/time.h>
 #include <sys/wait.h>
+#include <time.h>
 #include <unistd.h>
 
 static _Thread_local volatile sig_atomic_t received, bad_handler, jump_enabled, computing, expected_signal;
 static _Thread_local volatile unsigned marker = 11;
 static sigjmp_buf jump;
 static atomic_int ready;
+static timer_t nested_timer;
+static _Thread_local volatile sig_atomic_t nesting, nested_waiting, nested_seen;
 
 static void require(int ok, const char *what)
 {
@@ -32,6 +35,24 @@ static void require(int ok, const char *what)
 
 static void handler(int sig)
 {
+    if (nesting) {
+        if (!computing || marker != 11) bad_handler = 1;
+        if (sig == SIGALRM && !nested_waiting) {
+            struct itimerspec value = { .it_value = { .tv_nsec = 50000000 } };
+            if (timer_settime(nested_timer, 0, &value, NULL)) {
+                bad_handler = 1; received++; return;
+            }
+            nested_waiting = 1;
+            uint64_t count = 0;
+            /* No syscall or clock read while the handler waits for SIGUSR2. */
+            while (!nested_seen && count < (UINT64_C(1) << 30)) count++;
+            if (!nested_seen) bad_handler = 1;
+            nested_waiting = 0;
+            received++;
+        } else if (sig == SIGUSR2 && nested_waiting) nested_seen = 1;
+        else bad_handler = 1;
+        return;
+    }
     if (!computing || sig != expected_signal ||
         (sig == SIGUSR1 ? marker != 22 : marker != 11)) bad_handler = 1;
     received++;
@@ -143,6 +164,19 @@ int main(int argc, char **argv)
             "cooperative poll: pure computation profiling timer and user CPU accounting pass");
     }
 #endif
+    received = 0;
+    nesting = 1;
+    struct sigevent event = { .sigev_notify = SIGEV_SIGNAL, .sigev_signo = SIGUSR2 };
+    require(sigaction(SIGUSR2, &action, NULL) == 0 &&
+            timer_create(CLOCK_MONOTONIC, &event, &nested_timer) == 0, "prepare nested timer signal");
+    arm();
+    require(spin() && nested_seen && !nested_waiting, "unblocked signal interrupts handler computation");
+    nesting = 0;
+    require(timer_delete(nested_timer) == 0, "delete nested signal timer");
+    received = 0;
+    arm();
+    require(spin() && !bad_handler, "ordinary checkpoints recover after nested handlers");
+    puts("cooperative poll: nested handler computation receives unblocked signal and later timer recovers pass");
     puts("::vm-test::pass");
     for (;;) pause();
 }

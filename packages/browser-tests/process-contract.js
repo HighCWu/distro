@@ -12,6 +12,7 @@ export const processStages = {
     "cooperative poll: siglongjmp restores execution and later timer delivery pass",
     "cooperative poll: targeted pthread signal and independent native TLS pass",
     "cooperative poll: strict seccomp pure-loop timer, raw exit and single reaping pass",
+    "cooperative poll: nested handler computation receives unblocked signal and later timer recovers pass",
   ],
   dylink: [
     "dynamic loader: main symbols, canonical pointers and dlerror pass",

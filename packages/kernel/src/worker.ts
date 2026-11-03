@@ -344,7 +344,8 @@ function user_imports({
             created.exports,
             context.memory,
             kernel_address,
-            signal_depth !== 0 || !!fork || !!context.dynamic,
+            !!fork || !!context.dynamic,
+            signal_depth !== 0,
           );
           if (instance !== before) {
             call_entry = call_start;

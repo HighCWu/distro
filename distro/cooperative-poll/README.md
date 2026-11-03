@@ -20,10 +20,11 @@ compute workload fails the polling assertion. This does not establish Linux
 timer/signal delivery, parallel Worker scheduling, or an overhead bound.
 
 The Worker calls the kernel's private interrupt-return entry, preserving the
-syscall tracing/policy boundary. It defers live kernel callbacks and signal
-handlers and rejects mixing this profile with dynamic loading or continuation
-fork. Older kernels without the entry reject exec. This does not promise
-nested signal delivery in a handler's pure loop.
+syscall tracing/policy boundary. It defers live allocator/startup callbacks and
+rejects mixing this profile with dynamic loading or continuation fork. Handler
+checkpoints require the private `user_poll_nested_v1` kernel capability; older
+kernels keep deferring them. Signal handlers inside allocator callbacks still
+defer pending work. Kernels without the original entry reject exec.
 
 Only application compilation units use the coverage flag. Existing libc and
 startup libraries remain uninstrumented: ordinary pthread startup initializes
@@ -35,14 +36,17 @@ during early clone startup. Raw custom clone startup needs separate review.
 The `cooperative-poll-check-both` target verifies real Linux timer delivery in
 pure computation, siglongjmp and later recovery, targeted pthread signals and
 TLS isolation, and a strict-seccomp child with a pure loop and raw thread exit.
-It must finish all four stages and machine shutdown before acceptance. Local
+It adds a fifth stage where a handler's syscall-free loop receives an unblocked
+second timer signal, then ordinary timer delivery recovers. It must finish all
+five stages and machine shutdown before acceptance. Local
 compiler/host models do not establish this target result.
 
 `cooperative-poll-cpu` and `cooperative-poll-cpu-wasm64` pair the same application
 SDK with the existing separate generic virtual CPU-accounting kernel. They add
 ITIMER_VIRTUAL and ITIMER_PROF delivery from a syscall-free loop and require
 user CPU-time accumulation. `cooperative-poll-cpu-check-both` also includes the
-ordinary accounting configuration's two runtimes. This changes no default
+ordinary accounting configuration's two runtimes (five ordinary stages, seven
+GEN stages with nested handlers). This changes no default
 kernel configuration. Generic accounting measures logical scheduled intervals;
 it does not subtract host pauses/GC or promise native physical CPU accuracy.
 

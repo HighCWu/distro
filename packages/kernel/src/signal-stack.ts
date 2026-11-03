@@ -10,6 +10,11 @@ import {
 } from "./wasm.ts";
 
 const kernel_depth = new WeakMap<WebAssembly.Exports, number>();
+const user_callback_depth = new WeakMap<WebAssembly.Exports, number>();
+
+export function user_callback_active(exports: WebAssembly.Exports): boolean {
+  return (user_callback_depth.get(exports) ?? 0) !== 0;
+}
 
 /** Compiler checkpoints cannot run pending return work inside a live callback. */
 export function kernel_entry_active(exports: WebAssembly.Exports): boolean {
@@ -37,11 +42,18 @@ export function call_user_callback<T>(
   invoke: () => T,
 ): T {
   const bridge = context_bridge(exports);
-  if (!bridge) return invoke();
-  return call_kernel_entry(exports, address, () => {
-    bridge(1);
-    return invoke();
-  });
+  const depth = user_callback_depth.get(exports) ?? 0;
+  user_callback_depth.set(exports, depth + 1);
+  try {
+    if (!bridge) return invoke();
+    return call_kernel_entry(exports, address, () => {
+      bridge(1);
+      return invoke();
+    });
+  } finally {
+    if (depth) user_callback_depth.set(exports, depth);
+    else user_callback_depth.delete(exports);
+  }
 }
 
 /** New libc brackets a plain handler outside an interrupted cancellation point.
