@@ -7,6 +7,7 @@ import { fileSystemDevice } from "@lowland/kernel";
 import { NodeFS } from "../src/node.ts";
 import { MountFlags, SeekMode, SystemError } from "../src/index.ts";
 import { guest_test } from "./fixture.ts";
+import { readReadyOutput } from "./ready-output.ts";
 import {
   load_file_timestamps,
   load_open_file_metadata,
@@ -47,29 +48,20 @@ guest_test("Node directory sharing through Linux", async (t, fixture) => {
         { stdinMode: "streaming" },
       );
       const stderr = new Response(process.stderr).text();
-      const reader = process.stdout.getReader();
       const writer = process.stdin.getWriter();
-      let ready = "";
+      let stdout: Promise<string>;
       try {
-        while (!ready.includes("\n")) {
-          const next = await reader.read();
-          assert.equal(
-            next.done,
-            false,
-            "consumer must open the old inode before host replacement",
-          );
-          ready += new TextDecoder().decode(next.value);
-        }
-        assert.equal(ready, "external metadata: ready for host replacement\n");
+        ({ output: stdout } = await readReadyOutput(
+          process.stdout,
+          "external metadata: ready for host replacement",
+        ));
         // No Linux lookup after this host-side rename, before releasing the C
         // consumer to fstat/fchmod/futimens its already open descriptor.
         await rename(staging, target);
         await writer.write(new TextEncoder().encode("x"));
       } finally {
-        reader.releaseLock();
         await writer.close();
       }
-      const stdout = new Response(process.stdout).text();
       assert.equal((await process.status).success, true, await stderr);
       assert.deepEqual((await stdout).trim().split("\n"), [
         "external metadata: fstat retains replaced open inode without fresh pathname lookup pass",
