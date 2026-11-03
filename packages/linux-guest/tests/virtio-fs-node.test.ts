@@ -37,6 +37,56 @@ await mkdir(shared);
 await mkdir(outside);
 after(() => rm(temporary, { recursive: true, force: true }));
 
+test("node hard links keep aliases, rename and the last open inode coherent", async () => {
+  const directory = await mkdtemp(path.join(temporary, "hard-links-"));
+  await writeFile(path.join(directory, "source"), "original");
+  await mkdir(path.join(directory, "sub"));
+  const fs = new NodeFS(directory);
+  const node = (await fs.lookup(fs.root, "source"))!;
+  const sub = (await fs.lookup(fs.root, "sub"))!;
+  const held = await fs.open(node, linux_open.readwrite);
+  try {
+    await fs.link(node, sub, "alias");
+    assert.equal(await fs.lookup(sub, "alias"), node);
+    assert.equal((await fs.getattr(node)).nlink, 2);
+    assert.equal(
+      (await lstat(path.join(directory, "source"))).ino,
+      (await lstat(path.join(directory, "sub/alias"))).ino,
+    );
+    await assert.rejects(fs.link(node, sub, "alias"), { errno: 17 });
+    await assert.rejects(fs.link(sub, fs.root, "directory-link"), { errno: 1 });
+    await fs.unlink(fs.root, "source");
+    assert.equal((await fs.getattr(node)).nlink, 1);
+    await fs.rename(sub, "alias", fs.root, "renamed");
+    assert.equal(await fs.lookup(fs.root, "renamed"), node);
+    await fs.write(node, held, 0n, new TextEncoder().encode("UPDATED!"));
+    assert.equal(await readFile(path.join(directory, "renamed"), "utf8"), "UPDATED!");
+    await fs.unlink(fs.root, "renamed");
+    await writeFile(path.join(directory, "renamed"), "replacement");
+    assert.equal((await fs.getattr(node)).nlink, 0);
+    assert.equal(new TextDecoder().decode(await fs.read(node, held, 0n, 8)), "UPDATED!");
+    assert.notEqual(await fs.lookup(fs.root, "renamed"), node);
+  } finally {
+    await fs.release(node, held);
+  }
+  const ro = new NodeFS(directory, { readOnly: true });
+  const readonlyNode = (await ro.lookup(ro.root, "renamed"))!;
+  await assert.rejects(ro.link(readonlyNode, ro.root, "denied"), { errno: 30 });
+  await assert.rejects(fs.link(readonlyNode, fs.root, "foreign"), { errno: 22 });
+});
+
+test("node hard links preserve symlink identity without following its target", async () => {
+  const directory = await mkdtemp(path.join(temporary, "hard-symlinks-"));
+  await symlink("missing", path.join(directory, "source"));
+  const fs = new NodeFS(directory);
+  const source = (await fs.lookup(fs.root, "source"))!;
+  await fs.link(source, fs.root, "alias");
+  assert.equal(await fs.lookup(fs.root, "alias"), source);
+  await fs.unlink(fs.root, "source");
+  assert.equal(await fs.readlink(source), "missing");
+  assert.equal((await fs.getattr(source)).nlink, 1);
+});
+
 test("node virtio-fs directory entries preserve file, directory and symlink kinds", async () => {
   const directory = await mkdtemp(path.join(temporary, "entry-types-"));
   await writeFile(path.join(directory, "file"), "data");

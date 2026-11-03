@@ -8,12 +8,20 @@ test("FUSE forget releases records but preserves a live backend node's inode ide
   const root = {};
   const directory = {};
   let child = {};
+  let alias: object | undefined;
   const device = fileSystemDevice(
     {
       root,
       lookup(parent: object, name: string) {
         if (parent === root && name === "directory") return directory;
         if (parent === directory && name === "file") return child;
+        if (parent === root && name === "alias") return alias;
+      },
+      link(node: object, parent: object, name: string) {
+        assert.equal(node, child);
+        assert.equal(parent, root);
+        assert.equal(name, "alias");
+        alias = node;
       },
       getattr(node: object) {
         return { mode: node === child ? 0o100600 : 0o040700, size: 0n };
@@ -110,7 +118,28 @@ test("FUSE forget releases records but preserves a live backend node's inode ide
 
     await forget(childId);
     child = {}; // A replacement backend object is a different inode.
-    assert.notEqual(await lookup(directoryId, "file"), childId);
+    const replacementId = await lookup(directoryId, "file");
+    assert.notEqual(replacementId, childId);
+    const linked = new Uint8Array(14);
+    new DataView(linked.buffer).setBigUint64(0, replacementId, true);
+    linked.set(new TextEncoder().encode("alias\0"), 8);
+    await request(13, 1n, linked);
+    assert.equal(
+      view.getBigUint64(1040, true),
+      replacementId,
+      "LINK retains source inode identity",
+    );
+    assert.equal(await lookup(1n, "alias"), replacementId);
+    await forget(replacementId);
+    await forget(replacementId);
+    await request(3, replacementId, new Uint8Array(16));
+    await forget(replacementId);
+    await absent(replacementId);
+    assert.equal(
+      await lookup(1n, "alias"),
+      replacementId,
+      "alias relookup preserves inode after FORGET",
+    );
   } finally {
     await close_virtio_device(device);
   }

@@ -28,6 +28,7 @@ const FuseOpcode = {
   UNLINK: 10,
   RMDIR: 11,
   RENAME: 12,
+  LINK: 13,
   OPEN: 14,
   READ: 15,
   WRITE: 16,
@@ -99,11 +100,13 @@ const Errno = {
   EBADF: 9,
   EACCES: 13,
   EEXIST: 17,
+  EXDEV: 18,
   ENOTDIR: 20,
   EISDIR: 21,
   EINVAL: 22,
   ENOSPC: 28,
   EROFS: 30,
+  EMLINK: 31,
   EPROTO: 71,
   ENAMETOOLONG: 36,
   ENOSYS: 38,
@@ -211,6 +214,8 @@ export interface FS<TNode, THandle> {
   unlink?(parent: TNode, name: string): MaybePromise<void>;
   rmdir?(parent: TNode, name: string): MaybePromise<void>;
   rename?(oldParent: TNode, oldName: string, newParent: TNode, newName: string): MaybePromise<void>;
+  /** Add a name for this same node; preserve identity across every alias. */
+  link?(node: TNode, newParent: TNode, newName: string): MaybePromise<void>;
   open?(node: TNode, flags: number): MaybePromise<THandle>;
   create?(
     parent: TNode,
@@ -400,6 +405,8 @@ const FuseMkdirIn = Struct({
 const FuseRenameIn = Struct({
   newdir: U64LE,
 });
+
+const FuseLinkIn = Struct({ oldnodeid: U64LE });
 
 const FuseSetattrIn = Struct({
   valid: U32LE,
@@ -1031,6 +1038,14 @@ export function fileSystemDevice<TNode extends object, THandle, T extends FS<TNo
           new_parent.children += 1;
           collect_record(old_parent);
         }
+        break;
+      }
+      case FuseOpcode.LINK: {
+        if (!filesystem.link) throw new UnsupportedOperation();
+        const request = body.struct(FuseLinkIn);
+        const source = node_record(request.oldnodeid);
+        await filesystem.link(source.node, node!.node, validate_name(body.cstring()));
+        await write_lookup_entry(payload, source);
         break;
       }
       case FuseOpcode.OPEN:

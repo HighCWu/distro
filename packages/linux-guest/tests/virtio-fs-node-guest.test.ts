@@ -19,6 +19,46 @@ guest_test("Node directory sharing through Linux", async (t, fixture) => {
   await guest.mount("node-test", "/tmp/shared", { type: "virtiofs" });
 
   try {
+    await t.test(
+      "standard ln preserves hard-link inode, alias rename and open lifetime",
+      async () => {
+        const base = "/tmp/shared";
+        await guest.fs.writeTextFile(`${base}/link-source`, "original");
+        await guest.fs.mkdir(`${base}/links`);
+        const process = await guest.exec(["ln", `${base}/link-source`, `${base}/links/alias`]);
+        const stderr = new Response(process.stderr).text();
+        const stdout = new Response(process.stdout).text();
+        assert.equal((await process.status).success, true, await stderr);
+        assert.equal(await stdout, "");
+        const before = await guest.fs.stat(`${base}/link-source`);
+        const linked = await guest.fs.stat(`${base}/links/alias`);
+        assert.equal(linked.ino, before.ino);
+        assert.equal(linked.nlink, 2);
+        const held = await guest.fs.open(`${base}/link-source`, { read: true, write: true });
+        try {
+          await guest.fs.remove(`${base}/link-source`);
+          await guest.fs.rename(`${base}/links/alias`, `${base}/link-renamed`);
+          const renamed = await guest.fs.stat(`${base}/link-renamed`);
+          assert.equal(renamed.ino, before.ino);
+          assert.equal(renamed.nlink, 1);
+          assert.equal(await held.write(new TextEncoder().encode("UPDATED!")), 8);
+          await held.sync();
+          assert.equal(await readFile(path.join(shared, "link-renamed"), "utf8"), "UPDATED!");
+          await guest.fs.remove(`${base}/link-renamed`);
+          await guest.fs.writeTextFile(`${base}/link-renamed`, "replacement");
+          assert.equal((await held.stat()).ino, before.ino);
+          assert.equal((await held.stat()).nlink, 0);
+          await held.seek(0, SeekMode.Start);
+          const data = new Uint8Array(8);
+          assert.equal(await held.read(data), 8);
+          assert.equal(new TextDecoder().decode(data), "UPDATED!");
+          assert.notEqual((await guest.fs.stat(`${base}/link-renamed`)).ino, before.ino);
+        } finally {
+          await held.close();
+        }
+      },
+    );
+
     await t.test("reads and writes both sides of the mount", async () => {
       await guest.fs.writeTextFile("/tmp/shared/from-linux", "Linux data");
       assert.equal(await readFile(path.join(shared, "from-linux"), "utf8"), "Linux data");

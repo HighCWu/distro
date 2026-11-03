@@ -15,6 +15,7 @@ import {
   access,
   chmod,
   lchown,
+  link,
   lstat,
   lutimes,
   mkdir,
@@ -48,6 +49,8 @@ const known_errors = new Set([
   "EOPNOTSUPP",
   "EPERM",
   "EROFS",
+  "EXDEV",
+  "EMLINK",
 ]);
 
 function filesystem_error(error: unknown): never {
@@ -379,12 +382,25 @@ export class NodeFS implements FS<Node, Handle> {
 
   #forget(parts: readonly string[]) {
     const key = parts.join("/");
+    const affected = new Set<Node>();
     for (const [candidate, node] of this.#nodes) {
       if (candidate === key || candidate.startsWith(`${key}/`)) {
         this.#nodes.delete(candidate);
-        node.attached = false;
+        affected.add(node);
       }
     }
+    for (const node of affected) this.#refresh_path(node);
+  }
+
+  #refresh_path(node: Node) {
+    for (const [key, candidate] of this.#nodes) {
+      if (candidate === node) {
+        node.parts = key ? key.split("/") : [];
+        node.attached = true;
+        return;
+      }
+    }
+    node.attached = false;
   }
 
   async lookup(parent: Node, name: string) {
@@ -689,13 +705,31 @@ export class NodeFS implements FS<Node, Handle> {
       if (unchanged) return;
 
       this.#forget(new_parts);
+      const affected = new Set<Node>();
       for (const [key, node] of [...this.#nodes]) {
         if (key === old_parts.join("/") || key.startsWith(`${old_parts.join("/")}/`)) {
           this.#nodes.delete(key);
-          node.parts = [...new_parts, ...node.parts.slice(old_parts.length)];
-          this.#nodes.set(node.parts.join("/"), node);
+          const moved_parts = [...new_parts, ...key.split("/").slice(old_parts.length)];
+          this.#nodes.set(moved_parts.join("/"), node);
+          affected.add(node);
         }
       }
+      for (const node of affected) this.#refresh_path(node);
+    });
+  }
+
+  async link(node: Node, newParent: Node, newName: string) {
+    this.#writable();
+    await this.#path_operation(async () => {
+      const source = await this.#validated_path(this.#parts(node));
+      const stats = await node_call(lstat(source, { bigint: true }));
+      if (stats.isDirectory()) throw new FSError("EPERM", "cannot hard-link a directory");
+      const parts = [...this.#parts(newParent), valid_name(newName)];
+      const destination = await this.#validated_path(parts);
+      // Node link uses the source directory entry itself, including symlinks.
+      // The Linux caller resolves AT_SYMLINK_FOLLOW before issuing FUSE_LINK.
+      await node_call(link(source, destination));
+      this.#nodes.set(parts.join("/"), node);
     });
   }
 
