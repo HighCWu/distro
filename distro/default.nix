@@ -245,6 +245,7 @@ lib.makeScope (scope: lib.callPackageWith ({ inherit lib pkgs; } // scope)) (
             test -e ${self.dynamic-loader-wasm64.checks.runtime}
             test -e ${self.dynamic-symbol-versions.checks.runtime}
             test -e ${self.dynamic-symbol-versions-wasm64.checks.runtime}
+            test -e ${self.toolchain-smoke.checks.madvise-free-both}
             touch $out
           '';
     };
