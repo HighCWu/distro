@@ -19,6 +19,7 @@ const tidMask = 0x01300000n;
 const clearSighand = 0x100000000n;
 const newTime = 0x80n;
 const intoCgroup = 0x200000000n;
+const noNewPrivs = 0x800000000n;
 
 function unsigned_word(value: WasmAddress, address: WasmAddressType): bigint {
   if (
@@ -43,8 +44,8 @@ function fork_options(
     : {};
   if (flags & sharingMask)
     options.sharingFlags = address === "i64" ? flags & sharingMask : Number(flags & sharingMask);
-  if (flags & (clearSighand | newTime | intoCgroup))
-    options.flags64 = flags & (clearSighand | newTime | intoCgroup);
+  if (flags & (clearSighand | newTime | intoCgroup | noNewPrivs))
+    options.flags64 = flags & (clearSighand | newTime | intoCgroup | noNewPrivs);
   if (flags & tidMask) {
     // Linux performs TID stores (including its own fault behavior). Refuse
     // only addresses that the Wasm architecture cannot represent faithfully.
@@ -147,7 +148,17 @@ export function clone3_fork_request(
   // Namespace/TID bits fit the old transport. CLEAR_SIGHAND and NEWTIME
   // require native transport: NEWTIME aliases a legacy CSIGNAL bit.
   if (
-    flags & ~(namespaceMask | sharingMask | tidMask | clearSighand | newTime | intoCgroup | 0x1000n)
+    flags &
+    ~(
+      namespaceMask |
+      sharingMask |
+      tidMask |
+      clearSighand |
+      newTime |
+      intoCgroup |
+      noNewPrivs |
+      0x1000n
+    )
   )
     return -95;
   if (stack !== 0n || stackSize !== 0n) return -95;

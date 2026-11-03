@@ -113,6 +113,12 @@ at the last sharer's exit and rejects incompatible CLONE_NEWIPC combinations.
 Custom stacks, TLS flags and multithreaded fork remain unsupported. Actual
 target acceptance of this increment is recorded separately from host checks.
 
+Native clone3 CLONE_NNP requires bit 5 of the execution object capability. The
+flag remains u64 on wasm32 and is never substituted with a child-side prctl.
+Linux installs no_new_privs before child execution and retains its standard
+fork/exec inheritance and inability to clear the restriction. Older objects or
+non-native clone3 transport refuse the flag before continuation unwind.
+
 `share/linux-wasm-fork-sdk/profile.json` records the experimental profile.
 
 CLONE_CLEAR_SIGHAND requires the optional `__wasm_fork_clone3_flags64` export

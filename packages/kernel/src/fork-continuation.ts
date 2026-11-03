@@ -376,6 +376,19 @@ export class ForkContinuation {
         return -95;
     }
     const legacy = !clone3 && typeof this.e.__wasm_fork_clone_options === "function";
+    if ((request.flags64 ?? 0n) & 0x800000000n) {
+      const features =
+        typeof this.e.__wasm_fork_clone3_features === "function"
+          ? this.call("__wasm_fork_clone3_features")
+          : 0;
+      if (
+        !native ||
+        typeof features !== "number" ||
+        !Number.isInteger(features) ||
+        !(features & 32)
+      )
+        return -95;
+    }
     if (request.sharingFlags !== undefined) {
       const features =
         typeof this.e.__wasm_fork_clone3_features === "function"

@@ -593,7 +593,13 @@ lib.makeScope (scope: lib.callPackageWith ({ inherit lib pkgs; } // scope)) (
       vm-test = vmTestWasm64;
     };
     clone-namespaces = callPackage ./clone-namespaces/package.nix { };
-    clone-flags64 = callPackage ./clone-flags64/package.nix { };
+    clone-flags64 = callPackage ./clone-flags64/package.nix {
+      extraChecks.both = pkgs.runCommand "clone-flags64-both-widths" { passthru.ci.heavy = true; } ''
+        test -e ${self.clone-flags64.checks.runtime}
+        test -e ${self.clone-flags64-wasm64.checks.runtime}
+        touch $out
+      '';
+    };
     clone-timens = callPackage ./clone-timens/package.nix { };
     clone-pid-select = callPackage ./clone-pid-select/package.nix { };
     clone-sharing = callPackage ./clone-sharing/package.nix {

@@ -103,7 +103,10 @@ let
       ];
       cloneNamespaceTransport = true;
       nativeClone3Transport = true;
-      clone3WideFlags = [ "CLONE_CLEAR_SIGHAND" ];
+      clone3WideFlags = [
+        "CLONE_CLEAR_SIGHAND"
+        "CLONE_NNP"
+      ];
       clone3NativeOnlyFlags = [
         "CLONE_NEWTIME"
         "CLONE_INTO_CGROUP"

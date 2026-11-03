@@ -7,6 +7,8 @@
 #include <stdint.h>
 #include <stdio.h>
 #include <stdlib.h>
+#include <string.h>
+#include <sys/prctl.h>
 #include <sys/syscall.h>
 #include <sys/wait.h>
 #include <unistd.h>
@@ -20,6 +22,18 @@ static void require(int ok, const char *what)
 }
 
 static void handler(int sig) { (void)sig; }
+
+static long no_new_privs(void)
+{
+    return syscall(SYS_prctl, (long)PR_GET_NO_NEW_PRIVS, 0L, 0L, 0L, 0L, 0L);
+}
+
+static void cannot_clear_privs(void)
+{
+    errno = 0;
+    require(syscall(SYS_prctl, (long)PR_SET_NO_NEW_PRIVS, 0L, 0L, 0L, 0L, 0L) == -1 &&
+            errno == EINVAL && no_new_privs() == 1, "kernel refuses clearing no_new_privs");
+}
 
 static void dispositions(int cleared)
 {
@@ -47,9 +61,15 @@ static void reap(pid_t child, int signaled)
     no_children();
 }
 
-int main(void)
+int main(int argc, char **argv)
 {
     require(setvbuf(stdout, NULL, _IONBF, 0) == 0, "unbuffered stages");
+    if (argc == 2 && !strcmp(argv[1], "--nnp-exec")) {
+        require(no_new_privs() == 1, "clone3 no_new_privs survives exec");
+        cannot_clear_privs();
+        _exit(37);
+    }
+    require(no_new_privs() == 0, "unrestricted initial parent");
     struct sigaction old1, old2, action = { .sa_handler = handler };
     require(sigemptyset(&action.sa_mask) == 0 &&
             sigaction(SIGUSR1, &action, &old1) == 0, "install custom handler");
@@ -86,9 +106,36 @@ int main(void)
     dispositions(0);
     puts("clone flags64: conflicting shared/cleared handlers reject without a child pass");
 
+    args.flags = CLONE_NNP;
+    for (int execute = 0; execute < 2; execute++) {
+        child = syscall(SYS_clone3, (long)(uintptr_t)&args, (long)sizeof args, 0L, 0L, 0L, 0L);
+        require(child >= 0, "clone3 with kernel-installed no_new_privs");
+        if (!child) {
+            require(no_new_privs() == 1, "no_new_privs set before first child operation");
+            cannot_clear_privs();
+            if (execute) {
+                char *next[] = { "/init", "--nnp-exec", NULL };
+                execv(next[0], next);
+                require(0, "exec after CLONE_NNP");
+            }
+            pid_t grandchild = fork();
+            require(grandchild >= 0, "fork from restricted child");
+            if (!grandchild) {
+                require(no_new_privs() == 1, "grandchild inherits no_new_privs");
+                _exit(37);
+            }
+            reap(grandchild, 0);
+            _exit(37);
+        }
+        reap(child, 0);
+        require(no_new_privs() == 0, "CLONE_NNP does not restrict parent");
+        puts(execute ? "clone flags64: clone3 no_new_privs survives exec and cannot be cleared pass"
+                     : "clone flags64: clone3 installs child no_new_privs before return and fork inherits pass");
+    }
+
     child = fork();
     require(child >= 0, "later ordinary fork");
-    if (!child) { dispositions(0); _exit(37); }
+    if (!child) { dispositions(0); require(no_new_privs() == 0, "ordinary sibling stays unrestricted"); _exit(37); }
     reap(child, 0);
     require(sigaction(SIGUSR1, &old1, NULL) == 0 && sigaction(SIGUSR2, &old2, NULL) == 0,
             "restore parent dispositions");
