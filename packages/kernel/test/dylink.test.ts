@@ -54,6 +54,19 @@ test("dylink preserves dependencies, repeated symbol groups, TLS, weak imports a
   assert.throws(() => read_wasm_dylink(module(custom(info), custom(info))), /duplicate/);
 });
 
+test("Wasm metadata keeps leading BOM characters in dependencies, symbols and paths", () => {
+  const parsed = metadata([
+    ...section(2, [1, ...text("\ufefflibrary.so")]),
+    ...section(3, [1, ...text("\ufeffsymbol"), 0]),
+    ...section(4, [1, ...text("\ufeffenv"), ...text("\ufeffimport"), 1]),
+    ...section(5, [1, ...text("\ufeffdirectory")]),
+  ]);
+  assert.deepEqual(parsed.needed, ["\ufefflibrary.so"]);
+  assert.deepEqual(parsed.exports, [{ name: "\ufeffsymbol", flags: 0 }]);
+  assert.deepEqual(parsed.imports, [{ module: "\ufeffenv", name: "\ufeffimport", flags: 1 }]);
+  assert.deepEqual(parsed.runtimePaths, ["\ufeffdirectory"]);
+});
+
 test("engine-valid custom metadata cannot bypass subsection bounds or integer/string checks", () => {
   const bad = [
     [1, 4, 0, 0, 0], // Truncated payload.

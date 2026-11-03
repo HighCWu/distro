@@ -54,7 +54,7 @@ export class WasmParseError extends Error {
   }
 }
 
-const text_decoder = new TextDecoder("utf-8", { fatal: true });
+const text_decoder = new TextDecoder("utf-8", { fatal: true, ignoreBOM: true });
 
 class Cursor {
   readonly #bytes: Uint8Array;

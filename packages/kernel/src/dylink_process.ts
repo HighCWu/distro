@@ -6,6 +6,7 @@ import {
   type DylinkModuleRecord,
 } from "./dylink_linker.ts";
 import { plan_dylink_layout } from "./dylink.ts";
+import { decode_linux_bytes, encode_linux_string } from "./linux-string.ts";
 import {
   read_wasm_dylink,
   read_wasm_dynamic_imports,
@@ -124,9 +125,7 @@ export class ProcessDylink {
     const view = new Uint8Array(buffer, start, Math.min(4096, buffer.byteLength - start));
     const end = view.indexOf(0);
     if (end < 0) throw new Error("unterminated dynamic string");
-    // Browser decoders can reject SharedArrayBuffer views even in isolated
-    // pages. Decode an owned snapshot, as for other kernel bridge strings.
-    return new TextDecoder("utf-8", { fatal: true }).decode(view.slice(0, end));
+    return decode_linux_bytes(view.subarray(0, end));
   }
   #failure(error: unknown): WasmAddress {
     if (this.#options.isControlFlow(error)) throw error;
@@ -135,7 +134,7 @@ export class ProcessDylink {
     return this.#word(0n);
   }
   #read(path: string, known: ReadonlyMap<string, File>): File {
-    const encoded = new TextEncoder().encode(path + "\0");
+    const encoded = encode_linux_string(path + "\0");
     if (encoded.length > 4096) throw new DylinkSearchMiss("dynamic path exceeds PATH_MAX");
     const pointer = this.#call(
       "__wasm_dlopen_allocate",
@@ -241,7 +240,7 @@ export class ProcessDylink {
     // checks this layout at compile time. Wasm has no ELF dynamic section:
     // l_ld is NULL; l_addr describes data, never a native instruction address.
     const wordBytes = this.#options.address === "i64" ? 8 : 4;
-    const encoded = new TextEncoder().encode(name + "\0");
+    const encoded = encode_linux_string(name + "\0");
     const pointer = this.#call(
       "__wasm_dlopen_allocate",
       this.#word(BigInt(5 * wordBytes + encoded.length)),
@@ -515,7 +514,7 @@ export class ProcessDylink {
       const bytes = memory_bytes(this.#options.memory, pointer, size);
       if (!bytes) return -14;
       if (size) {
-        const message = new TextEncoder().encode(this.#error);
+        const message = encode_linux_string(this.#error);
         const count = Math.min(message.length, size - 1);
         bytes.set(message.subarray(0, count));
         bytes[count] = 0;

@@ -66,14 +66,17 @@ The constructor candidate publishes relocated groups and global definitions
 before running their constructors. A constructor may then load another graph,
 reopen a running parent, or finish a pending shared dependency. Initialization
 state is shared across groups; running/completed constructors are skipped and
-failed ones stay poisoned. The new eight-stage Linux process acceptance is
-still pending. File I/O, allocator callbacks and Wasm start sections retain
+failed ones stay poisoned. Constructor reentry is verified in the nine-stage
+1894258 Linux/Node and browser profile. File I/O, allocator callbacks and Wasm start sections retain
 the recursive-loading guard until their graph is ready.
 
 RTLD_NEXT, reference-value
 function signatures, dynamic symbol versions, cross-module setjmp/longjmp and C++ exceptions
 and cross-Worker publication still need implementation and acceptance.
-Names/paths currently use UTF-8; strings are bounded to 4096 bytes.
+Linux names and paths preserve their original bytes. Valid UTF-8 remains Unicode;
+undecodable bytes use reversible private host escapes. A leading BOM is a name
+character, including in Wasm dependency metadata. Strings stay bounded to 4096
+bytes; Wasm metadata still requires valid UTF-8 and does not admit escaped bytes.
 
 Handles now point to allocator-backed `struct link_map` objects, so the
 existing musl `dlinfo(RTLD_DI_LINKMAP)` body returns readable metadata. The
@@ -82,8 +85,10 @@ inode aliases keep the same handle and name. A dependency handle searches
 only its own dependency scope. The SDK asserts the five-word C layout.
 `l_addr` describes the module's linear data base; `l_ld` is NULL because
 these files have no ELF dynamic section. This is not ELF loading or program
-header support. The new nine-stage Linux/browser combination still needs
-acceptance; no new musl wrapper or public header is added. The private
+header support. The nine-stage 1894258 combination was verified at both widths
+in Node and Chromium/Firefox (two boots and shutdown per browser). The current
+ten-stage byte-path extension and new default compiler/kernel combination still
+need their own target acceptance; no new musl wrapper or public header is added. The private
 `linux_dlopen_v1.link_map_abi` import makes older hosts reject this SDK before
 exec commits, rather than accepting it with the old integer-handle behavior.
 UTF-8 decoding uses an owned byte snapshot, since browser TextDecoder

@@ -51,6 +51,27 @@ static void *symbol(void *handle, const char *name)
     }
     return address;
 }
+static void copy_path_library(const char *destination)
+{
+    int source = open("/plugins/path-library.so", O_RDONLY | O_CLOEXEC);
+    int target = open(destination, O_WRONLY | O_CREAT | O_EXCL | O_CLOEXEC, 0600);
+    require(source >= 0 && target >= 0, "byte-named library files");
+    char bytes[4096];
+    for (;;) {
+        ssize_t count = read(source, bytes, sizeof bytes);
+        if (count < 0 && errno == EINTR) continue;
+        require(count >= 0, "copy library read");
+        if (!count) break;
+        for (ssize_t offset = 0; offset < count;) {
+            ssize_t written = write(target, bytes + offset, count - offset);
+            if (written < 0 && errno == EINTR) continue;
+            require(written > 0, "copy library write");
+            offset += written;
+        }
+    }
+    require(!close(target) && !close(source), "copy library descriptors close");
+}
+
 int main(void)
 {
     require(!mount("proc", "/proc", "proc", 0, 0), "mount proc");
@@ -207,6 +228,38 @@ int main(void)
     require(!dlinfo(alias, RTLD_DI_LINKMAP, &unchanged) && unchanged == (struct link_map *)plugin &&
             descriptors() == baseline, "resident close and alias keep stable metadata without fd leaks");
     puts("dynamic loader: real link maps, dependency scopes and metadata error recovery pass");
+
+    const char *byte_paths[] = {
+        "/plugins/raw-\200-\355\240\200.so",
+        "/plugins/\357\273\277bom.so",
+        "/plugins/\344\270\255\346\226\207-\360\237\230\200.so",
+    };
+    for (unsigned i = 0; i < sizeof byte_paths / sizeof *byte_paths; i++) {
+        copy_path_library(byte_paths[i]);
+        /* A leading BOM in the user's relative filename is a real filename
+         * character; it must survive before LD_LIBRARY_PATH is searched. */
+        void *object = dlopen(i == 1 ? byte_paths[i] + sizeof("/plugins/") - 1 : byte_paths[i], RTLD_NOW);
+        require(object != NULL, "Linux filename bytes reach actual file lookup");
+        int (*value)(void) = symbol(object, "path_library_value");
+        int (*instances)(void) = symbol(object, "path_library_count");
+        struct link_map *metadata = NULL;
+        require(value() == 42 && instances() == 1 &&
+                !dlinfo(object, RTLD_DI_LINKMAP, &metadata) &&
+                metadata && !strcmp(metadata->l_name, byte_paths[i]),
+                "independent library constructor and exact link_map filename bytes");
+        char byte_alias[64];
+        int count = snprintf(byte_alias, sizeof byte_alias, "/plugins/byte-alias-%u.so", i);
+        require(count > 0 && (size_t)count < sizeof byte_alias &&
+                !link(byte_paths[i], byte_alias), "byte-path hardlink alias");
+        void *byte_handle = dlopen(byte_alias, RTLD_NOW | RTLD_NOLOAD);
+        require(byte_handle == object && instances() == 1,
+                "byte-path inode alias reuse without reinitialization");
+        /* Do not reuse one path alias for different inodes in a resident loader. */
+        require(!dlclose(byte_handle) && !dlclose(object) && !unlink(byte_alias) && !unlink(byte_paths[i]),
+                "byte-path close and filesystem cleanup");
+    }
+    require(descriptors() == baseline, "byte-path temporary descriptor cleanup");
+    puts("dynamic loader: byte-preserving filenames, BOM search and Unicode metadata pass");
 
     require(!dlopen("missing.so", RTLD_NOW) && dlerror(), "missing library failure");
     int fd = open("/plugins/bad.so", O_CREAT | O_TRUNC | O_WRONLY, 0600);

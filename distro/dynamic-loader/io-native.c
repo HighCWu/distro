@@ -5,6 +5,7 @@
 #include <dirent.h>
 #include <errno.h>
 #include <stdlib.h>
+#include <stdio.h>
 #include <string.h>
 #include <sys/auxv.h>
 #include <sys/statvfs.h>
@@ -76,6 +77,15 @@ int main(int argc, char **argv)
 	result = (void *)__wasm_dlopen_read(argv[2]);
 	assert(!result[4] && result[2] == device && result[3] == inode);
 	__wasm_dlopen_read_release();
+
+	char raw_name[PATH_MAX];
+	int raw_length = snprintf(raw_name, sizeof raw_name, "%s-\200-\355\240\200", argv[1]);
+	assert(raw_length > 0 && (size_t)raw_length < sizeof raw_name && !link(argv[1], raw_name));
+	result = (void *)__wasm_dlopen_read(raw_name);
+	assert(!result[4] && result[2] == device && result[3] == inode &&
+	       !strcmp((const char *)__wasm_dlopen_origin(), raw_name));
+	__wasm_dlopen_read_release();
+	assert(!unlink(raw_name) && descriptor_count() == baseline);
 	rejection(argv[3], EFBIG); /* Empty regular file. */
 	rejection(argv[4], ENOENT);
 	noexec = 1;
