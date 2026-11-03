@@ -131,6 +131,15 @@ lib.makeScope (scope: lib.callPackageWith ({ inherit lib pkgs; } // scope)) (
       sdk = self.sdk-wasm64;
     };
     dynamic-loader = callPackage ./dynamic-loader/package.nix { };
+    dynamic-symbol-versions = callPackage ./dynamic-symbol-versions/package.nix { };
+    dynamic-symbol-versions-wasm64 = callPackage ./dynamic-symbol-versions/package.nix {
+      platform = self.platform-wasm64;
+      sdk-dynamic-loader = self.sdk-dynamic-loader-wasm64;
+      llvm-toolchain = self.llvm-toolchain-wasm64;
+      musl = self.musl-wasm64;
+      llvm-runtimes = self.llvm-runtimes-wasm64;
+      vm-test = vmTestWasm64;
+    };
     dynamic-driver = callPackage ./dynamic-loader/driver.nix {
       compiler = sharedDriverToolchain;
     };
