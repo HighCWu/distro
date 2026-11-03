@@ -13,6 +13,7 @@
   # build. Tests of the old bounded/closed policies must opt out explicitly.
   fileMmapStreamCandidate ? true,
   vtimeCandidate ? false,
+  userNamespaceCandidate ? false,
   llvm-toolchain-unwrapped,
   src ? import ./fetch-source.nix {
     inherit pkgs;
@@ -47,6 +48,7 @@ let
         fileMmapCandidate
         fileMmapStreamCandidate
         vtimeCandidate
+        userNamespaceCandidate
         ;
       sourceIdentity = identity src;
       llvmToolchainIdentity = identity llvm-toolchain-unwrapped;
@@ -113,8 +115,17 @@ pkgs.stdenvNoCC.mkDerivation (finalAttrs: {
       scripts/config --enable WASM_VTIME --disable TICK_CPU_ACCOUNTING \
         --enable VIRT_CPU_ACCOUNTING_GEN --enable CONTEXT_TRACKING_USER_FORCE
     ''}
+    ${lib.optionalString userNamespaceCandidate ''
+      scripts/config --enable USER_NS
+    ''}
     ${lib.optionalString
-      (mmapCopyTest || fileMmapCandidate || fileMmapStreamCandidate || vtimeCandidate)
+      (
+        mmapCopyTest
+        || fileMmapCandidate
+        || fileMmapStreamCandidate
+        || vtimeCandidate
+        || userNamespaceCandidate
+      )
       ''
         make olddefconfig
       ''
@@ -213,7 +224,16 @@ pkgs.stdenvNoCC.mkDerivation (finalAttrs: {
     for namespace in NAMESPACES UTS_NS IPC_NS PID_NS NET_NS TIME_NS; do
       grep -qx "CONFIG_$namespace=y" .config
     done
-    grep -qx '# CONFIG_USER_NS is not set' .config
+    ${
+      if userNamespaceCandidate then
+        ''
+          grep -qx 'CONFIG_USER_NS=y' .config
+        ''
+      else
+        ''
+          grep -qx '# CONFIG_USER_NS is not set' .config
+        ''
+    }
     ! grep -qx 'CONFIG_MMU=y' .config
 
     make vmlinux.wasm

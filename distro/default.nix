@@ -211,6 +211,27 @@ lib.makeScope (scope: lib.callPackageWith ({ inherit lib pkgs; } // scope)) (
       busybox = self.busybox-wasm64;
     };
     landlock = callPackage ./landlock/package.nix { };
+    user-namespace = callPackage ./user-namespace/package.nix {
+      vm-test = self.vm-test.override {
+        kernel = self.kernel.override {
+          linux = self.linux.override { userNamespaceCandidate = true; };
+        };
+      };
+      extraChecks.both = pkgs.runCommand "user-namespace-both-widths" { passthru.ci.heavy = true; } ''
+        test -e ${self.user-namespace.checks.runtime}
+        test -e ${self.user-namespace-wasm64.checks.runtime}
+        touch $out
+      '';
+    };
+    user-namespace-wasm64 = callPackage ./user-namespace/package.nix {
+      platform = self.platform-wasm64;
+      sdk = self.sdk-wasm64;
+      vm-test = vmTestWasm64.override {
+        kernel = self.kernel-wasm64.override {
+          linux = self.linux-wasm64.override { userNamespaceCandidate = true; };
+        };
+      };
+    };
     sdk-brk-syscall = callPackage ./brk-syscall/sdk.nix { };
     brk-syscall = callPackage ./brk-syscall/package.nix {
       extraChecks.runtime-both =
