@@ -165,7 +165,7 @@ lib.makeScope (scope: lib.callPackageWith ({ inherit lib pkgs; } // scope)) (
     };
     toolchain-smoke-runtime-wasm64 = self.toolchain-smoke-wasm64.checks.c-runtime;
     symbol-versions = callPackage ./symbol-versions/package.nix {
-      sdk = self.sdk;
+      inherit (self) sdk;
       extraChecks.both =
         pkgs.runCommand "symbol-versions-both-widths"
           {
