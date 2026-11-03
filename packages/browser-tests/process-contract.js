@@ -7,6 +7,21 @@ const prefixStage =
   "user-access: partial boundary copies preserve file positions, suffixes and pipe accounting pass";
 const recoveryStage = "user-access: zero lengths, valid retries and descriptor recovery pass";
 export const processStages = {
+  clonetrace: [
+    "clone untraced: native clone3 reports ordinary fork and suppresses UNTRACED event pass",
+    "clone untraced: legacy clone reports ordinary fork and suppresses UNTRACED event pass",
+    "clone untraced: native explicit PTRACE inherits tracing with and without UNTRACED pass",
+    "clone untraced: legacy explicit PTRACE inherits tracing with and without UNTRACED pass",
+    "clone untraced: later ordinary tracing and process cleanup recover pass",
+  ],
+  clonesignal: [
+    "clone exit signal: zero notification preserves PIDFD exit and WCLONE reaping pass",
+    "clone exit signal: selected notification reaches parent and ordinary wait excludes child pass",
+    "clone exit signal: later SIGCHLD wait and request cleanup recover pass",
+    "legacy clone exit signal: zero notification preserves PIDFD exit and WCLONE reaping pass",
+    "legacy clone exit signal: selected notification reaches parent and ordinary wait excludes child pass",
+    "legacy clone exit signal: later SIGCHLD wait and request cleanup recover pass",
+  ],
   poll: [
     "cooperative poll: pure computation receives standard timer signal pass",
     "cooperative poll: siglongjmp restores execution and later timer delivery pass",

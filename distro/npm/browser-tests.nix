@@ -3,6 +3,10 @@
   bash-fork-wasm64,
   guest-agent,
   bytes,
+  clone-untraced,
+  clone-untraced-wasm64,
+  clone-exit-signal,
+  clone-exit-signal-wasm64,
   cooperative-poll,
   cooperative-poll-wasm64,
   curl,
@@ -448,6 +452,34 @@ let
       )
       // (lib.genAttrs
         [
+          "process-clone-wasm32-chromium"
+          "process-clone-wasm32-firefox"
+          "process-clone-wasm64-chromium"
+          "process-clone-wasm64-firefox"
+        ]
+        (
+          name:
+          let
+            bits = if lib.hasInfix "-wasm32-" name then 32 else 64;
+            project = lib.removePrefix "process-clone-wasm${toString bits}-" name;
+            check =
+              corpus:
+              playwright.mkCheck {
+                name = "browser-tests-process-${corpus}-wasm${toString bits}-${project}";
+                suite = processSuite bits corpus;
+                inherit project;
+                script = "process-browser-check.mjs";
+              };
+          in
+          pkgs.runCommand "browser-tests-${name}" { passthru.ci.heavy = true; } ''
+            test -e ${check "clonetrace"}
+            test -e ${check "clonesignal"}
+            touch $out
+          ''
+        )
+      )
+      // (lib.genAttrs
+        [
           "fork-wasm32-chromium"
           "fork-wasm32-firefox"
           "fork-wasm64-chromium"
@@ -565,7 +597,11 @@ let
         else
           (if bits == 64 then kernel-wasm64 else kernel);
       assets =
-        if corpus == "altstack" then
+        if corpus == "clonetrace" then
+          (if bits == 64 then clone-untraced-wasm64 else clone-untraced).checks.runtime.runtimeAssets
+        else if corpus == "clonesignal" then
+          (if bits == 64 then clone-exit-signal-wasm64 else clone-exit-signal).checks.runtime.runtimeAssets
+        else if corpus == "altstack" then
           (if bits == 64 then toolchain-smoke-wasm64 else toolchain-smoke)
           .checks.signal-altstack.runtimeAssets
         else if corpus == "stacklegacy" then

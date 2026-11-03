@@ -29,6 +29,8 @@ for (const corpus of Object.keys(processStages))
   });
 
 for (const corpus of [
+  "clonetrace",
+  "clonesignal",
   "poll",
   "dylink",
   "resolver",
@@ -114,6 +116,42 @@ for (const corpus of [
     assert.match(app, /runRuntimeSmoke/);
     assert.match(app, /crossOriginIsolated/);
   });
+
+test("clone browser gates reuse exact native assets, stages and both engines/widths", () => {
+  const recipe = readFileSync(
+    new URL("../../distro/npm/browser-tests.nix", import.meta.url),
+    "utf8",
+  );
+  for (const bits of [32, 64])
+    for (const engine of ["chromium", "firefox"])
+      assert.ok(recipe.includes(`"process-clone-wasm${bits}-${engine}"`));
+  for (const [corpus, packageName] of [
+    ["clonetrace", "clone-untraced"],
+    ["clonesignal", "clone-exit-signal"],
+  ]) {
+    assert.ok(recipe.includes(`test -e \${check "${corpus}"}`));
+    assert.ok(
+      recipe.includes(
+        `(if bits == 64 then ${packageName}-wasm64 else ${packageName}).checks.runtime.runtimeAssets`,
+      ),
+    );
+    const source = readFileSync(
+      new URL(`../../distro/${packageName}/runtime.c`, import.meta.url),
+      "utf8",
+    );
+    for (const stage of processStages[corpus])
+      assert.ok(source.includes(stage), `missing actual C stage ${stage}`);
+  }
+  assert.throws(
+    () =>
+      assertProcessOutput(
+        [...processStages.clonesignal.slice(0, 3), "::vm-test::pass"].join("\n"),
+        "clonesignal",
+      ),
+    /missing\/duplicate legacy clone exit signal/,
+    "the earlier clone3-only three-stage success cannot admit the new legacy transport",
+  );
+});
 
 test("signal stack browser suites reuse both-width standard and missing-export workloads", () => {
   const recipe = readFileSync(
