@@ -22,6 +22,22 @@ export interface WasmMemories {
   definitions: WasmMemoryType[];
 }
 
+export interface WasmGlobalImport {
+  module: string;
+  name: string;
+  value: "i32" | "i64" | null;
+  mutable: boolean;
+}
+
+/** Match the actual host-provided global before exec commits a new image. */
+export function user_poll_globals_supported(imports: WasmGlobalImport[], address: "i32" | "i64") {
+  return imports.every(
+    (entry) =>
+      entry.module !== "linux_user_poll_v2" ||
+      (entry.name === "thread_pointer" && entry.value === address && entry.mutable),
+  );
+}
+
 /**
  * Returns the single shared userspace memory import accepted by the runtime.
  * The kernel and userspace module must use one pointer width: mixing memory32
@@ -186,12 +202,13 @@ function skip_reference_type(bytes: Cursor) {
 
 function skip_value_type(bytes: Cursor) {
   const type = bytes.byte();
-  if (type >= 0x7b && type <= 0x7f) return;
+  if (type >= 0x7b && type <= 0x7f) return type;
   if (type === 0x63 || type === 0x64) {
     bytes.signed33(bytes.byte());
   } else if (type < 0x69 || type > 0x74) {
     bytes.fail("invalid value type");
   }
+  return type;
 }
 
 function skip_limits(bytes: Cursor) {
@@ -202,7 +219,7 @@ function skip_limits(bytes: Cursor) {
   if (flags & 0x01) read_limit();
 }
 
-function read_imports(bytes: Cursor, imports: WasmMemoryImport[]) {
+function read_imports(bytes: Cursor, imports: WasmMemoryImport[], globals?: WasmGlobalImport[]) {
   const count = bytes.u32();
   for (let i = 0; i < count; i++) {
     // Keep names as spans until we know this is a memory import. Typical Linux
@@ -224,10 +241,19 @@ function read_imports(bytes: Cursor, imports: WasmMemoryImport[]) {
           type: read_memory_type(bytes),
         });
         break;
-      case 0x03: // global
-        skip_value_type(bytes);
-        if (bytes.byte() > 1) bytes.fail("invalid global mutability");
+      case 0x03: {
+        // global
+        const type = skip_value_type(bytes);
+        const mutable = bytes.byte();
+        if (mutable > 1) bytes.fail("invalid global mutability");
+        globals?.push({
+          module: module.text(),
+          name: name.text(),
+          value: type === 0x7f ? "i32" : type === 0x7e ? "i64" : null,
+          mutable: !!mutable,
+        });
         break;
+      }
       case 0x04: // tag
         if (bytes.byte() !== 0) bytes.fail("unknown tag attribute");
         bytes.u32();
@@ -245,7 +271,7 @@ function read_definitions(bytes: Cursor, definitions: WasmMemoryType[]) {
   bytes.expect_done("memory section");
 }
 
-export function read_wasm_memories(module: Uint8Array): WasmMemories {
+export function read_wasm_memories(module: Uint8Array, globals?: WasmGlobalImport[]): WasmMemories {
   const bytes = new Cursor(module);
   const header = [0x00, 0x61, 0x73, 0x6d, 0x01, 0x00, 0x00, 0x00];
   for (const expected of header) {
@@ -261,7 +287,7 @@ export function read_wasm_memories(module: Uint8Array): WasmMemories {
     if (id === 2) {
       if (saw_imports) bytes.fail("duplicate import section");
       saw_imports = true;
-      read_imports(section, memories.imports);
+      read_imports(section, memories.imports, globals);
     } else if (id === 5) {
       if (saw_definitions) bytes.fail("duplicate memory section");
       saw_definitions = true;

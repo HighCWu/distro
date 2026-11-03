@@ -275,6 +275,18 @@ lib.makeScope (scope: lib.callPackageWith ({ inherit lib pkgs; } // scope)) (
       llvm-toolchain = self.llvm-toolchain-wasm64;
       vm-test = vmTestWasm64;
     };
+    exec-imports = callPackage ./exec-imports/package.nix {
+      extraChecks.both = pkgs.runCommand "exec-imports-both-widths" { passthru.ci.heavy = true; } ''
+        test -e ${self.exec-imports.checks.runtime}
+        test -e ${self.exec-imports-wasm64.checks.runtime}
+        touch $out
+      '';
+    };
+    exec-imports-wasm64 = callPackage ./exec-imports/package.nix {
+      platform = self.platform-wasm64;
+      sdk = self.sdk-wasm64;
+      vm-test = vmTestWasm64;
+    };
     sdk-cooperative-poll-wasm64 = callPackage ./cooperative-poll/sdk.nix {
       platform = self.platform-wasm64;
       llvm-toolchain = self.llvm-toolchain-wasm64;

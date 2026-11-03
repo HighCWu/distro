@@ -77,6 +77,8 @@ import {
   user_memory_import,
   read_wasm_main_table,
   read_wasm_dynamic_signatures,
+  user_poll_globals_supported,
+  type WasmGlobalImport,
 } from "./wasm_binary.ts";
 import { ProcessDylink } from "./dylink_process.ts";
 import {
@@ -545,9 +547,10 @@ function user_imports({
         let maximum: number;
         let dynamic: UserContext["dynamic"];
         try {
-          const memories = read_wasm_memories(bytes);
+          const globals: WasmGlobalImport[] = [];
+          const memories = read_wasm_memories(bytes, globals);
           const memory_import = user_memory_import(memories, kernel_address);
-          if (!memory_import) return -8; // exec format error
+          if (!memory_import || !user_poll_globals_supported(globals, kernel_address)) return -8; // exec format error
 
           module = new WebAssembly.Module(bytes);
           if (
