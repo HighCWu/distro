@@ -534,6 +534,7 @@ export async function bootMachine(options: BootMachineOptions): Promise<Machine>
       },
       user_context_v1: user_context_imports(),
       user_fork_v1: { entry: () => (memory_type.address === "i64" ? 0n : 0) },
+      user_brk_v1: { layout: unavailable, update: unavailable },
       user_v2: {
         mremap_fixed: unavailable,
         mmap_fixed: unavailable,

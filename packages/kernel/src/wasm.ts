@@ -350,6 +350,10 @@ export interface Imports {
   user_fork_v1: {
     entry(): WasmAddress;
   };
+  user_brk_v1: {
+    layout(destination: WasmAddress): number;
+    update(requested: WasmAddress): WasmAddress;
+  };
   user_signal_v1: {
     stack_pointer(to: WasmAddress): number;
     call_handler(

@@ -36,6 +36,7 @@ import {
   user_madvise,
 } from "./user-mmap.ts";
 import { FileMmapCopy } from "./file-mmap-copy.ts";
+import { user_brk_layout, user_brk_update } from "./user-brk.ts";
 import {
   read_signal_stack_pointer,
   call_on_signal_stack,
@@ -168,6 +169,7 @@ function user_imports({
   imports_mmap_init_v1: Imports["user_mmap_init_v1"];
   imports_mmap_stream_v1: Imports["user_mmap_stream_v1"];
   imports_fork_v1: Imports["user_fork_v1"];
+  imports_brk_v1: Imports["user_brk_v1"];
 } {
   const HALT_USER = Symbol("halt user");
 
@@ -427,6 +429,26 @@ function user_imports({
   }
 
   const result: ReturnType<typeof user_imports> = {
+    imports_brk_v1: {
+      layout(destination) {
+        if (!instance || !context) return -38;
+        if (context.address !== kernel_address) return -95;
+        return user_callback(() =>
+          user_brk_layout(
+            instance!.exports,
+            context!.memory,
+            context!.address,
+            kernel_memory,
+            destination,
+          ),
+        );
+      },
+      update(requested) {
+        if (!instance || !context || context.address !== kernel_address)
+          return kernel_address === "i64" ? -38n : -38;
+        return user_callback(() => user_brk_update(instance!.exports, context!.address, requested));
+      },
+    },
     imports_fork_v1: {
       entry() {
         const entry =
@@ -958,6 +980,7 @@ function start({
     user: user.imports,
     user_context_v1: user_context_imports(),
     user_fork_v1: user.imports_fork_v1,
+    user_brk_v1: user.imports_brk_v1,
     user_v2: user.imports_v2,
     user_signal_v1: user.imports_signal_v1,
     user_mmap_init_v1: user.imports_mmap_init_v1,

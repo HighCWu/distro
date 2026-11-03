@@ -198,6 +198,45 @@ lib.makeScope (scope: lib.callPackageWith ({ inherit lib pkgs; } // scope)) (
       busybox = self.busybox-wasm64;
     };
     landlock = callPackage ./landlock/package.nix { };
+    sdk-brk-syscall = callPackage ./brk-syscall/sdk.nix { };
+    brk-syscall = callPackage ./brk-syscall/package.nix {
+      extraChecks.both =
+        pkgs.runCommand "brk-syscall-both-widths"
+          {
+            passthru.ci.heavy = true;
+          }
+          ''
+            test -e ${self.brk-syscall.checks.profile}
+            test -e ${self.brk-syscall-wasm64.checks.profile}
+            test -e ${self.brk-syscall.checks.cxx-runtime}
+            test -e ${self.brk-syscall-wasm64.checks.cxx-runtime}
+            test -e ${self.brk-syscall.checks.runtime}
+            test -e ${self.brk-syscall-wasm64.checks.runtime}
+            # Reuse one build graph for the changed kernel/libc combination.
+            test -e ${self.landlock.checks.runtime}
+            test -e ${self.landlock-wasm64.checks.runtime}
+            test -e ${self.symbol-versions.checks.both}
+            test -e ${self.fork-continuation.checks.runtime}
+            test -e ${self.fork-continuation-wasm64.checks.runtime}
+            test -e ${self.dynamic-loader.checks.runtime}
+            test -e ${self.dynamic-loader-wasm64.checks.runtime}
+            test -e ${self.dynamic-symbol-versions.checks.runtime}
+            test -e ${self.dynamic-symbol-versions-wasm64.checks.runtime}
+            touch $out
+          '';
+    };
+    brk-syscall-wasm64 = callPackage ./brk-syscall/package.nix {
+      platform = self.platform-wasm64;
+      sdk-brk-syscall = self.sdk-brk-syscall-wasm64;
+      vm-test = vmTestWasm64;
+    };
+    sdk-brk-syscall-wasm64 = callPackage ./brk-syscall/sdk.nix {
+      platform = self.platform-wasm64;
+      musl = self.musl-wasm64;
+      sysroot-base = self.sysroot-base-wasm64;
+      sysroot = self.sysroot-wasm64;
+      sdk = self.sdk-wasm64;
+    };
     landlock-wasm64 = callPackage ./landlock/package.nix {
       platform = self.platform-wasm64;
       llvm-toolchain = self.llvm-toolchain-wasm64;

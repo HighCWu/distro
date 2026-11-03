@@ -6,12 +6,13 @@
   deduplicateMmapSearch ? true,
   enableForkContinuation ? false,
   enableDynamicLoader ? false,
+  enableBrkSyscall ? false,
   llvm-toolchain-unwrapped,
   src ? pkgs.fetchFromGitHub {
     owner = "HighCWu";
     repo = "musl";
-    rev = "7b077a6d549f1cbe97b22545e37cf1919dd6a641";
-    hash = "sha256-5tD0pAVUpnvC8B3jbZNp/B3lzbsRu8xttlnUHQrwTME=";
+    rev = "4bad222d065a160e75dcf2857ea71e940f1a1a4e";
+    hash = "sha256-sAUt/O868JxUb8k6hOdWUiRjjkpnVoip7wYB7EFzGHc=";
   },
 }:
 
@@ -40,7 +41,7 @@ pkgs.stdenvNoCC.mkDerivation (
       syslibdir=$out
       CFLAGS=${lib.optionalString debug "-g"}${
         lib.optionalString (!deduplicateMmapSearch) " -DWASM_MMAP_DEDUP_SEARCH=0"
-      }${lib.optionalString enableForkContinuation " -DWASM_FORK_CONTINUATION=1"}${lib.optionalString enableDynamicLoader " -DWASM_DYNAMIC_LOADER=1"}
+      }${lib.optionalString enableForkContinuation " -DWASM_FORK_CONTINUATION=1"}${lib.optionalString enableDynamicLoader " -DWASM_DYNAMIC_LOADER=1"}${lib.optionalString enableBrkSyscall " -DWASM_BRK_SYSCALL=1"}
       EOF
 
       runHook postConfigure
