@@ -391,7 +391,8 @@ export function link_dylink_graph(options: {
   };
   const functionGOT = new Set<string>();
   let requiredTableMinimum = 0n;
-  for (const record of fresh)
+  for (const record of fresh) {
+    const forwardedSignatures = new Map<string, string>();
     for (const entry of record.imports) {
       const symbol = symbols.get(entry.name);
       // LLD describes the symbol in env even when its only actual import is a
@@ -450,14 +451,20 @@ export function link_dylink_graph(options: {
             (symbol && symbol.kind !== "function")
           )
             throw new Error(`unresolved dynamic function: ${entry.module}.${entry.name}`);
-          if (
-            symbol &&
-            signatureOf(symbol, entry.name) !==
-              record.signatures.imports.find(
-                (item) => item.module === entry.module && item.name === entry.name,
-              )?.signature
-          )
+          const importSignature = record.signatures.imports.find(
+            (item) =>
+              item.module === entry.module &&
+              item.name === entry.name &&
+              item.typeIndex === entry.typeIndex,
+          )!.signature;
+          if (symbol && signatureOf(symbol, entry.name) !== importSignature)
             throw new Error(`dynamic function signature mismatch: ${entry.name}`);
+          if (!symbol) {
+            const previous = forwardedSignatures.get(entry.name);
+            if (previous !== undefined && previous !== importSignature)
+              throw new Error(`conflicting unresolved dynamic function signatures: ${entry.name}`);
+            forwardedSignatures.set(entry.name, importSignature);
+          }
           break;
         case "global":
           if (entry.module === "env") {
@@ -489,6 +496,7 @@ export function link_dylink_graph(options: {
           }
       }
     }
+  }
   if (
     memoryArena.cursor < 1n ||
     tableArena.cursor < 1n ||
@@ -581,7 +589,10 @@ export function link_dylink_graph(options: {
               group[entry.name] = host ?? dependency!;
             } else {
               const signature = record.signatures.imports.find(
-                (item) => item.module === entry.module && item.name === entry.name,
+                (item) =>
+                  item.module === entry.module &&
+                  item.name === entry.name &&
+                  item.typeIndex === entry.typeIndex,
               )!.signature;
               const forward = create_dylink_forwarder(signature, table, tableArena.address);
               group[entry.name] = forward.call;

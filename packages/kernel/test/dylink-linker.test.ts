@@ -18,6 +18,7 @@ function binary(
     privateMemory?: boolean;
     exportName?: string;
     result64?: boolean;
+    secondFunctionType64?: boolean;
     functionImports?: number;
     reexport?: boolean;
     gotFunctionExport?: boolean;
@@ -40,11 +41,15 @@ function binary(
   const parts = [
     section(0, [...text("dylink.0"), ...metadata]),
     section(1, [
-      options.startCall ? 2 : 1,
+      options.startCall || options.secondFunctionType64 ? 2 : 1,
       0x60,
       0,
       ...(options.trap === "start" ? [0] : [1, options.result64 ? 0x7e : 0x7f]),
-      ...(options.startCall ? [0x60, 0, 0] : []),
+      ...(options.startCall
+        ? [0x60, 0, 0]
+        : options.secondFunctionType64
+          ? [0x60, 0, 1, 0x7e]
+          : []),
     ]),
     ...(options.imports ? [section(2, options.imports)] : []),
     section(3, options.startCall ? [2, 0, 1] : options.callLazyExport ? [2, 0, 0] : [1, 0]),
@@ -530,6 +535,186 @@ test("table preparation follows symbol validation and covers imported minimum", 
   assert.deepEqual(events, ["validate", "prepare"]);
   assert.equal(table.length, 5);
   assert.equal(linked.instances.get("root")!.exports.answer !== undefined, true);
+});
+
+test("same-name function imports are checked by type index before forwarding", () => {
+  const imports = (name: string, secondType: number) => [
+    2,
+    ...text("env"),
+    ...text(name),
+    0,
+    0,
+    ...text("env"),
+    ...text(name),
+    0,
+    secondType,
+  ];
+  const typedProvider = setup(
+    new Map([
+      [
+        "root",
+        binary({
+          needed: ["provider"],
+          imports: imports("typed", 1),
+          functionImports: 2,
+          secondFunctionType64: true,
+        }),
+      ],
+      ["provider", binary({ exportName: "typed" })],
+    ]),
+  );
+  const pointers = new Map<CallableFunction, bigint>();
+  const memoryBefore = new Uint8Array(typedProvider.memory.buffer).slice();
+  let prepared = false;
+  assert.throws(
+    () =>
+      link_dylink_graph({
+        ...typedProvider,
+        functionPointers: pointers,
+        prepareTable() {
+          prepared = true;
+        },
+      }),
+    /dynamic function signature mismatch: typed/,
+  );
+  assert.equal(prepared, false, "signature rejection precedes table preparation");
+  assert.deepEqual(new Uint8Array(typedProvider.memory.buffer), memoryBefore);
+  assert.equal(pointers.size, 0);
+  for (let index = 0; index < typedProvider.table.length; index++)
+    assert.equal(typedProvider.table.get(index), null);
+
+  for (const flags of [0, 1]) {
+    const unresolved = setup(
+      new Map([
+        [
+          "root",
+          binary({
+            imports: imports("unresolved", 1),
+            functionImports: 2,
+            secondFunctionType64: true,
+            extra: flags ? section(4, [1, ...text("env"), ...text("unresolved"), flags]) : [],
+          }),
+        ],
+      ]),
+    );
+    const before = new Uint8Array(unresolved.memory.buffer).slice();
+    let tablePrepared = false;
+    assert.throws(
+      () =>
+        link_dylink_graph({
+          ...unresolved,
+          lazyFunctions: flags === 0,
+          prepareTable() {
+            tablePrepared = true;
+          },
+        }),
+      /conflicting unresolved dynamic function signatures: unresolved/,
+    );
+    assert.equal(tablePrepared, false);
+    assert.deepEqual(new Uint8Array(unresolved.memory.buffer), before);
+    for (let index = 0; index < unresolved.table.length; index++)
+      assert.equal(unresolved.table.get(index), null);
+  }
+
+  const crossRecordWeak = link_dylink_graph(
+    setup(
+      new Map([
+        ["root", binary({ needed: ["weak_i32", "weak_i64"] })],
+        [
+          "weak_i32",
+          binary({
+            imports: [1, ...text("env"), ...text("weak_shared"), 0, 0],
+            functionImports: 1,
+            extra: section(4, [1, ...text("env"), ...text("weak_shared"), 1]),
+          }),
+        ],
+        [
+          "weak_i64",
+          binary({
+            imports: [1, ...text("env"), ...text("weak_shared"), 0, 0],
+            functionImports: 1,
+            result64: true,
+            extra: section(4, [1, ...text("env"), ...text("weak_shared"), 1]),
+          }),
+        ],
+      ]),
+    ),
+  );
+  assert.equal(
+    (crossRecordWeak.instances.get("weak_i32")!.exports.answer as CallableFunction)(),
+    42,
+  );
+  assert.equal(
+    (crossRecordWeak.instances.get("weak_i64")!.exports.answer as CallableFunction)(),
+    42n,
+    "per-record weak forwarders may have different Wasm signatures",
+  );
+
+  const sameSignature = link_dylink_graph({
+    ...setup(
+      new Map([
+        [
+          "root",
+          binary({
+            imports: imports("unresolved", 0),
+            functionImports: 2,
+            secondFunctionType64: true,
+          }),
+        ],
+      ]),
+    ),
+    lazyFunctions: true,
+  });
+  assert.equal(sameSignature.lazyFunctions.length, 2);
+  assert.deepEqual(
+    sameSignature.lazyFunctions.map(({ name, signature }) => [name, signature]),
+    [
+      ["unresolved", "[[],[127]]"],
+      ["unresolved", "[[],[127]]"],
+    ],
+  );
+
+  const type0 = [0x60, 1, 0x7f, 0]; // (i32) -> ()
+  const type1 = [0x60, 1, 0x7e, 0]; // (i64) -> ()
+  const type2 = [0x60, 0, 1, 0x7f]; // () -> i32
+  const call32 = [0, 0x41, 5, 0x10, 0, 0x41, 42, 0x0b];
+  const call64 = [0, 0x42, 6, 0x10, 1, 0x41, 42, 0x0b];
+  const polymorphicHost = new Uint8Array([
+    0,
+    97,
+    115,
+    109,
+    1,
+    0,
+    0,
+    0,
+    ...section(0, [...text("dylink.0"), ...info, ...section(2, [0])]),
+    ...section(1, [3, ...type0, ...type1, ...type2]),
+    ...section(2, [
+      2,
+      ...text("env"),
+      ...text("poly"),
+      0,
+      0,
+      ...text("env"),
+      ...text("poly"),
+      0,
+      1,
+    ]),
+    ...section(3, [2, 2, 2]),
+    ...section(7, [2, ...text("call_i32"), 0, 2, ...text("call_i64"), 0, 3]),
+    ...section(10, [2, call32.length, ...call32, call64.length, ...call64]),
+  ]);
+  const received: unknown[] = [];
+  const host = (value: number | bigint) => received.push(value);
+  const polymorphic = link_dylink_graph({
+    ...setup(new Map([["root", polymorphicHost]])),
+    hostFunctions: new Map([["env", new Map([["poly", host]])]]),
+  });
+  const exports = polymorphic.instances.get("root")!.exports;
+  assert.equal((exports.call_i32 as CallableFunction)(), 42);
+  assert.equal((exports.call_i64 as CallableFunction)(), 42);
+  assert.deepEqual(received, [5, 6n]);
 });
 
 test("forwarded imports cannot hide incompatible Wasm function signatures", () => {
