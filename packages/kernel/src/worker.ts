@@ -36,6 +36,7 @@ import {
   user_madvise,
 } from "./user-mmap.ts";
 import { FileMmapCopy } from "./file-mmap-copy.ts";
+import { apply_fork_memory_advice } from "./fork-memory-advice.ts";
 import { user_brk_layout, user_brk_update } from "./user-brk.ts";
 import {
   call_user_poll,
@@ -173,6 +174,7 @@ function user_imports({
 }): {
   context: UserContext | null;
   prepare(): void;
+  applyForkAdvice(): void;
   imports: Imports["user"];
   imports_v2: Imports["user_v2"];
   imports_signal_v1: Imports["user_signal_v1"];
@@ -550,6 +552,10 @@ function user_imports({
     },
     prepare() {
       if (parent) instantiate(false);
+    },
+    applyForkAdvice() {
+      if (!instance || !context) throw new Error("fork memory advice has no child instance");
+      apply_fork_memory_advice(instance.exports, context.memory, context.address);
     },
     imports: {
       // program management:
@@ -1190,7 +1196,17 @@ function start({
     : instantiate_kernel();
   if (profile) profile.measure("user_instance_ns", () => user.prepare());
   else user.prepare();
-  if (user_copy_status) pause_copy_publication(copy_fault, user_copy_status);
+  if (user_copy_status) {
+    try {
+      user.applyForkAdvice();
+    } catch {
+      settle_user_copy(user_copy_status, USER_COPY_NO_MEMORY);
+      postMessage({ type: "worker_exit" });
+      platform.quit();
+      return;
+    }
+    pause_copy_publication(copy_fault, user_copy_status);
+  }
   if (user_copy_status && !settle_user_copy(user_copy_status, USER_COPY_COMPLETE)) {
     acknowledge_copy_timeout(copy_fault, user_copy_status);
     postMessage({ type: "worker_exit" });

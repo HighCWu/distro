@@ -139,6 +139,30 @@ lib.makeScope (scope: lib.callPackageWith ({ inherit lib pkgs; } // scope)) (
           '';
     };
     sdk = callPackage ./sdk/package.nix { };
+    fork-memory-advice = callPackage ./fork-memory-advice/package.nix {
+      extraChecks.both =
+        pkgs.runCommand "fork-memory-advice-check-both"
+          {
+            passthru.ci.heavy = true;
+          }
+          ''
+            test -e ${self.fork-memory-advice.checks.runtime}
+            test -e ${self.fork-memory-advice-wasm64.checks.runtime}
+            test -e ${self.fork-continuation.checks.runtime}
+            test -e ${self.fork-continuation-wasm64.checks.runtime}
+            test -e ${self.toolchain-smoke.checks.madvise}
+            test -e ${self.toolchain-smoke-wasm64.checks.madvise}
+            touch $out
+          '';
+    };
+    fork-memory-advice-wasm64 = callPackage ./fork-memory-advice/package.nix {
+      platform = self.platform-wasm64;
+      sdk-fork-continuation = self.sdk-fork-continuation-wasm64;
+      musl = self.musl-wasm64;
+      llvm-runtimes = self.llvm-runtimes-wasm64;
+      vm-test = vmTestWasm64;
+      busybox = self.busybox-wasm64;
+    };
     sdk-dynamic-loader = callPackage ./dynamic-loader/sdk.nix {
       sharedCompiler = sharedDriverToolchain;
     };

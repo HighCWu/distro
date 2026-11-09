@@ -36,6 +36,10 @@ export function user_madvise(
   len: WasmAddress,
   advice: number,
 ): WasmAddress {
+  const versioned = exports.__wasm_madvise_v2;
+  const descriptor = (exports as Record<string, unknown>).__wasm_fork_memory_advice_v1;
+  if (typeof versioned === "function" && descriptor instanceof WebAssembly.Global)
+    return versioned(addr, len, advice) as WasmAddress;
   const callback = exports.__wasm_madvise;
   if (typeof callback !== "function") return addressType === "i64" ? -38n : -38;
   return callback(addr, len, advice) as WasmAddress;

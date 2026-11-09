@@ -79,6 +79,38 @@ for (const address_type of ["i32", "i64"] as const) {
     assert.equal(calls, 2);
   });
 
+  test(`${address_type}: versioned madvise requires the fork advice Global`, () => {
+    const args = [address(0x20000), address(65536), 18] as const;
+    const globalValue = address_type === "i64" ? 0n : 0;
+    const descriptor = new WebAssembly.Global({ value: address_type, mutable: false }, globalValue);
+    const versioned = {
+      __wasm_fork_memory_advice_v1: descriptor,
+      __wasm_madvise_v2: (...actual: unknown[]) => {
+        assert.deepEqual(actual, args);
+        return address(0);
+      },
+      __wasm_madvise: () => assert.fail("v2 must use the Global-backed contract"),
+    };
+    assert.equal(user_madvise(versioned, address_type, ...args), address(0));
+
+    let legacyCalls = 0;
+    const legacy = {
+      __wasm_fork_memory_advice_v1: 1,
+      __wasm_madvise_v2: () => assert.fail("v2 requires a WebAssembly.Global"),
+      __wasm_madvise: (...actual: unknown[]) => {
+        legacyCalls++;
+        assert.deepEqual(actual, args);
+        return address(-95);
+      },
+    };
+    assert.equal(
+      user_madvise(legacy as unknown as WebAssembly.Exports, address_type, ...args),
+      address(-95),
+    );
+    assert.equal(legacyCalls, 1);
+    assert.equal(user_madvise({}, address_type, ...args), address(-38));
+  });
+
   test(`${address_type}: private msync forwards typed registers and refuses unknown allocator coverage`, () => {
     const pointer = address_type === "i64" ? 0x100010000n : -2147418112;
     const args = [pointer, address(65536), 4] as const;
