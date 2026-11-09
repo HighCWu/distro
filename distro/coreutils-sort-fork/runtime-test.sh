@@ -55,13 +55,13 @@ check_output() {
 
 # Keep upstream's sorting process single-threaded while forcing several real
 # compressed runs. The helper log rejects the fork-free uncompressed fallback.
-SORT_FAIL=none "$sort_binary" --parallel=1 -S 64K -T "$work/tmp" \
+SORT_FAIL='none' "$sort_binary" --parallel=1 -S 64K -T "$work/tmp" \
   --compress-program="$work/compress" "$work/input" >"$work/output" || fail 'compressed external sort'
 check_output
 echo 'standard sort: original fork, helper exec, gzip compression and decompression pass'
 
 : >"$SORT_HELPER_LOG"
-SORT_FAIL=compress "$sort_binary" --parallel=1 -S 64K -T "$work/tmp" \
+SORT_FAIL='compress' "$sort_binary" --parallel=1 -S 64K -T "$work/tmp" \
   --compress-program="$work/compress" "$work/input" >"$work/output" 2>"$work/error"
 status=$?
 [ "$status" -eq 2 ] || fail "compression failure status $status"
@@ -71,7 +71,7 @@ grep -q 'terminated abnormally' "$work/error" || fail 'compression child diagnos
 echo 'standard sort: nonzero compression child propagates and cleans temporary files pass'
 
 : >"$SORT_HELPER_LOG"
-SORT_FAIL=decompress "$sort_binary" --parallel=1 -S 64K -T "$work/tmp" \
+SORT_FAIL='decompress' "$sort_binary" --parallel=1 -S 64K -T "$work/tmp" \
   --compress-program="$work/compress" "$work/input" >"$work/output" 2>"$work/error"
 status=$?
 [ "$status" -eq 2 ] || fail "decompression failure status $status"
@@ -82,7 +82,7 @@ grep -q 'terminated abnormally' "$work/error" || fail 'decompression child diagn
 echo 'standard sort: nonzero decompression child propagates and cleans temporary files pass'
 
 : >"$SORT_HELPER_LOG"
-SORT_FAIL=none "$sort_binary" --parallel=1 -S 64K -T "$work/tmp" \
+SORT_FAIL='none' "$sort_binary" --parallel=1 -S 64K -T "$work/tmp" \
   --compress-program="$work/compress" "$work/input" >"$work/output" || fail 'later compression recovery'
 check_output
 rm -rf "$work" || fail 'filesystem cleanup'
