@@ -13,6 +13,13 @@ objects stay free of compiler polling. See `../fork-poll/README.md` for each
 profile's target acceptance requirements. Dynamic/fork composition requires
 separate implementation and acceptance.
 
+The `sdk-fork-brk` and `sdk-fork-brk-wasm64` candidates combine automatic fork
+linking with the existing standard brk syscall route. Their libc `brk`, `sbrk`
+and fresh allocator growth enter the kernel's live AS/DATA limit checks. Select
+a matching-width kernel/runtime with the brk execution callbacks. The direct
+heap arena is monotonic. Target acceptance of fork inheritance, denied growth
+and recovery is recorded separately in the project.
+
 This profile imports `linux.syscall_v2`, whose clone arguments use the Linux
 default order: flags, stack, parent TID, child TID, TLS. Only the single-thread
 fork shape with `SIGCHLD` and the default child stack is supported, with the
