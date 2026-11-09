@@ -167,10 +167,15 @@ let
     ++ platform.compilerFlags
     ++ map (flag: "-Wl,${flag}") platform.linkerFlags
   );
+  legacySignalSysroot = import ../sdk/link-sysroot.nix {
+    inherit pkgs lib sysroot;
+    name = "toolchain-smoke-legacy-signal-${platform.wasmArch}";
+    executableArgs = lib.filter (flag: flag != "--export=__stack_pointer") platform.linkerFlags;
+  };
   legacySignalCompileFlags = lib.escapeShellArgs (
     [
       "--target=${platform.targetTriple}"
-      "--sysroot=${sysroot}"
+      "--sysroot=${legacySignalSysroot}"
     ]
     ++ platform.compilerFlags
     ++ map (flag: "-Wl,${flag}") (
