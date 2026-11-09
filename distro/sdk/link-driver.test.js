@@ -1,7 +1,15 @@
 // SPDX-License-Identifier: MIT
 import assert from "node:assert/strict";
 import { spawnSync } from "node:child_process";
-import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import {
+  chmodSync,
+  existsSync,
+  mkdirSync,
+  mkdtempSync,
+  readFileSync,
+  rmSync,
+  writeFileSync,
+} from "node:fs";
 import { tmpdir } from "node:os";
 import { basename, join } from "node:path";
 import { pathToFileURL } from "node:url";
@@ -17,8 +25,12 @@ const wasmLdArguments = (result, label) => {
   );
 };
 
-const runCompiler = (compiler, directory, ...arguments_) => {
-  const result = spawnSync(compiler, arguments_, { cwd: directory, encoding: "utf8" });
+const runCompilerWithEnvironment = (compiler, directory, environment, ...arguments_) => {
+  const result = spawnSync(compiler, arguments_, {
+    cwd: directory,
+    encoding: "utf8",
+    env: environment,
+  });
   const command = arguments_.map((argument) => JSON.stringify(argument)).join(" ");
   assert.equal(
     result.status,
@@ -26,6 +38,40 @@ const runCompiler = (compiler, directory, ...arguments_) => {
     `compiler arguments: ${command}\n${result.stderr || String(result.error)}`,
   );
   return result;
+};
+
+const runCompiler = (compiler, directory, ...arguments_) =>
+  runCompilerWithEnvironment(compiler, directory, process.env, ...arguments_);
+
+const runProfileCompiler = (compiler, directory, wasmOptProbe, ...arguments_) =>
+  wasmOptProbe
+    ? runCompilerWithEnvironment(compiler, directory, wasmOptProbe.environment, ...arguments_)
+    : runCompiler(compiler, directory, ...arguments_);
+
+const createWasmOptProbe = (directory) => {
+  const binaryDirectory = join(directory, "fake-bin");
+  const binary = join(binaryDirectory, "wasm-opt");
+  const marker = join(directory, "wasm-opt-invoked");
+  mkdirSync(binaryDirectory);
+  writeFileSync(binary, '#!/bin/sh\nprintf invoked > "$WASM_OPT_PROBE"\nexit 97\n');
+  chmodSync(binary, 0o755);
+  return {
+    binary,
+    marker,
+    environment: {
+      ...process.env,
+      PATH: `${binaryDirectory}:${process.env.PATH ?? ""}`,
+      WASM_OPT_PROBE: marker,
+    },
+  };
+};
+
+const assertWasmOptWasNotInvoked = (probe, label) => {
+  assert.equal(existsSync(probe.marker), false, `${label}: wasm-opt was invoked`);
+};
+
+const assertWasmOptWasNotSelected = (result, probe, label) => {
+  assert.equal(result.stderr.includes(probe.binary), false, `${label}: -### selected wasm-opt`);
 };
 
 const assertNoRelocatableDefaults = (result, label) => {
@@ -55,6 +101,7 @@ const assertNoRelocatableDefaults = (result, label) => {
         "-shared",
         "--growable-table",
         "--export=__stack_pointer",
+        "--experimental-elf-container",
       ].includes(argument),
       `${label}: unexpected default argument ${argument}`,
     );
@@ -74,11 +121,23 @@ const assertNoRelocatableDefaults = (result, label) => {
 };
 
 const assertProfileResponse = (arguments_, fileName, label) => {
-  assert.ok(
-    arguments_.some(
-      (argument) => argument.startsWith("@") && basename(argument.slice(1)) === fileName,
-    ),
-    `${label}: expected @sysroot/lib/${fileName}`,
+  const responseFile = arguments_.find(
+    (argument) => argument.startsWith("@") && basename(argument.slice(1)) === fileName,
+  );
+  assert.ok(responseFile, `${label}: expected @sysroot/lib/${fileName}`);
+  return responseFile.slice(1);
+};
+
+const responseHasArgument = (responseFile, expected) =>
+  readFileSync(responseFile, "utf8")
+    .split(/\r?\n/)
+    .some((argument) => argument === expected || argument === `'${expected}'`);
+
+const assertElfContainerOption = (responseFile, label) => {
+  assert.equal(
+    responseHasArgument(responseFile, "--experimental-elf-container"),
+    Boolean(process.env.SDK_LINK_ELF_INSPECT),
+    `${label}: executable response file does not match the ELF candidate profile`,
   );
 };
 
@@ -107,8 +166,15 @@ const assertMemoryProfile = (memoryTypes, moduleName, bits, maximumBytes) => {
   );
 };
 
-const assertMainProfile = (bytes, moduleName, bits, maximumBytes, api) => {
-  const module = new WebAssembly.Module(bytes);
+const assertMainProfile = async (bytes, moduleName, bits, maximumBytes, api) => {
+  let moduleBytes = bytes;
+  if (process.env.SDK_LINK_ELF_INSPECT) {
+    const inspector = await import(pathToFileURL(process.env.SDK_LINK_ELF_INSPECT).href);
+    const carrier = inspector.parseElfContainer(bytes, bits);
+    assert.equal(carrier.addressBits, bits, `${moduleName}: carrier address width`);
+    moduleBytes = bytes.subarray(carrier.moduleOffset, carrier.moduleOffset + carrier.moduleSize);
+  }
+  const module = new WebAssembly.Module(moduleBytes);
   const imports = WebAssembly.Module.imports(module);
   assert.ok(
     imports.some(
@@ -116,7 +182,7 @@ const assertMainProfile = (bytes, moduleName, bits, maximumBytes, api) => {
     ),
     `${moduleName}: missing env.memory import`,
   );
-  assertMemoryProfile(api.read_wasm_memories(bytes), moduleName, bits, maximumBytes);
+  assertMemoryProfile(api.read_wasm_memories(moduleBytes), moduleName, bits, maximumBytes);
   const exports = WebAssembly.Module.exports(module);
   const exportNames = new Set(exports.map((entry) => entry.name));
   for (const name of [
@@ -159,6 +225,7 @@ test(
     assert.ok(maximumBytes > 0n, "SDK_LINK_MAXIMUM must be a positive byte count");
     const api = await wasmApi();
     const directory = mkdtempSync(join(tmpdir(), "SDK C partial link "));
+    const wasmOptProbe = process.env.SDK_LINK_ELF_INSPECT ? createWasmOptProbe(directory) : null;
     try {
       writeFileSync(
         join(directory, "main.c"),
@@ -231,15 +298,29 @@ test(
       );
       assert.ok(readFileSync(join(directory, "nested combined.o")).byteLength > 0);
 
-      const mainDryRun = runCompiler(compiler, directory, "-###", "main.c", "-o", "main.wasm");
-      assertProfileResponse(
-        wasmLdArguments(mainDryRun, "ordinary C main"),
+      const mainDryRun = runProfileCompiler(
+        compiler,
+        directory,
+        wasmOptProbe,
+        "-###",
+        "-O2",
+        "main.c",
+        "-o",
+        "main.wasm",
+      );
+      const mainCommand = wasmLdArguments(mainDryRun, "ordinary C main");
+      const executableResponse = assertProfileResponse(
+        mainCommand,
         "wasm-linux-executable.rsp",
         "ordinary C main",
       );
-      runCompiler(
+      assertElfContainerOption(executableResponse, "ordinary C main");
+      if (wasmOptProbe)
+        assertWasmOptWasNotSelected(mainDryRun, wasmOptProbe, "ELF candidate C main");
+      runProfileCompiler(
         compiler,
         directory,
+        wasmOptProbe,
         "-O2",
         "-Wall",
         "-Wextra",
@@ -249,8 +330,9 @@ test(
         "-o",
         "main.wasm",
       );
+      if (wasmOptProbe) assertWasmOptWasNotInvoked(wasmOptProbe, "ELF candidate C main");
       const mainBytes = new Uint8Array(readFileSync(join(directory, "main.wasm")));
-      assertMainProfile(mainBytes, "ordinary C main", bits, maximumBytes, api);
+      await assertMainProfile(mainBytes, "ordinary C main", bits, maximumBytes, api);
     } finally {
       rmSync(directory, { recursive: true, force: true });
     }
@@ -268,6 +350,7 @@ test(
     assert.ok(maximumBytes > 0n, "SDK_LINK_MAXIMUM must be a positive byte count");
     const api = await wasmApi();
     const directory = mkdtempSync(join(tmpdir(), "SDK CXX partial link "));
+    const wasmOptProbe = process.env.SDK_LINK_ELF_INSPECT ? createWasmOptProbe(directory) : null;
     const runtimeFlags = ["-stdlib=libc++", "--unwindlib=libunwind", "--rtlib=compiler-rt"];
     try {
       writeFileSync(
@@ -334,11 +417,12 @@ test(
         "C++ -r must retain the unresolved main_value import",
       );
 
-      const mainDryRun = runCompiler(
+      const mainDryRun = runProfileCompiler(
         compiler,
         directory,
+        wasmOptProbe,
         "-###",
-        "-O0",
+        "-O2",
         "-Wall",
         "-Wextra",
         "-Werror",
@@ -349,12 +433,29 @@ test(
         "main-cxx.wasm",
       );
       const mainCommand = wasmLdArguments(mainDryRun, "ordinary C++ main");
-      assertProfileResponse(mainCommand, "wasm-linux-executable.rsp", "ordinary C++ main");
-      assertProfileResponse(mainCommand, "wasm-linux-cxx.rsp", "ordinary C++ main");
-      runCompiler(
+      const executableResponse = assertProfileResponse(
+        mainCommand,
+        "wasm-linux-executable.rsp",
+        "ordinary C++ main",
+      );
+      const cxxResponse = assertProfileResponse(
+        mainCommand,
+        "wasm-linux-cxx.rsp",
+        "ordinary C++ main",
+      );
+      assertElfContainerOption(executableResponse, "ordinary C++ main");
+      assert.equal(
+        responseHasArgument(cxxResponse, "--experimental-elf-container"),
+        false,
+        "C++ linker response file must not carry the executable-only ELF option",
+      );
+      if (wasmOptProbe)
+        assertWasmOptWasNotSelected(mainDryRun, wasmOptProbe, "ELF candidate C++ main");
+      runProfileCompiler(
         compiler,
         directory,
-        "-O0",
+        wasmOptProbe,
+        "-O2",
         "-Wall",
         "-Wextra",
         "-Werror",
@@ -364,8 +465,9 @@ test(
         "-o",
         "main-cxx.wasm",
       );
+      if (wasmOptProbe) assertWasmOptWasNotInvoked(wasmOptProbe, "ELF candidate C++ main");
       const mainBytes = new Uint8Array(readFileSync(join(directory, "main-cxx.wasm")));
-      const { exports } = assertMainProfile(
+      const { exports } = await assertMainProfile(
         mainBytes,
         "ordinary C++ main",
         bits,

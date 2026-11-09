@@ -30,6 +30,16 @@ lib.makeScope (scope: lib.callPackageWith ({ inherit lib pkgs; } // scope)) (
       apk = self.apk-wasm64;
       image = self.image-wasm64;
     };
+    linuxElfContainer = self.linux.override { elfContainerCandidate = true; };
+    kernelElfContainer = self.kernel.override { linux = linuxElfContainer; };
+    vmTestElfContainer = self.vm-test.override { kernel = kernelElfContainer; };
+    linuxElfContainerWasm64 = self.linux-wasm64.override { elfContainerCandidate = true; };
+    kernelElfContainerWasm64 = self.kernel-wasm64.override {
+      linux = linuxElfContainerWasm64;
+    };
+    vmTestElfContainerWasm64 = vmTestWasm64.override {
+      kernel = kernelElfContainerWasm64;
+    };
     # Historical refusal controls use an explicitly closed kernel. They must
     # not redefine the ordinary runtime's file-mapping policy.
     vmTestClosed32 = self.vm-test.override {
@@ -139,6 +149,10 @@ lib.makeScope (scope: lib.callPackageWith ({ inherit lib pkgs; } // scope)) (
           '';
     };
     sdk = callPackage ./sdk/package.nix { };
+    sdk-elf-container = self.sdk.override {
+      elfContainer = true;
+      vm-test = vmTestElfContainer;
+    };
     fork-memory-advice = callPackage ./fork-memory-advice/package.nix {
       extraChecks.both =
         pkgs.runCommand "fork-memory-advice-check-both"
@@ -239,6 +253,31 @@ lib.makeScope (scope: lib.callPackageWith ({ inherit lib pkgs; } // scope)) (
       llvm-runtimes = self.llvm-runtimes-wasm64;
       vm-test = vmTestWasm64;
     };
+    elf-container = callPackage ./elf-container/package.nix {
+      inherit (self) sdk-elf-container;
+      vm-test = vmTestElfContainer;
+      extraChecks.both =
+        pkgs.runCommand "elf-container-check-both"
+          {
+            passthru.ci.heavy = true;
+          }
+          ''
+            test -e ${self.sdk-elf-container.checks.link-driver}
+            test -e ${self.sdk-elf-container-wasm64.checks.link-driver}
+            test -e ${self.elf-container.checks.runtime}
+            test -e ${self.elf-container-wasm64.checks.runtime}
+            touch $out
+          '';
+    };
+    elf-container-wasm64 = callPackage ./elf-container/package.nix {
+      platform = self.platform-wasm64;
+      sdk = self.sdk-wasm64;
+      sdk-elf-container = self.sdk-elf-container-wasm64;
+      musl = self.musl-wasm64;
+      llvm-runtimes = self.llvm-runtimes-wasm64;
+      vm-test = vmTestElfContainerWasm64;
+      busybox = self.busybox-wasm64;
+    };
     libltdl = callPackage ./libltdl/package.nix { };
     libltdl-wasm64 = callPackage ./libltdl/package.nix {
       platform = self.platform-wasm64;
@@ -274,6 +313,10 @@ lib.makeScope (scope: lib.callPackageWith ({ inherit lib pkgs; } // scope)) (
       llvm-toolchain = self.llvm-toolchain-wasm64;
       sysroot = self.sysroot-wasm64;
       vm-test = vmTestWasm64;
+    };
+    sdk-elf-container-wasm64 = self.sdk-wasm64.override {
+      elfContainer = true;
+      vm-test = vmTestElfContainerWasm64;
     };
     toolchain-smoke-runtime = self.toolchain-smoke.checks.c-runtime;
     toolchain-smoke-wasm64 = callPackage ./toolchain-smoke/package.nix {

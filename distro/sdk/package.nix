@@ -3,6 +3,7 @@
   pkgs,
   lib,
   platform,
+  elfContainer ? false,
   llvm-toolchain,
   sysroot,
   vm-test,
@@ -12,10 +13,14 @@
 }:
 let
   meson = import ./meson.nix { inherit pkgs; };
+  profileCompilerFlags = platform.compilerFlags;
+  linkOnlyDriverFlags = lib.optional elfContainer "--no-wasm-opt";
+  profileLinkerFlags =
+    platform.linkerFlags ++ lib.optional elfContainer "--experimental-elf-container";
   linkRoot = import ./link-sysroot.nix {
     inherit pkgs lib sysroot;
     name = "sdk-link-sysroot-${platform.wasmArch}";
-    executableArgs = extraLinkerInputs ++ platform.linkerFlags;
+    executableArgs = extraLinkerInputs ++ profileLinkerFlags;
   };
   licenseSources = sysroot.licenseSources // {
     llvm-toolchain = llvm-toolchain.licenseSource;
@@ -42,7 +47,8 @@ let
         "--target=${platform.targetTriple}"
         "--sysroot=${linkRoot}"
       ]
-      ++ platform.compilerFlags
+      ++ profileCompilerFlags
+      ++ map (flag: "$${flag}") linkOnlyDriverFlags
     )
     + "\n"
   );
@@ -140,14 +146,17 @@ let
         addressBits
         wasmArch
         targetTriple
-        compilerFlags
-        linkerFlags
         ;
+      compilerFlags = profileCompilerFlags;
+      linkerFlags = profileLinkerFlags;
+      inherit linkOnlyDriverFlags;
+      elfContainerCandidate = elfContainer;
       cxxConfiguration = builtins.readFile ../llvm-toolchain/clang++.cfg;
       linearMemory = {
         maximumBytes = platform.maximumMemoryBytes;
       };
       execution = {
+        executableFormat = if elfContainer then "experimental-elf-container-v1" else "raw-wasm";
         initializedPrivateCopy = {
           version = 1;
           exportName = "__wasm_mmap_init_v1";
@@ -220,6 +229,9 @@ let
             nativeBuildInputs = [ pkgs.nodejs ];
           }
           ''
+            ${lib.optionalString elfContainer ''
+              export SDK_LINK_ELF_INSPECT=${../elf-container/inspect.mjs}
+            ''}
             SDK_LINK_CC=${cc}/bin/wasm-linux-cc \
               SDK_LINK_CXX=${cxx}/bin/wasm-linux-c++ \
               SDK_LINK_PARSER=${../../packages/kernel/src/wasm_binary.ts} \
@@ -352,12 +364,17 @@ let
           assert.equal(p.targetTriple, "${platform.targetTriple}");
           assert.equal(p.addressBits, ${toString platform.addressBits});
           assert.equal(p.wasmArch, "${platform.wasmArch}");
+          assert.equal(p.elfContainerCandidate, ${builtins.toJSON elfContainer});
           assert.equal(p.linearMemory.maximumBytes, ${toString platform.maximumMemoryBytes});
           assert.ok(Number.isSafeInteger(p.linearMemory.maximumBytes));
           assert.ok(p.linkerFlags.includes("--max-memory=" + p.linearMemory.maximumBytes));
           assert.ok(fs.statSync(p.paths.licenseTexts + "/SHA256SUMS").isFile());
-          assert.deepEqual(p.compilerFlags, ${builtins.toJSON platform.compilerFlags});
-          assert.deepEqual(p.linkerFlags, ${builtins.toJSON platform.linkerFlags});
+          assert.deepEqual(p.compilerFlags, ${builtins.toJSON profileCompilerFlags});
+          assert.deepEqual(p.linkerFlags, ${builtins.toJSON profileLinkerFlags});
+          assert.deepEqual(p.linkOnlyDriverFlags, ${builtins.toJSON linkOnlyDriverFlags});
+          assert.equal(p.execution.executableFormat, ${
+            builtins.toJSON (if elfContainer then "experimental-elf-container-v1" else "raw-wasm")
+          });
           assert.deepEqual(p.execution.initializedPrivateCopy, {
             version: 1, exportName: "__wasm_mmap_init_v1",
             importModule: "linux_mmap_init_v1", importName: "copy", admission: "kernel",

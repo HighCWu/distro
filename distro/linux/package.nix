@@ -14,13 +14,14 @@
   fileMmapStreamCandidate ? true,
   vtimeCandidate ? false,
   userNamespaceCandidate ? false,
+  elfContainerCandidate ? false,
   llvm-toolchain-unwrapped,
   src ? import ./fetch-source.nix {
     inherit pkgs;
     owner = "HighCWu";
     repo = "linux";
-    rev = "8856f4a0d52a298ab2bddcea9bf1ad7be1a2527e";
-    hash = "sha256-E0CLhcxotqtWKtbCff0D02W904urJnUDKDZvV1mI+k0=";
+    rev = "e34fb21f6a9c883d051fb65307963811a62837b0";
+    hash = "sha256-JrbMSgwpVPKuDB19jj9doKbydxMUHDWbwRNlCOe2kK8=";
   },
 }:
 
@@ -49,6 +50,7 @@ let
         fileMmapStreamCandidate
         vtimeCandidate
         userNamespaceCandidate
+        elfContainerCandidate
         ;
       sourceIdentity = identity src;
       llvmToolchainIdentity = identity llvm-toolchain-unwrapped;
@@ -118,6 +120,9 @@ pkgs.stdenvNoCC.mkDerivation (finalAttrs: {
     ${lib.optionalString userNamespaceCandidate ''
       scripts/config --enable USER_NS
     ''}
+    ${lib.optionalString elfContainerCandidate ''
+      scripts/config --enable WASM_ELF_CONTAINER
+    ''}
     ${lib.optionalString
       (
         mmapCopyTest
@@ -125,6 +130,7 @@ pkgs.stdenvNoCC.mkDerivation (finalAttrs: {
         || fileMmapStreamCandidate
         || vtimeCandidate
         || userNamespaceCandidate
+        || elfContainerCandidate
       )
       ''
         make olddefconfig
@@ -234,6 +240,16 @@ pkgs.stdenvNoCC.mkDerivation (finalAttrs: {
           grep -qx '# CONFIG_USER_NS is not set' .config
         ''
     }
+    ${
+      if elfContainerCandidate then
+        ''
+          grep -qx 'CONFIG_WASM_ELF_CONTAINER=y' .config
+        ''
+      else
+        ''
+          ! grep -qx 'CONFIG_WASM_ELF_CONTAINER=y' .config
+        ''
+    }
     ! grep -qx 'CONFIG_MMU=y' .config
 
     make vmlinux.wasm
@@ -269,7 +285,7 @@ pkgs.stdenvNoCC.mkDerivation (finalAttrs: {
       ''
             cd ${finalAttrs.finalPackage}
             sha256sum --check linux-build/SHA256SUMS
-        jq --exit-status '.schemaVersion == 1 and .wasmBits == ${toString wasmBits} and .debug == ${builtins.toJSON debug} and .mmapCopyTest == ${builtins.toJSON mmapCopyTest} and .fileMmapCandidate == ${builtins.toJSON fileMmapCandidate} and .fileMmapStreamCandidate == ${builtins.toJSON fileMmapStreamCandidate} and .vtimeCandidate == ${builtins.toJSON vtimeCandidate}' linux-build/build.json
+        jq --exit-status '.schemaVersion == 1 and .wasmBits == ${toString wasmBits} and .debug == ${builtins.toJSON debug} and .mmapCopyTest == ${builtins.toJSON mmapCopyTest} and .fileMmapCandidate == ${builtins.toJSON fileMmapCandidate} and .fileMmapStreamCandidate == ${builtins.toJSON fileMmapStreamCandidate} and .vtimeCandidate == ${builtins.toJSON vtimeCandidate} and .elfContainerCandidate == ${builtins.toJSON elfContainerCandidate}' linux-build/build.json
             test -s linux-build/kernel.config
             test -s linux-build/LICENSES/preferred/GPL-2.0
             touch $out
