@@ -265,13 +265,13 @@ echo 'tar fork: to-command metadata, exact member bytes and parent environment i
 # operation must remain usable in this process.
 failure_log=$workdir/failure.log
 filter_fail_command="$quoted_helper filter-fail"
-if TAR_FORK_LOG="$failure_log" "$tar_program" \
+TAR_FORK_LOG="$failure_log" "$tar_program" \
   --use-compress-program="$filter_fail_command" \
   -cf "$workdir/filter-fail.tar" -C "$workdir/source" src \
-  >"$workdir/filter-fail.out" 2>"$workdir/filter-fail.err"; then
+  >"$workdir/filter-fail.out" 2>"$workdir/filter-fail.err"
+filter_fail_status=$?
+if [ "$filter_fail_status" -eq 0 ]; then
   fail "tar accepted a nonzero external filter"
-else
-  filter_fail_status=$?
 fi
 [ "$filter_fail_status" -ne 0 ] || fail "nonzero filter status was ignored"
 grep -Eq '^filter-fail pid=[0-9]+ ppid=[0-9]+ direction=compress$' "$failure_log"
@@ -282,12 +282,12 @@ missing_helper=$workdir/no-such-filter
 quoted_missing=$(quote_path "$missing_helper")
 status=$?
 [ "$status" -eq 0 ] || fail "quote missing filter path"
-if "$tar_program" --use-compress-program="$quoted_missing" \
+"$tar_program" --use-compress-program="$quoted_missing" \
   -cf "$workdir/missing-filter.tar" -C "$workdir/source" src \
-  >"$workdir/missing-filter.out" 2>"$workdir/missing-filter.err"; then
+  >"$workdir/missing-filter.out" 2>"$workdir/missing-filter.err"
+missing_filter_status=$?
+if [ "$missing_filter_status" -eq 0 ]; then
   fail "tar accepted a nonexistent external filter"
-else
-  missing_filter_status=$?
 fi
 [ "$missing_filter_status" -ne 0 ] || fail "missing filter command status was ignored"
 
