@@ -30,9 +30,7 @@ let
     CFLAGS_FOR_BUILD = "-std=gnu17";
     configurePhase = ''
       runHook preConfigure
-      # Dash unconditionally calls vfork. This application-only fallback is
-      # explicit: it exercises ordinary fork, not shared-memory vfork semantics.
-      CC=wasm-linux-fork-cc CFLAGS='-O2 -Dvfork=fork' ./configure \
+      CC=wasm-linux-fork-cc CFLAGS='-O2' ./configure \
         --build=${pkgs.stdenv.buildPlatform.config} \
         --host=${platform.targetTriple} --prefix=/ --enable-static --without-libedit
       runHook postConfigure

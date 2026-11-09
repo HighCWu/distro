@@ -9,7 +9,7 @@ import { test } from "node:test";
 const template = readFileSync(new URL("./finalize.sh", import.meta.url), "utf8");
 const quote = (value) => "'" + value.replaceAll("'", "'\\''") + "'";
 
-test("fork profile clears only the default fork denial and preserves other unsupported semantics", () => {
+test("fork profile clears fork and vfork denials and preserves other unsupported semantics", () => {
   const base = readFileSync(new URL("../config.site", import.meta.url), "utf8");
   const delta = readFileSync(new URL("./config.site", import.meta.url), "utf8");
   const variables = [
@@ -35,9 +35,8 @@ test("fork profile clears only the default fork denial and preserves other unsup
       );
       assert.equal(result.status, 0, result.stderr);
       assert.deepEqual(result.stdout.trim().split("\n"), [
-        profile ? "unset" : "no",
-        profile ? "unset" : "no",
-        ...Array(6).fill("no"),
+        ...Array(4).fill(profile ? "unset" : "no"),
+        ...Array(4).fill("no"),
       ]);
     }
   }

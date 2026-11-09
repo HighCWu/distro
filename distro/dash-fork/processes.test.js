@@ -42,9 +42,10 @@ test("native Dash executes the complete process workload and refuses failed depe
   assert.doesNotMatch(failed.stdout, /::vm-test::pass/);
 });
 
-test("candidate preserves upstream source and keeps the fork fallback application-local", () => {
+test("candidate builds upstream Dash with the platform fork SDK", () => {
   const recipe = readFileSync(new URL("./package.nix", import.meta.url), "utf8");
-  assert.match(recipe, /CFLAGS='-O2 -Dvfork=fork'/);
+  assert.match(recipe, /CC=wasm-linux-fork-cc CFLAGS='-O2' \.\/configure/);
+  assert.doesNotMatch(recipe, /Dvfork=fork/);
   assert.match(recipe, /CC_FOR_BUILD = "\$\{pkgs.stdenv.cc\}\/bin\/cc"/);
   assert.match(recipe, /wasm-linux-fork-finalize src\/dash dash.wasm/);
   assert.match(recipe, /cp COPYING/);

@@ -11,7 +11,17 @@ diff --git a/include/unistd.h b/include/unistd.h
  int execve(const char *, char *const [], char *const []);
  int execv(const char *, char *const []);
  int execle(const char *, const char *, ...);
-@@ -177,7 +175,5 @@
+@@ -164,9 +162,7 @@
+ #define L_XTND 2
+ int brk(void *);
+ void *sbrk(intptr_t);
+-#ifndef __wasm__
+ pid_t vfork(void);
+-#endif
+ int vhangup(void);
+ int chroot(const char *);
+ int getpagesize(void);
+@@ -177,7 +173,5 @@
  int setgroups(size_t, const gid_t *);
  char *getpass(const char *);
 -#ifndef __wasm__
@@ -68,6 +78,16 @@ diff --git a/src/process/_Fork.c b/src/process/_Fork.c
  pid_t _Fork(void)
  {
  	pid_t ret;
+diff --git a/src/process/vfork.c b/src/process/vfork.c
+--- a/src/process/vfork.c
++++ b/src/process/vfork.c
+@@ -4,5 +4,5 @@
+ #include "syscall.h"
+ 
+-#ifndef __wasm__
++#if !defined(__wasm__) || defined(WASM_FORK_CONTINUATION)
+ pid_t vfork(void)
+ {
 diff --git a/arch/wasm32/syscall_arch.h b/arch/wasm32/syscall_arch.h
 --- a/arch/wasm32/syscall_arch.h
 +++ b/arch/wasm32/syscall_arch.h

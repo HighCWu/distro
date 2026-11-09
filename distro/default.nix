@@ -998,6 +998,33 @@ lib.makeScope (scope: lib.callPackageWith ({ inherit lib pkgs; } // scope)) (
       busybox = self.busybox-wasm64;
       vm-test = vmTestWasm64;
     };
+    vfork-runtime = callPackage ./vfork-runtime/package.nix {
+      extraChecks.both =
+        pkgs.runCommand "vfork-runtime-check-both"
+          {
+            passthru.ci.heavy = true;
+          }
+          ''
+            test -e ${self.sdk-fork-continuation.checks.wrapper}
+            test -e ${self.sdk-fork-continuation-wasm64.checks.wrapper}
+            test -e ${self.vfork-runtime.checks.runtime}
+            test -e ${self.vfork-runtime-wasm64.checks.runtime}
+            test -e ${self.dash-fork.checks.runtime}
+            test -e ${self.dash-fork-wasm64.checks.runtime}
+            test -e ${self.fork-continuation.checks.runtime}
+            test -e ${self.fork-continuation-wasm64.checks.runtime}
+            touch $out
+          '';
+    };
+    vfork-runtime-wasm64 = callPackage ./vfork-runtime/package.nix {
+      platform = self.platform-wasm64;
+      sdk = self.sdk-wasm64;
+      sdk-fork-continuation = self.sdk-fork-continuation-wasm64;
+      musl = self.musl-wasm64;
+      llvm-runtimes = self.llvm-runtimes-wasm64;
+      vm-test = vmTestWasm64;
+      busybox = self.busybox-wasm64;
+    };
 
     # The wasm stdenv: nixpkgs' generic stdenv with a cc-wrapped fork toolchain
     # and wasm32-unknown-linux-musl as the host platform. Everything below here
