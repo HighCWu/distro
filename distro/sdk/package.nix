@@ -48,7 +48,9 @@ let
         "--sysroot=${linkRoot}"
       ]
       ++ profileCompilerFlags
-      ++ map (flag: "$" + flag) linkOnlyDriverFlags
+      # Normal config arguments keep driver policy available to toolchains.
+      # Clang claims these flags even during compile-only jobs.
+      ++ linkOnlyDriverFlags
     )
     + "\n"
   );

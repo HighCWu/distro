@@ -1,7 +1,7 @@
 # SPDX-License-Identifier: MIT
 # shellcheck shell=bash
-# Clang parses response files and applies $-prefixed configuration options only
-# to linking jobs. Keep argument interpretation in the compiler, not this shim.
+# Clang parses response files and routes $-prefixed linker inputs in configs.
+# Driver policy flags use normal config arguments.
 # Ambient compiler search paths commonly describe the build host. Target
 # dependencies must be supplied explicitly (-I/-isystem/-L, including response
 # files or build-system flags), not inherited from an unrelated host shell.
