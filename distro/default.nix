@@ -1316,6 +1316,31 @@ lib.makeScope (scope: lib.callPackageWith ({ inherit lib pkgs; } // scope)) (
       vm-test = vmTestWasm64;
     };
     gawk = callPackage ./gawk/package.nix { };
+    gawk-dynamic = callPackage ./gawk-dynamic/package.nix {
+      extraChecks.both =
+        pkgs.runCommand "gawk-dynamic-check-both"
+          {
+            passthru.ci.heavy = true;
+          }
+          ''
+            test -e ${self.gawk-dynamic.checks.runtime}
+            test -e ${self.gawk-dynamic-wasm64.checks.runtime}
+            test -e ${self.sdk-dynamic-loader.checks.driver}
+            test -e ${self.sdk-dynamic-loader-wasm64.checks.driver}
+            test -e ${self.dynamic-loader.checks.runtime}
+            test -e ${self.dynamic-loader-wasm64.checks.runtime}
+            touch $out
+          '';
+    };
+    gawk-dynamic-wasm64 = callPackage ./gawk-dynamic/package.nix {
+      platform = self.platform-wasm64;
+      sdk-dynamic-loader = self.sdk-dynamic-loader-wasm64;
+      llvm-toolchain = self.llvm-toolchain-wasm64;
+      musl = self.musl-wasm64;
+      llvm-runtimes = self.llvm-runtimes-wasm64;
+      busybox = self.busybox-wasm64;
+      vm-test = vmTestWasm64;
+    };
     git = callPackage ./git/package.nix { };
     git-wasm64 = self.git.override {
       stdenv = self.stdenv-wasm64;
