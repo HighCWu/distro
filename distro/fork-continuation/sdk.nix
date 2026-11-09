@@ -242,7 +242,7 @@ pkgs.symlinkJoin {
           ];
         }
         ''
-          mkdir -p distro/fork-continuation packages/kernel/src
+          mkdir -p distro/fork-continuation distro/cooperative-poll packages/kernel/src
           cp ${../../package.json} package.json
           cp ${../../packages/kernel/package.json} packages/kernel/package.json
           cp ${./sdk.test.js} distro/fork-continuation/sdk.test.js
@@ -250,6 +250,7 @@ pkgs.symlinkJoin {
           cp ${./package.nix} distro/fork-continuation/package.nix
           cp ${./sdk.nix} distro/fork-continuation/sdk.nix
           cp ${./execution.c} distro/fork-continuation/execution.c
+          cp ${../cooperative-poll/execution.c} distro/cooperative-poll/execution.c
           cp ${./raw-clone.c} distro/fork-continuation/raw-clone.c
           cp ${./config.site} distro/fork-continuation/config.site
           cp ${../config.site} distro/config.site
