@@ -34,6 +34,7 @@ function typed_providers(address: "i32" | "i64") {
     ["linux_dlopen_v1", "link_map_abi", [], i],
     ["linux_dlopen_v1", "open", [w, i], w],
     ["linux_dlopen_v1", "symbol", [w, w], w],
+    ["linux_dlopen_v1", "address", [w, w], i],
     ["linux_dlopen_v1", "valid", [w], i],
     ["linux_dlopen_v1", "error", [w, w], i],
     ["_execution", "_start", [], null],
