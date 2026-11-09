@@ -1,0 +1,13 @@
+# SPDX-License-Identifier: MIT
+# Autoconf policy for the optional Linux/Wasm dynamic-loader SDK.
+# Keep the default SDK's unsupported process and fixed-mapping answers.
+ac_cv_func_fork=no
+ac_cv_func_vfork=no
+ac_cv_func_fork_works=no
+ac_cv_func_vfork_works=no
+# Keep libtool's encoded runtime search path target-specific when cross compiling.
+lt_cv_sys_lib_dlsearch_path_spec='/lib /usr/lib'
+lt_cv_sys_dlsearch_path='/lib /usr/lib'
+# AC_FUNC_MMAP assumes success for cross-compiled Linux. Direct anonymous
+# allocation does not implement its fixed-address/file-mapping contract.
+ac_cv_func_mmap_fixed_mapped=no

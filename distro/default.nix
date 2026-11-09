@@ -186,6 +186,36 @@ lib.makeScope (scope: lib.callPackageWith ({ inherit lib pkgs; } // scope)) (
       llvm-runtimes = self.llvm-runtimes-wasm64;
       vm-test = vmTestWasm64;
     };
+    libltdl = callPackage ./libltdl/package.nix { };
+    libltdl-wasm64 = callPackage ./libltdl/package.nix {
+      platform = self.platform-wasm64;
+      sdk-dynamic-loader = self.sdk-dynamic-loader-wasm64;
+      llvm-toolchain = self.llvm-toolchain-wasm64;
+    };
+    libltdl-runtime = callPackage ./libltdl-runtime/package.nix {
+      extraChecks.both =
+        pkgs.runCommand "libltdl-runtime-both-widths"
+          {
+            passthru.ci.heavy = true;
+          }
+          ''
+            test -e ${self.sdk-dynamic-loader.checks.driver}
+            test -e ${self.sdk-dynamic-loader-wasm64.checks.driver}
+            test -e ${self.libltdl-runtime.checks.runtime}
+            test -e ${self.libltdl-runtime-wasm64.checks.runtime}
+            touch $out
+          '';
+    };
+    libltdl-runtime-wasm64 = callPackage ./libltdl-runtime/package.nix {
+      platform = self.platform-wasm64;
+      libltdl = self.libltdl-wasm64;
+      sdk-dynamic-loader = self.sdk-dynamic-loader-wasm64;
+      llvm-toolchain = self.llvm-toolchain-wasm64;
+      musl = self.musl-wasm64;
+      llvm-runtimes = self.llvm-runtimes-wasm64;
+      vm-test = vmTestWasm64;
+      busybox = self.busybox-wasm64;
+    };
     sdk-wasm64 = callPackage ./sdk/package.nix {
       platform = self.platform-wasm64;
       llvm-toolchain = self.llvm-toolchain-wasm64;

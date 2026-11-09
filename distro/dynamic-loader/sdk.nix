@@ -16,6 +16,10 @@ let
       llvm-toolchain
     else
       llvm-toolchain.override { llvm-toolchain-unwrapped = sharedCompiler; };
+  configSiteFiles = pkgs.writeTextDir "share/linux-wasm-dynamic-sdk/config.site" (
+    builtins.readFile ./config.site
+  );
+  configSite = "${configSiteFiles}/share/linux-wasm-dynamic-sdk/config.site";
   dynamicMusl = musl.override { enableDynamicLoader = true; };
   dynamicBase = sysroot-base.override { musl = dynamicMusl; };
   dynamicRoot = sysroot.override { sysroot-base = dynamicBase; };
@@ -104,7 +108,10 @@ let
 in
 pkgs.symlinkJoin {
   name = "linux-wasm-dynamic-sdk-${platform.wasmArch}";
-  paths = [ cc ];
+  paths = [
+    cc
+    configSiteFiles
+  ];
   postBuild = ''
     mkdir -p $out/share/linux-wasm-dynamic-sdk
     cp ${./SDK.md} $out/share/linux-wasm-dynamic-sdk/README.md
@@ -113,7 +120,12 @@ pkgs.symlinkJoin {
   passthru = {
     sysroot = startupRoot;
     buildMaterials = materials;
-    inherit config execution compiler;
+    inherit
+      config
+      configSite
+      execution
+      compiler
+      ;
     checks.driver =
       pkgs.runCommand "dynamic-sdk-driver-${platform.wasmArch}"
         {
