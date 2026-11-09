@@ -41,6 +41,7 @@ function now(): FSTimestamp {
 
 function valid_name(name: string) {
   if (
+    !name.isWellFormed() ||
     name.length === 0 ||
     name === "." ||
     name === ".." ||

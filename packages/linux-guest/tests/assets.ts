@@ -97,6 +97,7 @@ export const load_file_creation_modes = () => readFile(join(directory, "file-cre
 export const load_readonly_access = () => readFile(join(directory, "readonly-access"));
 export const load_external_file_metadata = () =>
   readFile(join(directory, "external-file-metadata"));
+export const load_file_byte_names = () => readFile(join(directory, "file-byte-names"));
 
 const lifecycle_rootfs = await readFile(join(directory, "lifecycle-rootfs.erofs"));
 

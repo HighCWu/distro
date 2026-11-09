@@ -37,6 +37,7 @@ let
   file-creation-modes = test-program "file-creation-modes" ../../guest-tests/file-creation-modes.c;
   readonly-access = test-program "readonly-access" ../../guest-tests/readonly-access.c;
   external-file-metadata = test-program "external-file-metadata" ../../guest-tests/external-file-metadata.c;
+  file-byte-names = test-program "file-byte-names" ../../guest-tests/file-byte-names.c;
 
   lifecycle-rootfs = vm-test.installedDisk {
     name = "linux-guest-lifecycle";
@@ -61,6 +62,7 @@ let
     "file-creation-modes" = "${file-creation-modes}/bin/file-creation-modes";
     "readonly-access" = "${readonly-access}/bin/readonly-access";
     "external-file-metadata" = "${external-file-metadata}/bin/external-file-metadata";
+    "file-byte-names" = "${file-byte-names}/bin/file-byte-names";
   };
 
   package = pkgs.stdenvNoCC.mkDerivation {

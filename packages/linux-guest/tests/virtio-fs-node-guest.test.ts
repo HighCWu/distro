@@ -24,6 +24,7 @@ import {
   load_file_timestamps,
   load_open_file_metadata,
   load_file_creation_modes,
+  load_file_byte_names,
   load_readonly_access,
   load_external_file_metadata,
 } from "./assets.ts";
@@ -166,6 +167,50 @@ guest_test("Node directory sharing through Linux", async (t, fixture) => {
         await guest.fs.remove(base + renamed);
         assert.equal(await readFile(path.join(shared, "bom-renamed"), "utf8"), "sentinel");
         await guest.fs.remove(base + "\uFEFFbom-link");
+      },
+    );
+
+    await t.test(
+      "raw non-UTF-8 names remain distinct from U+FFFD through Linux",
+      {
+        skip: process.platform === "win32",
+      },
+      async () => {
+        const directory = path.join(shared, "file-byte-names");
+        await mkdir(directory);
+        const rawName = Buffer.from([0x62, 0x79, 0x74, 0x65, 0x2d, 0x80]);
+        const replacementName = Buffer.from("byte-\uFFFD", "utf8");
+        const hostPath = (name: Buffer) =>
+          Buffer.concat([Buffer.from(directory), Buffer.from(path.sep), name]);
+        const rawPath = hostPath(rawName);
+        const replacementPath = hostPath(replacementName);
+        await writeFile(rawPath, "raw-byte-80\n");
+        await writeFile(replacementPath, "utf8-replacement\n");
+        const replacementBefore = await stat(replacementPath);
+
+        await guest.fs.writeFile("/tmp/file-byte-names", await load_file_byte_names());
+        await guest.fs.chmod("/tmp/file-byte-names", 0o755);
+        const process = await guest.exec(["/tmp/file-byte-names", "/tmp/shared/file-byte-names"]);
+        const stdout = new Response(process.stdout).text();
+        const stderr = new Response(process.stderr).text();
+        assert.equal((await process.status).success, true, await stderr);
+        assert.deepEqual((await stdout).trim().split("\n"), [
+          "file bytes: distinct raw and replacement names remain exact pass",
+          "file bytes: raw names survive directory and relative mutations pass",
+          "file bytes: cleanup preserves the replacement-name file pass",
+          "::vm-test::pass",
+        ]);
+
+        const entries = await readdir(directory, { encoding: "buffer" });
+        assert.deepEqual(
+          entries.sort(Buffer.compare),
+          [rawName, replacementName].sort(Buffer.compare),
+        );
+        assert.equal(await readFile(rawPath, "utf8"), "raw-byte-80\n");
+        assert.equal(await readFile(replacementPath, "utf8"), "utf8-replacement\n");
+        const replacementAfter = await stat(replacementPath);
+        assert.equal(replacementAfter.ino, replacementBefore.ino);
+        assert.equal(replacementAfter.size, replacementBefore.size);
       },
     );
 

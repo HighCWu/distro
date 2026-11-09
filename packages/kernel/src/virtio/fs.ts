@@ -12,6 +12,7 @@ import {
   type Virtqueue,
   type VirtqueueBuffer,
 } from "./core.ts";
+import { decode_linux_bytes, encode_linux_string } from "../linux-string.ts";
 
 type MaybePromise<T> = T | PromiseLike<T>;
 
@@ -204,8 +205,10 @@ export interface FSCreateContext {
 /**
  * The host-side filesystem contract used by virtio-fs.
  *
- * Names are single, valid UTF-8 path components. Methods which are absent are
- * reported to the guest as unsupported; sync methods may return promises.
+ * Names are single path components. Path components and symlink targets
+ * preserve arbitrary Linux bytes. Undecodable bytes use the private
+ * U+DC80..U+DCFF escapes from linux-string.ts. Methods which are absent are
+ * reported to Linux as unsupported. Sync methods may return promises.
  *
  * `TNode` and `THandle` are the backend's node and open-file types; the device
  * never inspects them. A writable backend (one providing `write` or `create`)
@@ -577,7 +580,11 @@ function validate_name(name: string) {
   ) {
     throw new FSError("EINVAL", "invalid path component");
   }
-  if (utf8_encoder.encode(name).byteLength > 255) {
+  const bytes = encode_linux_string(name);
+  if (decode_linux_bytes(bytes) !== name) {
+    throw new FSError("EINVAL", "noncanonical path component");
+  }
+  if (bytes.byteLength > 255) {
     throw new FSError("ENAMETOOLONG");
   }
   return name;
@@ -932,7 +939,10 @@ export function fileSystemDevice<TNode extends object, THandle, T extends FS<TNo
         break;
       }
       case FuseOpcode.LOOKUP: {
-        const found = await filesystem.lookup(node!.node, validate_name(body.cstring()));
+        const found = await filesystem.lookup(
+          node!.node,
+          validate_name(decode_linux_bytes(body.cstring_bytes())),
+        );
         if (!found) throw new FSError("ENOENT");
         await write_lookup_entry(payload, record_for_node(found, node!));
         break;
@@ -1000,13 +1010,13 @@ export function fileSystemDevice<TNode extends object, THandle, T extends FS<TNo
       }
       case FuseOpcode.READLINK: {
         if (!filesystem.readlink) throw new UnsupportedOperation();
-        payload.append(utf8_encoder.encode(await filesystem.readlink(node!.node)));
+        payload.append(encode_linux_string(await filesystem.readlink(node!.node)));
         break;
       }
       case FuseOpcode.SYMLINK: {
         if (!filesystem.symlink) throw new UnsupportedOperation();
-        const name = validate_name(body.cstring());
-        const target = body.cstring();
+        const name = validate_name(decode_linux_bytes(body.cstring_bytes()));
+        const target = decode_linux_bytes(body.cstring_bytes());
         const linked = await filesystem.symlink(
           node!.node,
           name,
@@ -1022,7 +1032,7 @@ export function fileSystemDevice<TNode extends object, THandle, T extends FS<TNo
         const request = body.struct(FuseMkdirIn);
         const made = await filesystem.mkdir(
           node!.node,
-          validate_name(body.cstring()),
+          validate_name(decode_linux_bytes(body.cstring_bytes())),
           create_context(header, FileType.directory | request.mode, request.umask),
         );
         const record = record_for_node(made, node!);
@@ -1033,15 +1043,19 @@ export function fileSystemDevice<TNode extends object, THandle, T extends FS<TNo
       case FuseOpcode.RMDIR: {
         const method = header.opcode === FuseOpcode.UNLINK ? filesystem.unlink : filesystem.rmdir;
         if (!method) throw new UnsupportedOperation();
-        await method.call(filesystem, node!.node, validate_name(body.cstring()));
+        await method.call(
+          filesystem,
+          node!.node,
+          validate_name(decode_linux_bytes(body.cstring_bytes())),
+        );
         break;
       }
       case FuseOpcode.RENAME: {
         if (!filesystem.rename) throw new UnsupportedOperation();
         const request = body.struct(FuseRenameIn);
         const new_parent = node_record(request.newdir);
-        const old_name = validate_name(body.cstring());
-        const new_name = validate_name(body.cstring());
+        const old_name = validate_name(decode_linux_bytes(body.cstring_bytes()));
+        const new_name = validate_name(decode_linux_bytes(body.cstring_bytes()));
         const moved =
           node === new_parent ? undefined : await filesystem.lookup(node!.node, old_name);
         const moved_record = moved && by_node.get(moved);
@@ -1063,7 +1077,11 @@ export function fileSystemDevice<TNode extends object, THandle, T extends FS<TNo
         if (!filesystem.link) throw new UnsupportedOperation();
         const request = body.struct(FuseLinkIn);
         const source = node_record(request.oldnodeid);
-        await filesystem.link(source.node, node!.node, validate_name(body.cstring()));
+        await filesystem.link(
+          source.node,
+          node!.node,
+          validate_name(decode_linux_bytes(body.cstring_bytes())),
+        );
         await write_lookup_entry(payload, source);
         break;
       }
@@ -1089,7 +1107,7 @@ export function fileSystemDevice<TNode extends object, THandle, T extends FS<TNo
         const request = body.struct(FuseCreateIn);
         const created = await filesystem.create(
           node!.node,
-          validate_name(body.cstring()),
+          validate_name(decode_linux_bytes(body.cstring_bytes())),
           request.flags,
           create_context(header, FileType.file | request.mode, request.umask),
         );
@@ -1231,7 +1249,7 @@ export function fileSystemDevice<TNode extends object, THandle, T extends FS<TNo
         }
         for (let index = offset; index < entries.length; index++) {
           const entry = entries[index]!;
-          const name = utf8_encoder.encode(entry.name);
+          const name = encode_linux_string(entry.name);
           if (!fits(name)) return payload;
           await append_entry(
             name,
@@ -1248,7 +1266,7 @@ export function fileSystemDevice<TNode extends object, THandle, T extends FS<TNo
         for await (const entry of directory_entries) {
           const position = index++;
           if (position < offset) continue;
-          const name = utf8_encoder.encode(validate_name(entry.name));
+          const name = encode_linux_string(validate_name(entry.name));
           if (!fits(name)) break;
           const record = record_for_node(entry.node, handle.node);
           try {

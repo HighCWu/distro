@@ -1,6 +1,8 @@
 // SPDX-License-Identifier: MIT
 
 import {
+  decode_linux_bytes,
+  encode_linux_string,
   type FS,
   type FSAttributes,
   type FSCreateContext,
@@ -82,6 +84,38 @@ async function node_call<T>(operation: Promise<T>): Promise<T> {
   } catch (error) {
     filesystem_error(error);
   }
+}
+
+function host_path(value: string): string | Buffer {
+  if (process.platform === "win32") {
+    if (!value.isWellFormed())
+      throw new FSError("EINVAL", "path contains an unpaired UTF-16 surrogate");
+    return value;
+  }
+  const encoded = encode_linux_string(value);
+  if (decode_linux_bytes(encoded) !== value)
+    throw new FSError("EINVAL", "path is not a canonical lossless Linux string");
+  return Buffer.from(encoded);
+}
+
+function host_name(value: string | Buffer): string {
+  return typeof value === "string" ? value : decode_linux_bytes(value);
+}
+
+async function host_realpath(value: string): Promise<string> {
+  if (process.platform === "win32") return await node_call(realpath(host_path(value)));
+  return decode_linux_bytes(await node_call(realpath(host_path(value), { encoding: "buffer" })));
+}
+
+async function host_readlink(value: string): Promise<string> {
+  if (process.platform === "win32") return await node_call(readlink(host_path(value)));
+  return decode_linux_bytes(await node_call(readlink(host_path(value), { encoding: "buffer" })));
+}
+
+async function host_readdir(value: string) {
+  if (process.platform === "win32")
+    return await node_call(readdir(host_path(value), { withFileTypes: true }));
+  return await node_call(readdir(host_path(value), { withFileTypes: true, encoding: "buffer" }));
 }
 
 function valid_name(name: string) {
@@ -316,7 +350,7 @@ export class NodeFS implements FS<Node, Handle> {
     this.#ownedNodes.add(this.root);
     this.readOnly = options.readOnly ?? false;
     this.#nodes.set("", this.root);
-    this.#root_path = node_call(realpath(path.resolve(root)));
+    this.#root_path = host_realpath(path.resolve(root));
   }
 
   // Keep validation and its later pathname syscall together relative to every
@@ -419,7 +453,7 @@ export class NodeFS implements FS<Node, Handle> {
     const root = await this.#root_path;
     const result = await this.#path(parts);
     const parent = directory || parts.length === 0 ? result : path.dirname(result);
-    const actual_parent = await node_call(realpath(parent));
+    const actual_parent = await host_realpath(parent);
     const relative = path.relative(root, actual_parent);
     if (relative === ".." || relative.startsWith(`..${path.sep}`) || path.isAbsolute(relative)) {
       throw new FSError("EACCES", "path escapes through a symbolic link");
@@ -434,7 +468,9 @@ export class NodeFS implements FS<Node, Handle> {
       const parts = this.#parts(node);
       let stats: BigIntStats;
       try {
-        stats = await node_call(lstat(await this.#validated_path(parts), { bigint: true }));
+        stats = await node_call(
+          lstat(host_path(await this.#validated_path(parts)), { bigint: true }),
+        );
       } catch (error) {
         // A cached child can be the first operation after its parent moved.
         // Its old pathname may have vanished before an identity comparison is
@@ -486,7 +522,7 @@ export class NodeFS implements FS<Node, Handle> {
       if (node.attached) {
         try {
           const target = await this.#validated_path(node.parts, true);
-          const current = await node_call(lstat(target, { bigint: true }));
+          const current = await node_call(lstat(host_path(target), { bigint: true }));
           if (`${current.dev}:${current.ino}` === node.identity && current.isDirectory())
             return node.parts;
         } catch (error) {
@@ -498,12 +534,12 @@ export class NodeFS implements FS<Node, Handle> {
         // Linux procfs resolves this live descriptor after a host rename.
         // Verify the resulting pathname still denotes that descriptor before
         // rebasing cached children. This does not make pathname I/O race-free.
-        const target = await node_call(realpath(`/proc/self/fd/${file.fd}`));
+        const target = await host_realpath(`/proc/self/fd/${file.fd}`);
         const root = await this.#root_path;
         const relative = path.relative(root, target);
         if (relative === ".." || relative.startsWith(`..${path.sep}`) || path.isAbsolute(relative))
           throw new FSError("EACCES", "open directory moved outside the shared root");
-        const actual = await node_call(lstat(target, { bigint: true }));
+        const actual = await node_call(lstat(host_path(target), { bigint: true }));
         if (actual.dev !== opened.dev || actual.ino !== opened.ino)
           throw new FSError("ENOENT", "open directory pathname was replaced");
         const parts = relative ? relative.split(path.sep) : [];
@@ -592,7 +628,9 @@ export class NodeFS implements FS<Node, Handle> {
     return await this.#path_operation(async () => {
       const parts = [...(await this.#directory_parts(parent)), valid_name(name)];
       try {
-        const stats = await node_call(lstat(await this.#validated_path(parts), { bigint: true }));
+        const stats = await node_call(
+          lstat(host_path(await this.#validated_path(parts)), { bigint: true }),
+        );
         return this.#node(parts, stats);
       } catch (error) {
         if (error instanceof FSError && (error as { readonly errno: number }).errno === 2) {
@@ -623,7 +661,7 @@ export class NodeFS implements FS<Node, Handle> {
   async readlink(node: Node) {
     return await this.#path_operation(async () => {
       await this.#stats(node);
-      return await node_call(readlink(await this.#validated_path(this.#parts(node))));
+      return await host_readlink(await this.#validated_path(this.#parts(node)));
     });
   }
 
@@ -631,10 +669,10 @@ export class NodeFS implements FS<Node, Handle> {
     this.#writable();
     return await this.#path_operation(async () => {
       const parts = [...(await this.#directory_parts(parent)), valid_name(name)];
-      await node_call(symlink(target, await this.#validated_path(parts)));
+      await node_call(symlink(host_path(target), host_path(await this.#validated_path(parts))));
       return this.#node(
         parts,
-        await node_call(lstat(await this.#validated_path(parts), { bigint: true })),
+        await node_call(lstat(host_path(await this.#validated_path(parts)), { bigint: true })),
       );
     });
   }
@@ -655,7 +693,7 @@ export class NodeFS implements FS<Node, Handle> {
           if ((await this.#stats(node)).isSymbolicLink()) {
             throw new FSError("EOPNOTSUPP", "cannot change a symbolic link's mode");
           }
-          await chmod(target!, changes.mode & 0o7777);
+          await chmod(host_path(target!), changes.mode & 0o7777);
         }
       }
       if (changes.uid !== undefined || changes.gid !== undefined) {
@@ -663,7 +701,7 @@ export class NodeFS implements FS<Node, Handle> {
         const uid = changes.uid ?? Number(existing.uid);
         const gid = changes.gid ?? Number(existing.gid);
         if (file) await file.chown(uid, gid);
-        else await lchown(target!, uid, gid);
+        else await lchown(host_path(target!), uid, gid);
       }
       if (changes.size !== undefined) {
         const size = checked_offset(changes.size);
@@ -691,7 +729,7 @@ export class NodeFS implements FS<Node, Handle> {
         const atime = time(changes.atime, explicit_atime, existing.atimeNs);
         const mtime = time(changes.mtime, explicit_mtime, existing.mtimeNs);
         if (file) await file.utimes(atime, mtime);
-        else await lutimes(target!, atime, mtime);
+        else await lutimes(host_path(target!), atime, mtime);
       }
       return attributes(await current());
     } catch (error) {
@@ -743,7 +781,7 @@ export class NodeFS implements FS<Node, Handle> {
     // though truncating that verified descriptor requires a writable host fd.
     const writable = (flags & linux_open.access) !== linux_open.readonly;
     if (truncate && !writable) checked_flags |= constants.O_RDWR;
-    const file = await node_call(open(target, checked_flags));
+    const file = await node_call(open(host_path(target), checked_flags));
     try {
       const actual = await node_call(file.stat({ bigint: true }));
       if (actual.dev !== expected.dev || actual.ino !== expected.ino)
@@ -767,7 +805,11 @@ export class NodeFS implements FS<Node, Handle> {
       let created = false;
       for (;;) {
         try {
-          file = await open(target, host_flags | constants.O_EXCL, context.mode & 0o7777);
+          file = await open(
+            host_path(target),
+            host_flags | constants.O_EXCL,
+            context.mode & 0o7777,
+          );
           created = true;
           break;
         } catch (error) {
@@ -775,7 +817,10 @@ export class NodeFS implements FS<Node, Handle> {
             filesystem_error(error);
         }
         try {
-          file = await open(target, host_flags & ~(constants.O_CREAT | constants.O_EXCL));
+          file = await open(
+            host_path(target),
+            host_flags & ~(constants.O_CREAT | constants.O_EXCL),
+          );
           break;
         } catch (error) {
           // An external unlink can race the EEXIST observation. Retry actual
@@ -887,9 +932,7 @@ export class NodeFS implements FS<Node, Handle> {
       if (process.platform === "linux" && current.file) {
         const opened = await node_call(current.file.stat({ bigint: true }));
         if (opened.isDirectory() && opened.nlink === 0n) {
-          const entries = await node_call(
-            readdir(`/proc/self/fd/${current.file.fd}`, { withFileTypes: true }),
-          );
+          const entries = await host_readdir(`/proc/self/fd/${current.file.fd}`);
           if (entries.length)
             throw new FSError("EIO", "removed directory contains unexpected entries");
           return [];
@@ -898,13 +941,14 @@ export class NodeFS implements FS<Node, Handle> {
       const parts = await this.#directory_parts(node);
       const target = await this.#validated_path(parts);
       const result: FSDirectoryEntry<Node>[] = [];
-      for (const entry of await node_call(readdir(target, { withFileTypes: true }))) {
+      for (const entry of await host_readdir(target)) {
+        const name = host_name(entry.name);
         result.push({
-          name: entry.name,
+          name,
           node: this.#node(
-            [...parts, entry.name],
+            [...parts, name],
             await node_call(
-              lstat(await this.#validated_path([...parts, entry.name]), { bigint: true }),
+              lstat(host_path(await this.#validated_path([...parts, name])), { bigint: true }),
             ),
           ),
           type: entry.isFile()
@@ -934,13 +978,13 @@ export class NodeFS implements FS<Node, Handle> {
       const parts = [...(await this.#directory_parts(parent)), valid_name(name)];
       const target = await this.#validated_path(parts);
       await node_call(
-        mkdir(target, {
+        mkdir(host_path(target), {
           mode: context.mode & 0o7777,
         }),
       );
-      const stats = await node_call(lstat(target, { bigint: true }));
+      const stats = await node_call(lstat(host_path(target), { bigint: true }));
       const mode = (Number(stats.mode) & 0o7000) | (context.mode & 0o777);
-      if ((Number(stats.mode) & 0o7777) !== mode) await node_call(chmod(target, mode));
+      if ((Number(stats.mode) & 0o7777) !== mode) await node_call(chmod(host_path(target), mode));
       return this.#node(parts, stats);
     });
   }
@@ -949,8 +993,8 @@ export class NodeFS implements FS<Node, Handle> {
     this.#writable();
     await this.#path_operation(async () => {
       const parts = [...(await this.#directory_parts(parent)), valid_name(name)];
-      await node_call(lstat(await this.#validated_path(parts), { bigint: true }));
-      await node_call(unlink(await this.#validated_path(parts)));
+      await node_call(lstat(host_path(await this.#validated_path(parts)), { bigint: true }));
+      await node_call(unlink(host_path(await this.#validated_path(parts))));
       this.#forget(parts);
     });
   }
@@ -959,8 +1003,8 @@ export class NodeFS implements FS<Node, Handle> {
     this.#writable();
     await this.#path_operation(async () => {
       const parts = [...(await this.#directory_parts(parent)), valid_name(name)];
-      await node_call(lstat(await this.#validated_path(parts), { bigint: true }));
-      await node_call(rmdir(await this.#validated_path(parts)));
+      await node_call(lstat(host_path(await this.#validated_path(parts)), { bigint: true }));
+      await node_call(rmdir(host_path(await this.#validated_path(parts))));
       this.#forget(parts);
     });
   }
@@ -971,7 +1015,7 @@ export class NodeFS implements FS<Node, Handle> {
       const old_parts = [...(await this.#directory_parts(oldParent)), valid_name(oldName)];
       const new_parts = [...(await this.#directory_parts(newParent)), valid_name(newName)];
       const source = await this.#validated_path(old_parts);
-      const source_stats = await node_call(lstat(source, { bigint: true }));
+      const source_stats = await node_call(lstat(host_path(source), { bigint: true }));
       const destination = await this.#validated_path(new_parts);
       let unchanged = old_parts.join("/") === new_parts.join("/");
       if (!unchanged) {
@@ -979,7 +1023,7 @@ export class NodeFS implements FS<Node, Handle> {
           // rename is a successful no-op when both names already refer to
           // one inode. Do not detach either cached node in that case. lstat
           // matters: distinct symlinks to the same target still replace.
-          const destination_stats = await lstat(destination, { bigint: true });
+          const destination_stats = await lstat(host_path(destination), { bigint: true });
           unchanged =
             source_stats.dev === destination_stats.dev &&
             source_stats.ino === destination_stats.ino;
@@ -989,7 +1033,7 @@ export class NodeFS implements FS<Node, Handle> {
       }
       // Even a no-op must reach the host syscall for source existence and
       // permission checks; equal path strings alone do not establish success.
-      await node_call(rename(source, destination));
+      await node_call(rename(host_path(source), host_path(destination)));
       if (unchanged) return;
 
       this.#forget(new_parts);
@@ -1012,13 +1056,13 @@ export class NodeFS implements FS<Node, Handle> {
     this.#writable();
     await this.#path_operation(async () => {
       const source = await this.#validated_path(this.#parts(node));
-      const stats = await node_call(lstat(source, { bigint: true }));
+      const stats = await node_call(lstat(host_path(source), { bigint: true }));
       if (stats.isDirectory()) throw new FSError("EPERM", "cannot hard-link a directory");
       const parts = [...(await this.#directory_parts(newParent)), valid_name(newName)];
       const destination = await this.#validated_path(parts);
       // Node link uses the source directory entry itself, including symlinks.
       // The Linux caller resolves AT_SYMLINK_FOLLOW before issuing FUSE_LINK.
-      await node_call(link(source, destination));
+      await node_call(link(host_path(source), host_path(destination)));
       this.#nodes.set(parts.join("/"), node);
       this.#remember_child(parts, node);
     });
@@ -1030,12 +1074,12 @@ export class NodeFS implements FS<Node, Handle> {
         throw new FSError("ELOOP");
       }
       if (mask & constants.W_OK) this.#writable();
-      await node_call(access(await this.#validated_path(this.#parts(node)), mask));
+      await node_call(access(host_path(await this.#validated_path(this.#parts(node))), mask));
     });
   }
 
   async statfs(_node: Node): Promise<FSStat> {
-    const stats = await node_call(statfs(await this.#root_path, { bigint: true }));
+    const stats = await node_call(statfs(host_path(await this.#root_path), { bigint: true }));
     return {
       blocks: stats.blocks,
       blocksFree: stats.bfree,

@@ -19,3 +19,17 @@ test("invalid UTF-8 remains rejected instead of becoming another filename", () =
   ])
     assert.throws(() => new Reader(Uint8Array.from(bytes)).cstring(), /not valid UTF-8/);
 });
+
+test("raw C strings preserve invalid bytes, offsets and unterminated behavior", () => {
+  const reader = new Reader(Uint8Array.of(0xaa, 0xc0, 0xaf, 0, 0xff, 0));
+  reader.skip(1);
+  assert.deepEqual(reader.cstring_bytes(), Uint8Array.of(0xc0, 0xaf));
+  assert.equal(reader.offset, 4);
+  assert.deepEqual(reader.cstring_bytes(), Uint8Array.of(0xff));
+  assert.equal(reader.offset, 6);
+
+  const unterminated = new Reader(Uint8Array.of(0xaa, 0xff));
+  unterminated.skip(1);
+  assert.throws(() => unterminated.cstring_bytes(), /unterminated/);
+  assert.equal(unterminated.offset, 1);
+});

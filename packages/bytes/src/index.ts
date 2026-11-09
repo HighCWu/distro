@@ -229,12 +229,18 @@ export class Reader {
     return type.get(this.#dv, this.#take(type.size));
   }
 
-  /** Reads a NUL-terminated UTF-8 string, consuming the terminator. */
-  cstring() {
+  /** Reads bytes before a NUL terminator, returning a view and consuming it. */
+  cstring_bytes() {
     const end = this.#array.indexOf(0, this.offset);
     if (end < 0) throw new RangeError("unterminated string");
     const bytes = this.bytes(end - this.offset);
     this.skip(1);
+    return bytes;
+  }
+
+  /** Reads a NUL-terminated UTF-8 string, consuming the terminator. */
+  cstring() {
+    const bytes = this.cstring_bytes();
     try {
       return utf8.decode(bytes);
     } catch {
