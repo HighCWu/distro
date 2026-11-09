@@ -1,4 +1,4 @@
-# Experimental static C fork SDK
+# Experimental static fork SDK profiles
 
 This opt-in profile does not replace the default SDK. Build `sdk-fork-continuation`
 or `sdk-fork-continuation-wasm64` from the distro flake. Use matching-width
@@ -72,11 +72,41 @@ still disables fixed/file-mapping capability probes and dynamic loading.
 The manual configurations require the finalizer after every complete executable
 link. The automatic configurations perform that step within Clang.
 
-Current supported scope: static C, fork from ordinary single-thread program
+The C profiles cover static C, fork from ordinary single-thread program
 execution. Fork from a signal handler, runtime callback, or a process with sibling
 threads is rejected. Dynamic modules, C++ EH/SjLj and multithreaded fork
 are not supported. The fixed 256 KiB continuation buffer traps on overflow;
 overflow is not a recoverable fork errno. No performance guarantee is made.
+
+## Static C++ candidate
+
+The independent `sdk-fork-cxx` and `sdk-fork-cxx-wasm64` candidates use automatic
+final linking and the supplied matching libc++, libc++abi and libunwind. Select
+one in the build environment and use ordinary C++ compile and link commands.
+
+```sh
+wasm-linux-fork-c++ -std=c++17 -O0 -pthread -c main.cc -o main.o
+wasm-linux-fork-c++ -pthread main.o -o app.wasm
+```
+
+These candidates advertise syscall continuation ABI 3. A matching loader checks
+the private `__wasm_fork_cxx_quiescent_v1` export before starting a fresh unwind.
+It reads the selected libc++abi's caught-exception chain and uncaught-exception
+count. An active exception returns `EOPNOTSUPP` before the descriptor is reset or
+a child is created. Initialization only validates the guard's signature. It does
+not query C++ TLS before `_start`, and rewind completes the already admitted call.
+The pinned Binaryen 129 traps when starting Asyncify unwind inside an active
+catch. Ordinary fork outside an active exception and subsequent parent/child C++
+exceptions are the candidate's intended success paths.
+
+The execution profile explicitly links its C++ runtime archives even when using
+`wasm-linux-fork-cc`, so C configure probes can link the guard. These explicit
+profile inputs also remain with `-nostdlib` or `-nodefaultlibs`. This candidate
+requires static single-module, single-thread programs and the supplied C++
+runtime. Dynamic linking, SjLj composition, foreign-language unwinding and
+multithreaded fork require further implementation and validation. The default SDK
+and C profiles retain their existing selection. Full Linux/Wasm target acceptance
+for this candidate is recorded separately from native and frontend checks.
 
 The existing `vfork()` interface uses musl's generic C fork-like fallback through
 the same single-thread continuation path. Parent and child have separate memory
@@ -84,9 +114,9 @@ snapshots and may proceed independently. The child can execute another program
 or call `_exit`. The path skips `pthread_atfork` handlers. Original Dash sources can
 link this interface directly with the optional profile and whole-link finalizer.
 
-New execution objects export syscall continuation ABI 2. Use a matching runtime;
+New C execution objects export syscall continuation ABI 2. Use a matching runtime;
 ABI-1-only loaders reject these objects, and new loaders still accept ABI 1 for
-the old clone subset. Only ABI 2 enables `clone3` through the v2 import.
+the old clone subset. ABI 2 and ABI 3 enable `clone3` through the v2 import.
 The v2 import adapts Linux `clone3` (435) for the same limited fork shape:
 zero flags or capability-gated options below, SIGCHLD exit signal, no alternate
 stack or CLONE_SETTLS flag. PID selection needs the optional transport below.
