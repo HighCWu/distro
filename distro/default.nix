@@ -185,6 +185,16 @@ lib.makeScope (scope: lib.callPackageWith ({ inherit lib pkgs; } // scope)) (
         test -e ${self.dynamic-loader-wasm64.checks.runtime}
         touch $out
       '';
+      extraChecks.link-driver-both =
+        pkgs.runCommand "sdk-link-driver-both-widths" { passthru.ci.heavy = true; }
+          ''
+            test -e ${self.sdk.checks.link-driver}
+            test -e ${self.sdk-wasm64.checks.link-driver}
+            test -e ${self.dynamic-driver.checks.build}
+            test -e ${self.sdk.checks.cxx-runtime}
+            test -e ${self.sdk-wasm64.checks.cxx-runtime}
+            touch $out
+          '';
     };
     dynamic-symbol-versions = callPackage ./dynamic-symbol-versions/package.nix { };
     dynamic-symbol-versions-wasm64 = callPackage ./dynamic-symbol-versions/package.nix {

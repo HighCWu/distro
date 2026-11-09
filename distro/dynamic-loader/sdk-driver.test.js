@@ -16,8 +16,72 @@ const linkerArguments = (result) => {
   );
 };
 
+const shellWords = (text) => {
+  const words = [];
+  let word = "";
+  let active = false;
+  let single = false;
+  let double = false;
+  let escaped = false;
+  for (const character of text) {
+    if (escaped) {
+      word += character;
+      active = true;
+      escaped = false;
+    } else if (single) {
+      if (character === "'") single = false;
+      else word += character;
+    } else if (double) {
+      if (character === '"') double = false;
+      else if (character === "\\") escaped = true;
+      else word += character;
+    } else if (character === "'") {
+      single = true;
+      active = true;
+    } else if (character === '"') {
+      double = true;
+      active = true;
+    } else if (character === "\\") {
+      escaped = true;
+      active = true;
+    } else if (/\s/.test(character)) {
+      if (active) words.push(word);
+      word = "";
+      active = false;
+    } else {
+      word += character;
+      active = true;
+    }
+  }
+  assert.equal(escaped, false, "trailing escape in SDK response file");
+  assert.equal(single || double, false, "unclosed quote in SDK response file");
+  if (active) words.push(word);
+  return words;
+};
+
+const expandedLinkerArguments = (result) => {
+  const expand = (arguments_) =>
+    arguments_.flatMap((argument) => {
+      if (
+        !argument.startsWith("@") ||
+        !/^wasm-linux-.*\.rsp$/.test(argument.slice(argument.lastIndexOf("/") + 1))
+      )
+        return [argument];
+      return expand(shellWords(readFileSync(argument.slice(1), "utf8")));
+    });
+  return expand(linkerArguments(result));
+};
+
 const assertRelocatableCommand = (result, description) => {
-  const arguments_ = linkerArguments(result);
+  const rawArguments = linkerArguments(result);
+  assert.equal(
+    rawArguments.some(
+      (argument) => argument.startsWith("@") && /wasm-linux-.*\.rsp$/.test(argument),
+    ),
+    false,
+    `${description}: relocatable link must not load the SDK profile response files`,
+  );
+  const arguments_ = expandedLinkerArguments(result);
   for (const argument of arguments_) {
     assert.doesNotMatch(argument, /(?:^|\/)crt[^/]*\.o$/i, `${description}: CRT ${argument}`);
     assert.doesNotMatch(argument, /libc-exports\.a$/i, `${description}: libc ${argument}`);
@@ -222,7 +286,7 @@ test(
       assert.equal(archiveMembers.status, 0, archiveMembers.stderr);
       assert.ok(archiveMembers.stdout.trim(), "combined libc++ archive has members");
 
-      const mainCommand = linkerArguments(
+      const mainCommand = expandedLinkerArguments(
         run("-###", "-O0", "-std=c++17", "main.cpp", "-o", "main.wasm"),
       );
       const archiveIndex = mainCommand.indexOf(archive);
@@ -243,7 +307,7 @@ test(
         "-o",
         "side.o",
       );
-      const sideCommand = linkerArguments(
+      const sideCommand = expandedLinkerArguments(
         run("-###", "-shared", "side.o", "-Wl,-soname,libcxx-side.so", "-o", "side.so"),
       );
       assert.ok(sideCommand.includes("--unresolved-symbols=import-dynamic"));
@@ -258,12 +322,21 @@ test(
       assert.equal(sideCommand.includes("-lc"), false);
       run("-shared", "side.o", "-Wl,-soname,libcxx-side.so", "-o", "side.so");
 
-      const partialCommand = assertRelocatableCommand(
-        run("-###", "-r", "side.o", "-o", "side.partial.o"),
-        "C++ -r",
+      const partialFlags = [
+        "-Werror",
+        "-stdlib=libc++",
+        "--unwindlib=libunwind",
+        "--rtlib=compiler-rt",
+      ];
+      const partialDryRun = run("-###", ...partialFlags, "-r", "side.o", "-o", "side.partial.o");
+      assert.doesNotMatch(
+        partialDryRun.stderr,
+        /argument unused during compilation|unused command-line argument/i,
+        "C++ -r must claim link runtime options without an unused-option diagnostic",
       );
+      const partialCommand = assertRelocatableCommand(partialDryRun, "C++ -r");
       assert.ok(partialCommand.includes("-r"), "C++ -r reaches wasm-ld");
-      run("-r", "side.o", "-o", "side.partial.o");
+      run(...partialFlags, "-r", "side.o", "-o", "side.partial.o");
       run(
         "-shared",
         "side.partial.o",

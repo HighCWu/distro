@@ -8,9 +8,15 @@
   vm-test,
   zlib,
   sqlite3,
+  extraLinkerInputs ? [ ],
 }:
 let
   meson = import ./meson.nix { inherit pkgs; };
+  linkRoot = import ./link-sysroot.nix {
+    inherit pkgs lib sysroot;
+    name = "sdk-link-sysroot-${platform.wasmArch}";
+    executableArgs = extraLinkerInputs ++ platform.linkerFlags;
+  };
   licenseSources = sysroot.licenseSources // {
     llvm-toolchain = llvm-toolchain.licenseSource;
     meson = meson.src;
@@ -28,15 +34,15 @@ let
       profileConfig
       licenseSources
       ;
+    sysroot = linkRoot;
   };
   profileConfig = pkgs.writeText "linux-${platform.wasmArch}.cfg" (
     lib.concatMapStringsSep "\n" lib.escapeShellArg (
       [
         "--target=${platform.targetTriple}"
-        "--sysroot=${sysroot}"
+        "--sysroot=${linkRoot}"
       ]
       ++ platform.compilerFlags
-      ++ map (flag: "$-Wl,${flag}") platform.linkerFlags
     )
     + "\n"
   );
@@ -64,8 +70,8 @@ let
       builtins.replaceStrings
         [ "@sysroot@" "@libdir@" "@pkgConfig@" ]
         [
-          (lib.escapeShellArg "${sysroot}")
-          (lib.escapeShellArg "${sysroot}/lib/pkgconfig:${sysroot}/share/pkgconfig")
+          (lib.escapeShellArg "${linkRoot}")
+          (lib.escapeShellArg "${linkRoot}/lib/pkgconfig:${linkRoot}/share/pkgconfig")
           (lib.escapeShellArg "${pkgs.pkg-config}/bin/pkg-config")
         ]
         (builtins.readFile ./pkg-config.sh);
@@ -107,7 +113,7 @@ let
     ar = "${llvm-toolchain}/bin/llvm-ar";
     ranlib = "${llvm-toolchain}/bin/llvm-ranlib";
     strip = "${llvm-toolchain}/bin/llvm-strip";
-    sysroot = "${sysroot}";
+    sysroot = "${linkRoot}";
     pkgConfig = "${pkgConfig}/bin/wasm-linux-pkg-config";
   };
   cmakeFiles = pkgs.runCommand "sdk-cmake-${platform.wasmArch}" { } ''
@@ -121,7 +127,7 @@ let
     ar = "${llvm-toolchain}/bin/llvm-ar";
     strip = "${llvm-toolchain}/bin/llvm-strip";
     pkgConfig = "${pkgConfig}/bin/wasm-linux-pkg-config";
-    sysroot = "${sysroot}";
+    sysroot = "${linkRoot}";
   };
   mesonFiles = pkgs.runCommand "sdk-meson-${platform.wasmArch}" { } ''
     mkdir -p $out/share/meson
@@ -154,7 +160,7 @@ let
       paths = {
         licenseTexts = "${licenseTexts}/share/linux-wasm-sdk/licenses";
         toolchain = "${llvm-toolchain}";
-        sysroot = "${sysroot}";
+        sysroot = "${linkRoot}";
         compilerConfiguration = "${profileConfig}";
         configSite = "${configSiteFiles}/share/linux-wasm-sdk/config.site";
         meson = "${meson}";
@@ -187,6 +193,7 @@ let
       llvm-toolchain
     ];
     passthru.meson = meson;
+    passthru.sysroot = linkRoot;
     passthru.buildMaterials = buildMaterials;
     passthru.sourceBundle = buildMaterials.sourceBundle;
     # Reuse the exact SDK-built consumer in real-browser runtime checks.
@@ -206,6 +213,21 @@ let
       profile = profileCheck;
       build-materials = buildMaterials.check;
       source-bundle = buildMaterials.sourceBundle.check;
+      link-driver =
+        pkgs.runCommand "sdk-link-driver-${platform.wasmArch}"
+          {
+            passthru.ci.heavy = true;
+            nativeBuildInputs = [ pkgs.nodejs ];
+          }
+          ''
+            SDK_LINK_CC=${cc}/bin/wasm-linux-cc \
+              SDK_LINK_CXX=${cxx}/bin/wasm-linux-c++ \
+              SDK_LINK_PARSER=${../../packages/kernel/src/wasm_binary.ts} \
+              SDK_LINK_BITS=${toString platform.addressBits} \
+              SDK_LINK_MAXIMUM=${toString platform.maximumMemoryBytes} \
+              node --test ${./link-driver.test.js}
+            mkdir $out
+          '';
       wrapper =
         pkgs.runCommand "sdk-wrapper-contract"
           {
@@ -219,7 +241,11 @@ let
             cp ${./wrapper-test.js} wrapper-test.js
             cp ${./pkg-config.sh} pkg-config.sh
             cp ${./pkg-config-test.js} pkg-config-test.js
-            node --test wrapper-test.js pkg-config-test.js
+            mkdir -p sdk llvm-toolchain
+            cp ${./link-sysroot.nix} sdk/link-sysroot.nix
+            cp ${./link-sysroot.test.js} sdk/link-sysroot.test.js
+            cp ${../llvm-toolchain/clang++.cfg} llvm-toolchain/clang++.cfg
+            node --test wrapper-test.js pkg-config-test.js sdk/link-sysroot.test.js
             mkdir $out
           '';
       cxx-runtime = vm-test.rawInitramfsTest {
@@ -379,7 +405,7 @@ let
         # the SDK wrapper; this is preprocessing only, not a host target link.
         poison_status=0
         CPATH=${./host-path-poison} ${llvm-toolchain}/bin/clang++ \
-          --target=${platform.targetTriple} --sysroot=${sysroot} \
+          --target=${platform.targetTriple} --sysroot=${linkRoot} \
           -E ${../toolchain-smoke/runtime-cxx.cc} > /dev/null 2> poison.log || poison_status=$?
         test "$poison_status" -ne 0
         grep -q SDK_HOST_INCLUDE_PATH_LEAKED poison.log

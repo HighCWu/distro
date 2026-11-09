@@ -47,9 +47,8 @@ pkgs.stdenv.override (old: {
   inherit cc;
   hasCC = true;
 
-  # Executable-shaping linker flags belong on clang-driven links only;
-  # NIX_LDFLAGS would also reach partial `ld -r` links, where flags like
-  # --export-table are invalid.
+  # Final Clang links read the executable linker defaults from their sysroot
+  # response file; partial `ld -r` links do not receive those defaults.
   #
   # The multiple-outputs hook unconditionally prepends `-rpath $lib/lib` to
   # NIX_LDFLAGS before any platform guard can run, and wasm-ld has no rpath;
@@ -117,9 +116,6 @@ pkgs.stdenv.override (old: {
     # interpreters a payload needs.
     export dontPatchShebangs=1
     export CONFIG_SITE=${configSite}
-    export NIX_CFLAGS_LINK="${
-      toString (map (flag: "-Wl,${flag}") platform.linkerFlags)
-    } ''${NIX_CFLAGS_LINK-}"
     postHooks+=('export NIX_LDFLAGS="$(printf %s "''${NIX_LDFLAGS-}" | sed -E "s/(^| )-rpath [^ ]+//g")"')
   '';
 

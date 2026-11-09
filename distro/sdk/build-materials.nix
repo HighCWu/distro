@@ -3,6 +3,7 @@
   pkgs,
   platform,
   sdk,
+  sysroot,
   profileCheck,
   profileConfig,
   licenseSources,
@@ -25,6 +26,8 @@ let
         "installed/linux-wasm.ini" = "${sdk}/share/meson/linux-wasm.ini";
         "configuration/compiler.cfg" = "${profileConfig}";
         "configuration/clang++.cfg" = "${sdk}/bin/clang++.cfg";
+        "configuration/executable-linker.rsp" = "${sysroot}/lib/wasm-linux-executable.rsp";
+        "configuration/cxx-linker.rsp" = "${sysroot}/lib/wasm-linux-cxx.rsp";
         "integration/flake.nix" = "${../../flake.nix}";
         "integration/flake.lock" = "${../../flake.lock}";
         "integration/platform.nix" = "${../platform.nix}";

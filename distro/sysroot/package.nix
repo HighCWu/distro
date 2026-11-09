@@ -1,25 +1,35 @@
 # The complete target sysroot: musl, kernel headers, compiler-rt, and libc++.
 {
   pkgs,
+  lib,
   platform,
   llvm-runtimes,
   sysroot-base,
 }:
 
-pkgs.runCommand "sysroot-${platform.wasmArch}"
-  {
-    passthru.licenseSources = sysroot-base.licenseSources // {
-      llvm-runtimes = llvm-runtimes.src;
-    };
-  }
-  ''
-    mkdir -p $out/lib $out/include/${platform.multiarchTriple} $out/share
+let
+  targetSysroot =
+    pkgs.runCommand "sysroot-${platform.wasmArch}-contents"
+      {
+        passthru.licenseSources = sysroot-base.licenseSources // {
+          llvm-runtimes = llvm-runtimes.src;
+        };
+      }
+      ''
+        mkdir -p $out/lib $out/include/${platform.multiarchTriple} $out/share
 
-    cp -r ${sysroot-base}/include/* $out/include/
-    cp ${sysroot-base}/lib/* $out/lib/
+        cp -r ${sysroot-base}/include/* $out/include/
+        cp ${sysroot-base}/lib/* $out/lib/
 
-    cp -r ${llvm-runtimes}/include/c++ $out/include/
-    cp -r ${llvm-runtimes}/include/${platform.targetTriple}/c++ $out/include/${platform.multiarchTriple}/
-    cp -r ${llvm-runtimes}/share/libc++ $out/share/
-    cp ${llvm-runtimes}/lib/${platform.targetTriple}/* $out/lib/
-  ''
+        cp -r ${llvm-runtimes}/include/c++ $out/include/
+        cp -r ${llvm-runtimes}/include/${platform.targetTriple}/c++ $out/include/${platform.multiarchTriple}/
+        cp -r ${llvm-runtimes}/share/libc++ $out/share/
+        cp ${llvm-runtimes}/lib/${platform.targetTriple}/* $out/lib/
+      '';
+in
+import ../sdk/link-sysroot.nix {
+  inherit pkgs lib;
+  sysroot = targetSysroot;
+  name = "sysroot-${platform.wasmArch}";
+  executableArgs = platform.linkerFlags;
+}

@@ -44,10 +44,10 @@ let
       '';
   routed = sdk.override {
     sysroot = selectedRoot;
+    extraLinkerInputs = [ "${execution}/user-poll.o" ];
     platform = platform // {
       compilerFlags = platform.compilerFlags ++ [
         "-fsanitize-coverage=trace-pc,no-prune,edge"
-        ("$" + "${execution}/user-poll.o")
       ];
       linkerFlags = platform.linkerFlags ++ [
         "--export=__tls_base"

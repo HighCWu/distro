@@ -33,6 +33,24 @@ let
     llvm-runtimes = dynamicRuntimes;
     sysroot-base = dynamicBase;
   };
+  linkerConfigArgs = [
+    "--import-memory"
+    "--max-memory=${toString platform.maximumMemoryBytes}"
+    "--shared-memory"
+    "--growable-table"
+    "--export=__stack_pointer"
+    "--export-all"
+    "-z"
+    "stack-size=8388608"
+  ];
+  linkRoot = import ../sdk/link-sysroot.nix {
+    inherit pkgs lib;
+    sysroot = dynamicRoot;
+    name = "dynamic-link-sysroot-${platform.wasmArch}";
+    executableArgs = linkerConfigArgs;
+    sharedArgs = linkerConfigArgs;
+    cxxArgs = [ ];
+  };
   exportedLibc =
     pkgs.runCommand "dynamic-libc-${platform.wasmArch}"
       {
@@ -97,21 +115,13 @@ let
       exportedCxx
       ;
     llvm-toolchain = compiler;
-    sysroot = dynamicRoot;
+    sysroot = linkRoot;
   };
-  linkerConfigFlags = map (flag: "$-Wl,${flag}") [
-    "--import-memory"
-    "--max-memory=${toString platform.maximumMemoryBytes}"
-    "--export-all"
-    "-z"
-    "stack-size=8388608"
-  ];
   configFlags = [
     "--target=${platform.targetTriple}"
     "--sysroot=${startupRoot}"
   ]
-  ++ platform.compilerFlags
-  ++ linkerConfigFlags;
+  ++ platform.compilerFlags;
   config = pkgs.writeText "dynamic-${platform.wasmArch}.cfg" (
     lib.concatMapStringsSep "\n" lib.escapeShellArg configFlags + "\n"
   );
@@ -155,12 +165,15 @@ let
   materials = pkgs.runCommand "dynamic-sdk-materials-${platform.wasmArch}" { } ''
     mkdir -p $out/recipes $out/licenses
     cp -r ${./.} $out/recipes/dynamic-loader
+    mkdir -p $out/recipes/sdk
+    cp ${../sdk/link-sysroot.nix} $out/recipes/sdk/link-sysroot.nix
     cp -r ${../musl} $out/recipes/musl
     cp ${config} $out/recipes/compiler.cfg
     cp ${cxxConfig} $out/recipes/compiler-cxx.cfg
     cp ${../sdk/LICENSE.MIT} $out/licenses/SDK-MIT.txt
     cp ${dynamicMusl.src}/COPYRIGHT $out/licenses/musl-COPYRIGHT
     ln -s ${sdk.buildMaterials} $out/default-sdk-materials
+    ln -s ${linkRoot} $out/link-sysroot
     ln -s ${startupRoot} $out/startup-sysroot
     ln -s ${startupRoot.buildMaterials} $out/startup-materials
     ln -s ${exportedCxx} $out/exported-cxx
@@ -190,6 +203,7 @@ pkgs.symlinkJoin {
       compiler
       cxxConfig
       exportedCxx
+      linkRoot
       ;
     checks.driver =
       pkgs.runCommand "dynamic-sdk-driver-${platform.wasmArch}"

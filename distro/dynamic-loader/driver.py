@@ -26,7 +26,34 @@ def linker_command(result):
     return next(command for command in commands if "wasm-ld" in Path(command[0]).name)
 
 
+def expand_sdk_responses(linker):
+    """Expand only ClangLinux's generated profile files, never user @files."""
+    result = []
+    for word in linker:
+        if word.startswith("@") and Path(word[1:]).name in (
+            "wasm-linux-executable.rsp",
+            "wasm-linux-shared.rsp",
+            "wasm-linux-cxx.rsp",
+        ):
+            result.extend(shlex.split(Path(word[1:]).read_text()))
+        else:
+            result.append(word)
+    return result
+
+
+def profile_response(linker, path):
+    argument = f"@{path}"
+    assert argument in linker, (argument, linker)
+
+
 def assert_relocatable_has_no_link_defaults(linker):
+    assert not any(
+        word.startswith("@")
+        and Path(word[1:]).name.startswith("wasm-linux-")
+        and Path(word[1:]).suffix == ".rsp"
+        for word in linker
+    ), linker
+    linker = expand_sdk_responses(linker)
     assert "-r" in linker or "--relocatable" in linker, linker
     assert not any(
         Path(word).name.startswith("crt") and Path(word).name.endswith(".o")
@@ -61,7 +88,13 @@ for width in (32, 64):
     for shared in (False, True):
         args = (*common, "-###", "-fPIC", *(["-shared"] if shared else []), str(side))
         dry = run(*args)
-        linker = linker_command(dry)
+        raw_linker = linker_command(dry)
+        profile_name = "wasm-linux-shared.rsp" if shared else "wasm-linux-executable.rsp"
+        assert any(
+            word.startswith("@") and Path(word[1:]).name == profile_name
+            for word in raw_linker
+        ), raw_linker
+        linker = expand_sdk_responses(raw_linker)
         startup = any(Path(word).name == "crt1.o" for word in linker)
         assert startup == (not shared), linker
         assert ("--table-base=3" in linker) == (not shared), linker
@@ -83,8 +116,33 @@ for width in (32, 64):
     (sysroot / "lib").mkdir(parents=True)
     crt = sysroot / "lib/crt1.o"
     exported_libc = sysroot / "lib/libc-exports.a"
+    executable_rsp = sysroot / "lib/wasm-linux-executable.rsp"
+    shared_rsp = sysroot / "lib/wasm-linux-shared.rsp"
     crt.touch()
     exported_libc.touch()
+    executable_rsp.write_text(
+        shlex.join(
+            [
+                "--shared-memory",
+                "--max-memory=16777216",
+                "--growable-table",
+                "--export=__stack_pointer",
+                "--table-base=3",
+            ]
+        )
+        + "\n"
+    )
+    shared_rsp.write_text(
+        shlex.join(
+            [
+                "--shared-memory",
+                "--max-memory=16777216",
+                "--growable-table",
+                "--export=__stack_pointer",
+            ]
+        )
+        + "\n"
+    )
     for mode, startup, libc in (
         ([], True, True),
         (["-shared"], False, False),
@@ -93,9 +151,18 @@ for width in (32, 64):
         (["-nostdlib"], False, False),
         (["-r"], False, False),
     ):
-        linker = linker_command(
+        raw_linker = linker_command(
             run(*common, "-###", f"--sysroot={sysroot}", *mode, str(side))
         )
+        if mode == ["-r"]:
+            assert not any(
+                word.startswith("@") and Path(word[1:]).name in (executable_rsp.name, shared_rsp.name)
+                for word in raw_linker
+            ), raw_linker
+        else:
+            selected_rsp = shared_rsp if "-shared" in mode else executable_rsp
+            profile_response(raw_linker, selected_rsp)
+        linker = expand_sdk_responses(raw_linker)
         assert (str(crt) in linker) == startup, linker
         assert (str(exported_libc) in linker) == libc, linker
         for archive, expected in ((crt, startup), (exported_libc, libc)):
@@ -104,9 +171,11 @@ for width in (32, 64):
                 assert linker[position - 1] == "--whole-archive", linker
                 assert linker[position + 1] == "--no-whole-archive", linker
         assert linker.count("--whole-archive") == int(startup) + int(libc), linker
-    dynamic_default_linker = linker_command(
+    dynamic_default_raw = linker_command(
         run(*common, "-###", f"--sysroot={sysroot}", str(side))
     )
+    profile_response(dynamic_default_raw, executable_rsp)
+    dynamic_default_linker = expand_sdk_responses(dynamic_default_raw)
     for default in (
         "--shared-memory",
         "--growable-table",
@@ -122,9 +191,9 @@ for width in (32, 64):
     collision_directory = root / f"wasm{width}-unrelated-cwd"
     collision_directory.mkdir()
     (collision_directory / "libc-exports.a").touch()
-    linker = linker_command(
+    linker = expand_sdk_responses(linker_command(
         run(*common, "-###", str(side.resolve()), cwd=collision_directory)
-    )
+    ))
     assert not any(Path(word).name == "libc-exports.a" for word in linker), linker
     output = root / f"wasm{width}-side.wasm"
     side_object = root / f"wasm{width}-side.o"

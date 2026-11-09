@@ -1,90 +1,72 @@
 # SPDX-License-Identifier: Apache-2.0 WITH LLVM-exception
-# Support Linux/Wasm side modules and relocatable object links.
+# Linux/Wasm shared links and dynamic-runtime archive exports.
 --- a/clang/lib/Driver/ToolChains/WebAssembly.cpp
 +++ b/clang/lib/Driver/ToolChains/WebAssembly.cpp
-@@ -113,7 +113,23 @@
+@@ -143,6 +143,13 @@
  
    ToolChain.AddFilePathLibArgs(Args, CmdArgs);
  
-+  const bool IsLinux = ToolChain.getTriple().isOSLinux();
-+  const bool IsLinuxRelocatable = IsLinux && Args.hasArg(options::OPT_r);
-+  if (IsLinuxRelocatable) {
-+    // Runtime selection still applies to later final links, but -r does not
-+    // consume these libraries.
-+    Args.ClaimAllArgs(options::OPT_stdlib_EQ);
-+    Args.ClaimAllArgs(options::OPT_unwindlib_EQ);
-+    Args.ClaimAllArgs(options::OPT_rtlib_EQ);
-+  }
 +  const std::string ExportedLibc =
 +      IsLinux ? ToolChain.GetFilePath("libc-exports.a") : "";
 +  const bool IsDynamicSysroot =
 +      IsLinux && ExportedLibc != "libc-exports.a" &&
 +      llvm::sys::fs::exists(ExportedLibc);
++  const bool IsLinuxShared = IsLinux && Args.hasArg(options::OPT_shared);
++
    bool IsCommand = true;
-+  const bool IsLinuxShared = IsLinux && !IsLinuxRelocatable &&
-+                             Args.hasArg(options::OPT_shared);
    const char *Crt1;
    const char *Entry = nullptr;
- 
-@@ -153,8 +169,14 @@
+@@ -183,9 +189,14 @@
      }
    }
  
--  if (!Args.hasArg(options::OPT_nostdlib, options::OPT_nostartfiles))
-+  if (!IsLinuxShared && !IsLinuxRelocatable &&
+-  if (!IsLinuxRelocatable &&
+-      !Args.hasArg(options::OPT_nostdlib, options::OPT_nostartfiles))
++  if (!IsLinuxRelocatable && !IsLinuxShared &&
 +      !Args.hasArg(options::OPT_nostdlib, options::OPT_nostartfiles)) {
-+    if (ToolChain.getTriple().isOSLinux())
++    if (IsLinux)
 +      CmdArgs.push_back("--whole-archive");
      CmdArgs.push_back(Args.MakeArgString(ToolChain.GetFilePath(Crt1)));
-+    if (ToolChain.getTriple().isOSLinux())
++    if (IsLinux)
 +      CmdArgs.push_back("--no-whole-archive");
 +  }
    if (Entry) {
      CmdArgs.push_back(Args.MakeArgString("--entry"));
      CmdArgs.push_back(Args.MakeArgString(Entry));
-@@ -162,21 +184,52 @@
+@@ -193,10 +204,12 @@
  
    if (Args.hasArg(options::OPT_shared))
      CmdArgs.push_back(Args.MakeArgString("-shared"));
 +  if (IsLinuxShared)
 +    CmdArgs.push_back("--unresolved-symbols=import-dynamic");
-+
-+  // Dynamic SDK defaults are injected before linker inputs so explicit user
-+  // options can take precedence. They replace the SDK config-file defaults.
-+  if (IsDynamicSysroot && !IsLinuxRelocatable) {
-+    CmdArgs.push_back("--shared-memory");
-+    CmdArgs.push_back("--growable-table");
-+    CmdArgs.push_back("--export=__stack_pointer");
-+  }
  
    // Linux reserves function-pointer values 1 and 2 for SIG_IGN and SIG_HOLD.
    // Keep real address-taken functions out of those wasm table slots. Linker
    // inputs follow this default, so an explicit user --table-base wins.
--  if (ToolChain.getTriple().isOSLinux())
+-  if (IsLinux && !IsLinuxRelocatable)
 +  if (IsLinux && !IsLinuxShared && !IsLinuxRelocatable)
      CmdArgs.push_back("--table-base=3");
  
+@@ -209,15 +222,30 @@
+ 
    AddLinkerInputs(ToolChain, Inputs, Args, CmdArgs, JA);
  
--  if (WantsPthread(ToolChain.getTriple(), Args))
+-  if (WantsPthread(ToolChain.getTriple(), Args) && !IsLinuxRelocatable)
 +  if (WantsPthread(ToolChain.getTriple(), Args) && !IsLinuxRelocatable &&
 +      !IsDynamicSysroot)
      CmdArgs.push_back("--shared-memory");
  
--  if (!Args.hasArg(options::OPT_nostdlib, options::OPT_nodefaultlibs)) {
--    if (ToolChain.ShouldLinkCXXStdlib(Args))
-+  // Linux/Wasm side modules share the main module's libc and runtime. Pulling
-+  // static system archives into each side module duplicates process state.
-+  if (!IsLinuxShared && !IsLinuxRelocatable &&
-+      !Args.hasArg(options::OPT_nostdlib, options::OPT_nodefaultlibs)) {
+-  if (!IsLinuxRelocatable &&
++  if (!IsLinuxRelocatable && !IsLinuxShared &&
+       !Args.hasArg(options::OPT_nostdlib, options::OPT_nodefaultlibs)) {
 +    if (IsDynamicSysroot) {
 +      CmdArgs.push_back("--whole-archive");
 +      CmdArgs.push_back(Args.MakeArgString(ExportedLibc));
 +      CmdArgs.push_back("--no-whole-archive");
 +    }
 +
-+    if (ToolChain.ShouldLinkCXXStdlib(Args)) {
-+      if (ToolChain.getTriple().isOSLinux()) {
+     if (ToolChain.ShouldLinkCXXStdlib(Args)) {
++      if (IsLinux) {
 +        const std::string ExportedCxx =
 +            ToolChain.GetFilePath("libcxx-exports.a");
 +        if (ExportedCxx != "libcxx-exports.a" &&
@@ -95,30 +77,8 @@
 +        }
 +      }
        ToolChain.AddCXXStdlibLibArgs(Args, CmdArgs);
-+    }
+-      if (IsLinux && !IsLinuxRelocatable)
+-        AddSysrootResponseFile("wasm-linux-cxx.rsp");
+     }
  
      if (WantsPthread(ToolChain.getTriple(), Args))
-       CmdArgs.push_back("-lpthread");
-@@ -185,7 +238,8 @@
-     AddRunTimeLibs(ToolChain, ToolChain.getDriver(), CmdArgs, Args);
-   }
- 
--  ToolChain.addProfileRTLibs(Args, CmdArgs);
-+  if (!IsLinuxRelocatable)
-+    ToolChain.addProfileRTLibs(Args, CmdArgs);
- 
-   CmdArgs.push_back("-o");
-   CmdArgs.push_back(Output.getFilename());
-@@ -194,8 +248,10 @@
-   // components at this time. Retain the historical default otherwise, though,
-   // of running `wasm-opt` by default.
-   bool WasmOptDefault = !TargetBuildsComponents(ToolChain.getTriple());
--  bool RunWasmOpt = Args.hasFlag(options::OPT_wasm_opt,
--                                 options::OPT_no_wasm_opt, WasmOptDefault);
-+  bool RunWasmOpt =
-+      !IsLinuxRelocatable &&
-+      Args.hasFlag(options::OPT_wasm_opt, options::OPT_no_wasm_opt,
-+                   WasmOptDefault);
- 
-   // If wasm-opt is enabled and optimizations are happening look for the
-   // `wasm-opt` program. If it's not found auto-disable it.

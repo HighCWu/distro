@@ -41,27 +41,30 @@ let
             -O2 -Wall -Wextra -Werror -c ${../cooperative-poll/execution.c} -o $out/user-poll.o
         ''}
       '';
+  linkRoot = import ../sdk/link-sysroot.nix {
+    inherit pkgs lib;
+    sysroot = forkRoot;
+    name = "fork-${platform.wasmArch}${lib.optionalString cooperativePoll "-poll"}";
+    executableArgs = [
+      "${execution}/fork-execution.o"
+    ]
+    ++ lib.optional cooperativePoll "${execution}/user-poll.o"
+    ++ platform.linkerFlags
+    ++ [
+      "--export=__stack_pointer"
+      "--export=__tls_base"
+      "--undefined=__wasm_fork_abi"
+    ]
+    ++ lib.optional cooperativePoll "--export=__wasm_user_poll_abi";
+  };
   config = pkgs.writeText "fork-${platform.wasmArch}.cfg" (
     lib.concatMapStringsSep "\n" lib.escapeShellArg (
       [
         "--target=${platform.targetTriple}"
-        "--sysroot=${forkRoot}"
+        "--sysroot=${linkRoot}"
       ]
       ++ platform.compilerFlags
-      ++ [ ("$" + "${execution}/fork-execution.o") ]
-      ++ lib.optionals cooperativePoll [
-        "-fsanitize-coverage=trace-pc,no-prune,edge"
-        ("$" + "${execution}/user-poll.o")
-      ]
-      ++ map (flag: "$-Wl,${flag}") (
-        platform.linkerFlags
-        ++ [
-          "--export=__stack_pointer"
-          "--export=__tls_base"
-          "--undefined=__wasm_fork_abi"
-        ]
-        ++ lib.optional cooperativePoll "--export=__wasm_user_poll_abi"
-      )
+      ++ lib.optional cooperativePoll "-fsanitize-coverage=trace-pc,no-prune,edge"
     )
     + "\n"
   );
@@ -140,7 +143,9 @@ let
         "no C++ EH/SjLj"
       ];
       paths = {
-        sysroot = "${forkRoot}";
+        sysroot = "${linkRoot}";
+        sourceSysroot = "${forkRoot}";
+        executableResponse = "${linkRoot}/lib/wasm-linux-executable.rsp";
         compilerConfiguration = "${config}";
         executionObject = "${execution}/fork-execution.o";
         configSite = "${configSite}";
@@ -156,6 +161,7 @@ let
     cp ${config} $out/recipes/compiler.cfg
     cp ${../config.site} $out/recipes/config.site
     cp ${configSite} $out/recipes/fork-config.site
+    ln -s ${linkRoot} $out/actualsysroot
     cp ${pkgs.binaryen.src}/LICENSE $out/licenses/Binaryen-LICENSE
     cp ${../sdk/LICENSE.MIT} $out/licenses/SDK-MIT.txt
     ln -s ${pkgs.binaryen.src} $out/binaryen-source
@@ -178,7 +184,7 @@ pkgs.symlinkJoin {
   '';
   passthru = {
     inherit configSite;
-    sysroot = forkRoot;
+    sysroot = linkRoot;
     buildMaterials = materials;
     checks.wrapper =
       pkgs.runCommand "fork-sdk-wrapper-contract"
@@ -202,7 +208,10 @@ pkgs.symlinkJoin {
           cp ${../default.nix} default.nix
           node --test fork-continuation/sdk.test.js
           node --test fork-continuation/execution-link.test.js
-          grep -F -- ${lib.escapeShellArg ("$" + "${execution}/fork-execution.o")} ${config}
+          grep -F -- ${lib.escapeShellArg "${execution}/fork-execution.o"} ${linkRoot}/lib/wasm-linux-executable.rsp
+          ${lib.optionalString cooperativePoll ''
+            grep -F -- ${lib.escapeShellArg "${execution}/user-poll.o"} ${linkRoot}/lib/wasm-linux-executable.rsp
+          ''}
           mkdir $out
         '';
   };

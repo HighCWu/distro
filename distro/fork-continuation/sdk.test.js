@@ -126,9 +126,32 @@ test("the dual-width runtime corpus consumes the installed SDK tools", () => {
   assert.match(scope, /sdk-fork-continuation = self\.sdk-fork-continuation-wasm64/);
 });
 
-test("execution object path is interpolated separately from Clang's link-only dollar prefix", () => {
+test("fork execution object is linked through the sysroot executable response file", () => {
   const recipe = readFileSync(new URL("./sdk.nix", import.meta.url), "utf8");
-  assert.ok(recipe.includes('("$" + "${execution}/fork-execution.o")'));
-  assert.ok(!recipe.includes("$${execution}"), "Nix would escape the execution interpolation");
-  assert.match(recipe, /grep -F -- .*execution.*fork-execution\.o.*\$\{config\}/);
+  assert.ok(recipe.includes("linkRoot = import ../sdk/link-sysroot.nix"));
+  assert.match(recipe, /executableArgs\s*=\s*\[\s*"\$\{execution\}\/fork-execution\.o"\s*\]/);
+  assert.ok(recipe.includes('executableResponse = "${linkRoot}/lib/wasm-linux-executable.rsp"'));
+  const configStart = recipe.indexOf("  config = pkgs.writeText");
+  const configEnd = recipe.indexOf("  cc = pkgs.writeShellApplication", configStart);
+  assert.ok(configStart >= 0 && configEnd > configStart);
+  const config = recipe.slice(configStart, configEnd);
+  assert.match(config, /--target=\$\{platform\.targetTriple\}/);
+  assert.match(config, /--sysroot=\$\{linkRoot\}/);
+  assert.ok(config.includes("platform.compilerFlags"));
+  assert.ok(
+    config.includes('lib.optional cooperativePoll "-fsanitize-coverage=trace-pc,no-prune,edge"'),
+  );
+  assert.ok(!config.includes("${execution}"), "execution inputs belong to the link response");
+  assert.ok(!config.includes("platform.linkerFlags"), "link defaults belong to the response");
+  assert.ok(recipe.includes("-c ${./execution.c} -o $out/fork-execution.o"));
+  assert.ok(
+    recipe.includes(
+      'grep -F -- ${lib.escapeShellArg "${execution}/fork-execution.o"} ${linkRoot}/lib/wasm-linux-executable.rsp',
+    ),
+  );
+  assert.ok(recipe.includes("cp -r ${./.} $out/recipes/fork-continuation"));
+  assert.ok(recipe.includes("cp ${config} $out/recipes/compiler.cfg"));
+  assert.ok(recipe.includes("ln -s ${linkRoot} $out/actualsysroot"));
+  assert.ok(recipe.includes("ln -s ${sdk.buildMaterials} $out/default-sdk-build-materials"));
+  assert.ok(recipe.includes("ln -s ${sdk.sourceBundle} $out/default-sdk-selected-sources"));
 });
