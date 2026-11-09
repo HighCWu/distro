@@ -1342,6 +1342,24 @@ lib.makeScope (scope: lib.callPackageWith ({ inherit lib pkgs; } // scope)) (
       vm-test = vmTestWasm64;
     };
     git = callPackage ./git/package.nix { };
+    git-fork = callPackage ./git-fork/package.nix {
+      extraChecks.both = pkgs.runCommand "git-fork-check-both" { passthru.ci.heavy = true; } ''
+        test -e ${self.git-fork.checks.runtime}
+        test -e ${self.git-fork-wasm64.checks.runtime}
+        touch $out
+      '';
+    };
+    git-fork-wasm64 = callPackage ./git-fork/package.nix {
+      platform = self.platform-wasm64;
+      sdk = self.sdk-wasm64;
+      sdk-fork-continuation = self.sdk-fork-continuation-wasm64;
+      llvm-toolchain = self.llvm-toolchain-wasm64;
+      musl = self.musl-wasm64;
+      llvm-runtimes = self.llvm-runtimes-wasm64;
+      zlib = self.zlib-wasm64;
+      busybox = self.busybox-wasm64;
+      vm-test = vmTestWasm64;
+    };
     git-wasm64 = self.git.override {
       stdenv = self.stdenv-wasm64;
       platform = self.platform-wasm64;
