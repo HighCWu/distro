@@ -6,6 +6,7 @@ import {
   user_mmap,
   user_mmap_fixed,
   user_mremap,
+  user_mremap_dontunmap,
   user_mremap_fixed,
   user_msync,
   user_madvise,
@@ -147,6 +148,29 @@ for (const address_type of ["i32", "i64"] as const) {
     };
     assert.equal(user_mremap(exports, address_type, ...args), raw);
     assert.equal(user_mremap(exports, address_type, ...args), address(-12));
+    assert.equal(calls, 2);
+  });
+
+  test(`${address_type}: DONTUNMAP requires its private five-register export`, () => {
+    const pointer = address_type === "i64" ? 0x100010000n : -2147418112;
+    const newAddress = address_type === "i64" ? 0x100080000n : -2146959360;
+    const args = [pointer, address(65536), address(131072), address(4), newAddress] as const;
+    const legacy = {
+      __wasm_mremap: () => assert.fail("must not fall back to ordinary mremap"),
+    };
+    assert.equal(user_mremap_dontunmap(legacy, address_type, ...args), address(-95));
+
+    let calls = 0;
+    const exports = {
+      ...legacy,
+      __wasm_mremap_dontunmap_v1: (...actual: unknown[]) => {
+        calls++;
+        assert.deepEqual(actual, args);
+        return calls === 1 ? newAddress : address(-12);
+      },
+    };
+    assert.equal(user_mremap_dontunmap(exports, address_type, ...args), newAddress);
+    assert.equal(user_mremap_dontunmap(exports, address_type, ...args), address(-12));
     assert.equal(calls, 2);
   });
 

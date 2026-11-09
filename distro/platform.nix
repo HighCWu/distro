@@ -68,6 +68,7 @@ rec {
     "--export=__wasm_munmap"
     "--export=__wasm_mremap"
     "--export=__wasm_mremap_fixed"
+    "--export=__wasm_mremap_dontunmap_v1"
     "--export=__wasm_msync"
     "--export=__wasm_madvise"
     "--export=__wasm_madvise_v2"

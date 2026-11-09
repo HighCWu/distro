@@ -542,6 +542,7 @@ export async function bootMachine(options: BootMachineOptions): Promise<Machine>
         msync: unavailable,
         mmap: unavailable,
         mremap: unavailable,
+        mremap_dontunmap: unavailable,
       },
       user_mmap_init_v1: {
         capabilities: unavailable,

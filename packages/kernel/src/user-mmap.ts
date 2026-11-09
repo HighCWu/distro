@@ -73,6 +73,21 @@ export function user_mremap(
   return callback(addr, oldLen, newLen, flags) as WasmAddress;
 }
 
+/** Only the private allocator export can authorize MREMAP_DONTUNMAP. */
+export function user_mremap_dontunmap(
+  exports: WebAssembly.Exports,
+  addressType: WasmAddressType,
+  addr: WasmAddress,
+  oldLen: WasmAddress,
+  newLen: WasmAddress,
+  flags: WasmAddress,
+  newAddr: WasmAddress,
+): WasmAddress {
+  const callback = exports.__wasm_mremap_dontunmap_v1;
+  if (typeof callback !== "function") return addressType === "i64" ? -95n : -95;
+  return callback(addr, oldLen, newLen, flags, newAddr) as WasmAddress;
+}
+
 /** Forward the versioned request, limiting length-only modules to their original subset. */
 export function user_mmap(
   exports: WebAssembly.Exports,

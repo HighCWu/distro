@@ -31,6 +31,7 @@ import {
   user_mmap,
   user_mmap_fixed,
   user_mremap,
+  user_mremap_dontunmap,
   user_mremap_fixed,
   user_msync,
   user_madvise,
@@ -936,6 +937,20 @@ function user_imports({
         assert(instance);
         return user_callback(() =>
           user_mremap(instance!.exports, kernel_address, addr, oldLen, newLen, flags),
+        );
+      },
+      mremap_dontunmap(addr, oldLen, newLen, flags, newAddr) {
+        assert(instance);
+        return user_callback(() =>
+          user_mremap_dontunmap(
+            instance!.exports,
+            kernel_address,
+            addr,
+            oldLen,
+            newLen,
+            flags,
+            newAddr,
+          ),
         );
       },
       mmap(addr, len, prot, flags, fd, pgoff) {

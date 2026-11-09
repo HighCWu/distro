@@ -163,6 +163,23 @@ lib.makeScope (scope: lib.callPackageWith ({ inherit lib pkgs; } // scope)) (
       vm-test = vmTestWasm64;
       busybox = self.busybox-wasm64;
     };
+    mremap-dontunmap = callPackage ./mremap-dontunmap/package.nix {
+      extraChecks.both = pkgs.runCommand "mremap-dontunmap-both-widths" { passthru.ci.heavy = true; } ''
+        test -e ${self.mremap-dontunmap.checks.runtime}
+        test -e ${self.mremap-dontunmap-wasm64.checks.runtime}
+        test -e ${self.toolchain-smoke.checks.mremap}
+        test -e ${self.toolchain-smoke-wasm64.checks.mremap}
+        touch $out
+      '';
+    };
+    mremap-dontunmap-wasm64 = callPackage ./mremap-dontunmap/package.nix {
+      platform = self.platform-wasm64;
+      sdk = self.sdk-wasm64;
+      musl = self.musl-wasm64;
+      llvm-runtimes = self.llvm-runtimes-wasm64;
+      vm-test = vmTestWasm64;
+      busybox = self.busybox-wasm64;
+    };
     sdk-dynamic-loader = callPackage ./dynamic-loader/sdk.nix {
       sharedCompiler = sharedDriverToolchain;
     };

@@ -430,6 +430,13 @@ export interface Imports {
       newLen: WasmAddress,
       flags: WasmAddress,
     ): WasmAddress;
+    mremap_dontunmap(
+      addr: WasmAddress,
+      oldLen: WasmAddress,
+      newLen: WasmAddress,
+      flags: WasmAddress,
+      newAddr: WasmAddress,
+    ): WasmAddress;
     mmap(
       addr: WasmAddress,
       len: WasmAddress,
