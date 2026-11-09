@@ -48,7 +48,7 @@ let
         "--sysroot=${linkRoot}"
       ]
       ++ profileCompilerFlags
-      ++ map (flag: "$${flag}") linkOnlyDriverFlags
+      ++ map (flag: "$" + flag) linkOnlyDriverFlags
     )
     + "\n"
   );
