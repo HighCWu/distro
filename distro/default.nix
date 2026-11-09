@@ -1345,7 +1345,7 @@ lib.makeScope (scope: lib.callPackageWith ({ inherit lib pkgs; } // scope)) (
     };
     findutils = callPackage ./findutils/package.nix { };
     findutils-fork = callPackage ./findutils-fork/package.nix {
-      sdk-fork-automatic = self.sdk-fork-automatic;
+      inherit (self) sdk-fork-automatic;
       extraChecks.both = pkgs.runCommand "findutils-standard-fork-both" { passthru.ci.heavy = true; } ''
         test -e ${self.findutils-fork.checks.runtime}
         test -e ${self.findutils-fork-wasm64.checks.runtime}
