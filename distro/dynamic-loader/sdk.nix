@@ -45,7 +45,7 @@ let
         # These weak startup adapters form a lazy chain selected by main's signature.
         # Keep them in the normal libc archive, outside the forced export set.
         llvm-ar d $out/libc-exports.a __main_void.o __main_argc_argv.o
-        # The execution adapters are default runtime helpers, not CRT startup.
+        # Keep execution adapters available to links that omit CRT startup.
         llvm-ar r $out/libc-exports.a ${execution}/dynamic-execution.o
       '';
   exportedCxx =

@@ -52,12 +52,14 @@ build-host loader paths do not enter target libraries. The SDK's `configSite`
 passthru attribute points to this same installed file.
 
 The SDK uses the Linux shared-link driver branch that selects relocatable
-table placement and dynamic imports for shared libraries. Main startup and the
-private execution support come from its sysroot CRT archive. Default main links
-also export the libc definitions needed by side libraries. Explicit user library
+table placement and dynamic imports for shared libraries. Main startup comes
+from its sysroot CRT archive. The default libc export archive carries the
+private execution support and the libc definitions needed by side libraries.
+Explicit user library
 inputs remain available, and a later stricter unresolved-symbol policy wins.
 The compiler's `-nostdlib`, `-nostartfiles` and `-nodefaultlibs` switches control
-the corresponding startup and default-library inputs.
+the corresponding startup and default-library inputs. In particular,
+`-nostartfiles` keeps the runtime helpers while omitting the CRT entry point.
 
 `sdk-dynamic-loader-check-driver` and the wasm64 equivalent exercise the built
 SDK compiler with nested response files, an ordinary main and a PIC library,
