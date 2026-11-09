@@ -1,0 +1,17 @@
+# SPDX-License-Identifier: MIT
+# Keep the architecture-provided Wasm _start path free of the generic main startup.
+diff --git a/crt/crt1.c b/crt/crt1.c
+--- a/crt/crt1.c
++++ b/crt/crt1.c
+@@ -5,6 +5,7 @@
+ #define START "_start"
+ 
+ #include "crt_arch.h"
++#ifndef __wasm__
+ 
+ int main(int, char **, char **);
+ weak void _init();
+@@ -19,2 +20,3 @@ hidden void _start_c(long *p)
+ 	__libc_start_main(main, argc, argv, _init, _fini, 0);
+ }
++#endif

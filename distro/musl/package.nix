@@ -79,10 +79,12 @@ pkgs.stdenvNoCC.mkDerivation (
       runHook postInstall
     '';
   }
-  // lib.optionalAttrs (enableForkContinuation || enableDynamicLoader || enableCooperativePoll) {
-    patches =
-      lib.optional enableForkContinuation ./fork-continuation.patch
-      ++ lib.optional enableDynamicLoader ./dynamic-loader.patch
-      ++ lib.optional enableCooperativePoll ./cooperative-poll.patch;
+  // {
+    patches = [
+      ./wasm-crt1.patch
+    ]
+    ++ lib.optional enableForkContinuation ./fork-continuation.patch
+    ++ lib.optional enableDynamicLoader ./dynamic-loader.patch
+    ++ lib.optional enableCooperativePoll ./cooperative-poll.patch;
   }
 )
