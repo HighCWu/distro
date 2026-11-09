@@ -9,6 +9,7 @@ import {
   readdir,
   rename,
   rm,
+  rmdir,
   stat,
   writeFile,
 } from "node:fs/promises";
@@ -55,6 +56,7 @@ guest_test("Node directory sharing through Linux", async (t, fixture) => {
       const directory = path.join(shared, "external-directory"),
         moved = path.join(shared, "external-moved");
       await mkdir(directory);
+      await mkdir(path.join(directory, "host-empty"));
       await writeFile(path.join(directory, "old-entry"), "original");
       await guest.fs.writeFile("/tmp/external-file-metadata", await load_external_file_metadata());
       await guest.fs.chmod("/tmp/external-file-metadata", 0o755);
@@ -78,6 +80,7 @@ guest_test("Node directory sharing through Linux", async (t, fixture) => {
         // consumer to fstat/fchmod/futimens its already open descriptor.
         await rename(staging, target);
         await rename(directory, moved);
+        await rmdir(path.join(moved, "host-empty"));
         await mkdir(directory);
         await writeFile(path.join(directory, "new-entry"), "replacement");
         await writer.write(new TextEncoder().encode("x"));

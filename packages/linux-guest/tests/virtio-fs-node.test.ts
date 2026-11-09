@@ -639,6 +639,16 @@ test("node virtio-fs synchronizes and closes an opened directory after unlink", 
     await assert.rejects(fs.fsync(node, handle, false), { errno: 5 });
     file.sync = sync;
     await fs.rmdir(fs.root, "child");
+    if (process.platform === "linux") {
+      assert.equal((await fs.getattr(node)).nlink, 0);
+      assert.deepEqual(await fs.readdir(node, handle), []);
+      await mkdir(path.join(directory, "child"));
+      await writeFile(path.join(directory, "child", "replacement"), "new");
+      const replacement = (await fs.lookup(fs.root, "child"))!;
+      assert.notEqual(replacement, node);
+      assert.deepEqual(await fs.readdir(node, handle), []);
+      assert.equal(await readFile(path.join(directory, "child", "replacement"), "utf8"), "new");
+    }
     await fs.fsync(node, handle, false);
     assert.equal((await fs.getattr(node)).mode & 0o170000, 0o040000);
     assert.equal((await file.stat({ bigint: true })).ino, ino);

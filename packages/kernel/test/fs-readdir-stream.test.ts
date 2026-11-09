@@ -12,6 +12,7 @@ for (const [asynchronous, typed] of [
 ]) {
   test(`FUSE readdir streams pages and closes iterators, async=${asynchronous}, typed=${typed}`, async () => {
     const root = {},
+      handle = {},
       nodes = [{}, {}, {}];
     let opened = 0,
       yielded = 0,
@@ -19,6 +20,9 @@ for (const [asynchronous, typed] of [
       attributes = 0;
     let failAttributes = false;
     let invalidType = false;
+    let removedDirectory = false;
+    let removedReads = 0;
+    let failDirectoryRead = false;
     function* entries() {
       opened++;
       try {
@@ -41,15 +45,25 @@ for (const [asynchronous, typed] of [
         lookup() {
           return undefined;
         },
-        getattr(node: object) {
+        getattr(node: object, actualHandle?: object) {
           attributes++;
           if (failAttributes && node !== root) throw new FSError("EACCES");
-          return { mode: node === root ? 0o040700 : 0o100600, size: 0n };
+          if (removedDirectory) assert.equal(actualHandle, handle);
+          return {
+            mode: node === root ? 0o040700 : 0o100600,
+            size: 0n,
+            nlink: removedDirectory ? 0 : undefined,
+          };
         },
         opendir() {
-          return {};
+          return handle;
         },
         readdir() {
+          if (removedDirectory) {
+            removedReads++;
+            if (failDirectoryRead) throw new FSError("EIO");
+            return [];
+          }
           if (!asynchronous) return entries();
           return (async function* () {
             yield* entries();
@@ -144,6 +158,30 @@ for (const [asynchronous, typed] of [
         await page(2, 32, 5);
       }
       assert.equal(closed, opened, "attribute failure also closes the backend iterator");
+      removedDirectory = true;
+      const beforeSmallPage = attributes;
+      assert.deepEqual(await page(0, 31), []);
+      assert.equal(attributes, beforeSmallPage, "undersized pages do not stat or enumerate");
+      assert.equal(removedReads, 0);
+      for (const offset of [0, 1, 2]) {
+        const before = attributes;
+        assert.deepEqual(await page(offset, 64), [], "removed directories omit both dot entries");
+        assert.equal(attributes - before, offset < 2 ? 1 : 0);
+      }
+      assert.equal(removedReads, 3, "removed-directory EOF still comes from the backend");
+      failDirectoryRead = true;
+      await page(0, 64, 5);
+      assert.equal(removedReads, 4, "backend failure cannot become a synthetic EOF");
+      removedDirectory = false;
+      failDirectoryRead = false;
+      assert.deepEqual(
+        (await page(0, 64)).map((entry) => [entry.name, entry.offset]),
+        [
+          [".", 1n],
+          ["..", 2n],
+        ],
+        "linked directories retain dot entries and offsets",
+      );
     } finally {
       await close_virtio_device(device);
     }

@@ -1194,11 +1194,18 @@ export function fileSystemDevice<TNode extends object, THandle, T extends FS<TNo
         // ".." entries this device injects. Each request restarts enumeration
         // and skips `off` entries, then stops once the page is full. No directory
         // position state is kept between requests.
-        const entries = [
-          { name: ".", record: handle.node },
-          { name: "..", record: handle.node.parent },
-        ];
         const limit = Math.min(request.size, capacity - FuseOutHeader.size);
+        const directory =
+          offset < 2 && limit >= 32
+            ? await filesystem.getattr(handle.node.node, handle.handle)
+            : undefined;
+        const entries =
+          directory?.nlink === 0
+            ? []
+            : [
+                { name: ".", record: handle.node },
+                { name: "..", record: handle.node.parent },
+              ];
         async function append_entry(
           name: Uint8Array,
           record: NodeRecord<TNode>,
@@ -1226,7 +1233,12 @@ export function fileSystemDevice<TNode extends object, THandle, T extends FS<TNo
           const entry = entries[index]!;
           const name = utf8_encoder.encode(entry.name);
           if (!fits(name)) return payload;
-          await append_entry(name, entry.record, index);
+          await append_entry(
+            name,
+            entry.record,
+            index,
+            index === 0 && directory ? mode_type(directory.mode) : undefined,
+          );
         }
         // Even the shortest dirent takes 32 bytes. Do not open an iterator
         // when no further entry can fit. Breaking for-await closes generators.

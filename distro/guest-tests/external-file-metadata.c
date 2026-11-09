@@ -26,6 +26,10 @@ int main(int argc, char **argv)
     int directory_fd = dirfd(directory);
     require(directory_fd >= 0 && fstatat(directory_fd, "old-entry", &old_child, 0) == 0,
             "open original directory and cache child before host replacement");
+    int host_removed_fd = openat(directory_fd, "host-empty", O_RDONLY | O_DIRECTORY | O_CLOEXEC);
+    require(host_removed_fd >= 0, "open empty directory before host removal");
+    DIR *host_removed = fdopendir(host_removed_fd);
+    require(host_removed != NULL, "retain directory stream across host removal");
     int fd = open(argv[1], O_RDONLY | O_CLOEXEC);
     struct stat before, held, replacement;
     require(fd >= 0 && fstat(fd, &before) == 0, "open and capture original inode");
@@ -66,6 +70,15 @@ int main(int argc, char **argv)
             replacement.st_size == 11 && close(current) == 0,
             "restore replacement data and close independent handles");
     puts("external metadata: path truncate with read-only fd, explicit EINVAL and write recovery pass");
+    // The host removed this directory during the handshake. Linux has not
+    // processed rmdir for it, so readdir must reach the filesystem backend.
+    struct stat host_removed_stat;
+    require(fstat(host_removed_fd, &host_removed_stat) == 0 && host_removed_stat.st_nlink == 0,
+            "host-removed directory descriptor retains unlinked inode");
+    errno = 0;
+    require(readdir(host_removed) == NULL && errno == 0,
+            "host-removed directory stream reaches clean EOF");
+    require(closedir(host_removed) == 0, "close host-removed directory stream");
     unsigned entries = 0;
     struct dirent *entry;
     errno = 0;
@@ -86,8 +99,21 @@ int main(int argc, char **argv)
     int created = openat(directory_fd, "created", O_WRONLY | O_CREAT | O_EXCL | O_CLOEXEC, 0600);
     require(created >= 0 && close(created) == 0 &&
             renameat(directory_fd, "created", directory_fd, "renamed") == 0 &&
-            unlinkat(directory_fd, "renamed", 0) == 0 && closedir(directory) == 0,
-            "relative create rename unlink and directory close");
+            unlinkat(directory_fd, "renamed", 0) == 0,
+            "relative create rename and unlink");
+    require(mkdirat(directory_fd, "empty", 0700) == 0, "create empty directory for removal");
+    int empty_fd = openat(directory_fd, "empty", O_RDONLY | O_DIRECTORY | O_CLOEXEC);
+    require(empty_fd >= 0, "open empty directory before removal");
+    DIR *removed = fdopendir(empty_fd);
+    require(removed != NULL && unlinkat(directory_fd, "empty", AT_REMOVEDIR) == 0,
+            "hold removed empty directory stream");
+    struct stat removed_stat;
+    require(fstat(empty_fd, &removed_stat) == 0 && removed_stat.st_nlink == 0,
+            "removed directory descriptor retains unlinked inode");
+    errno = 0;
+    require(readdir(removed) == NULL && errno == 0, "removed directory stream reaches clean EOF");
+    require(closedir(removed) == 0 && closedir(directory) == 0,
+            "close removed and renamed directory streams");
     puts("external metadata: moved directory enumeration, child identity and relative operations pass");
     return 0;
 }

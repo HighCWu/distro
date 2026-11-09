@@ -295,7 +295,8 @@ export interface NodeFSOptions {
  * kernel resolves them inside the guest namespace. Path and symlink escapes are
  * rejected when the host directory is stable.
  * On Linux, live directory descriptors can recover in-root host renames via
- * procfs; moved-outside-root and deleted-directory traversal are not provided.
+ * procfs and enumerate a removed empty directory through its live descriptor.
+ * Traversal after a directory moves outside the shared root is not provided.
  *
  * Use an application-owned directory. This is not a sandbox against another
  * host process concurrently restructuring the shared tree: standard Node APIs
@@ -882,7 +883,18 @@ export class NodeFS implements FS<Node, Handle> {
     return await this.#path_operation(async () => {
       // A release already ahead of this read may have closed the handle
       // after its initial admission check, including when close reports error.
-      this.#handle(node, handle);
+      const current = this.#handle(node, handle);
+      if (process.platform === "linux" && current.file) {
+        const opened = await node_call(current.file.stat({ bigint: true }));
+        if (opened.isDirectory() && opened.nlink === 0n) {
+          const entries = await node_call(
+            readdir(`/proc/self/fd/${current.file.fd}`, { withFileTypes: true }),
+          );
+          if (entries.length)
+            throw new FSError("EIO", "removed directory contains unexpected entries");
+          return [];
+        }
+      }
       const parts = await this.#directory_parts(node);
       const target = await this.#validated_path(parts);
       const result: FSDirectoryEntry<Node>[] = [];
