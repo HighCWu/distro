@@ -38,6 +38,7 @@ let
   readonly-access = test-program "readonly-access" ../../guest-tests/readonly-access.c;
   external-file-metadata = test-program "external-file-metadata" ../../guest-tests/external-file-metadata.c;
   file-byte-names = test-program "file-byte-names" ../../guest-tests/file-byte-names.c;
+  file-append-flags = test-program "file-append-flags" ../../guest-tests/file-append-flags.c;
 
   lifecycle-rootfs = vm-test.installedDisk {
     name = "linux-guest-lifecycle";
@@ -63,6 +64,7 @@ let
     "readonly-access" = "${readonly-access}/bin/readonly-access";
     "external-file-metadata" = "${external-file-metadata}/bin/external-file-metadata";
     "file-byte-names" = "${file-byte-names}/bin/file-byte-names";
+    "file-append-flags" = "${file-append-flags}/bin/file-append-flags";
   };
 
   package = pkgs.stdenvNoCC.mkDerivation {

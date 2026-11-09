@@ -25,6 +25,7 @@ import {
   load_open_file_metadata,
   load_file_creation_modes,
   load_file_byte_names,
+  load_file_append_flags,
   load_readonly_access,
   load_external_file_metadata,
 } from "./assets.ts";
@@ -102,6 +103,44 @@ guest_test("Node directory sharing through Linux", async (t, fixture) => {
       assert.deepEqual(await readdir(directory), ["new-entry"]);
       assert.equal(await readFile(path.join(directory, "new-entry"), "utf8"), "replacement");
     });
+
+    await t.test(
+      "host descriptor O_APPEND flag changes retain offset and inode semantics",
+      async () => {
+        const directory = path.join(shared, "append-flags");
+        await mkdir(directory);
+        await writeFile(path.join(directory, "held"), "original");
+        await guest.fs.writeFile("/tmp/file-append-flags", await load_file_append_flags());
+        await guest.fs.chmod("/tmp/file-append-flags", 0o755);
+        const process = await guest.exec(["/tmp/file-append-flags", "/tmp/shared/append-flags"], {
+          stdinMode: "streaming",
+        });
+        const stderr = new Response(process.stderr).text();
+        const writer = process.stdin.getWriter();
+        let stdout: Promise<string>;
+        try {
+          ({ output: stdout } = await readReadyOutput(
+            process.stdout,
+            "append flags: ready for host replacement",
+          ));
+          await rename(path.join(directory, "held"), path.join(directory, "held-original"));
+          await writeFile(path.join(directory, "held"), "replacement");
+          await writer.write(new TextEncoder().encode("x"));
+        } finally {
+          await writer.close();
+        }
+        assert.equal((await process.status).success, true, await stderr);
+        assert.deepEqual((await stdout).trim().split("\n"), [
+          "append flags: clearing, restoring and clearing O_APPEND honors offsets pass",
+          "append flags: held descriptor writes retain the replaced inode pass",
+          "append flags: unlinked descriptor remains independent of recreated path pass",
+        ]);
+        assert.equal(await readFile(path.join(directory, "toggle"), "utf8"), "aXcZefY");
+        assert.equal(await readFile(path.join(directory, "held"), "utf8"), "replacement");
+        assert.equal(await readFile(path.join(directory, "held-original"), "utf8"), "oBiginalC");
+        assert.equal(await readFile(path.join(directory, "unlinked"), "utf8"), "new-data");
+      },
+    );
 
     await t.test(
       "standard access distinguishes backend protection from a read-only mount",

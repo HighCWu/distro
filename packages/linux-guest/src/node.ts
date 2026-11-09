@@ -304,13 +304,16 @@ class Handle {
   readonly file: FileHandle | undefined;
   readonly directory: boolean;
   readonly writable: boolean;
+  readonly openFlags: number;
+  positionalFile: FileHandle | undefined;
   closed = false;
 
-  constructor(node: Node, file?: FileHandle, directory = false, writable = false) {
+  constructor(node: Node, file?: FileHandle, directory = false, writable = false, openFlags = 0) {
     this.node = node;
     this.file = file;
     this.directory = directory;
     this.writable = writable;
+    this.openFlags = openFlags;
     if (file) node.files.add(file);
     if (file && writable) node.writableFiles.add(file);
   }
@@ -766,6 +769,7 @@ export class NodeFS implements FS<Node, Handle> {
           await this.#open_file(node, flags),
           false,
           (flags & linux_open.access) !== linux_open.readonly,
+          flags,
         ),
     );
   }
@@ -845,6 +849,7 @@ export class NodeFS implements FS<Node, Handle> {
             file,
             false,
             (flags & linux_open.access) !== linux_open.readonly,
+            flags,
           ),
         };
       } catch (error) {
@@ -862,13 +867,70 @@ export class NodeFS implements FS<Node, Handle> {
     return buffer.subarray(0, bytesRead);
   }
 
-  async write(node: Node, handle: Handle, offset: bigint, data: Uint8Array) {
+  async #positional_file(node: Node, handle: Handle, original: FileHandle) {
+    if (handle.positionalFile) return handle.positionalFile;
+
+    // These are descriptor status flags that affect I/O behavior. Path and
+    // creation flags must not be replayed when duplicating the held inode.
+    const preserved =
+      handle.openFlags &
+      (linux_open.noTerminal |
+        linux_open.nonblocking |
+        linux_open.dataSync |
+        linux_open.direct |
+        linux_open.noAtime |
+        linux_open.sync |
+        linux_open.largeFile |
+        linux_open.closeOnExec);
+    const flags = linux_open.writeonly | preserved;
+    const positional =
+      process.platform === "linux"
+        ? await node_call(open(`/proc/self/fd/${original.fd}`, translate_open_flags(flags)))
+        : await this.#open_file(node, flags);
+    try {
+      const [expected, actual] = await Promise.all([
+        node_call(original.stat({ bigint: true })),
+        node_call(positional.stat({ bigint: true })),
+      ]);
+      if (expected.dev !== actual.dev || expected.ino !== actual.ino)
+        throw new FSError("ENOENT", "positional descriptor no longer identifies the open inode");
+    } catch (error) {
+      await positional.close().catch(() => {});
+      throw error;
+    }
+
+    handle.positionalFile = positional;
+    node.files.add(positional);
+    node.writableFiles.add(positional);
+    return positional;
+  }
+
+  async write(node: Node, handle: Handle, offset: bigint, data: Uint8Array, flags?: number) {
     this.#writable();
     const file = this.#file(node, handle);
     if (!handle.writable) throw new FSError("EBADF", "file handle is not writable");
     const start = checked_range(offset, data.byteLength);
-    const { bytesWritten } = await node_call(file.write(data, 0, data.byteLength, start));
-    return bytesWritten;
+
+    // Node cannot clear O_APPEND on a FileHandle. When F_SETFL removed it
+    // from a handle that was originally opened with O_APPEND, use one cached
+    // descriptor for positional writes to that same inode. Other writes stay
+    // on the original descriptor, preserving host O_APPEND atomicity.
+    if (
+      !(handle.openFlags & linux_open.append) ||
+      flags === undefined ||
+      flags & linux_open.append
+    ) {
+      const { bytesWritten } = await node_call(file.write(data, 0, data.byteLength, start));
+      return bytesWritten;
+    }
+
+    return await this.#path_operation(async () => {
+      const current = this.#file(node, handle);
+      if (!handle.writable) throw new FSError("EBADF", "file handle is not writable");
+      const positional = await this.#positional_file(node, handle, current);
+      const { bytesWritten } = await node_call(positional.write(data, 0, data.byteLength, start));
+      return bytesWritten;
+    });
   }
 
   async flush(node: Node, handle: Handle) {
@@ -890,13 +952,21 @@ export class NodeFS implements FS<Node, Handle> {
     await this.#path_operation(async () => {
       const file = this.#file(node, handle);
       handle.closed = true;
-      try {
-        await node_call(file.close());
-      } finally {
-        node.files.delete(file);
-        node.writableFiles.delete(file);
-        this.#collect_inode(node);
-      }
+      const files = handle.positionalFile ? [file, handle.positionalFile] : [file];
+      handle.positionalFile = undefined;
+      const results = await Promise.allSettled(
+        files.map(async (file) => {
+          try {
+            await node_call(file.close());
+          } finally {
+            node.files.delete(file);
+            node.writableFiles.delete(file);
+          }
+        }),
+      );
+      this.#collect_inode(node);
+      const failure = results.find((result) => result.status === "rejected");
+      if (failure?.status === "rejected") throw failure.reason;
     });
   }
 
