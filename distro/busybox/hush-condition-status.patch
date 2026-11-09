@@ -1,0 +1,17 @@
+# SPDX-License-Identifier: MIT
+# This local patch contribution is MIT; upstream BusyBox hush.c remains GPL-2.0-or-later.
+diff --git a/shell/hush.c b/shell/hush.c
+--- a/shell/hush.c
++++ b/shell/hush.c
+@@ -9925,6 +9925,11 @@
+ 				last_rword = rword;
+ 				continue;
+ 			}
++			if ((rword == RES_ELSE || rword == RES_ELIF)
++			 && last_rword != rword
++			) {
++				G.last_exitcode = rcode = cond_code;
++			}
+ 		} else {
+ 			if (rword == RES_ELSE
+ 			 || (rword == RES_ELIF && last_rword != RES_ELIF)

@@ -47,6 +47,7 @@ stdenv.mkDerivation (finalAttrs: {
   pname = "busybox";
   version = "1.37.0";
   inherit src;
+  patches = [ ./hush-condition-status.patch ];
   outputs = [
     "out"
     "buildMaterials"
@@ -174,7 +175,10 @@ stdenv.mkDerivation (finalAttrs: {
     cp ${llvm-runtimes.src}/compiler-rt/LICENSE.TXT "$notices/compiler-rt-LICENSE.TXT"
     cp ${./notices.md} "$notices/README.md"
     bash ${./build-materials.sh} "$PWD" "$buildMaterials" ${./package.nix} \
-      ${buildMetadata} ${./source-bundle.README.md}
+      ${buildMetadata} ${./source-bundle.README.md} \
+      ${lib.escapeShellArgs (
+        lib.optional (finalAttrs.patches == [ ./hush-condition-status.patch ]) ./hush-condition-status.patch
+      )}
     cp ${./check-binary.mjs} "$buildMaterials/check-binary.mjs"
     cp ${../../packages/kernel/src/wasm_binary.ts} "$buildMaterials/wasm_binary.ts"
     cp ${./notices.md} "$buildMaterials/notices.md"
@@ -210,6 +214,7 @@ stdenv.mkDerivation (finalAttrs: {
               pkgs.gzip
               pkgs.coreutils
               pkgs.gnused
+              pkgs.patch
             ];
           }
           ''
@@ -218,6 +223,7 @@ stdenv.mkDerivation (finalAttrs: {
           '';
       smoke = check "smoke" ./smoke-test.sh;
       processes = check "processes" ./process-test.sh;
+      shell-status = check "shell-status" ./shell-status-test.sh;
       networking = check "networking" ./network-test.sh;
       inotify = check "inotify" ./inotify-test.sh;
       ipv6 = check "ipv6" ./ipv6-test.sh;
