@@ -1148,6 +1148,31 @@ lib.makeScope (scope: lib.callPackageWith ({ inherit lib pkgs; } // scope)) (
       linux = self.linux-wasm64;
       vm-test = vmTestWasm64;
     };
+    busybox-fork = callPackage ./busybox-fork/package.nix {
+      extraChecks.both =
+        pkgs.runCommand "busybox-fork-check-both"
+          {
+            passthru.ci.heavy = true;
+          }
+          ''
+            test -e ${self.sdk-fork-continuation.checks.wrapper}
+            test -e ${self.sdk-fork-continuation-wasm64.checks.wrapper}
+            test -e ${self.busybox-fork.checks.runtime}
+            test -e ${self.busybox-fork-wasm64.checks.runtime}
+            test -e ${self.fork-continuation.checks.runtime}
+            test -e ${self.fork-continuation-wasm64.checks.runtime}
+            touch $out
+          '';
+    };
+    busybox-fork-wasm64 = callPackage ./busybox-fork/package.nix {
+      platform = self.platform-wasm64;
+      sdk = self.sdk-wasm64;
+      sdk-fork-continuation = self.sdk-fork-continuation-wasm64;
+      musl = self.musl-wasm64;
+      llvm-runtimes = self.llvm-runtimes-wasm64;
+      busybox = self.busybox-wasm64;
+      vm-test = vmTestWasm64;
+    };
     bzip2 = callPackage ./bzip2/package.nix { };
     bzip2-wasm64 = self.bzip2.override {
       stdenv = self.stdenv-wasm64;
