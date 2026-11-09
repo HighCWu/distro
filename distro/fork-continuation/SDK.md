@@ -36,16 +36,22 @@ programs executed by `exec` may still use the default SDK without Asyncify.
 For Autoconf builds, select this profile's
 `share/linux-wasm-fork-sdk/config.site` with the standard `CONFIG_SITE` variable
 (Nix users can use the package's `configSite` attribute). It removes the default
-SDK's negative fork cache answers so the normal compile/link probes can run;
+SDK's negative fork/vfork cache answers so the normal compile/link probes can run;
 it does not prefill success. The default SDK's policy is unchanged. The profile
-still disables vfork, fixed/file-mapping capability probes and dynamic loading.
+still disables fixed/file-mapping capability probes and dynamic loading.
 Every complete executable still needs the finalizer after linking.
 
 Current supported scope: static C, fork from ordinary single-thread program
 execution. Fork from a signal handler, runtime callback, or a process with sibling
-threads is rejected. Dynamic modules, C++ EH/SjLj, vfork and multithreaded fork
+threads is rejected. Dynamic modules, C++ EH/SjLj and multithreaded fork
 are not supported. The fixed 256 KiB continuation buffer traps on overflow;
 overflow is not a recoverable fork errno. No performance guarantee is made.
+
+The existing `vfork()` interface uses musl's generic C fork-like fallback through
+the same single-thread continuation path. Parent and child have separate memory
+snapshots and may proceed independently. The child can execute another program
+or call `_exit`. The path skips `pthread_atfork` handlers. Original Dash sources can
+link this interface directly with the optional profile and whole-link finalizer.
 
 New execution objects export syscall continuation ABI 2. Use a matching runtime;
 ABI-1-only loaders reject these objects, and new loaders still accept ABI 1 for
