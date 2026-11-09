@@ -7,6 +7,9 @@
   platform,
   llvm-toolchain,
   sysroot,
+  # Keep the existing capability answers by default; dynamic SDK stdenvs pass
+  # the matching SDK copy explicitly so configure probes share its policy.
+  configSite ? ./config.site,
 }:
 
 let
@@ -35,10 +38,6 @@ let
       echo "--sysroot=${sysroot} ${toString platform.compilerFlags}" >> $out/nix-support/cc-cflags
     '';
   };
-  # Use the same verified negative capability answers as external SDK builds.
-  # In particular AC_FUNC_MMAP's Linux cross default is not evidence for
-  # fixed-address/file mappings, and linking dlopen does not prove a loader.
-  configSite = ./config.site;
 in
 
 pkgs.stdenv.override (old: {

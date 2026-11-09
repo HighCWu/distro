@@ -62,7 +62,7 @@ test("shared target site policy only supplies established negative capability an
 
 test("distro, installed SDK and profile use the same site policy source", () => {
   const stdenv = readFileSync(new URL("../stdenv.nix", import.meta.url), "utf8");
-  assert.match(stdenv, /configSite = \.\/config\.site;/);
+  assert.match(stdenv, /configSite \? \.\/config\.site,/);
   const sdk = readFileSync(new URL("./package.nix", import.meta.url), "utf8");
   assert.match(sdk, /builtins\.readFile \.\.\/config\.site/);
   assert.ok(sdk.includes('configSite = "${configSiteFiles}/share/linux-wasm-sdk/config.site";'));

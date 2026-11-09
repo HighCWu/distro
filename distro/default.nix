@@ -961,6 +961,30 @@ lib.makeScope (scope: lib.callPackageWith ({ inherit lib pkgs; } // scope)) (
     # images merely because the surrounding default scope is wasm32.
     stdenv-wasm64 =
       if debug then pkgs.stdenvAdapters.keepDebugInfo stdenvReleaseWasm64 else stdenvReleaseWasm64;
+    stdenv-dynamic-loader = import ./stdenv.nix {
+      inherit pkgs;
+      llvm-toolchain = self.sdk-dynamic-loader.compiler;
+      sysroot = self.sdk-dynamic-loader.sysroot;
+      configSite = self.sdk-dynamic-loader.configSite;
+      platform = self.platform // {
+        linkerFlags = self.platform.linkerFlags ++ [
+          "--growable-table"
+          "--export-all"
+        ];
+      };
+    };
+    stdenv-dynamic-loader-wasm64 = import ./stdenv.nix {
+      inherit pkgs;
+      llvm-toolchain = self.sdk-dynamic-loader-wasm64.compiler;
+      sysroot = self.sdk-dynamic-loader-wasm64.sysroot;
+      configSite = self.sdk-dynamic-loader-wasm64.configSite;
+      platform = self.platform-wasm64 // {
+        linkerFlags = self.platform-wasm64.linkerFlags ++ [
+          "--growable-table"
+          "--export-all"
+        ];
+      };
+    };
     apk-wasm64 = callPackage ./apk {
       tools = self.apk-tools-host;
       callPackage = lib.callPackageWith (
@@ -1166,6 +1190,36 @@ lib.makeScope (scope: lib.callPackageWith ({ inherit lib pkgs; } // scope)) (
       openssl = self.openssl-wasm64;
       busybox = self.busybox-wasm64;
       vm-test = vmTestWasm64;
+    };
+    python-dynamic = callPackage ./python-dynamic/package.nix { };
+    python-dynamic-wasm64 = callPackage ./python-dynamic/package.nix {
+      python = self.python-wasm64;
+      stdenv-dynamic-loader = self.stdenv-dynamic-loader-wasm64;
+      sdk-dynamic-loader = self.sdk-dynamic-loader-wasm64;
+    };
+    python-extension-runtime = callPackage ./python-extension-runtime/package.nix {
+      extraChecks.both =
+        pkgs.runCommand "python-extension-runtime-check-both"
+          {
+            passthru.ci.heavy = true;
+          }
+          ''
+            test -e ${self.sdk-dynamic-loader.checks.driver}
+            test -e ${self.sdk-dynamic-loader-wasm64.checks.driver}
+            test -e ${self.dynamic-loader.checks.runtime}
+            test -e ${self.dynamic-loader-wasm64.checks.runtime}
+            test -e ${self.python-extension-runtime.checks.runtime}
+            test -e ${self.python-extension-runtime-wasm64.checks.runtime}
+            touch $out
+          '';
+    };
+    python-extension-runtime-wasm64 = callPackage ./python-extension-runtime/package.nix {
+      platform = self.platform-wasm64;
+      python-dynamic = self.python-dynamic-wasm64;
+      sdk-dynamic-loader = self.sdk-dynamic-loader-wasm64;
+      llvm-toolchain = self.llvm-toolchain-wasm64;
+      vm-test = vmTestWasm64;
+      busybox = self.busybox-wasm64;
     };
     quickjs = callPackage ./quickjs/package.nix { };
     quickjs-wasm64 = self.quickjs.override {
