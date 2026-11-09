@@ -48,9 +48,12 @@ pkgs.stdenvNoCC.mkDerivation (
       # globals and SjLj tag used by the retained PIC libc.so output. This
       # affects its link only; ordinary executables keep strict resolution.
       LDFLAGS_AUTO=-Wl,--unresolved-symbols=import-dynamic,--shared-memory,--import-memory,--max-memory=${toString platform.maximumMemoryBytes}
+      # The wasm Clang target defaults globals to hidden visibility. Dynamic
+      # libc exports need public definitions visible while src/include's
+      # explicit hidden allocator declarations remain internal.
       CFLAGS=${lib.optionalString debug "-g"}${
         lib.optionalString (!deduplicateMmapSearch) " -DWASM_MMAP_DEDUP_SEARCH=0"
-      }${lib.optionalString enableForkContinuation " -DWASM_FORK_CONTINUATION=1"}${lib.optionalString enableDynamicLoader " -DWASM_DYNAMIC_LOADER=1"}${lib.optionalString enableBrkSyscall " -DWASM_BRK_SYSCALL=1"}${lib.optionalString enableCooperativePoll " -fsanitize-coverage=trace-pc,no-prune,edge"}
+      }${lib.optionalString enableForkContinuation " -DWASM_FORK_CONTINUATION=1"}${lib.optionalString enableDynamicLoader " -fvisibility=default -DWASM_DYNAMIC_LOADER=1"}${lib.optionalString enableBrkSyscall " -DWASM_BRK_SYSCALL=1"}${lib.optionalString enableCooperativePoll " -fsanitize-coverage=trace-pc,no-prune,edge"}
       EOF
 
       ${lib.optionalString enableCooperativePoll ''
