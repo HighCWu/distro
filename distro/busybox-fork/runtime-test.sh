@@ -182,7 +182,15 @@ status=$?
 [ "$status" -eq 0 ] || fail 'writing awk expected output'
 cmp "$work/awk.expected" "$work/awk.stdout" >/dev/null 2>&1
 status=$?
-[ "$status" -eq 0 ] || fail 'awk output or child results changed'
+if [ "$status" -ne 0 ]; then
+  printf 'busybox fork diagnostic (awk.stdout):\n' >&2
+  cat "$work/awk.stdout" >&2
+  printf 'busybox fork diagnostic (awk.stderr):\n' >&2
+  cat "$work/awk.stderr" >&2
+  printf 'busybox fork diagnostic (awk.log):\n' >&2
+  cat "$awk_log" >&2
+  fail 'awk output or child results changed'
+fi
 grep -Fx 'awk-system|1|invoked' "$awk_log" >/dev/null 2>&1
 status=$?
 [ "$status" -eq 0 ] || fail 'awk system() helper was not recorded'
