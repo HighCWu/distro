@@ -1006,6 +1006,24 @@ lib.makeScope (scope: lib.callPackageWith ({ inherit lib pkgs; } // scope)) (
     };
     ca-certificates = callPackage ./ca-certificates/package.nix { };
     coreutils = callPackage ./coreutils/package.nix { };
+    coreutils-sort-fork = callPackage ./coreutils-sort-fork/package.nix {
+      extraChecks.both =
+        pkgs.runCommand "coreutils-sort-fork-both-widths" { passthru.ci.heavy = true; }
+          ''
+            test -e ${self.coreutils-sort-fork.checks.runtime}
+            test -e ${self.coreutils-sort-fork-wasm64.checks.runtime}
+            touch $out
+          '';
+    };
+    coreutils-sort-fork-wasm64 = callPackage ./coreutils-sort-fork/package.nix {
+      platform = self.platform-wasm64;
+      sdk-fork-continuation = self.sdk-fork-continuation-wasm64;
+      llvm-toolchain = self.llvm-toolchain-wasm64;
+      musl = self.musl-wasm64;
+      llvm-runtimes = self.llvm-runtimes-wasm64;
+      busybox = self.busybox-wasm64;
+      vm-test = vmTestWasm64;
+    };
     coreutils-split-fork = callPackage ./coreutils-split-fork/package.nix {
       extraChecks.both =
         pkgs.runCommand "coreutils-split-fork-both-widths" { passthru.ci.heavy = true; }
