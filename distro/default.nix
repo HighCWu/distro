@@ -1189,6 +1189,35 @@ lib.makeScope (scope: lib.callPackageWith ({ inherit lib pkgs; } // scope)) (
     sqlite3-wasm64 = callPackage ./sqlite3/native-wasm64.nix {
       vm-test = vmTestWasm64;
     };
+    sqlite3-dynamic = callPackage ./sqlite3-dynamic/package.nix { };
+    sqlite3-dynamic-wasm64 = callPackage ./sqlite3-dynamic/package.nix {
+      platform = self.platform-wasm64;
+      sdk-dynamic-loader = self.sdk-dynamic-loader-wasm64;
+      llvm-toolchain = self.llvm-toolchain-wasm64;
+      llvm-runtimes = self.llvm-runtimes-wasm64;
+    };
+    sqlite3-extension-runtime = callPackage ./sqlite3-extension-runtime/package.nix {
+      extraChecks.both =
+        pkgs.runCommand "sqlite3-extension-runtime-check-both"
+          {
+            passthru.ci.heavy = true;
+          }
+          ''
+            test -e ${self.sdk-dynamic-loader.checks.driver}
+            test -e ${self.sdk-dynamic-loader-wasm64.checks.driver}
+            test -e ${self.sqlite3-extension-runtime.checks.runtime}
+            test -e ${self.sqlite3-extension-runtime-wasm64.checks.runtime}
+            touch $out
+          '';
+    };
+    sqlite3-extension-runtime-wasm64 = callPackage ./sqlite3-extension-runtime/package.nix {
+      platform = self.platform-wasm64;
+      sqlite3-dynamic = self.sqlite3-dynamic-wasm64;
+      sdk-dynamic-loader = self.sdk-dynamic-loader-wasm64;
+      llvm-toolchain = self.llvm-toolchain-wasm64;
+      vm-test = vmTestWasm64;
+      busybox = self.busybox-wasm64;
+    };
     tar = callPackage ./tar/package.nix { };
     util-linux = callPackage ./util-linux/package.nix { };
     util-linux-wasm64 = self.util-linux.override {
