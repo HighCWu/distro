@@ -2,6 +2,7 @@
 import {
   DylinkInitializationError,
   link_dylink_graph,
+  type DylinkExternalTag,
   type DylinkExternalSymbol,
   type DylinkLazyFunction,
   type DylinkModuleRecord,
@@ -45,6 +46,7 @@ type Options = {
   maximumPages: number;
   tableType: WasmTableType;
   signatures: ReadonlyMap<string, string>;
+  tagSignatures?: ReadonlyMap<string, string>;
   functionMetadata?: ReadonlyMap<string, { signature: string; imported: boolean }>;
   privateExports?: ReadonlySet<string>;
   isControlFlow(error: unknown): boolean;
@@ -65,6 +67,7 @@ export class ProcessDylink {
   readonly #table: WebAssembly.Table;
   readonly #stack: WebAssembly.Global;
   readonly #symbols = new Map<string, DylinkExternalSymbol>();
+  readonly #tags = new Map<string, DylinkExternalTag>();
   readonly #pointers = new Map<CallableFunction, bigint>();
   readonly #files = new Map<string, File>();
   readonly #aliases = new Map<string, string>();
@@ -98,6 +101,12 @@ export class ProcessDylink {
     this.#table = table;
     this.#stack = stack;
     this.#cursor = BigInt(table.length);
+    for (const [name, signature] of options.tagSignatures ?? []) {
+      const value = options.main.exports[name];
+      if (typeof WebAssembly.Tag !== "function" || !(value instanceof WebAssembly.Tag))
+        throw new Error(`missing dynamic main exception tag: ${name}`);
+      this.#tags.set(name, { value, signature });
+    }
     for (let index = 3n; index < this.#cursor; index++) {
       const fn = wasm_table_get(table, this.#word(index, options.tableType.address));
       if (fn && !this.#pointers.has(fn)) this.#pointers.set(fn, index);
@@ -571,6 +580,7 @@ export class ProcessDylink {
           memoryArena: { cursor: base, limit: base + size, address: this.#options.address },
           tableArena: { cursor: tableStart, limit: tableEnd, address: tableAddress },
           externalSymbols: this.#symbols,
+          externalTags: this.#tags,
           functionPointers: this.#pointers,
           initialThreadLocalTls: true,
           lazyFunctions: !!(flags & 1),

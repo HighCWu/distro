@@ -1,0 +1,162 @@
+# SPDX-License-Identifier: Apache-2.0 WITH LLVM-exception
+# Route PIC Wasm EH through libunwind's main-module TLS context.
+--- a/llvm/lib/CodeGen/WasmEHPrepare.cpp
++++ b/llvm/lib/CodeGen/WasmEHPrepare.cpp
+@@ -113,6 +113,8 @@
+   Function *GetSelectorF = nullptr; // wasm.get.ehselector() intrinsic
+   FunctionCallee CallPersonalityF =
+       nullptr; // _Unwind_CallPersonality() wrapper
++  FunctionCallee GetLPadContextF =
++      nullptr; // _Unwind_GetWasmLPadContext() for PIC modules
+ 
+   bool prepareThrows(Function &F);
+   bool prepareEHPads(Function &F);
+@@ -243,19 +245,29 @@
+   }
+   assert(F.hasPersonalityFn() && "Personality function not found");
+ 
+-  // __wasm_lpad_context global variable.
+-  // This variable should be thread local. If the target does not support TLS,
+-  // we depend on CoalesceFeaturesAndStripAtomics to downgrade it to
+-  // non-thread-local ones, in which case we don't allow this object to be
+-  // linked with other objects using shared memory.
+-  LPadContextGV = M.getOrInsertGlobal("__wasm_lpad_context", LPadContextTy);
+-  LPadContextGV->setThreadLocalMode(GlobalValue::GeneralDynamicTLSModel);
+-
+-  LPadIndexField = LPadContextGV;
+-  LSDAField = IRB.CreateConstInBoundsGEP2_32(LPadContextTy, LPadContextGV, 0, 1,
+-                                             "lsda_gep");
+-  SelectorField = IRB.CreateConstInBoundsGEP2_32(LPadContextTy, LPadContextGV,
+-                                                 0, 2, "selector_gep");
++  // For non-PIC code, preserve the direct TLS access used by the main
++  // executable. PIC code can be loaded as a separate module, so access the
++  // main module's thread-local context through libunwind instead.
++  if (M.getPICLevel() == PICLevel::NotPIC) {
++    GetLPadContextF = nullptr;
++    // __wasm_lpad_context should be thread local. If the target does not
++    // support TLS, we depend on CoalesceFeaturesAndStripAtomics to downgrade
++    // it to non-thread-local ones, in which case we don't allow this object to
++    // be linked with other objects using shared memory.
++    LPadContextGV = M.getOrInsertGlobal("__wasm_lpad_context", LPadContextTy);
++    LPadContextGV->setThreadLocalMode(GlobalValue::GeneralDynamicTLSModel);
++
++    LPadIndexField = LPadContextGV;
++    LSDAField = IRB.CreateConstInBoundsGEP2_32(
++        LPadContextTy, LPadContextGV, 0, 1, "lsda_gep");
++    SelectorField = IRB.CreateConstInBoundsGEP2_32(
++        LPadContextTy, LPadContextGV, 0, 2, "selector_gep");
++  } else {
++    GetLPadContextF = M.getOrInsertFunction("_Unwind_GetWasmLPadContext",
++                                             IRB.getPtrTy());
++    if (Function *F = dyn_cast<Function>(GetLPadContextF.getCallee()))
++      F->setDoesNotThrow();
++  }
+ 
+   // wasm.landingpad.index() intrinsic, which is to specify landingpad index
+   LPadIndexF =
+@@ -357,15 +369,35 @@
+   // Pseudocode: wasm.landingpad.index(Index);
+   IRB.CreateCall(LPadIndexF, {FPI, IRB.getInt32(Index)});
+ 
++  auto *CPI = cast<CatchPadInst>(FPI);
++  Value *IndexField = LPadIndexField;
++  Value *LSDAFieldAddr = LSDAField;
++  Value *SelectorFieldAddr = SelectorField;
++  if (GetLPadContextF) {
++    // Keep this call and its GEPs local to the pad. A function can have
++    // multiple catch pads, and one pad's context pointer may not dominate
++    // another pad.
++    SmallVector<OperandBundleDef, 1> Bundles;
++    Bundles.emplace_back("funclet", CPI);
++    CallInst *LPadContextCI =
++        IRB.CreateCall(GetLPadContextF, {}, Bundles, "wasm.lpad.context");
++    LPadContextCI->setDoesNotThrow();
++    IndexField =
++        IRB.CreateStructGEP(LPadContextTy, LPadContextCI, 0, "lpad_index_gep");
++    LSDAFieldAddr =
++        IRB.CreateStructGEP(LPadContextTy, LPadContextCI, 1, "lsda_gep");
++    SelectorFieldAddr =
++        IRB.CreateStructGEP(LPadContextTy, LPadContextCI, 2, "selector_gep");
++  }
++
+   // Pseudocode: __wasm_lpad_context.lpad_index = index;
+-  IRB.CreateStore(IRB.getInt32(Index), LPadIndexField);
+-
+-  auto *CPI = cast<CatchPadInst>(FPI);
++  IRB.CreateStore(IRB.getInt32(Index), IndexField);
++
+   // TODO Sometimes storing the LSDA address every time is not necessary, in
+   // case it is already set in a dominating EH pad and there is no function call
+   // between from that EH pad to here. Consider optimizing those cases.
+   // Pseudocode: __wasm_lpad_context.lsda = wasm.lsda();
+-  IRB.CreateStore(IRB.CreateCall(LSDAF), LSDAField);
++  IRB.CreateStore(IRB.CreateCall(LSDAF), LSDAFieldAddr);
+ 
+   // Pseudocode: _Unwind_CallPersonality(exn);
+   CallInst *PersCI = IRB.CreateCall(CallPersonalityF, CatchCI,
+@@ -374,7 +406,7 @@
+ 
+   // Pseudocode: int selector = __wasm_lpad_context.selector;
+   Instruction *Selector =
+-      IRB.CreateLoad(IRB.getInt32Ty(), SelectorField, "selector");
++      IRB.CreateLoad(IRB.getInt32Ty(), SelectorFieldAddr, "selector");
+ 
+   // Replace the return value from wasm.get.ehselector() with the selector value
+   // loaded from __wasm_lpad_context.selector.
+--- a/libunwind/src/Unwind-wasm.c
++++ b/libunwind/src/Unwind-wasm.c
+@@ -36,6 +36,11 @@
+ // Communication channel between compiler-generated user code and personality
+ // function
+ thread_local struct _Unwind_LandingPadContext __wasm_lpad_context;
++
++_LIBUNWIND_EXPORT struct _Unwind_LandingPadContext *
++_Unwind_GetWasmLPadContext(void) {
++  return &__wasm_lpad_context;
++}
+ 
+ /// Calls to this function are in landing pads in compiler-generated user code.
+ /// In other EH schemes, stack unwinding is done by libunwind library, which
+--- /dev/null
++++ b/llvm/test/CodeGen/WebAssembly/wasm-pic-eh-context.ll
+@@ -0,0 +1,40 @@
++; SPDX-License-Identifier: MIT
++; RUN: llc < %s -asm-verbose=false -wasm-enable-eh -wasm-use-legacy-eh=false -exception-model=wasm -mattr=+exception-handling -relocation-model=pic | FileCheck %s --check-prefix=PIC
++; RUN: llc < %s -asm-verbose=false -wasm-enable-eh -wasm-use-legacy-eh=false -exception-model=wasm -mattr=+exception-handling -relocation-model=static | FileCheck %s --check-prefix=NONPIC
++
++target triple = "wasm32-unknown-unknown"
++
++@_ZTIi = external dso_local constant ptr
++@selector = global i32 0
++
++declare void @foo()
++declare i32 @__gxx_wasm_personality_v0(...)
++declare ptr @llvm.wasm.get.exception(token)
++declare i32 @llvm.wasm.get.ehselector(token)
++
++define void @catch() personality ptr @__gxx_wasm_personality_v0 {
++entry:
++  invoke void @foo()
++          to label %exit unwind label %dispatch
++
++dispatch:
++  %0 = catchswitch within none [label %catch.start] unwind to caller
++
++catch.start:
++  %1 = catchpad within %0 [ptr @_ZTIi]
++  %2 = call ptr @llvm.wasm.get.exception(token %1)
++  %3 = call i32 @llvm.wasm.get.ehselector(token %1)
++  store volatile i32 %3, ptr @selector
++  catchret from %1 to label %exit
++
++exit:
++  ret void
++}
++
++; PIC-NOT: __wasm_lpad_context
++; PIC: call _Unwind_GetWasmLPadContext
++; PIC-NOT: __wasm_lpad_context
++
++; NONPIC-NOT: _Unwind_GetWasmLPadContext
++; NONPIC: __wasm_lpad_context
++; NONPIC-NOT: _Unwind_GetWasmLPadContext

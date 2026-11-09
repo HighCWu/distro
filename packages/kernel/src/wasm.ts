@@ -62,6 +62,7 @@ export interface UserContext {
   dynamic?: {
     table: WasmTableType;
     signatures: Map<string, string>;
+    tagSignatures: ReadonlyMap<string, string>;
     functionMetadata: ReadonlyMap<string, { signature: string; imported: boolean }>;
     privateExports: ReadonlySet<string>;
   };

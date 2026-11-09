@@ -6,15 +6,18 @@
   sysroot,
   execution,
   exportedLibc,
+  exportedCxx,
 }:
 let
   materials = pkgs.runCommand "dynamic-startup-materials-${platform.wasmArch}" { } ''
     mkdir -p $out/recipes
     cp ${./startup.nix} $out/recipes/startup.nix
     cp ${./linux-shared.patch} $out/recipes/linux-shared.patch
+    cp ${./wasm-pic-eh-context.patch} $out/recipes/wasm-pic-eh-context.patch
     ln -s ${sysroot} $out/original-sysroot
     ln -s ${execution} $out/execution
     ln -s ${exportedLibc} $out/exported-libc
+    ln -s ${exportedCxx} $out/exported-cxx
   '';
 in
 pkgs.runCommand "dynamic-startup-sysroot-${platform.wasmArch}"
@@ -31,6 +34,7 @@ pkgs.runCommand "dynamic-startup-sysroot-${platform.wasmArch}"
     chmod u+w $out/lib
     rm $out/lib/crt1.o
     ln -s ${exportedLibc}/libc-exports.a $out/lib/libc-exports.a
+    ln -s ${exportedCxx}/libcxx-exports.a $out/lib/libcxx-exports.a
 
     # The Linux driver selects crt1 only for an executable and surrounds it
     # with --whole-archive. Keep each original object intact: a relocatable

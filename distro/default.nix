@@ -73,6 +73,7 @@ lib.makeScope (scope: lib.callPackageWith ({ inherit lib pkgs; } // scope)) (
         ./dynamic-loader/linux-shared.patch
         ./dynamic-loader/function-reexport-reader.patch
         ./dynamic-loader/function-reexports.patch
+        ./dynamic-loader/wasm-pic-eh-context.patch
       ];
     };
   in
@@ -148,6 +149,7 @@ lib.makeScope (scope: lib.callPackageWith ({ inherit lib pkgs; } // scope)) (
       sysroot = self.sysroot-wasm64;
       llvm-toolchain = self.llvm-toolchain-wasm64;
       sdk = self.sdk-wasm64;
+      llvm-runtimes = self.llvm-runtimes-wasm64;
       sharedCompiler = sharedDriverToolchain;
     };
     dynamic-loader = callPackage ./dynamic-loader/package.nix {
@@ -1218,6 +1220,28 @@ lib.makeScope (scope: lib.callPackageWith ({ inherit lib pkgs; } // scope)) (
       python-dynamic = self.python-dynamic-wasm64;
       sdk-dynamic-loader = self.sdk-dynamic-loader-wasm64;
       llvm-toolchain = self.llvm-toolchain-wasm64;
+      vm-test = vmTestWasm64;
+      busybox = self.busybox-wasm64;
+    };
+    cxx-dynamic-runtime = callPackage ./cxx-dynamic-runtime/package.nix {
+      extraChecks.both =
+        pkgs.runCommand "cxx-dynamic-runtime-check-both"
+          {
+            passthru.ci.heavy = true;
+          }
+          ''
+            test -e ${self.sdk-dynamic-loader.checks.driver}
+            test -e ${self.sdk-dynamic-loader-wasm64.checks.driver}
+            test -e ${self.cxx-dynamic-runtime.checks.runtime}
+            test -e ${self.cxx-dynamic-runtime-wasm64.checks.runtime}
+            touch $out
+          '';
+    };
+    cxx-dynamic-runtime-wasm64 = callPackage ./cxx-dynamic-runtime/package.nix {
+      platform = self.platform-wasm64;
+      sdk-dynamic-loader = self.sdk-dynamic-loader-wasm64;
+      llvm-runtimes = self.llvm-runtimes-wasm64;
+      musl = self.musl-wasm64;
       vm-test = vmTestWasm64;
       busybox = self.busybox-wasm64;
     };

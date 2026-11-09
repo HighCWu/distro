@@ -392,14 +392,15 @@ export type WasmDynamicImport = {
   name: string;
 } & (
   | { kind: "function"; typeIndex: number }
+  | { kind: "tag"; typeIndex: number }
   | { kind: "memory"; type: WasmMemoryType }
   | { kind: "table"; address: "i32" | "i64"; minimum: bigint; maximum?: bigint }
   | { kind: "global"; value: "i32" | "i64"; mutable: boolean }
 );
 
-/** The current native-code dynamic profile accepts integer GOT/base globals and
- * a funcref table. Reject other import kinds before allocating process resources.
- * Engine validation is still required for the complete module and signatures. */
+/** The current native-code dynamic profile accepts integer GOT/base globals, a
+ * funcref table and exception tags. Reject other import kinds before allocating
+ * process resources. Engine validation is still required for the complete module. */
 export function read_wasm_dynamic_imports(
   module: Uint8Array,
   allowDefinedTable = false,
@@ -453,6 +454,11 @@ export function read_wasm_dynamic_imports(
           });
           break;
         }
+        case 4: {
+          if (part.byte() !== 0) part.fail("unsupported dynamic tag attribute");
+          result.push({ module, name, kind: "tag", typeIndex: part.u32() });
+          break;
+        }
         default:
           part.fail("unsupported dynamic import kind");
       }
@@ -471,22 +477,30 @@ export interface WasmDynamicSignatures {
   exports: Map<string, string>;
   functions: readonly string[];
   imports: readonly (Extract<WasmDynamicImport, { kind: "function" }> & { signature: string })[];
+  tagImports: readonly (Extract<WasmDynamicImport, { kind: "tag" }> & { signature: string })[];
+  tagExports: Map<string, string>;
   reexports: ReadonlyMap<string, WasmDynamicFunctionReexport>;
 }
 
-/** Function ABI identities for the numeric C/SIMD dynamic profile. Do not let a JS
- * forwarding function erase a producer/consumer signature mismatch. Function
- * re-exports retain their imported identity so the linker can handle their aliases. */
+/** Function and tag ABI identities for the numeric C/SIMD dynamic profile. Do not
+ * let a JS forwarding function erase a producer/consumer signature mismatch.
+ * Function re-exports retain their imported identity for linker alias handling. */
 export function read_wasm_dynamic_signatures(
   module: Uint8Array,
   allowDefinedTable = false,
 ): WasmDynamicSignatures {
-  const imports = read_wasm_dynamic_imports(module, allowDefinedTable).filter(
-    (entry) => entry.kind === "function",
+  const dynamicImports = read_wasm_dynamic_imports(module, allowDefinedTable);
+  const imports = dynamicImports.filter(
+    (entry): entry is Extract<WasmDynamicImport, { kind: "function" }> => entry.kind === "function",
+  );
+  const tagImports = dynamicImports.filter(
+    (entry): entry is Extract<WasmDynamicImport, { kind: "tag" }> => entry.kind === "tag",
   );
   const functions = imports.map((entry) => entry.typeIndex);
-  const types: string[] = [];
+  const types: { signature: string; results: number[] }[] = [];
+  const definedTags: number[] = [];
   const exports = new Map<string, string>();
+  const tagExports = new Map<string, string>();
   const reexports = new Map<string, WasmDynamicFunctionReexport>();
   const bytes = new Cursor(module, 8);
   while (!bytes.done) {
@@ -500,44 +514,71 @@ export function read_wasm_dynamic_signatures(
         const results = [...part.span().view()];
         if ([...parameters, ...results].some((type) => type < 0x7b || type > 0x7f))
           part.fail("dynamic function parameters/results must be numeric values");
-        types.push(JSON.stringify([parameters, results]));
+        types.push({ signature: JSON.stringify([parameters, results]), results });
       }
       part.expect_done("dynamic type section");
     } else if (id === 3) {
       const count = part.u32();
       for (let index = 0; index < count; index++) functions.push(part.u32());
       part.expect_done("dynamic function section");
+    } else if (id === 13) {
+      const count = part.u32();
+      for (let index = 0; index < count; index++) {
+        if (part.byte() !== 0) part.fail("unsupported dynamic tag attribute");
+        definedTags.push(part.u32());
+      }
+      part.expect_done("dynamic tag section");
     } else if (id === 7) {
       const count = part.u32();
       for (let index = 0; index < count; index++) {
         const name = part.span().text();
         const kind = part.byte();
         const position = part.u32();
-        if (kind !== 0) continue;
-        const type = functions[position];
-        const signature = type === undefined ? undefined : types[type];
-        if (signature === undefined) part.fail("invalid dynamic export function type");
-        exports.set(name, signature!);
-        if (position < imports.length) {
-          const imported = imports[position]!;
-          reexports.set(name, { module: imported.module, name: imported.name });
+        if (kind === 0) {
+          const type = functions[position];
+          const signature =
+            (type === undefined ? undefined : types[type]?.signature) ??
+            part.fail("invalid dynamic export function type");
+          exports.set(name, signature);
+          if (position < imports.length) {
+            const imported = imports[position]!;
+            reexports.set(name, { module: imported.module, name: imported.name });
+          }
+        } else if (kind === 4) {
+          const typeIndex =
+            position < tagImports.length
+              ? tagImports[position]?.typeIndex
+              : definedTags[position - tagImports.length];
+          const type =
+            (typeIndex === undefined ? undefined : types[typeIndex]) ??
+            part.fail("invalid dynamic export tag type");
+          if (type.results.length !== 0) part.fail("dynamic tag type must have no results");
+          tagExports.set(name, type.signature);
         }
       }
       part.expect_done("dynamic export section");
     }
   }
+  for (const typeIndex of definedTags) {
+    const type = types[typeIndex] ?? bytes.fail("invalid dynamic tag type");
+    if (type.results.length !== 0) bytes.fail("dynamic tag type must have no results");
+  }
   return {
     exports,
     functions: functions.map((type) => {
-      const signature = types[type];
-      if (signature === undefined) bytes.fail("invalid dynamic function type");
-      return signature!;
-    }) as readonly string[],
-    imports: imports.map((entry) => {
-      const signature = types[entry.typeIndex];
-      if (signature === undefined) bytes.fail("invalid dynamic import function type");
-      return { ...entry, signature: signature! };
+      return types[type]?.signature ?? bytes.fail("invalid dynamic function type");
     }),
+    imports: imports.map((entry) => {
+      const signature =
+        types[entry.typeIndex]?.signature ?? bytes.fail("invalid dynamic import function type");
+      return { ...entry, signature };
+    }),
+    tagImports: tagImports.map((entry) => {
+      const type = types[entry.typeIndex] ?? bytes.fail("invalid dynamic import tag type");
+      if (type.results.length !== 0) bytes.fail("dynamic tag type must have no results");
+      return { ...entry, signature: type.signature };
+    }),
+    tagExports,
     reexports,
   };
 }

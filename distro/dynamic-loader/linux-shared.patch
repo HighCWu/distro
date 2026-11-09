@@ -42,11 +42,12 @@
      CmdArgs.push_back("--table-base=3");
  
    AddLinkerInputs(ToolChain, Inputs, Args, CmdArgs, JA);
-@@ -174,7 +184,19 @@
+@@ -174,9 +184,33 @@
    if (WantsPthread(ToolChain.getTriple(), Args))
      CmdArgs.push_back("--shared-memory");
  
 -  if (!Args.hasArg(options::OPT_nostdlib, options::OPT_nodefaultlibs)) {
+-    if (ToolChain.ShouldLinkCXXStdlib(Args))
 +  // Linux/Wasm side modules share the main module's libc and runtime. Pulling
 +  // static system archives into each side module duplicates process state.
 +  if (!IsLinuxShared &&
@@ -60,5 +61,20 @@
 +        CmdArgs.push_back("--no-whole-archive");
 +      }
 +    }
-     if (ToolChain.ShouldLinkCXXStdlib(Args))
++
++    if (ToolChain.ShouldLinkCXXStdlib(Args)) {
++      if (ToolChain.getTriple().isOSLinux()) {
++        const std::string ExportedCxx =
++            ToolChain.GetFilePath("libcxx-exports.a");
++        if (ExportedCxx != "libcxx-exports.a" &&
++            llvm::sys::fs::exists(ExportedCxx)) {
++          CmdArgs.push_back("--whole-archive");
++          CmdArgs.push_back(Args.MakeArgString(ExportedCxx));
++          CmdArgs.push_back("--no-whole-archive");
++        }
++      }
        ToolChain.AddCXXStdlibLibArgs(Args, CmdArgs);
++    }
+ 
+     if (WantsPthread(ToolChain.getTriple(), Args))
+       CmdArgs.push_back("-lpthread");

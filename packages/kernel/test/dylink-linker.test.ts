@@ -2,7 +2,11 @@
 
 import assert from "node:assert/strict";
 import test from "node:test";
-import { DylinkInitializationError, link_dylink_graph } from "../src/dylink_linker.ts";
+import {
+  DylinkInitializationError,
+  link_dylink_graph,
+  type DylinkExternalTag,
+} from "../src/dylink_linker.ts";
 import { read_wasm_dynamic_imports } from "../src/wasm_binary.ts";
 import { create_dylink_forwarder } from "../src/dylink_forwarder.ts";
 
@@ -1234,7 +1238,7 @@ test("an exit/exec control transfer escapes a constructor without being relabele
   assert.throws(() => linked.initialize(), /cannot be retried/);
 });
 
-test("dynamic import types retain memory64, table32 and independent integer globals", () => {
+test("dynamic import types retain memory64, table32, integer globals and tags", () => {
   const entries = [
     ...text("env"),
     ...text("memory"),
@@ -1259,8 +1263,13 @@ test("dynamic import types retain memory64, table32 and independent integer glob
     3,
     0x7f,
     0,
+    ...text("env"),
+    ...text("__cpp_exception"),
+    4,
+    0,
+    0,
   ];
-  const bytes = binary({ imports: [4, ...entries] });
+  const bytes = binary({ imports: [5, ...entries] });
   assert.deepEqual(read_wasm_dynamic_imports(bytes), [
     {
       module: "env",
@@ -1278,7 +1287,15 @@ test("dynamic import types retain memory64, table32 and independent integer glob
     },
     { module: "env", name: "__memory_base", kind: "global", value: "i64", mutable: false },
     { module: "env", name: "__table_base32", kind: "global", value: "i32", mutable: false },
+    { module: "env", name: "__cpp_exception", kind: "tag", typeIndex: 0 },
   ]);
+  assert.throws(
+    () =>
+      read_wasm_dynamic_imports(
+        binary({ imports: [1, ...text("env"), ...text("__cpp_exception"), 4, 1, 0] }),
+      ),
+    /unsupported dynamic tag attribute/,
+  );
   const privateTable = new Uint8Array([
     0,
     97,
@@ -1291,4 +1308,73 @@ test("dynamic import types retain memory64, table32 and independent integer glob
     ...section(4, [1, 0x70, 0, 1]),
   ]);
   assert.throws(() => read_wasm_dynamic_imports(privateTable), /private table/);
+});
+
+test("main exception tags are shared across DSO instances and preflighted", () => {
+  const magic = [0, 97, 115, 109, 1, 0, 0, 0];
+  const dylink = section(0, [...text("dylink.0"), ...info, ...section(2, [0])]);
+  const consumerDylink = section(0, [
+    ...text("dylink.0"),
+    ...info,
+    ...section(2, [1, ...text("producer")]),
+  ]);
+  const types = section(1, [2, 0x60, 0, 1, 0x7f, 0x60, 1, 0x7f, 0]);
+  const tagImport = [...text("env"), ...text("__cpp_exception"), 4, 0, 1];
+  const producer = new Uint8Array([
+    ...magic,
+    ...dylink,
+    ...types,
+    ...section(2, [1, ...tagImport]),
+    ...section(3, [1, 0]),
+    ...section(7, [1, ...text("thrower"), 0, 0]),
+    ...section(10, [1, 6, 0, 0x41, 7, 0x08, 0, 0x0b]),
+  ]);
+  const consumer = new Uint8Array([
+    ...magic,
+    ...consumerDylink,
+    ...types,
+    ...section(2, [2, ...tagImport, ...text("env"), ...text("thrower"), 0, 0]),
+    ...section(3, [1, 0]),
+    ...section(7, [1, ...text("catcher"), 0, 1]),
+    ...section(10, [1, 9, 0, 0x06, 0x7f, 0x10, 0, 0x07, 0, 0x0b, 0x0b]),
+  ]);
+  const tag = new WebAssembly.Tag({ parameters: ["i32"] });
+  const externalTags = new Map<string, DylinkExternalTag>([
+    ["__cpp_exception", { value: tag, signature: "[[127],[]]" }],
+  ]);
+  const files = new Map([
+    ["root", consumer],
+    ["producer", producer],
+  ]);
+  const linked = link_dylink_graph({
+    ...setup(files),
+    externalTags,
+  });
+  const catcher = linked.instances.get("root")!.exports.catcher as CallableFunction;
+  assert.equal(catcher(), 7, "the consumer catches the producer's exception tag");
+  assert.deepEqual(linked.symbolNamesFrom("root").sort(), ["catcher", "thrower"]);
+  assert.equal(linked.lookup("__cpp_exception"), undefined);
+  assert.equal(linked.lookupOwn("producer", "__cpp_exception"), undefined);
+
+  const invalid = setup(files);
+  const pointers = new Map<CallableFunction, bigint>();
+  const memoryBefore = new Uint8Array(invalid.memory.buffer).slice();
+  let prepared = false;
+  assert.throws(
+    () =>
+      link_dylink_graph({
+        ...invalid,
+        externalTags: new Map([["__cpp_exception", { value: tag, signature: "[[126],[]]" }]]),
+        functionPointers: pointers,
+        prepareTable() {
+          prepared = true;
+        },
+      }),
+    /dynamic tag signature mismatch: __cpp_exception/,
+  );
+  assert.equal(prepared, false);
+  assert.deepEqual(new Uint8Array(invalid.memory.buffer), memoryBefore);
+  assert.equal(pointers.size, 0);
+  for (let index = 0; index < invalid.table.length; index++)
+    assert.equal(invalid.table.get(index), null);
 });

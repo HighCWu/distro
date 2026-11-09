@@ -305,6 +305,7 @@ function user_imports({
           tableType: context.dynamic.table,
           signatures: context.dynamic.signatures,
           functionMetadata: context.dynamic.functionMetadata,
+          tagSignatures: context.dynamic.tagSignatures,
           privateExports: context.dynamic.privateExports,
           isControlFlow: control,
           pinFile: (fd, device, inode) =>
@@ -620,12 +621,13 @@ function user_imports({
           maximum = Math.min(Number(memory_import.type.maximum), rlimit_pages);
           if (dynamic_profile) {
             const table = read_wasm_main_table(bytes);
-            const signatures = read_wasm_dynamic_signatures(bytes, true).exports;
+            const signatures = read_wasm_dynamic_signatures(bytes, true);
             const metadata = prepare_dylink_call_metadata(bytes, true);
             module = new WebAssembly.Module(metadata.bytes);
             dynamic = {
               table,
-              signatures,
+              signatures: signatures.exports,
+              tagSignatures: signatures.tagExports,
               functionMetadata: metadata.functions,
               privateExports: metadata.privateExports,
             };

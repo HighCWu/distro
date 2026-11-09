@@ -90,6 +90,8 @@ for (const width of [32, 64] as const)
     const word = width === 64 ? 0x7e : 0x7f;
     const signatures = read_wasm_dynamic_signatures(original, true);
     assert.equal(signatures.reexports.size, 0);
+    assert.deepEqual(signatures.tagImports, []);
+    assert.deepEqual(signatures.tagExports, new Map());
     assert.deepEqual(signatures.functions, [
       JSON.stringify([[word], [word]]),
       ...Array(3).fill(JSON.stringify([[], [word]])),
@@ -168,6 +170,79 @@ for (const width of [32, 64] as const)
     assert.deepEqual(calls, width === 64 ? [41n, 51n] : [41, 51]);
   });
 
+test("tag imports and exports retain numeric signatures and their own index space", () => {
+  const tagSignature = JSON.stringify([[0x7f], []]);
+  const functionSignature = JSON.stringify([[0x7e], [0x7e]]);
+  const original = binary(
+    section(1, [2, 0x60, 1, 0x7f, 0, 0x60, 1, 0x7e, 1, 0x7e]),
+    section(2, [
+      2,
+      ...text("env"),
+      ...text("__cpp_exception"),
+      4,
+      0,
+      0,
+      ...text("env"),
+      ...text("increment"),
+      0,
+      1,
+    ]),
+    section(3, [1, 1]),
+    section(13, [1, 0, 0]),
+    section(7, [
+      4,
+      ...text("call"),
+      0,
+      0,
+      ...text("defined_function"),
+      0,
+      1,
+      ...text("imported_exception"),
+      4,
+      0,
+      ...text("defined_exception"),
+      4,
+      1,
+    ]),
+  );
+  const signatures = read_wasm_dynamic_signatures(original);
+
+  assert.deepEqual(signatures.imports, [
+    {
+      module: "env",
+      name: "increment",
+      kind: "function",
+      typeIndex: 1,
+      signature: functionSignature,
+    },
+  ]);
+  assert.deepEqual(signatures.functions, [functionSignature, functionSignature]);
+  assert.deepEqual(
+    signatures.exports,
+    new Map([
+      ["call", functionSignature],
+      ["defined_function", functionSignature],
+    ]),
+  );
+  assert.deepEqual([...signatures.reexports], [["call", { module: "env", name: "increment" }]]);
+  assert.deepEqual(signatures.tagImports, [
+    {
+      module: "env",
+      name: "__cpp_exception",
+      kind: "tag",
+      typeIndex: 0,
+      signature: tagSignature,
+    },
+  ]);
+  assert.deepEqual(
+    signatures.tagExports,
+    new Map([
+      ["imported_exception", tagSignature],
+      ["defined_exception", tagSignature],
+    ]),
+  );
+});
+
 test("missing export sections are inserted after tags/globals and before start/code", () => {
   for (const start of [false, true]) {
     const original = binary(
@@ -244,5 +319,40 @@ test("dynamic signatures reject invalid re-export indices and function types", (
         binary(section(1, [1, 0x60, 0, 0]), section(2, [1, ...text("env"), ...text("call"), 0, 1])),
       ),
     /invalid dynamic function type/,
+  );
+});
+
+test("dynamic tag signatures reject invalid indices, attributes and results", () => {
+  const emptyFunctionType = section(1, [1, 0x60, 0, 0]);
+  const resultFunctionType = section(1, [1, 0x60, 0, 1, 0x7f]);
+  const tagImport = (typeIndex: number, attribute = 0) =>
+    section(2, [1, ...text("env"), ...text("__cpp_exception"), 4, attribute, typeIndex]);
+
+  assert.throws(
+    () => read_wasm_dynamic_signatures(binary(emptyFunctionType, tagImport(1))),
+    /invalid dynamic import tag type/,
+  );
+  assert.throws(
+    () => read_wasm_dynamic_signatures(binary(resultFunctionType, tagImport(0))),
+    /dynamic tag type must have no results/,
+  );
+  assert.throws(
+    () => read_wasm_dynamic_signatures(binary(emptyFunctionType, section(13, [1, 0, 1]))),
+    /invalid dynamic tag type/,
+  );
+  assert.throws(
+    () => read_wasm_dynamic_signatures(binary(resultFunctionType, section(13, [1, 0, 0]))),
+    /dynamic tag type must have no results/,
+  );
+  assert.throws(
+    () => read_wasm_dynamic_signatures(binary(emptyFunctionType, section(13, [1, 1, 0]))),
+    /unsupported dynamic tag attribute/,
+  );
+  assert.throws(
+    () =>
+      read_wasm_dynamic_signatures(
+        binary(emptyFunctionType, section(7, [1, ...text("bad"), 4, 0])),
+      ),
+    /invalid dynamic export tag type/,
   );
 });

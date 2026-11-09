@@ -29,6 +29,11 @@ export interface DylinkExternalSymbol {
   address?: bigint;
 }
 
+export type DylinkExternalTag = {
+  value: WebAssembly.Tag;
+  signature: string;
+};
+
 export type DylinkLazyFunction = {
   name: string;
   signature: string;
@@ -67,6 +72,8 @@ export function link_dylink_graph(options: {
   tableArena: Readonly<DylinkArena>;
   hostFunctions?: ReadonlyMap<string, ReadonlyMap<string, CallableFunction>>;
   externalSymbols?: ReadonlyMap<string, DylinkExternalSymbol>;
+  /** Main-module exception tags shared by dynamic objects. */
+  externalTags?: ReadonlyMap<string, DylinkExternalTag>;
   /** Allow unresolved strong env function imports to remain callable through a
    * typed Wasm forwarder until a later global provider publishes its slot. */
   lazyFunctions?: boolean;
@@ -494,6 +501,27 @@ export function link_dylink_graph(options: {
               throw new Error(`unresolved dynamic GOT: ${entry.module}.${entry.name}`);
             if (kind === "function") functionGOT.add(entry.name);
           }
+          break;
+        case "tag": {
+          if (entry.module !== "env")
+            throw new Error(`unsupported dynamic tag import: ${entry.module}.${entry.name}`);
+          const provider = options.externalTags?.get(entry.name);
+          const signature = record.signatures.tagImports.find(
+            (item) =>
+              item.module === entry.module &&
+              item.name === entry.name &&
+              item.typeIndex === entry.typeIndex,
+          )?.signature;
+          if (
+            !provider ||
+            typeof WebAssembly.Tag !== "function" ||
+            !(provider.value instanceof WebAssembly.Tag)
+          )
+            throw new Error(`unresolved dynamic tag: ${entry.module}.${entry.name}`);
+          if (signature === undefined || provider.signature !== signature)
+            throw new Error(`dynamic tag signature mismatch: ${entry.name}`);
+          break;
+        }
       }
     }
   }
@@ -631,6 +659,13 @@ export function link_dylink_graph(options: {
               group[entry.name] = global;
               got.push({ entry, global });
             }
+            break;
+          case "tag": {
+            const provider = options.externalTags!.get(entry.name)!;
+            // The current TypeScript WebAssembly.Imports type predates tag imports.
+            Object.assign(group, { [entry.name]: provider.value });
+            break;
+          }
         }
       }
       const instantiate = () => new WebAssembly.Instance(record.module, imports);

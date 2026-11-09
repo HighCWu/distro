@@ -7,22 +7,32 @@
   sysroot-base,
   sysroot,
   llvm-toolchain,
+  llvm-runtimes,
   sdk,
   sharedCompiler ? null,
 }:
 let
+  dynamicRuntimes = llvm-runtimes.overrideAttrs (old: {
+    patches = (old.patches or [ ]) ++ [ ./wasm-pic-eh-context.patch ];
+  });
   compiler =
     if sharedCompiler == null then
-      llvm-toolchain
+      llvm-toolchain.override { llvm-runtimes = dynamicRuntimes; }
     else
-      llvm-toolchain.override { llvm-toolchain-unwrapped = sharedCompiler; };
+      llvm-toolchain.override {
+        llvm-runtimes = dynamicRuntimes;
+        llvm-toolchain-unwrapped = sharedCompiler;
+      };
   configSiteFiles = pkgs.writeTextDir "share/linux-wasm-dynamic-sdk/config.site" (
     builtins.readFile ./config.site
   );
   configSite = "${configSiteFiles}/share/linux-wasm-dynamic-sdk/config.site";
   dynamicMusl = musl.override { enableDynamicLoader = true; };
   dynamicBase = sysroot-base.override { musl = dynamicMusl; };
-  dynamicRoot = sysroot.override { sysroot-base = dynamicBase; };
+  dynamicRoot = sysroot.override {
+    llvm-runtimes = dynamicRuntimes;
+    sysroot-base = dynamicBase;
+  };
   exportedLibc =
     pkgs.runCommand "dynamic-libc-${platform.wasmArch}"
       {
@@ -35,6 +45,31 @@ let
         # These weak startup adapters form a lazy chain selected by main's signature.
         # Keep them in the normal libc archive, outside the forced export set.
         llvm-ar d $out/libc-exports.a __main_void.o __main_argc_argv.o
+      '';
+  exportedCxx =
+    pkgs.runCommand "dynamic-libcxx-${platform.wasmArch}"
+      {
+        nativeBuildInputs = [ compiler ];
+      }
+      ''
+        mkdir $out
+        for archive in \
+          ${dynamicRoot}/lib/libc++.a \
+          ${dynamicRoot}/lib/libc++abi.a \
+          ${dynamicRoot}/lib/libunwind.a; do
+          test -s "$archive"
+        done
+        llvm-ar -M <<EOF
+        CREATE $out/libcxx-exports.a
+        ADDLIB ${dynamicRoot}/lib/libc++.a
+        ADDLIB ${dynamicRoot}/lib/libc++abi.a
+        ADDLIB ${dynamicRoot}/lib/libunwind.a
+        SAVE
+        END
+        EOF
+        test -s $out/libcxx-exports.a
+        llvm-ar t $out/libcxx-exports.a > $out/libcxx-export-members.txt
+        test -s $out/libcxx-export-members.txt
       '';
   execution =
     pkgs.runCommand "dynamic-execution-${platform.wasmArch}" { nativeBuildInputs = [ llvm-toolchain ]; }
@@ -57,26 +92,38 @@ let
       platform
       execution
       exportedLibc
+      exportedCxx
       ;
     llvm-toolchain = compiler;
     sysroot = dynamicRoot;
   };
+  linkerConfigFlags = map (flag: "$-Wl,${flag}") [
+    "--import-memory"
+    "--max-memory=${toString platform.maximumMemoryBytes}"
+    "--shared-memory"
+    "--export=__stack_pointer"
+    "--growable-table"
+    "--export-all"
+    "-z"
+    "stack-size=8388608"
+  ];
+  configFlags = [
+    "--target=${platform.targetTriple}"
+    "--sysroot=${startupRoot}"
+  ]
+  ++ platform.compilerFlags
+  ++ linkerConfigFlags;
   config = pkgs.writeText "dynamic-${platform.wasmArch}.cfg" (
+    lib.concatMapStringsSep "\n" lib.escapeShellArg configFlags + "\n"
+  );
+  cxxConfig = pkgs.writeText "dynamic-cxx-${platform.wasmArch}.cfg" (
     lib.concatMapStringsSep "\n" lib.escapeShellArg (
-      [
-        "--target=${platform.targetTriple}"
-        "--sysroot=${startupRoot}"
-      ]
-      ++ platform.compilerFlags
-      ++ map (flag: "$-Wl,${flag}") [
-        "--import-memory"
-        "--max-memory=${toString platform.maximumMemoryBytes}"
-        "--shared-memory"
-        "--export=__stack_pointer"
-        "--growable-table"
-        "--export-all"
-        "-z"
-        "stack-size=8388608"
+      configFlags
+      ++ [
+        "-stdlib=libc++"
+        "$--unwindlib=libunwind"
+        "-fwasm-exceptions"
+        "-fc++-abi=webassembly"
       ]
     )
     + "\n"
@@ -92,16 +139,33 @@ let
         ]
         (builtins.readFile ../sdk/compiler.sh);
   };
+  cxx = pkgs.writeShellApplication {
+    name = "wasm-linux-dlopen-c++";
+    text =
+      builtins.replaceStrings
+        [ "@compiler@" "@configArgument@" ]
+        [
+          (lib.escapeShellArg "${compiler}/bin/clang++")
+          (lib.escapeShellArgs [
+            "--no-default-config"
+            "--config=${cxxConfig}"
+          ])
+        ]
+        (builtins.readFile ../sdk/compiler.sh);
+  };
   materials = pkgs.runCommand "dynamic-sdk-materials-${platform.wasmArch}" { } ''
     mkdir -p $out/recipes $out/licenses
     cp -r ${./.} $out/recipes/dynamic-loader
     cp -r ${../musl} $out/recipes/musl
     cp ${config} $out/recipes/compiler.cfg
+    cp ${cxxConfig} $out/recipes/compiler-cxx.cfg
+    cp ${cxxConfig} $out/recipes/compiler-cxx.cfg
     cp ${../sdk/LICENSE.MIT} $out/licenses/SDK-MIT.txt
     cp ${dynamicMusl.src}/COPYRIGHT $out/licenses/musl-COPYRIGHT
     ln -s ${sdk.buildMaterials} $out/default-sdk-materials
     ln -s ${startupRoot} $out/startup-sysroot
     ln -s ${startupRoot.buildMaterials} $out/startup-materials
+    ln -s ${exportedCxx} $out/exported-cxx
     ln -s ${compiler} $out/compiler
     ln -s ${compiler.licenseSource} $out/compiler-source
   '';
@@ -110,6 +174,7 @@ pkgs.symlinkJoin {
   name = "linux-wasm-dynamic-sdk-${platform.wasmArch}";
   paths = [
     cc
+    cxx
     configSiteFiles
   ];
   postBuild = ''
@@ -125,6 +190,8 @@ pkgs.symlinkJoin {
       configSite
       execution
       compiler
+      cxxConfig
+      exportedCxx
       ;
     checks.driver =
       pkgs.runCommand "dynamic-sdk-driver-${platform.wasmArch}"
@@ -134,6 +201,9 @@ pkgs.symlinkJoin {
         }
         ''
           DYNAMIC_SDK_CC=${cc}/bin/wasm-linux-dlopen-cc \
+            DYNAMIC_SDK_CXX=${cxx}/bin/wasm-linux-dlopen-c++ \
+            DYNAMIC_SDK_CXX_ARCHIVE=${startupRoot}/lib/libcxx-exports.a \
+            DYNAMIC_SDK_AR=${compiler}/bin/llvm-ar \
             node --test ${./sdk-driver.test.js}
           touch $out
         '';
