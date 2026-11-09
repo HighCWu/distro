@@ -16,7 +16,12 @@ test(
     const compiler = process.env.DYNAMIC_SDK_CC;
     const run = (...arguments_) => {
       const result = spawnSync(compiler, arguments_, { cwd: directory, encoding: "utf8" });
-      assert.equal(result.status, 0, result.stderr || String(result.error));
+      const command = arguments_.map((argument) => JSON.stringify(argument)).join(" ");
+      assert.equal(
+        result.status,
+        0,
+        `compiler arguments: ${command}\n${result.stderr || String(result.error)}`,
+      );
       return result;
     };
     const exportsOf = (name) =>
@@ -77,16 +82,28 @@ test(
         ),
       );
 
-      for (const option of ["-nostdlib", "-nostartfiles"]) {
-        run(
-          option,
-          "side object.o",
-          "-Wl,--no-entry,--unresolved-symbols=import-dynamic",
-          "-o",
-          "without startup.wasm",
-        );
-        assert.equal(exportsOf("without startup.wasm").has("__wasm_dlopen_io_v1"), false, option);
-      }
+      run(
+        "-nostdlib",
+        "side object.o",
+        "-Wl,--no-entry,--unresolved-symbols=import-dynamic",
+        "-o",
+        "nostdlib.wasm",
+      );
+      assert.equal(exportsOf("nostdlib.wasm").has("__wasm_dlopen_io_v1"), false, "-nostdlib");
+
+      run(
+        "-nostartfiles",
+        "main source.c",
+        "side object.o",
+        "-Wl,--no-entry",
+        "-o",
+        "nostartfiles.wasm",
+      );
+      assert.equal(
+        exportsOf("nostartfiles.wasm").has("__wasm_dlopen_io_v1"),
+        false,
+        "-nostartfiles",
+      );
       const defaultsDisabled = run("-###", "-nodefaultlibs", "main source.c", "-o", "unused.wasm");
       assert.doesNotMatch(defaultsDisabled.stderr, /libc-exports\.a/);
       assert.doesNotMatch(defaultsDisabled.stderr, /"-lc"/);
