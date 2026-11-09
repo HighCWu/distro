@@ -1159,6 +1159,38 @@ lib.makeScope (scope: lib.callPackageWith ({ inherit lib pkgs; } // scope)) (
       sdk = self.sdk-wasm64;
       vm-test = vmTestWasm64;
     };
+    lua-dynamic = callPackage ./lua-dynamic/package.nix { };
+    lua-dynamic-wasm64 = callPackage ./lua-dynamic/package.nix {
+      platform = self.platform-wasm64;
+      lua = self.lua-wasm64;
+      sdk-dynamic-loader = self.sdk-dynamic-loader-wasm64;
+      llvm-toolchain = self.llvm-toolchain-wasm64;
+      musl = self.musl-wasm64;
+      llvm-runtimes = self.llvm-runtimes-wasm64;
+    };
+    lua-extension-runtime = callPackage ./lua-extension-runtime/package.nix {
+      extraChecks.both =
+        pkgs.runCommand "lua-extension-runtime-check-both"
+          {
+            passthru.ci.heavy = true;
+          }
+          ''
+            test -e ${self.sdk-dynamic-loader.checks.driver}
+            test -e ${self.sdk-dynamic-loader-wasm64.checks.driver}
+            test -e ${self.dynamic-loader.checks.runtime}
+            test -e ${self.dynamic-loader-wasm64.checks.runtime}
+            test -e ${self.lua-extension-runtime.checks.runtime}
+            test -e ${self.lua-extension-runtime-wasm64.checks.runtime}
+            touch $out
+          '';
+    };
+    lua-extension-runtime-wasm64 = callPackage ./lua-extension-runtime/package.nix {
+      platform = self.platform-wasm64;
+      lua-dynamic = self.lua-dynamic-wasm64;
+      sdk-dynamic-loader = self.sdk-dynamic-loader-wasm64;
+      vm-test = vmTestWasm64;
+      busybox = self.busybox-wasm64;
+    };
     make = callPackage ./make/package.nix { };
     ncurses = callPackage ./ncurses/package.nix { };
     ncurses-wasm64 = self.ncurses.override {
