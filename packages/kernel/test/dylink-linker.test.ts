@@ -4,6 +4,7 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import { DylinkInitializationError, link_dylink_graph } from "../src/dylink_linker.ts";
 import { read_wasm_dynamic_imports } from "../src/wasm_binary.ts";
+import { create_dylink_forwarder } from "../src/dylink_forwarder.ts";
 
 const text = (name: string) => [name.length, ...new TextEncoder().encode(name)];
 const section = (id: number, bytes: number[]) => [id, bytes.length, ...bytes];
@@ -21,6 +22,7 @@ function binary(
     reexport?: boolean;
     callImport?: boolean;
     startCall?: boolean;
+    privateExport?: string;
   } = {},
 ) {
   const metadata = [
@@ -46,10 +48,13 @@ function binary(
     section(3, options.startCall ? [2, 0, 1] : [1, 0]),
     ...(options.privateMemory ? [section(5, [1, 0, 1])] : []),
     section(7, [
-      1,
+      options.privateExport ? 2 : 1,
       ...text(options.trap === "ctor" ? "__wasm_call_ctors" : (options.exportName ?? "answer")),
       0,
       options.reexport ? 0 : (options.functionImports ?? 0),
+      ...(options.privateExport
+        ? [...text(options.privateExport), 0, options.functionImports ?? 0]
+        : []),
     ]),
     ...(options.trap === "start" ? [section(8, [0])] : []),
     ...(options.startCall ? [section(8, [(options.functionImports ?? 0) + 1])] : []),
@@ -77,6 +82,149 @@ function setup(files = new Map([["root", binary()]])) {
     tableArena: { cursor: 3n, limit: 20n, address: "i32" as const },
   };
 }
+
+test("execution hooks retain original public scope, own-object lookup and canonical wrapped pointers", () => {
+  const options = setup(
+    new Map([
+      ["root", binary({ needed: ["dep"] })],
+      ["dep", binary({ exportName: "dependency_only" })],
+    ]),
+  );
+  const events: string[] = [];
+  const wrapped = new Map<CallableFunction, CallableFunction>();
+  const functionPointers = new Map<CallableFunction, bigint>();
+  let active: string | undefined;
+  const execution = {
+    prepare(name: string) {
+      events.push(`prepare:${name}`);
+      return new WebAssembly.Module(
+        binary({
+          needed: name === "root" ? ["dep"] : [],
+          exportName: name === "root" ? "answer" : "dependency_only",
+          privateExport: "private_function_alias",
+        }),
+      );
+    },
+    instantiate(name: string, action: () => WebAssembly.Instance) {
+      const previous = active;
+      active = name;
+      events.push(`instantiate:${name}`);
+      try {
+        return action();
+      } finally {
+        active = previous;
+      }
+    },
+    register(name: string, instance: WebAssembly.Instance) {
+      assert.equal(active, undefined);
+      events.push(`register:${name}`);
+      const fn = instance.exports.private_function_alias as CallableFunction;
+      const privateTable = new WebAssembly.Table({ element: "anyfunc", initial: 1 });
+      privateTable.set(0, fn);
+      const forward = create_dylink_forwarder("[[],[127]]", privateTable, "i32");
+      wrapped.set(fn, forward.call);
+      wrapped.set(forward.call, forward.call);
+      const address = name === "root" ? 19n : 18n;
+      functionPointers.set(fn, address);
+      options.table.set(Number(address), fn);
+    },
+    callable(fn: CallableFunction) {
+      return wrapped.get(fn) ?? fn;
+    },
+    settleTable() {
+      events.push("settle");
+      for (let index = 0; index < options.table.length; index++) {
+        const fn = options.table.get(index) as CallableFunction | null;
+        if (fn) options.table.set(index, wrapped.get(fn) ?? fn);
+      }
+    },
+  };
+  const linked = link_dylink_graph({
+    ...options,
+    execution,
+    functionPointers,
+    externalSymbols: new Map([["answer", { value: () => 7, signature: "[[],[127]]" }]]),
+  });
+  assert.deepEqual(events, [
+    "prepare:root",
+    "prepare:dep",
+    "instantiate:dep",
+    "register:dep",
+    "settle",
+    "instantiate:root",
+    "register:root",
+    "settle",
+  ]);
+  assert.equal(linked.layout.tableEnd, 5n, "private exports do not consume public pointer budget");
+  assert.deepEqual(linked.names, ["answer", "dependency_only"]);
+  assert.equal(linked.lookupOwn("root", "private_function_alias"), undefined);
+  assert.equal(linked.lookupOwn("root", "dependency_only"), undefined);
+  assert.equal(linked.lookupFrom("root", "dependency_only")!.address, 18n);
+  const own = linked.lookupOwn("root", "answer")!;
+  assert.equal((own.value as CallableFunction)(), 42, "own lookup ignores main/global preemption");
+  assert.equal(own.address, 19n);
+  const original = linked.instances.get("root")!.exports.answer as CallableFunction;
+  assert.notEqual(own.value, original);
+  assert.equal(functionPointers.get(original), 19n);
+  assert.equal(functionPointers.get(own.value as CallableFunction), 19n);
+  assert.equal(options.table.get(19), own.value);
+  assert.throws(() => linked.lookupOwn("unknown", "answer"), /unknown dynamic object/);
+  events.length = 0;
+  const reused = link_dylink_graph({
+    ...options,
+    execution,
+    functionPointers,
+    reuse: linked.records,
+  });
+  assert.deepEqual(events, [], "resident modules retain their registered execution instance");
+  assert.equal(reused.lookupOwn("root", "answer")!.value, own.value);
+});
+
+test("relocations and constructors use execution callables and settle successful table changes", () => {
+  const options = setup(
+    new Map([
+      ["root", binary({ needed: ["reloc"], exportName: "__wasm_call_ctors" })],
+      ["reloc", binary({ exportName: "__wasm_apply_data_relocs" })],
+    ]),
+  );
+  const owners = new Map<CallableFunction, string>();
+  const events: string[] = [];
+  const linked = link_dylink_graph({
+    ...options,
+    execution: {
+      prepare(_name, bytes) {
+        return new WebAssembly.Module(bytes);
+      },
+      instantiate(name, action) {
+        events.push(`instantiate:${name}`);
+        return action();
+      },
+      register(name, instance) {
+        for (const value of Object.values(instance.exports))
+          if (typeof value === "function") owners.set(value, name);
+      },
+      callable(fn) {
+        events.push(`call:${owners.get(fn)}`);
+        return fn;
+      },
+      settleTable() {
+        events.push("settle");
+      },
+    },
+  });
+  assert.deepEqual(events, [
+    "instantiate:reloc",
+    "settle",
+    "instantiate:root",
+    "settle",
+    "call:reloc",
+    "settle",
+  ]);
+  assert.equal(linked.lookupOwn("root", "__wasm_call_ctors"), undefined);
+  events.length = 0;
+  linked.initialize();
+  assert.deepEqual(events, ["call:root", "settle"]);
+});
 
 test("dependency graph deduplicates diamonds and zeroes only allocated data", () => {
   const options = setup(

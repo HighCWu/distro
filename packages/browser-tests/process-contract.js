@@ -39,6 +39,7 @@ export const processStages = {
     "dynamic loader: constructor dlopen, nested rejection recovery and single initialization pass",
     "dynamic loader: real link maps, dependency scopes and metadata error recovery pass",
     "dynamic loader: byte-preserving filenames, BOM search and Unicode metadata pass",
+    "dynamic loader: RTLD_NEXT chains, private callers and main reentry recover pass",
     "dynamic loader: missing/malformed rejection, descriptor recovery and cleanup pass",
   ],
   resolver: [

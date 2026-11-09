@@ -510,6 +510,11 @@ export function read_wasm_dynamic_signatures(module: Uint8Array, allowDefinedTab
   }
   return {
     exports,
+    functions: functions.map((type) => {
+      const signature = types[type];
+      if (signature === undefined) bytes.fail("invalid dynamic function type");
+      return signature!;
+    }) as readonly string[],
     imports: imports.map((entry) => {
       const signature = types[entry.typeIndex];
       if (signature === undefined) bytes.fail("invalid dynamic import function type");

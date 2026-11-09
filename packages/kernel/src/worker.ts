@@ -86,6 +86,7 @@ import {
   type WasmGlobalImport,
 } from "./wasm_binary.ts";
 import { ProcessDylink } from "./dylink_process.ts";
+import { prepare_dylink_call_metadata } from "./dylink_call_metadata.ts";
 import { user_function_imports_supported } from "./user-functions.ts";
 import {
   allocate_shared_memory,
@@ -303,6 +304,8 @@ function user_imports({
           maximumPages: context.maximum_pages,
           tableType: context.dynamic.table,
           signatures: context.dynamic.signatures,
+          functionMetadata: context.dynamic.functionMetadata,
+          privateExports: context.dynamic.privateExports,
           isControlFlow: control,
           pinFile: (fd, device, inode) =>
             file_kernel(() => kernel_instance.exports.dynamic_file_pin_v1!(fd, device, inode)),
@@ -579,15 +582,12 @@ function user_imports({
           if (!memory_import || !user_poll_globals_supported(globals, kernel_address)) return -8; // exec format error
 
           module = new WebAssembly.Module(bytes);
-          if (
-            WebAssembly.Module.imports(module).some((entry) => entry.module === "linux_dlopen_v1")
-          ) {
+          const dynamic_profile = WebAssembly.Module.imports(module).some(
+            (entry) => entry.module === "linux_dlopen_v1",
+          );
+          if (dynamic_profile) {
             if (uses_fork_continuation(module)) return -8;
             if (get_kernel_instance().exports.dynamic_file_pin_abi_v1?.() !== 1) return -8;
-            dynamic = {
-              table: read_wasm_main_table(bytes),
-              signatures: read_wasm_dynamic_signatures(bytes, true).exports,
-            };
           }
           if (
             !user_module_imports_supported(module) ||
@@ -618,6 +618,18 @@ function user_imports({
 
           minimum = Number(memory_import.type.minimum);
           maximum = Math.min(Number(memory_import.type.maximum), rlimit_pages);
+          if (dynamic_profile) {
+            const table = read_wasm_main_table(bytes);
+            const signatures = read_wasm_dynamic_signatures(bytes, true).exports;
+            const metadata = prepare_dylink_call_metadata(bytes, true);
+            module = new WebAssembly.Module(metadata.bytes);
+            dynamic = {
+              table,
+              signatures,
+              functionMetadata: metadata.functions,
+              privateExports: metadata.privateExports,
+            };
+          }
         } catch {
           return -8; // exec format error
         }

@@ -107,6 +107,32 @@ pkgs.stdenvNoCC.mkDerivation (finalAttrs: {
     ${sideCC} -O2 -fPIC -c ${./reentrant-root.c} -o reentrant-root.o
     ${sideCC} -O2 -fPIC -c ${./reentrant-leaf.c} -o reentrant-leaf.o
     ${sideCC} -O2 -fPIC -c ${./reentrant-reject.c} -o reentrant-reject.o
+    ${sideCC} -O2 -fPIC -c ${./next-front.c} -o next-front.o
+    ${sideCC} -O2 -fPIC -c ${./next-middle.c} -o next-middle.o
+    ${sideCC} -O2 -fPIC -c ${./next-leaf.c} -o next-leaf.o
+    ${linkShared {
+      name = "next-leaf.so";
+      output = "next-leaf.so";
+      inputs = [ "next-leaf.o" ];
+    }}
+    ${linkShared {
+      name = "next-middle.so";
+      output = "next-middle.so";
+      inputs = [
+        "next-middle.o"
+        "next-leaf.so"
+      ];
+      runpath = "$ORIGIN";
+    }}
+    ${linkShared {
+      name = "next-front.so";
+      output = "next-front.so";
+      inputs = [
+        "next-front.o"
+        "next-middle.so"
+      ];
+      runpath = "$ORIGIN/next";
+    }}
     ${linkShared {
       name = "reentrant-root.so";
       output = "reentrant-root.so";
@@ -159,6 +185,9 @@ pkgs.stdenvNoCC.mkDerivation (finalAttrs: {
     install -Dm644 reentrant-root.so $out/lib/reentrant-root.so
     install -Dm644 reentrant-leaf.so $out/lib/reentrant-leaf.so
     install -Dm644 reentrant-reject.so $out/lib/reentrant-reject.so
+    install -Dm644 next-front.so $out/lib/next-front.so
+    install -Dm644 next-middle.so $out/lib/next/next-middle.so
+    install -Dm644 next-leaf.so $out/lib/next/next-leaf.so
     install -Dm644 ${../sdk/LICENSE.MIT} $out/share/licenses/dynamic-loader/LICENSE.MIT
     cp ${musl.src}/COPYRIGHT $out/share/licenses/dynamic-loader/musl-COPYRIGHT
     cp ${llvm-runtimes.src}/compiler-rt/LICENSE.TXT $out/share/licenses/dynamic-loader/compiler-rt-LICENSE.TXT
@@ -166,6 +195,7 @@ pkgs.stdenvNoCC.mkDerivation (finalAttrs: {
     cp ${./runtime.c} ${./library-a.c} ${./library-b.c} ${./cycle-a.c} ${./cycle-b.c} ${./package.nix} $buildMaterials/share/dynamic-loader-materials/
     cp ${./path-library.c} $buildMaterials/share/dynamic-loader-materials/
     cp ${./reentrant-root.c} ${./reentrant-leaf.c} ${./reentrant-reject.c} $buildMaterials/share/dynamic-loader-materials/
+    cp ${./next-front.c} ${./next-middle.c} ${./next-leaf.c} $buildMaterials/share/dynamic-loader-materials/
     cp ${compilerCommands} $buildMaterials/share/dynamic-loader-materials/compiler-commands.json
     ln -s ${sdk-dynamic-loader.buildMaterials} $buildMaterials/share/dynamic-loader-materials/sdk
     ${lib.optionalString (sharedCompiler != null) ''
@@ -188,6 +218,9 @@ pkgs.stdenvNoCC.mkDerivation (finalAttrs: {
         "/plugins/reentrant-root.so" = "${finalAttrs.finalPackage}/lib/reentrant-root.so";
         "/plugins/reentrant-leaf.so" = "${finalAttrs.finalPackage}/lib/reentrant-leaf.so";
         "/plugins/reentrant-reject.so" = "${finalAttrs.finalPackage}/lib/reentrant-reject.so";
+        "/plugins/next-front.so" = "${finalAttrs.finalPackage}/lib/next-front.so";
+        "/plugins/next/next-middle.so" = "${finalAttrs.finalPackage}/lib/next/next-middle.so";
+        "/plugins/next/next-leaf.so" = "${finalAttrs.finalPackage}/lib/next/next-leaf.so";
       };
     };
   }

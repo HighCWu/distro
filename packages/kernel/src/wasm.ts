@@ -59,7 +59,12 @@ export interface UserContext {
   maximum_pages: number;
   /** Present only while a suspended fork is creating its private-memory child. */
   fork_continuation?: ForkSnapshot;
-  dynamic?: { table: WasmTableType; signatures: Map<string, string> };
+  dynamic?: {
+    table: WasmTableType;
+    signatures: Map<string, string>;
+    functionMetadata: ReadonlyMap<string, { signature: string; imported: boolean }>;
+    privateExports: ReadonlySet<string>;
+  };
 }
 
 export type WasmAddressType = "i32" | "i64";

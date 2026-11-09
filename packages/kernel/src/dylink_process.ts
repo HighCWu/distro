@@ -6,6 +6,8 @@ import {
   type DylinkModuleRecord,
 } from "./dylink_linker.ts";
 import { plan_dylink_layout } from "./dylink.ts";
+import { prepare_dylink_call_metadata } from "./dylink_call_metadata.ts";
+import { create_dylink_call_wrapper } from "./dylink_call_wrapper.ts";
 import { decode_linux_bytes, encode_linux_string } from "./linux-string.ts";
 import {
   read_wasm_dylink,
@@ -41,6 +43,8 @@ type Options = {
   maximumPages: number;
   tableType: WasmTableType;
   signatures: ReadonlyMap<string, string>;
+  functionMetadata?: ReadonlyMap<string, { signature: string; imported: boolean }>;
+  privateExports?: ReadonlySet<string>;
   isControlFlow(error: unknown): boolean;
   fatal(error: unknown): never;
   pinFile(fd: number, device: bigint, inode: bigint): number;
@@ -65,6 +69,13 @@ export class ProcessDylink {
   readonly #reuse = new Map<string, DylinkModuleRecord>();
   readonly #groups = new Map<string, ObjectHandle>();
   readonly #handles = new Map<bigint, ObjectHandle>();
+  readonly #globalOrder: string[] = [];
+  readonly #caller = new WebAssembly.Global({ value: "i32", mutable: true }, 0);
+  readonly #owners = new Map<string, number>();
+  readonly #ownerNames = new Map<number, string>();
+  readonly #functions = new Map<CallableFunction, { owner: number | null; signature: string }>();
+  readonly #wrappers = new Map<CallableFunction, CallableFunction>();
+  #nextOwner = 1;
   #mainHandle = 0n;
   #lastMap = 0n;
   #cursor: bigint;
@@ -88,18 +99,82 @@ export class ProcessDylink {
       const fn = wasm_table_get(table, this.#word(index, options.tableType.address));
       if (fn && !this.#pointers.has(fn)) this.#pointers.set(fn, index);
     }
+    if (options.functionMetadata)
+      this.#registerFunctions(0, options.main, options.functionMetadata);
     for (const [name, value] of Object.entries(options.main.exports)) {
-      if (typeof value === "function")
+      if (options.privateExports?.has(name)) continue;
+      if (typeof value === "function") {
+        const signature = options.signatures.get(name);
+        if (signature && !this.#functions.has(value))
+          this.#functions.set(value, { owner: 0, signature });
         this.#symbols.set(name, {
           value,
-          signature: options.signatures.get(name),
+          signature,
           address: this.#pointers.get(value),
         });
-      else if (
+      } else if (
         value instanceof WebAssembly.Global &&
         (typeof value.value === "number" || typeof value.value === "bigint")
       )
         this.#symbols.set(name, { value, address: this.#unsigned(value.value) });
+    }
+    // dlsym executes in the main libc, but its lookup scope belongs to the
+    // module which called it. All other C function boundaries keep their owner.
+    const dlsym = options.main.exports.dlsym;
+    if (typeof dlsym === "function") {
+      const info = this.#functions.get(dlsym);
+      if (info) this.#functions.set(dlsym, { ...info, owner: null });
+    }
+    this.#settleTable();
+  }
+  #owner(name: string) {
+    const existing = this.#owners.get(name);
+    if (existing !== undefined) return existing;
+    if (this.#nextOwner > 0xffffffff) throw new RangeError("dynamic caller capacity exhausted");
+    const owner = this.#nextOwner++;
+    this.#owners.set(name, owner);
+    this.#ownerNames.set(owner, name);
+    return owner;
+  }
+  #registerFunctions(
+    owner: number,
+    instance: WebAssembly.Instance,
+    metadata: ReadonlyMap<string, { signature: string; imported: boolean }>,
+  ) {
+    for (const [name, description] of metadata) {
+      const fn = instance.exports[name];
+      if (typeof fn !== "function") throw new Error("missing private dynamic function alias");
+      if (!this.#functions.has(fn))
+        this.#functions.set(fn, {
+          owner: description.imported ? null : owner,
+          signature: description.signature,
+        });
+    }
+  }
+  #callable(fn: CallableFunction): CallableFunction {
+    const info = this.#functions.get(fn);
+    if (!info || info.owner === null) return fn;
+    const existing = this.#wrappers.get(fn);
+    if (existing) return existing;
+    const wrapped = create_dylink_call_wrapper(info.signature, fn, this.#caller, info.owner);
+    this.#wrappers.set(fn, wrapped);
+    this.#wrappers.set(wrapped, wrapped);
+    this.#functions.set(wrapped, info);
+    const pointer = this.#pointers.get(fn);
+    if (pointer !== undefined) this.#pointers.set(wrapped, pointer);
+    return wrapped;
+  }
+  #settleTable() {
+    const set = this.#table.set as unknown as (index: WasmAddress, fn: CallableFunction) => void;
+    for (let index = 3n; index < BigInt(this.#table.length); index++) {
+      const address = this.#word(index, this.#options.tableType.address);
+      const fn = wasm_table_get(this.#table, address);
+      if (!fn) continue;
+      const wrapped = this.#callable(fn);
+      const pointer = this.#pointers.get(fn) ?? this.#pointers.get(wrapped) ?? index;
+      this.#pointers.set(fn, pointer);
+      this.#pointers.set(wrapped, pointer);
+      if (wrapped !== fn) set.call(this.#table, address, wrapped);
     }
   }
   #word(value: bigint, address = this.#options.address): WasmAddress {
@@ -111,11 +186,15 @@ export class ProcessDylink {
   #call(name: string, ...args: WasmAddress[]): WasmAddress {
     const fn = this.#options.main.exports[name];
     if (typeof fn !== "function") throw new Error(`missing private dynamic callback: ${name}`);
+    const previous = this.#caller.value;
+    this.#caller.value = 0;
     try {
       return fn(...args) as WasmAddress;
     } catch (error) {
       if (this.#options.isControlFlow(error)) throw error;
       throw new DylinkInitializationError(error);
+    } finally {
+      this.#caller.value = previous;
     }
   }
   #string(pointer: WasmAddress): string {
@@ -129,7 +208,10 @@ export class ProcessDylink {
   }
   #failure(error: unknown): WasmAddress {
     if (this.#options.isControlFlow(error)) throw error;
-    if (error instanceof DylinkInitializationError) this.#options.fatal(error);
+    if (error instanceof DylinkInitializationError) {
+      this.#caller.value = 0;
+      this.#options.fatal(error);
+    }
     this.#error = error instanceof Error ? error.message : "Dynamic loader failure";
     return this.#word(0n);
   }
@@ -223,14 +305,16 @@ export class ProcessDylink {
   #address(symbol: DylinkExternalSymbol): bigint {
     if (symbol.address !== undefined) return symbol.address;
     if (typeof symbol.value !== "function") throw new Error("dynamic symbol has no address");
-    let pointer = this.#pointers.get(symbol.value);
+    const fn = this.#callable(symbol.value);
+    let pointer = this.#pointers.get(fn);
     if (pointer === undefined) {
       pointer = this.#cursor;
       this.#grow(pointer + 1n);
       const set = this.#table.set as unknown as (index: WasmAddress, fn: CallableFunction) => void;
-      set.call(this.#table, this.#word(pointer, this.#options.tableType.address), symbol.value);
+      set.call(this.#table, this.#word(pointer, this.#options.tableType.address), fn);
       this.#cursor++;
       this.#pointers.set(symbol.value, pointer);
+      this.#pointers.set(fn, pointer);
     }
     symbol.address = pointer;
     return pointer;
@@ -268,14 +352,21 @@ export class ProcessDylink {
     this.#lastMap = address;
     return address;
   }
-  #promote(group: Group, root?: string) {
-    const pending = (root === undefined ? group.names : group.symbolNamesFrom(root))
+  #promote(group: Group, root: string) {
+    const pending = group
+      .symbolNamesFrom(root)
       .filter((name) => !this.#symbols.has(name))
-      .map(
-        (name) =>
-          [name, root === undefined ? group.lookup(name)! : group.lookupFrom(root, name)!] as const,
-      );
+      .map((name) => [name, group.lookupFrom(root, name)!] as const);
     for (const [name, symbol] of pending) this.#symbols.set(name, symbol);
+    const queue = [root];
+    const visited = new Set<string>();
+    for (let index = 0; index < queue.length; index++) {
+      const key = queue[index]!;
+      if (visited.has(key)) continue;
+      visited.add(key);
+      if (!this.#globalOrder.includes(key)) this.#globalOrder.push(key);
+      for (const dependency of this.#files.get(key)!.dependencies.values()) queue.push(dependency);
+    }
   }
   open(pathPointer: WasmAddress, flags: number): WasmAddress {
     let allocation: WasmAddress | undefined;
@@ -416,6 +507,10 @@ export class ProcessDylink {
       // new canonical pointers beyond this batch's initialization/clear range.
       this.#cursor = tableEnd;
       let group: Group;
+      const functionMetadata = new Map<
+        string,
+        ReadonlyMap<string, { signature: string; imported: boolean }>
+      >();
       try {
         group = link_dylink_graph({
           root: root.key,
@@ -433,6 +528,26 @@ export class ProcessDylink {
           reuse: this.#reuse,
           resolveDependency: (name, parent) => local.get(parent)!.dependencies.get(name)!,
           isControlFlow: this.#options.isControlFlow,
+          execution: {
+            prepare: (name, bytes) => {
+              const prepared = prepare_dylink_call_metadata(bytes);
+              functionMetadata.set(name, prepared.functions);
+              return new WebAssembly.Module(prepared.bytes);
+            },
+            instantiate: (name, action) => {
+              const previous = this.#caller.value;
+              this.#caller.value = this.#owner(name) | 0;
+              try {
+                return action();
+              } finally {
+                this.#caller.value = previous;
+              }
+            },
+            register: (name, instance) =>
+              this.#registerFunctions(this.#owner(name), instance, functionMetadata.get(name)!),
+            callable: (fn) => this.#callable(fn),
+            settleTable: () => this.#settleTable(),
+          },
         });
       } catch (error) {
         // Ordinary errors precede instantiation and reentrant user code. Traps
@@ -454,7 +569,7 @@ export class ProcessDylink {
       for (const file of files) this.#files.set(file.key, file);
       for (const [name, key] of aliases) this.#aliases.set(name, key);
       for (const [key, record] of group.records) this.#reuse.set(key, record);
-      if (flags & 256) this.#promote(group);
+      if (flags & 256) this.#promote(group, root.key);
       allocation = undefined; // Resident until exec/exit, including dlclose.
       // Instances, GOT/TLS relocations and file ownership are complete. Publish
       // before constructors so recursive dlopen sees the same records and can
@@ -492,15 +607,38 @@ export class ProcessDylink {
       const key = this.#unsigned(handle);
       const name = this.#string(namePointer);
       const object = this.#handles.get(key);
+      const next = (1n << BigInt(this.#options.address === "i64" ? 64 : 32)) - 1n;
       const symbol =
-        key === 0n || key === this.#mainHandle
-          ? this.#symbols.get(name)
-          : object?.group.lookupFrom(object.root, name);
+        key === next
+          ? this.#nextSymbol(name)
+          : key === 0n || key === this.#mainHandle
+            ? this.#symbols.get(name)
+            : object?.group.lookupFrom(object.root, name);
       if (!symbol) throw new Error(`symbol not found or invalid handle: ${name}`);
       return this.#word(this.#address(symbol));
     } catch (error) {
       return this.#failure(error);
     }
+  }
+  #nextSymbol(name: string): DylinkExternalSymbol | undefined {
+    const owner = Number(this.#caller.value) >>> 0;
+    const caller = owner ? this.#ownerNames.get(owner) : undefined;
+    if (owner && (!caller || !this.#groups.has(caller)))
+      throw new Error("calling dynamic object is not published");
+    const loaded = [...this.#groups.keys()];
+    const first = owner ? loaded[loaded.indexOf(caller!) + 1] : undefined;
+    if (owner && first === undefined) return undefined;
+    // Match the existing musl lookup model: begin at the next link-map object,
+    // then follow that object's global-symbol chain. A local object has no
+    // global successor until it is promoted with RTLD_GLOBAL.
+    const start = first === undefined ? 0 : this.#globalOrder.indexOf(first);
+    const scope = start < 0 ? [first!] : this.#globalOrder.slice(start);
+    for (const key of scope) {
+      const object = this.#groups.get(key)!;
+      const found = object.group.lookupOwn(object.root, name);
+      if (found) return found;
+    }
+    return undefined;
   }
   valid(handle: WasmAddress): number {
     const key = this.#unsigned(handle);

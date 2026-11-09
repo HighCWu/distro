@@ -61,6 +61,14 @@ export function link_dylink_graph(options: {
   /** Only the process profile which refuses Worker creation may use LLD's
    * first-thread TLS image. No imported/public TLS binding is provided. */
   initialThreadLocalTls?: boolean;
+  /** Process-owned execution wrappers preserve the calling object's identity. */
+  execution?: {
+    prepare(name: string, bytes: Uint8Array<ArrayBuffer>): WebAssembly.Module;
+    instantiate(name: string, action: () => WebAssembly.Instance): WebAssembly.Instance;
+    register(name: string, instance: WebAssembly.Instance): void;
+    callable(fn: CallableFunction): CallableFunction;
+    settleTable(): void;
+  };
   resolveDependency?(name: string, parent: string): string;
   /** Execution control transfers (exit/exec) must escape initialization intact. */
   isControlFlow?(error: unknown): boolean;
@@ -69,6 +77,7 @@ export function link_dylink_graph(options: {
   const modules = new Map<
     string,
     {
+      name: string;
       module: WebAssembly.Module;
       metadata: WasmDylink;
       imports: ReturnType<typeof read_wasm_dynamic_imports>;
@@ -95,11 +104,11 @@ export function link_dylink_graph(options: {
     if (modules.has(name)) continue;
     const bytes = options.files.get(name);
     if (!bytes) throw new Error(`missing dynamic dependency: ${name}`);
-    const module = new WebAssembly.Module(bytes);
-    const metadata = read_wasm_dylink(module);
+    const originalModule = new WebAssembly.Module(bytes);
+    const metadata = read_wasm_dylink(originalModule);
     if (!metadata) throw new Error(`missing dylink.0: ${name}`);
     if (metadata.unknownSubsections.length) throw new Error("unsupported dylink extension");
-    const exports = WebAssembly.Module.exports(module);
+    const exports = WebAssembly.Module.exports(originalModule);
     const localTls = metadata.exports.filter((symbol) => symbol.flags & 0x100);
     if (
       metadata.imports.some((symbol) => symbol.flags & ~0xff) ||
@@ -129,7 +138,10 @@ export function link_dylink_graph(options: {
       throw new Error("dynamic module must not define private memory");
     const resident = options.reuse?.get(name);
     modules.set(name, {
-      module,
+      name,
+      module: resident
+        ? originalModule
+        : (options.execution?.prepare(name, bytes) ?? originalModule),
       metadata,
       imports: read_wasm_dynamic_imports(bytes),
       signatures: read_wasm_dynamic_signatures(bytes),
@@ -157,8 +169,20 @@ export function link_dylink_graph(options: {
       symbols.set(name, { external, kind: "global" });
   }
   const ownSymbols = new Map<string, Symbol>();
-  const valueOf = (symbol: Symbol, name: string) =>
-    symbol.owner?.instance?.exports[name] ?? symbol.external?.value;
+  const functionPointers = options.functionPointers ?? new Map<CallableFunction, bigint>();
+  const callable = (fn: CallableFunction) => {
+    const wrapped = options.execution?.callable(fn) ?? fn;
+    const address = functionPointers.get(fn) ?? functionPointers.get(wrapped);
+    if (address !== undefined) {
+      functionPointers.set(fn, address);
+      functionPointers.set(wrapped, address);
+    }
+    return wrapped;
+  };
+  const valueOf = (symbol: Symbol, name: string) => {
+    const value = symbol.owner?.instance?.exports[name] ?? symbol.external?.value;
+    return typeof value === "function" ? callable(value) : value;
+  };
   const signatureOf = (symbol: Symbol, name: string) =>
     symbol.owner?.signatures.exports.get(name) ?? symbol.external?.signature;
   // Lookup scope and constructor order differ: breadth-first root/NEEDED lookup
@@ -366,9 +390,9 @@ export function link_dylink_graph(options: {
   const got: { entry: { module: string; name: string }; global: WebAssembly.Global }[] = [];
   const forwards = new Map<Record, { name: string; target: WebAssembly.Global }[]>();
   let nextSlot = layout.tableEnd;
-  const functionPointers = options.functionPointers ?? new Map<CallableFunction, bigint>();
   function functionPointer(fn: CallableFunction): bigint {
-    const old = functionPointers.get(fn);
+    const wrapped = callable(fn);
+    const old = functionPointers.get(wrapped);
     if (old !== undefined) return old;
     for (const record of records)
       for (
@@ -376,16 +400,19 @@ export function link_dylink_graph(options: {
         index < record.tableBase + BigInt(record.metadata.tableSize);
         index++
       ) {
-        if (wasm_table_get(table, word(index, tableArena.address)) === fn) {
+        const value = wasm_table_get(table, word(index, tableArena.address));
+        if (value === wrapped || (value && callable(value) === wrapped)) {
           functionPointers.set(fn, index);
+          functionPointers.set(wrapped, index);
           return index;
         }
       }
     const index = nextSlot++;
     if (index >= extra.tableEnd) throw new RangeError("dynamic function slot budget exhausted");
     const set = table.set as unknown as (index: number | bigint, value: CallableFunction) => void;
-    set.call(table, word(index, tableArena.address), fn);
+    set.call(table, word(index, tableArena.address), wrapped);
     functionPointers.set(fn, index);
+    functionPointers.set(wrapped, index);
     return index;
   }
   try {
@@ -444,7 +471,12 @@ export function link_dylink_graph(options: {
             }
         }
       }
-      record.instance = new WebAssembly.Instance(record.module, imports);
+      const instantiate = () => new WebAssembly.Instance(record.module, imports);
+      record.instance = options.execution
+        ? options.execution.instantiate(record.name, instantiate)
+        : instantiate();
+      options.execution?.register(record.name, record.instance);
+      options.execution?.settleTable();
       // Publish each provider immediately, as the previous late JS lookup did.
       // A later start section can call an earlier module through this edge.
       for (const { name, target } of forwards.get(record) ?? []) {
@@ -504,7 +536,10 @@ export function link_dylink_graph(options: {
         relocations.push("__wasm_apply_tls_relocs", "__wasm_apply_global_tls_relocs");
       for (const name of relocations) {
         const relocate = record.instance!.exports[name];
-        if (typeof relocate === "function") relocate();
+        if (typeof relocate === "function") {
+          callable(relocate)();
+          options.execution?.settleTable();
+        }
       }
     }
   } catch (error) {
@@ -525,7 +560,10 @@ export function link_dylink_graph(options: {
         initialization.state = "running";
         try {
           const ctor = record.instance!.exports.__wasm_call_ctors;
-          if (typeof ctor === "function") ctor();
+          if (typeof ctor === "function") {
+            callable(ctor)();
+            options.execution?.settleTable();
+          }
           initialization.state = "done";
         } catch (error) {
           initialization.state = "failed";
@@ -540,8 +578,10 @@ export function link_dylink_graph(options: {
     }
   };
   const ensureInitialized = () => ensureInitializedFrom(options.root);
-  const lookupFrom = (root: string, name: string): DylinkExternalSymbol | undefined => {
-    const symbol = symbolsFrom(root).get(name);
+  const lookupSymbol = (
+    symbol: Symbol | undefined,
+    name: string,
+  ): DylinkExternalSymbol | undefined => {
     if (!symbol) return undefined;
     const value = valueOf(symbol, name)!;
     const address =
@@ -549,6 +589,21 @@ export function link_dylink_graph(options: {
         ? functionPointer(value)
         : symbol.owner!.base + BigInt((value as WebAssembly.Global).value);
     return { value, address, signature: signatureOf(symbol, name) };
+  };
+  const lookupFrom = (root: string, name: string) =>
+    lookupSymbol(symbolsFrom(root).get(name), name);
+  const lookupOwn = (root: string, name: string) => {
+    const record = modules.get(root);
+    if (!record) throw new Error("unknown dynamic object");
+    const entry = record.exports.find((entry) => entry.name === name);
+    if (
+      !entry ||
+      (entry.kind !== "function" && entry.kind !== "global") ||
+      internal.has(name) ||
+      record.metadata.exports.some((entry) => entry.name === name && entry.flags & 0x106)
+    )
+      return undefined;
+    return lookupSymbol({ owner: record, kind: entry.kind }, name);
   };
   return {
     order,
@@ -575,6 +630,7 @@ export function link_dylink_graph(options: {
       return lookupFrom(options.root, name);
     },
     lookupFrom,
+    lookupOwn,
     symbolNamesFrom: (root: string) => [...symbolsFrom(root).keys()],
     initialize() {
       if (initialized) throw new Error("dynamic constructors cannot be retried");

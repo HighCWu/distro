@@ -51,6 +51,17 @@ static void *symbol(void *handle, const char *name)
     }
     return address;
 }
+
+__attribute__((noinline)) static int main_private_next_lookup(int value)
+{
+    int (*next)(int) = symbol(RTLD_NEXT, "next_chain");
+    return next(value);
+}
+
+int main_next_lookup(int value)
+{
+    return main_private_next_lookup(value);
+}
 static void copy_path_library(const char *destination)
 {
     int source = open("/plugins/path-library.so", O_RDONLY | O_CLOEXEC);
@@ -260,6 +271,35 @@ int main(void)
     }
     require(descriptors() == baseline, "byte-path temporary descriptor cleanup");
     puts("dynamic loader: byte-preserving filenames, BOM search and Unicode metadata pass");
+
+    void *next_front = dlopen("next-front.so", RTLD_NOW | RTLD_GLOBAL);
+    require(next_front != NULL, "load ordered NEXT dependency chain");
+    void *next_middle = dlopen("/plugins/next/next-middle.so", RTLD_NOW | RTLD_NOLOAD);
+    void *next_leaf = dlopen("/plugins/next/next-leaf.so", RTLD_NOW | RTLD_NOLOAD);
+    require(next_middle && next_leaf, "anchor data retains both NEXT dependencies");
+    int (*front_chain)(int) = symbol(next_front, "next_chain");
+    int (*middle_chain)(int) = symbol(next_middle, "next_chain");
+    int (*leaf_chain)(int) = symbol(next_leaf, "next_chain");
+    require(front_chain != middle_chain && middle_chain != leaf_chain &&
+            front_chain == symbol(RTLD_DEFAULT, "next_chain") &&
+            front_chain(5) == 116 && middle_chain(5) == 115 && leaf_chain(5) == 105,
+            "NEXT lookup follows each caller and keeps canonical public pointers");
+    require(*(int *)symbol(next_front, "next_front_constructor_count") == 1 &&
+            *(int *)symbol(next_front, "next_front_constructor_value") == 110,
+            "NEXT dependency graph is available to its constructor");
+    int (*(*private_function)(void))(int) = symbol(next_front, "next_private_function");
+    require(private_function()(5) == 118,
+            "unexported address-taken function preserves module caller identity");
+    int (*call_main)(int) = symbol(next_front, "next_call_main");
+    int (*call_callback)(int, int (*)(int)) = symbol(next_front, "next_call_callback");
+    int (*missing_recovers)(int) = symbol(next_front, "next_missing_recovers");
+    require(main_next_lookup(5) == 116 && call_main(5) == 116 &&
+            call_callback(5, main_private_next_lookup) == 116 &&
+            missing_recovers(5) == 116 && front_chain(5) == 116,
+            "main caller restoration and missing NEXT error recover");
+    require(!dlclose(next_front) && !dlclose(next_middle) && !dlclose(next_leaf) &&
+            descriptors() == baseline, "NEXT chain close and descriptor cleanup");
+    puts("dynamic loader: RTLD_NEXT chains, private callers and main reentry recover pass");
 
     require(!dlopen("missing.so", RTLD_NOW) && dlerror(), "missing library failure");
     int fd = open("/plugins/bad.so", O_CREAT | O_TRUNC | O_WRONLY, 0600);
