@@ -7,8 +7,11 @@ runtime/kernel packages that implement the optional `linux_fork_v1` protocol.
 The separate `sdk-fork-cooperative-poll` and `-wasm64` candidates combine this
 profile with application-only computation checkpoints, using an explicit private
 composition marker. They retain whole-link finalization and single-thread static
-C limits. Libc polling and dynamic linking are not enabled by this composition;
-see `../fork-poll/README.md` for its target acceptance requirements.
+C limits. The `sdk-fork-cooperative-poll-libc` and `-wasm64` candidates add libc
+coverage through poll ABI 2 and its matching composition marker. Their support
+objects stay free of compiler polling. See `../fork-poll/README.md` for each
+profile's target acceptance requirements. Dynamic/fork composition requires
+separate implementation and acceptance.
 
 This profile imports `linux.syscall_v2`, whose clone arguments use the Linux
 default order: flags, stack, parent TID, child TID, TLS. Only the single-thread
