@@ -196,13 +196,7 @@ const assertMainProfile = async (bytes, moduleName, bits, maximumBytes, api) => 
   assertMemoryProfile(api.read_wasm_memories(moduleBytes), moduleName, bits, maximumBytes);
   const exports = WebAssembly.Module.exports(module);
   const exportNames = new Set(exports.map((entry) => entry.name));
-  for (const name of [
-    "_start",
-    "__stack_pointer",
-    "__wasm_mmap_v2",
-    "__wasm_mmap_init_v1",
-    "__wasm_signal_handler_v2",
-  ])
+  for (const name of ["_start", "__stack_pointer", "__wasm_mmap_v2", "__wasm_mmap_init_v1"])
     assert.ok(exportNames.has(name), `${moduleName}: missing runtime export ${name}`);
   return { module, exports };
 };
@@ -242,9 +236,16 @@ test(
     try {
       writeFileSync(
         join(directory, "main.c"),
-        "int main_value(int n) { return n + 40; }\n" +
+        "#include <signal.h>\n" +
+          "static void signal_handler(int signal_number) { (void)signal_number; }\n" +
+          "int main_value(int n) { return n + 40; }\n" +
           "int library_value(int);\n" +
-          "int main(void) { return main_value(2) != 42 || library_value(1) != 42; }\n",
+          "int main(void) {\n" +
+          "  struct sigaction action = {0};\n" +
+          "  action.sa_handler = signal_handler;\n" +
+          "  if (sigemptyset(&action.sa_mask) != 0 || sigaction(SIGUSR1, &action, 0) != 0) return 1;\n" +
+          "  return main_value(2) != 42 || library_value(1) != 42;\n" +
+          "}\n",
       );
       writeFileSync(
         join(directory, "side.c"),
@@ -360,7 +361,17 @@ test(
       );
       if (wasmOptProbe) assertWasmOptWasNotInvoked(wasmOptProbe, "ELF candidate C main");
       const mainBytes = new Uint8Array(readFileSync(join(directory, "main.wasm")));
-      await assertMainProfile(mainBytes, "ordinary C main", bits, maximumBytes, api);
+      const { exports } = await assertMainProfile(
+        mainBytes,
+        "ordinary C main",
+        bits,
+        maximumBytes,
+        api,
+      );
+      assert.ok(
+        exports.some((entry) => entry.name === "__wasm_signal_handler_v2"),
+        "ordinary C main using sigaction exports the signal restore handler",
+      );
     } finally {
       rmSync(directory, { recursive: true, force: true });
     }
@@ -383,9 +394,16 @@ test(
     try {
       writeFileSync(
         join(directory, "main.cpp"),
-        'extern "C" int main_value(int n) { return n + 40; }\n' +
+        "#include <signal.h>\n" +
+          "static void signal_handler(int signal_number) { (void)signal_number; }\n" +
+          'extern "C" int main_value(int n) { return n + 40; }\n' +
           'extern "C" int library_value(int);\n' +
-          "int main() { try { throw 42; } catch (int value) { return value == 42 && library_value(1) == 42 ? 0 : 1; } }\n",
+          "int main() {\n" +
+          "  struct sigaction action{};\n" +
+          "  action.sa_handler = signal_handler;\n" +
+          "  if (sigemptyset(&action.sa_mask) != 0 || sigaction(SIGUSR1, &action, nullptr) != 0) return 1;\n" +
+          "  try { throw 42; } catch (int value) { return value == 42 && library_value(1) == 42 ? 0 : 1; }\n" +
+          "}\n",
       );
       writeFileSync(
         join(directory, "side.cpp"),
@@ -501,6 +519,10 @@ test(
         bits,
         maximumBytes,
         api,
+      );
+      assert.ok(
+        exports.some((entry) => entry.name === "__wasm_signal_handler_v2"),
+        "ordinary C++ main using sigaction exports the signal restore handler",
       );
       assert.ok(
         exports.some((entry) => entry.name === "__cpp_exception" && entry.kind === "tag"),
