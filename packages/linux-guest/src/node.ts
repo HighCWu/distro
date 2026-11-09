@@ -257,6 +257,8 @@ class Node {
   attached = true;
   readonly files = new Set<FileHandle>();
   readonly writableFiles = new Set<FileHandle>();
+  readonly children = new Map<string, WeakRef<Node>>();
+  parent: WeakRef<Node> | undefined;
 
   constructor(parts: string[]) {
     this.parts = parts;
@@ -353,6 +355,7 @@ export class NodeFS implements FS<Node, Handle> {
     node.parts = parts;
     node.attached = true;
     this.#nodes.set(key, node);
+    this.#remember_child(parts, node);
     if (share) this.#inodes.set(identity, node);
     return node;
   }
@@ -425,11 +428,31 @@ export class NodeFS implements FS<Node, Handle> {
 
   async #stats(node: Node) {
     for (;;) {
+      const parent = node.parent?.deref();
+      if (!node.attached && parent) await this.#directory_parts(parent);
       const parts = this.#parts(node);
-      const stats = await node_call(lstat(await this.#validated_path(parts), { bigint: true }));
+      let stats: BigIntStats;
+      try {
+        stats = await node_call(lstat(await this.#validated_path(parts), { bigint: true }));
+      } catch (error) {
+        // A cached child can be the first operation after its parent moved.
+        // Its old pathname may have vanished before an identity comparison is
+        // possible. Recover the parent and retry only when that moved this node.
+        if (parent && error instanceof FSError && (error.errno === 2 || error.errno === 20)) {
+          const previous = parts.join("/");
+          await this.#directory_parts(parent);
+          if (node.attached && node.parts.join("/") !== previous) continue;
+        }
+        throw error;
+      }
       const identity = `${stats.dev}:${stats.ino}`;
       if (node.identity === undefined) node.identity = identity;
       if (node.identity === identity) return stats;
+      if (parent) {
+        const previous = parts.join("/");
+        await this.#directory_parts(parent);
+        if (node.attached && node.parts.join("/") !== previous) continue;
+      }
       // A completed host replacement must not rebind a cached inode. Remove
       // this stale alias; another known hard link can still identify it.
       this.#forget(parts);
@@ -439,6 +462,8 @@ export class NodeFS implements FS<Node, Handle> {
 
   async #directory_parts(node: Node) {
     this.#owned_node(node);
+    const parent = node.parent?.deref();
+    if (parent) await this.#directory_parts(parent);
     const file = node.files.values().next().value;
     if (process.platform === "linux" && file) {
       // Keep the normal case independent of procfs, and leave cached child
@@ -482,6 +507,7 @@ export class NodeFS implements FS<Node, Handle> {
     const old = node.parts.join("/");
     const destination = parts.join("/");
     const relocateChildren = node.attached && this.#nodes.get(old) === node;
+    this.#nodes.get(node.parts.slice(0, -1).join("/"))?.children.delete(node.parts.at(-1)!);
     this.#forget(parts);
     const affected = new Set<Node>();
     for (const [key, child] of [...this.#nodes]) {
@@ -495,10 +521,35 @@ export class NodeFS implements FS<Node, Handle> {
     this.#nodes.set(destination, node);
     affected.add(node);
     for (const child of affected) this.#refresh_path(child);
+    this.#restore_children(node, parts);
+  }
+
+  #remember_child(parts: readonly string[], node: Node) {
+    const parent = parts.length ? this.#nodes.get(parts.slice(0, -1).join("/")) : undefined;
+    if (parent) {
+      parent.children.set(parts.at(-1)!, new WeakRef(node));
+      if (parts.join("/") === node.parts.join("/")) node.parent = new WeakRef(parent);
+    }
+  }
+
+  #restore_children(parent: Node, parts: string[]) {
+    for (const [name, reference] of parent.children) {
+      const child = reference.deref();
+      if (!child) {
+        parent.children.delete(name);
+        continue;
+      }
+      const childParts = [...parts, name];
+      this.#nodes.set(childParts.join("/"), child);
+      if (child.identity) this.#inodes.set(child.identity, child);
+      this.#refresh_path(child);
+      this.#restore_children(child, childParts);
+    }
   }
 
   #forget(parts: readonly string[]) {
     const key = parts.join("/");
+    if (parts.length) this.#nodes.get(parts.slice(0, -1).join("/"))?.children.delete(parts.at(-1)!);
     const affected = new Set<Node>();
     for (const [candidate, node] of this.#nodes) {
       if (candidate === key || candidate.startsWith(`${key}/`)) {
@@ -514,6 +565,7 @@ export class NodeFS implements FS<Node, Handle> {
       if (candidate === node) {
         node.parts = key ? key.split("/") : [];
         node.attached = true;
+        this.#remember_child(node.parts, node);
         return;
       }
     }
@@ -915,12 +967,14 @@ export class NodeFS implements FS<Node, Handle> {
       if (unchanged) return;
 
       this.#forget(new_parts);
+      this.#nodes.get(old_parts.slice(0, -1).join("/"))?.children.delete(old_parts.at(-1)!);
       const affected = new Set<Node>();
       for (const [key, node] of [...this.#nodes]) {
         if (key === old_parts.join("/") || key.startsWith(`${old_parts.join("/")}/`)) {
           this.#nodes.delete(key);
           const moved_parts = [...new_parts, ...key.split("/").slice(old_parts.length)];
           this.#nodes.set(moved_parts.join("/"), node);
+          this.#remember_child(moved_parts, node);
           affected.add(node);
         }
       }
@@ -940,6 +994,7 @@ export class NodeFS implements FS<Node, Handle> {
       // The Linux caller resolves AT_SYMLINK_FOLLOW before issuing FUSE_LINK.
       await node_call(link(source, destination));
       this.#nodes.set(parts.join("/"), node);
+      this.#remember_child(parts, node);
     });
   }
 

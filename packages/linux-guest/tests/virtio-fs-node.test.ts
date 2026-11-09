@@ -66,12 +66,13 @@ test(
           replacement = (await fs.lookup(fs.root, "parent"))!;
           newChild = (await fs.lookup(replacement, "new-entry"))!;
         }
+        assert.equal((await fs.getattr(child)).size, 8n);
         const entries = await fs.readdir(parent, handle);
         assert.deepEqual(
           entries.map((entry) => entry.name),
           ["old-entry"],
         );
-        if (order !== "replacement-lookup-first") assert.equal(entries[0]!.node, child);
+        assert.equal(entries[0]!.node, child);
         const original = (await fs.lookup(parent, "old-entry"))!;
         const file = await fs.open(original, linux_open.readonly);
         try {
@@ -179,6 +180,55 @@ test("stale parent inode requests never act on a host replacement directory", as
     }
   }
 });
+
+test(
+  "moved ancestor recovery preserves nested renamed children without reviving removed aliases",
+  { skip: process.platform !== "linux" },
+  async () => {
+    const directory = await mkdtemp(path.join(temporary, "nested-directory-move-"));
+    const target = path.join(directory, "parent"),
+      moved = path.join(directory, "moved");
+    await mkdir(path.join(target, "sub"), { recursive: true });
+    await writeFile(path.join(target, "sub", "source"), "original");
+    const fs = new NodeFS(directory);
+    const parent = (await fs.lookup(fs.root, "parent"))!;
+    const sub = (await fs.lookup(parent, "sub"))!;
+    const child = (await fs.lookup(sub, "source"))!;
+    await fs.link(child, sub, "alias");
+    await fs.rename(sub, "source", sub, "renamed");
+    await fs.unlink(sub, "alias");
+    const handle = await fs.opendir(parent);
+    try {
+      await rename(target, moved);
+      await mkdir(path.join(target, "sub"), { recursive: true });
+      await writeFile(path.join(target, "sub", "renamed"), "replacement");
+      const replacement = (await fs.lookup(fs.root, "parent"))!;
+      const replacementSub = (await fs.lookup(replacement, "sub"))!;
+      const replacementChild = (await fs.lookup(replacementSub, "renamed"))!;
+      assert.equal((await fs.getattr(child)).size, 8n);
+      assert.equal(await fs.lookup(sub, "renamed"), child);
+      assert.equal(await fs.lookup(sub, "source"), undefined);
+      assert.equal(await fs.lookup(sub, "alias"), undefined);
+      const held = await fs.open(child, linux_open.readonly);
+      try {
+        assert.equal(new TextDecoder().decode(await fs.read(child, held, 0n, 8)), "original");
+      } finally {
+        await fs.release(child, held);
+      }
+      const entries = await fs.readdir(parent, handle);
+      assert.deepEqual(
+        entries.map((entry) => entry.name),
+        ["sub"],
+      );
+      assert.equal(entries[0]!.node, sub);
+      assert.equal(await fs.lookup(replacement, "sub"), replacementSub);
+      assert.equal(await fs.lookup(replacementSub, "renamed"), replacementChild);
+      assert.equal(await readFile(path.join(target, "sub", "renamed"), "utf8"), "replacement");
+    } finally {
+      await fs.releasedir(parent, handle);
+    }
+  },
+);
 
 test("node hard links keep aliases, rename and the last open inode coherent", async () => {
   const directory = await mkdtemp(path.join(temporary, "hard-links-"));
