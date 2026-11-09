@@ -379,7 +379,7 @@ test(
 );
 
 test(
-  "built SDK C++ accepts runtime-selection flags on -r and preserves the exception-tag executable profile",
+  "built SDK C++ accepts runtime-selection flags on -r and resolves the exception tag in ordinary executables",
   { skip: !process.env.SDK_LINK_CXX && "requires the built SDK C++ compiler" },
   async () => {
     const compiler = process.env.SDK_LINK_CXX;
@@ -411,6 +411,28 @@ test(
           'extern "C" int library_value(int n) { return main_value(n) + helper_value(); }\n',
       );
       writeFileSync(join(directory, "helper.cpp"), 'extern "C" int helper_value() { return 1; }\n');
+
+      runCompiler(
+        compiler,
+        directory,
+        "-O2",
+        "-Wall",
+        "-Wextra",
+        "-Werror",
+        "-std=c++17",
+        "-c",
+        "main.cpp",
+        "-o",
+        "main.o",
+      );
+      const mainObjectImports = api.read_wasm_dynamic_imports(
+        new Uint8Array(readFileSync(join(directory, "main.o"))),
+        true,
+      );
+      assert.ok(
+        mainObjectImports.some((entry) => entry.kind === "tag" && entry.name === "__cpp_exception"),
+        "optimized C++ main must retain a real reference to the canonical exception tag",
+      );
 
       runCompiler(
         compiler,
@@ -473,7 +495,7 @@ test(
         "-Wextra",
         "-Werror",
         "-std=c++17",
-        "main.cpp",
+        "main.o",
         "combined.o",
         "-o",
         "main-cxx.wasm",
@@ -506,14 +528,14 @@ test(
         "-Wextra",
         "-Werror",
         "-std=c++17",
-        "main.cpp",
+        "main.o",
         "combined.o",
         "-o",
         "main-cxx.wasm",
       );
       if (wasmOptProbe) assertWasmOptWasNotInvoked(wasmOptProbe, "ELF candidate C++ main");
       const mainBytes = new Uint8Array(readFileSync(join(directory, "main-cxx.wasm")));
-      const { exports } = await assertMainProfile(
+      const { module, exports } = await assertMainProfile(
         mainBytes,
         "ordinary C++ main",
         bits,
@@ -525,8 +547,10 @@ test(
         "ordinary C++ main using sigaction exports the signal restore handler",
       );
       assert.ok(
-        exports.some((entry) => entry.name === "__cpp_exception" && entry.kind === "tag"),
-        "ordinary C++ main exports its canonical C++ exception tag",
+        !WebAssembly.Module.imports(module).some(
+          (entry) => entry.name === "__cpp_exception" && entry.kind === "tag",
+        ),
+        "ordinary statically linked C++ main must resolve its canonical exception tag internally",
       );
     } finally {
       rmSync(directory, { recursive: true, force: true });

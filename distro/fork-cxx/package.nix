@@ -63,7 +63,10 @@ pkgs.stdenvNoCC.mkDerivation (finalAttrs: {
       "__wasm_fork_cxx_quiescent_v1",
     ])
       assert.equal(exports.get(name), "function", "missing function export " + name);
-    assert.equal(exports.get("__cpp_exception"), "tag", "missing canonical C++ exception tag");
+    assert.ok(
+      !WebAssembly.Module.imports(module).some((entry) => entry.kind === "tag"),
+      "static C++ executable must resolve its exception tag internally",
+    );
     for (const name of ["__stack_pointer", "__tls_base"])
       assert.equal(exports.get(name), "global", "missing fork TLS/stack global " + name);
     NODE
