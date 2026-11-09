@@ -18,8 +18,9 @@ stdenv.mkDerivation (finalAttrs: {
     replaces = [ "busybox" ];
   };
 
-  # make runs every recipe through a child process. On wasm there is no
-  # fork()/vfork(), only posix_spawn (clone+execve); make already has a full
+  # This default SDK build runs recipes through posix_spawn (clone+execve).
+  # The optional continuation fork profile has a separate release boundary.
+  # GNU make already has a full
   # posix_spawn job path (src/job.c, USE_POSIX_SPAWN) used on macOS. configure
   # defines USE_POSIX_SPAWN unless one of user/support/synchronous is exactly
   # "no": header spawn.h and func posix_spawn both detect against musl, and the
@@ -32,11 +33,9 @@ stdenv.mkDerivation (finalAttrs: {
   configureFlags = [
     "--disable-nls"
     "--without-guile"
-    # make's 'load' directive dlopen()s a shared object at runtime. wasm has no
-    # dlopen (musl links a stub that always fails), but configure detects the
-    # link-only symbol and enables MAKE_LOAD, which then adds a pointless
-    # -Wl,--export-dynamic to the final link. Disabling load drops both the dead
-    # feature and that flag; there is no shared-object loading on this platform.
+    # This static SDK's dlopen entry is a stub. Configure detects that symbol
+    # at link time and would enable MAKE_LOAD without an execution provider.
+    # The optional make-dynamic product supplies the dynamic SDK for 'load'.
     "--disable-load"
     "make_cv_synchronous_posix_spawn=yes"
   ];

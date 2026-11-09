@@ -1372,6 +1372,31 @@ lib.makeScope (scope: lib.callPackageWith ({ inherit lib pkgs; } // scope)) (
       busybox = self.busybox-wasm64;
     };
     make = callPackage ./make/package.nix { };
+    make-dynamic = callPackage ./make-dynamic/package.nix {
+      extraChecks.both =
+        pkgs.runCommand "make-dynamic-check-both"
+          {
+            passthru.ci.heavy = true;
+          }
+          ''
+            test -e ${self.make-dynamic.checks.runtime}
+            test -e ${self.make-dynamic-wasm64.checks.runtime}
+            test -e ${self.sdk-dynamic-loader.checks.driver}
+            test -e ${self.sdk-dynamic-loader-wasm64.checks.driver}
+            test -e ${self.dynamic-loader.checks.runtime}
+            test -e ${self.dynamic-loader-wasm64.checks.runtime}
+            touch $out
+          '';
+    };
+    make-dynamic-wasm64 = callPackage ./make-dynamic/package.nix {
+      platform = self.platform-wasm64;
+      sdk-dynamic-loader = self.sdk-dynamic-loader-wasm64;
+      llvm-toolchain = self.llvm-toolchain-wasm64;
+      musl = self.musl-wasm64;
+      llvm-runtimes = self.llvm-runtimes-wasm64;
+      busybox = self.busybox-wasm64;
+      vm-test = vmTestWasm64;
+    };
     ncurses = callPackage ./ncurses/package.nix { };
     ncurses-wasm64 = self.ncurses.override {
       stdenv = self.stdenv-wasm64;
