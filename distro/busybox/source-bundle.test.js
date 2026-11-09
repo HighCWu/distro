@@ -11,6 +11,7 @@ import {
   linkSync,
   statSync,
   existsSync,
+  chmodSync,
 } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -176,6 +177,7 @@ test("the selected hush patch is checksummed, bundled and applies to its source 
       "patch additions appear in extracted source",
     );
 
+    chmodSync(join(materials, "hush-condition-status.patch"), 0o644);
     writeFileSync(join(materials, "hush-condition-status.patch"), `${patchText}\n# tampered\n`);
     assert.notEqual(run("bash", [archiver, source, materials, archive]).status, 0);
   } finally {
