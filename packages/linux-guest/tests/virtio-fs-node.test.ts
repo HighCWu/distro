@@ -432,6 +432,46 @@ test("stale selected hard-link alias falls back to another known alias of the sa
   assert.equal(await readFile(path.join(directory, "alias"), "utf8"), "replacement");
 });
 
+test("host removal of a selected hard-link alias preserves surviving inode operations", async () => {
+  for (const missingParent of [false, true]) {
+    const directory = await mkdtemp(path.join(temporary, "missing-hard-link-"));
+    const source = path.join(directory, "source"),
+      aliasDirectory = path.join(directory, "aliases");
+    await mkdir(aliasDirectory);
+    await writeFile(source, "old");
+    const alias = path.join(aliasDirectory, "selected");
+    await link(source, alias);
+    const fs = new NodeFS(directory);
+    const node = (await fs.lookup(fs.root, "source"))!;
+    const parent = (await fs.lookup(fs.root, "aliases"))!;
+    assert.equal(await fs.lookup(parent, "selected"), node);
+    if (missingParent) {
+      await rm(aliasDirectory, { recursive: true });
+      await writeFile(aliasDirectory, "not a directory");
+    } else await rm(alias);
+    const handle = await fs.open(node, linux_open.readwrite);
+    try {
+      assert.equal(new TextDecoder().decode(await fs.read(node, handle, 0n, 3)), "old");
+      assert.equal(await fs.write(node, handle, 0n, new TextEncoder().encode("new")), 3);
+    } finally {
+      await fs.release(node, handle);
+    }
+    assert.equal(await readFile(source, "utf8"), "new");
+    if (missingParent) {
+      await rm(aliasDirectory);
+      await mkdir(aliasDirectory);
+    }
+    await writeFile(alias, "replacement");
+    await fs.setattr(node, { size: 2n });
+    assert.equal(await readFile(source, "utf8"), "ne");
+    const replacementParent = (await fs.lookup(fs.root, "aliases"))!;
+    assert.notEqual(await fs.lookup(replacementParent, "selected"), node);
+    await rm(source);
+    await assert.rejects(fs.open(node, linux_open.readonly), { errno: 2 });
+    assert.equal(await readFile(alias, "utf8"), "replacement");
+  }
+});
+
 test("verified regular-file truncation preserves read-only logical access and normal writes", async () => {
   const directory = await mkdtemp(path.join(temporary, "verified-truncate-"));
   await writeFile(path.join(directory, "file"), "original");

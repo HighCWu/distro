@@ -438,10 +438,24 @@ export class NodeFS implements FS<Node, Handle> {
         // A cached child can be the first operation after its parent moved.
         // Its old pathname may have vanished before an identity comparison is
         // possible. Recover the parent and retry only when that moved this node.
-        if (parent && error instanceof FSError && (error.errno === 2 || error.errno === 20)) {
+        if (error instanceof FSError && (error.errno === 2 || error.errno === 20)) {
           const previous = parts.join("/");
-          await this.#directory_parts(parent);
+          if (parent) {
+            try {
+              await this.#directory_parts(parent);
+            } catch (parentError) {
+              if (
+                !(parentError instanceof FSError) ||
+                (parentError.errno !== 2 && parentError.errno !== 20)
+              )
+                throw parentError;
+            }
+          }
           if (node.attached && node.parts.join("/") !== previous) continue;
+          // A host unlink can remove just the selected hard-link alias.
+          // Retire it and retry another known name of this same inode.
+          this.#forget(parts);
+          if (node.attached) continue;
         }
         throw error;
       }
