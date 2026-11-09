@@ -162,6 +162,80 @@ test(
       run("-O2", "main source.c", "-o", "ordinary main.wasm");
       run("@shared outer.rsp");
 
+      writeFileSync(
+        join(directory, "libc override main.c"),
+        [
+          "#include <string.h>",
+          "#include <unistd.h>",
+          "int optind = 23;",
+          "int getopt(int argc, char *const argv[], const char *options)",
+          "{",
+          "    (void)argv;",
+          "    (void)options;",
+          "    return argc + 40;",
+          "}",
+          "int main(void)",
+          "{",
+          '    char *argv[] = { "probe", "argument", 0 };',
+          '    return getopt(2, argv, "") == 42 && optind == 23 && strlen("wasm") == 4U ? 0 : 1;',
+          "}",
+          "",
+        ].join("\n"),
+      );
+      run(
+        "-O0",
+        "-Wall",
+        "-Wextra",
+        "-Werror",
+        "-fno-builtin",
+        "libc override main.c",
+        "-o",
+        "libc override main.wasm",
+      );
+      const libcOverrideModule = new WebAssembly.Module(
+        readFileSync(join(directory, "libc override main.wasm")),
+      );
+      const libcOverrideExports = new Map(
+        WebAssembly.Module.exports(libcOverrideModule).map((entry) => [entry.name, entry.kind]),
+      );
+      assert.equal(libcOverrideExports.get("getopt"), "function");
+      assert.equal(libcOverrideExports.get("optind"), "global");
+      assert.equal(
+        WebAssembly.Module.imports(libcOverrideModule).some(
+          (entry) => entry.name === "getopt" || entry.name === "optind",
+        ),
+        false,
+        "application getopt/optind resolve inside the executable",
+      );
+
+      writeFileSync(
+        join(directory, "duplicate user one.c"),
+        "int duplicate_sdk_user_symbol(void) { return 1; }\n" +
+          "int main(void) { return duplicate_sdk_user_symbol(); }\n",
+      );
+      writeFileSync(
+        join(directory, "duplicate user two.c"),
+        "int duplicate_sdk_user_symbol(void) { return 2; }\n",
+      );
+      run("-O0", "-fno-builtin", "-c", "duplicate user one.c", "-o", "duplicate user one.o");
+      run("-O0", "-fno-builtin", "-c", "duplicate user two.c", "-o", "duplicate user two.o");
+      const duplicateUserSymbols = spawnSync(
+        compiler,
+        ["duplicate user one.o", "duplicate user two.o", "-o", "duplicate user symbols.wasm"],
+        { cwd: directory, encoding: "utf8" },
+      );
+      const duplicateDiagnostics = `${duplicateUserSymbols.stderr || ""}\n${duplicateUserSymbols.stdout || ""}`;
+      assert.ok(
+        Number.isInteger(duplicateUserSymbols.status) && duplicateUserSymbols.status !== 0,
+        `two strong application definitions must fail to link\n${duplicateDiagnostics || String(duplicateUserSymbols.error)}`,
+      );
+      assert.match(
+        duplicateDiagnostics,
+        /duplicate symbol/i,
+        `expected a duplicate-symbol diagnostic\n${duplicateDiagnostics}`,
+      );
+      assert.match(duplicateDiagnostics, /duplicate_sdk_user_symbol/);
+
       const relocatableArguments = assertRelocatableCommand(
         run("-###", "-r", "side object.o", "-o", "combined.o"),
         "direct C -r",

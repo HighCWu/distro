@@ -59,12 +59,15 @@ let
   exportedLibc =
     pkgs.runCommand "dynamic-libc-${platform.wasmArch}"
       {
-        nativeBuildInputs = [ llvm-toolchain ];
+        nativeBuildInputs = [ compiler ];
       }
       ''
         mkdir $out
         cp ${dynamicRoot}/lib/libc.a $out/libc-exports.a
         chmod u+w $out/libc-exports.a
+        # Keep libc fallback definitions weak only in this export archive.
+        llvm-objcopy --weaken $out/libc-exports.a $out/libc-exports-weakened.a
+        mv $out/libc-exports-weakened.a $out/libc-exports.a
         # These weak startup adapters form a lazy chain selected by main's signature.
         # Keep them in the normal libc archive, outside the forced export set.
         llvm-ar d $out/libc-exports.a __main_void.o __main_argc_argv.o
