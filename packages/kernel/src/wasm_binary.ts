@@ -462,16 +462,32 @@ export function read_wasm_dynamic_imports(
   return result;
 }
 
+export interface WasmDynamicFunctionReexport {
+  module: string;
+  name: string;
+}
+
+export interface WasmDynamicSignatures {
+  exports: Map<string, string>;
+  functions: readonly string[];
+  imports: readonly (Extract<WasmDynamicImport, { kind: "function" }> & { signature: string })[];
+  reexports: ReadonlyMap<string, WasmDynamicFunctionReexport>;
+}
+
 /** Function ABI identities for the numeric C/SIMD dynamic profile. Do not let a JS
- * forwarding function erase a producer/consumer signature mismatch. Imported
- * function re-exports need scope/alias handling and are rejected by this profile. */
-export function read_wasm_dynamic_signatures(module: Uint8Array, allowDefinedTable = false) {
+ * forwarding function erase a producer/consumer signature mismatch. Function
+ * re-exports retain their imported identity so the linker can handle their aliases. */
+export function read_wasm_dynamic_signatures(
+  module: Uint8Array,
+  allowDefinedTable = false,
+): WasmDynamicSignatures {
   const imports = read_wasm_dynamic_imports(module, allowDefinedTable).filter(
     (entry) => entry.kind === "function",
   );
   const functions = imports.map((entry) => entry.typeIndex);
   const types: string[] = [];
   const exports = new Map<string, string>();
+  const reexports = new Map<string, WasmDynamicFunctionReexport>();
   const bytes = new Cursor(module, 8);
   while (!bytes.done) {
     const id = bytes.byte();
@@ -498,12 +514,14 @@ export function read_wasm_dynamic_signatures(module: Uint8Array, allowDefinedTab
         const kind = part.byte();
         const position = part.u32();
         if (kind !== 0) continue;
-        if (position < imports.length)
-          part.fail("dynamic function re-exports are not supported yet");
         const type = functions[position];
         const signature = type === undefined ? undefined : types[type];
         if (signature === undefined) part.fail("invalid dynamic export function type");
         exports.set(name, signature!);
+        if (position < imports.length) {
+          const imported = imports[position]!;
+          reexports.set(name, { module: imported.module, name: imported.name });
+        }
       }
       part.expect_done("dynamic export section");
     }
@@ -520,6 +538,7 @@ export function read_wasm_dynamic_signatures(module: Uint8Array, allowDefinedTab
       if (signature === undefined) bytes.fail("invalid dynamic import function type");
       return { ...entry, signature: signature! };
     }),
+    reexports,
   };
 }
 

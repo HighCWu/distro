@@ -1,0 +1,37 @@
+# SPDX-License-Identifier: Apache-2.0 WITH LLVM-exception
+# Populate signatures for exported imported functions, including aliases.
+--- a/llvm/lib/Object/WasmObjectFile.cpp
++++ b/llvm/lib/Object/WasmObjectFile.cpp
+@@ -1440,6 +1440,12 @@
+   uint32_t Count = readVaruint32(Ctx);
+   Exports.reserve(Count);
+   Symbols.reserve(Count);
++  std::vector<const wasm::WasmImport *> ImportedFunctions;
++  ImportedFunctions.reserve(NumImportedFunctions);
++  for (const wasm::WasmImport &Import : Imports) {
++    if (Import.Kind == wasm::WASM_EXTERNAL_FUNCTION)
++      ImportedFunctions.push_back(&Import);
++  }
+   for (uint32_t I = 0; I < Count; I++) {
+     wasm::WasmExport Ex;
+     Ex.Name = readString(Ctx);
+@@ -1463,10 +1469,16 @@
+         unsigned FuncIndex = Info.ElementIndex - NumImportedFunctions;
+         wasm::WasmFunction &Function = Functions[FuncIndex];
+         Signature = &Signatures[Function.SigIndex];
++      } else {
++        if (Ex.Index >= ImportedFunctions.size())
++          return make_error<GenericBinaryError>("invalid function export",
++                                                object_error::parse_failed);
++        const wasm::WasmImport &Import = *ImportedFunctions[Ex.Index];
++        if (Import.SigIndex >= Signatures.size())
++          return make_error<GenericBinaryError>("invalid function type",
++                                                object_error::parse_failed);
++        Signature = &Signatures[Import.SigIndex];
+       }
+-      // Else the function is imported. LLVM object files don't use this
+-      // pattern and we still treat this as an undefined symbol, but we want to
+-      // parse it without crashing.
+       break;
+     }
+     case wasm::WASM_EXTERNAL_GLOBAL: {

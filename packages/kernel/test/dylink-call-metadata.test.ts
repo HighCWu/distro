@@ -89,6 +89,7 @@ for (const width of [32, 64] as const)
       saved = original.slice();
     const word = width === 64 ? 0x7e : 0x7f;
     const signatures = read_wasm_dynamic_signatures(original, true);
+    assert.equal(signatures.reexports.size, 0);
     assert.deepEqual(signatures.functions, [
       JSON.stringify([[word], [word]]),
       ...Array(3).fill(JSON.stringify([[], [word]])),
@@ -123,7 +124,48 @@ for (const width of [32, 64] as const)
       sections(prepared.bytes).filter((part) => part.id !== 7),
       sections(original).filter((part) => part.id !== 7),
     );
-    assert.throws(() => prepare_dylink_call_metadata(fixture(width, true), true), /re-exports/);
+  });
+
+for (const width of [32, 64] as const)
+  test(`imported wasm${width} function re-exports retain identity and private metadata`, () => {
+    const original = fixture(width, true);
+    const signatures = read_wasm_dynamic_signatures(original, true);
+    const word = width === 64 ? 0x7e : 0x7f;
+    const signature = JSON.stringify([[word], [word]]);
+    assert.equal(signatures.exports.get("invoke"), signature);
+    assert.deepEqual([...signatures.reexports], [["invoke", { module: "env", name: "increment" }]]);
+    assert.deepEqual(signatures.functions, [
+      signature,
+      ...Array(3).fill(JSON.stringify([[], [word]])),
+    ]);
+
+    const prepared = prepare_dylink_call_metadata(original, true);
+    const [privateAlias, metadata] = [...prepared.functions][0]!;
+    assert.deepEqual(metadata, { signature, imported: true });
+    assert.equal(prepared.privateExports.has(privateAlias), true);
+    assert.equal(prepared.privateExports.has("invoke"), false);
+
+    const calls: (number | bigint)[] = [];
+    const increment = (value: number | bigint) => {
+      calls.push(value);
+      return typeof value === "bigint" ? value + 1n : value + 1;
+    };
+    const instance = new WebAssembly.Instance(new WebAssembly.Module(prepared.bytes), {
+      env: { increment },
+    });
+    const exports = instance.exports;
+    assert.equal(typeof exports.invoke, "function");
+    assert.equal(typeof exports[privateAlias], "function");
+    assert.equal(exports.invoke, exports[privateAlias]);
+    assert.equal(
+      (exports.invoke as CallableFunction)(width === 64 ? 41n : 41),
+      width === 64 ? 42n : 42,
+    );
+    assert.equal(
+      (exports[privateAlias] as CallableFunction)(width === 64 ? 51n : 51),
+      width === 64 ? 52n : 52,
+    );
+    assert.deepEqual(calls, width === 64 ? [41n, 51n] : [41, 51]);
   });
 
 test("missing export sections are inserted after tags/globals and before start/code", () => {
@@ -184,6 +226,23 @@ test("metadata rejects malformed section/name bounds and duplicate sections", ()
   assert.throws(() => prepare_dylink_call_metadata(binary(section(7, [1, 1, 255, 0, 0]))), /UTF-8/);
   assert.throws(
     () => prepare_dylink_call_metadata(binary(section(3, [1, 1]))),
+    /invalid dynamic function type/,
+  );
+});
+
+test("dynamic signatures reject invalid re-export indices and function types", () => {
+  const type = section(1, [1, 0x60, 0, 0]);
+  const imported = section(2, [1, ...text("env"), ...text("call"), 0, 0]);
+  assert.throws(
+    () =>
+      read_wasm_dynamic_signatures(binary(type, imported, section(7, [1, ...text("bad"), 0, 1]))),
+    /invalid dynamic export function type/,
+  );
+  assert.throws(
+    () =>
+      read_wasm_dynamic_signatures(
+        binary(section(1, [1, 0x60, 0, 0]), section(2, [1, ...text("env"), ...text("call"), 0, 1])),
+      ),
     /invalid dynamic function type/,
   );
 });

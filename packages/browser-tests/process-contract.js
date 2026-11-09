@@ -41,6 +41,7 @@ export const processStages = {
     "dynamic loader: byte-preserving filenames, BOM search and Unicode metadata pass",
     "dynamic loader: RTLD_NEXT chains, private callers and main reentry recover pass",
     "dynamic loader: missing/malformed rejection, descriptor recovery and cleanup pass",
+    "dynamic loader: imported function re-export, provider identity and direct/GOT calls pass",
   ],
   resolver: [
     "curl resolver: pending DNS does not block an independent multi transfer pass",

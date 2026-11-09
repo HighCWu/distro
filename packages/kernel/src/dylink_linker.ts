@@ -161,13 +161,26 @@ export function link_dylink_graph(options: {
   const records = order.map((name) => modules.get(name)!);
   const fresh = records.filter((record) => !record.instance);
   type Record = (typeof records)[number];
-  type Symbol = { owner?: Record; external?: DylinkExternalSymbol; kind: "function" | "global" };
+  type Symbol = {
+    owner?: Record;
+    /** The actual provider export, which can differ from a public alias name. */
+    name?: string;
+    external?: DylinkExternalSymbol;
+    kind: "function" | "global";
+  };
+  type Candidate = {
+    owner: Record;
+    name: string;
+    kind: "function" | "global";
+    reexport?: { module: string; name: string };
+  };
   const symbols = new Map<string, Symbol>();
   for (const [name, external] of options.externalSymbols ?? []) {
     if (typeof external.value === "function") symbols.set(name, { external, kind: "function" });
     else if (external.value instanceof WebAssembly.Global && external.address !== undefined)
       symbols.set(name, { external, kind: "global" });
   }
+  const externalSymbols = new Map(symbols);
   const ownSymbols = new Map<string, Symbol>();
   const functionPointers = options.functionPointers ?? new Map<CallableFunction, bigint>();
   const callable = (fn: CallableFunction) => {
@@ -180,11 +193,11 @@ export function link_dylink_graph(options: {
     return wrapped;
   };
   const valueOf = (symbol: Symbol, name: string) => {
-    const value = symbol.owner?.instance?.exports[name] ?? symbol.external?.value;
+    const value = symbol.owner?.instance?.exports[symbol.name ?? name] ?? symbol.external?.value;
     return typeof value === "function" ? callable(value) : value;
   };
   const signatureOf = (symbol: Symbol, name: string) =>
-    symbol.owner?.signatures.exports.get(name) ?? symbol.external?.signature;
+    symbol.owner?.signatures.exports.get(symbol.name ?? name) ?? symbol.external?.signature;
   // Lookup scope and constructor order differ: breadth-first root/NEEDED lookup
   // uses the first definition, including a weak one, as normal ELF lookup does.
   const scope = [options.root];
@@ -216,6 +229,9 @@ export function link_dylink_graph(options: {
     "__wasm_apply_tls_relocs",
     "__wasm_apply_global_tls_relocs",
   ]);
+  const candidates = new Map<string, Candidate[]>();
+  const candidatesByRecord = new Map<Record, Map<string, Candidate>>();
+  const reexports: Candidate[] = [];
   let objectFunctionCount = 0;
   for (const name of scope) {
     const record = modules.get(name)!;
@@ -226,10 +242,81 @@ export function link_dylink_graph(options: {
       const attributes = flags.get(symbol.name) ?? 0;
       if (attributes & 6) continue;
       if (symbol.kind === "function") objectFunctionCount++;
-      const definition: Symbol = { owner: record, kind: symbol.kind };
-      if (!symbols.has(symbol.name)) symbols.set(symbol.name, definition);
-      if (!ownSymbols.has(symbol.name)) ownSymbols.set(symbol.name, definition);
+      const candidate: Candidate = {
+        owner: record,
+        name: symbol.name,
+        kind: symbol.kind,
+        ...(symbol.kind === "function"
+          ? { reexport: record.signatures.reexports.get(symbol.name) }
+          : {}),
+      };
+      const recordCandidates = candidatesByRecord.get(record) ?? new Map<string, Candidate>();
+      recordCandidates.set(symbol.name, candidate);
+      candidatesByRecord.set(record, recordCandidates);
+      const group = candidates.get(symbol.name) ?? [];
+      group.push(candidate);
+      candidates.set(symbol.name, group);
+      if (candidate.reexport) reexports.push(candidate);
     }
+  }
+  const resolveName = (name: string, visited: Set<Candidate>): Symbol | undefined => {
+    const external = externalSymbols.get(name);
+    if (external) return external;
+    for (const candidate of candidates.get(name) ?? []) {
+      if (visited.has(candidate)) continue;
+      visited.add(candidate);
+      if (!candidate.reexport)
+        return { owner: candidate.owner, name: candidate.name, kind: candidate.kind };
+      const target = resolveImport(candidate, visited);
+      if (target) return target;
+    }
+    return undefined;
+  };
+  const resolveImport = (candidate: Candidate, visited: Set<Candidate>): Symbol | undefined => {
+    const target = candidate.reexport!;
+    // Public aliases need a canonical Wasm function slot for dlsym and GOT.func.
+    // Host imports are callable from Wasm, but their JavaScript function values
+    // cannot be installed in this process's Wasm function table.
+    if (options.hostFunctions?.get(target.module)?.has(target.name))
+      throw new Error(`unsupported dynamic re-export host import: ${target.module}.${target.name}`);
+    if (target.module !== "env") return undefined;
+    return resolveName(target.name, visited);
+  };
+  const aliasTargets = new Map<Candidate, Symbol>();
+  // Normalize every public re-export before arena layout, clearing data, or
+  // changing table entries. A missed provider or an alias-only cycle cannot
+  // leave a partially initialized process resource behind.
+  for (const alias of reexports) {
+    const visited = new Set<Candidate>([alias]);
+    const target = resolveImport(alias, visited);
+    if (!target) throw new Error(`unresolved dynamic re-export: ${alias.owner.name}.${alias.name}`);
+    if (target.external && typeof target.external.value === "function") {
+      try {
+        const probe = new WebAssembly.Table({ element: "anyfunc", initial: 1 });
+        probe.set(0, target.external.value);
+      } catch {
+        throw new Error(
+          `unsupported dynamic re-export host function: ${alias.owner.name}.${alias.name}`,
+        );
+      }
+    }
+    aliasTargets.set(alias, target);
+  }
+  for (const [name, group] of candidates) {
+    if (!symbols.has(name)) {
+      const resolved = resolveName(name, new Set());
+      if (resolved) symbols.set(name, resolved);
+    }
+    const first = group[0]!;
+    if (!ownSymbols.has(name))
+      ownSymbols.set(
+        name,
+        aliasTargets.get(first) ?? {
+          owner: first.owner,
+          name: first.name,
+          kind: first.kind,
+        },
+      );
   }
   const scopeFrom = (root: string) => {
     if (!modules.has(root)) throw new Error("unknown dynamic object");
@@ -248,15 +335,25 @@ export function link_dylink_graph(options: {
     const found = new Map<string, Symbol>();
     for (const name of scopeFrom(root)) {
       const record = modules.get(name)!;
-      const flags = new Map(record.metadata.exports.map((symbol) => [symbol.name, symbol.flags]));
-      for (const entry of record.exports)
+      const recordCandidates = candidatesByRecord.get(record);
+      for (const entry of record.exports) {
         if (
           (entry.kind === "function" || entry.kind === "global") &&
           !internal.has(entry.name) &&
-          !((flags.get(entry.name) ?? 0) & 6) &&
+          recordCandidates?.has(entry.name) &&
           !found.has(entry.name)
-        )
-          found.set(entry.name, { owner: record, kind: entry.kind });
+        ) {
+          const candidate = recordCandidates!.get(entry.name)!;
+          found.set(
+            entry.name,
+            aliasTargets.get(candidate) ?? {
+              owner: record,
+              name: entry.name,
+              kind: entry.kind,
+            },
+          );
+        }
+      }
     }
     return found;
   };
@@ -388,7 +485,7 @@ export function link_dylink_graph(options: {
   for (const [index, record] of fresh.entries()) Object.assign(record, layout.items[index]);
   const word = (value: bigint, type: "i32" | "i64") => (type === "i64" ? value : Number(value));
   const got: { entry: { module: string; name: string }; global: WebAssembly.Global }[] = [];
-  const forwards = new Map<Record, { name: string; target: WebAssembly.Global }[]>();
+  const forwards = new Map<Record, { providerName: string; target: WebAssembly.Global }[]>();
   let nextSlot = layout.tableEnd;
   function functionPointer(fn: CallableFunction): bigint {
     const wrapped = callable(fn);
@@ -447,7 +544,10 @@ export function link_dylink_graph(options: {
                 const provider = definition.owner;
                 if (!provider) throw new Error("unavailable dynamic function");
                 const pending = forwards.get(provider) ?? [];
-                pending.push({ name: entry.name, target: forward.target });
+                pending.push({
+                  providerName: definition.name ?? entry.name,
+                  target: forward.target,
+                });
                 forwards.set(provider, pending);
               }
               // A weak undefined call retains target zero and traps natively.
@@ -479,8 +579,8 @@ export function link_dylink_graph(options: {
       options.execution?.settleTable();
       // Publish each provider immediately, as the previous late JS lookup did.
       // A later start section can call an earlier module through this edge.
-      for (const { name, target } of forwards.get(record) ?? []) {
-        const fn = record.instance.exports[name];
+      for (const { providerName, target } of forwards.get(record) ?? []) {
+        const fn = record.instance.exports[providerName];
         if (typeof fn !== "function") throw new Error("unavailable dynamic function");
         target.value = word(functionPointer(fn), tableArena.address);
       }
@@ -603,7 +703,12 @@ export function link_dylink_graph(options: {
       record.metadata.exports.some((entry) => entry.name === name && entry.flags & 0x106)
     )
       return undefined;
-    return lookupSymbol({ owner: record, kind: entry.kind }, name);
+    const candidate = candidatesByRecord.get(record)?.get(name);
+    if (!candidate) return undefined;
+    return lookupSymbol(
+      aliasTargets.get(candidate) ?? { owner: record, name, kind: entry.kind },
+      name,
+    );
   };
   return {
     order,

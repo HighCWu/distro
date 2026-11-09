@@ -312,6 +312,29 @@ int main(void)
             "profile refuses creation without module publication");
     require(descriptors() == baseline && !unlink("/plugins/alias.so") && !unlink("/plugins/bad.so"), "failure cleanup");
     puts("dynamic loader: missing/malformed rejection, descriptor recovery and cleanup pass");
+
+    void *reexport_forwarder = dlopen("libreexport-forwarder.so", RTLD_NOW | RTLD_LOCAL);
+    require(reexport_forwarder != NULL, "load DSO that re-exports an imported function");
+    void *reexport_consumer = dlopen("libreexport-consumer.so", RTLD_NOW | RTLD_LOCAL);
+    require(reexport_consumer != NULL, "load consumer through re-exporting dependency");
+    void *reexport_provider = dlopen("libreexport-provider.so", RTLD_NOW | RTLD_NOLOAD);
+    require(reexport_provider != NULL, "re-export provider was loaded as a real dependency");
+    int (*provider_target)(int) = symbol(reexport_provider, "reexport_target");
+    int (*forwarded_target)(int) = symbol(reexport_forwarder, "reexport_target");
+    int (*forwarder_anchor)(void) = symbol(reexport_forwarder, "reexport_forwarder_anchor");
+    int (*consumer_direct)(int) = symbol(reexport_consumer, "reexport_consumer_direct");
+    int (*(*consumer_pointer)(void))(int) = symbol(reexport_consumer, "reexport_consumer_pointer");
+    int (*consumer_got_target)(int) = consumer_pointer();
+    require(main_value == 10 && provider_target(1) == 42 && forwarder_anchor() == 41 &&
+            forwarded_target == provider_target,
+            "dlsym of the imported re-export resolves to the provider function");
+    require(consumer_direct(1) == 42 && consumer_got_target(1) == 42 && main_value == 10 &&
+            consumer_got_target == provider_target,
+            "dependent DSO direct call and GOT function pointer keep provider identity");
+    require(!dlclose(reexport_consumer) && !dlclose(reexport_forwarder) &&
+            !dlclose(reexport_provider) && descriptors() == baseline,
+            "re-export dependency close and descriptor cleanup");
+    puts("dynamic loader: imported function re-export, provider identity and direct/GOT calls pass");
     puts("::vm-test::pass");
     return 0;
 }

@@ -1,0 +1,277 @@
+# SPDX-License-Identifier: Apache-2.0 WITH LLVM-exception
+# Preserve explicitly requested function imports as true Wasm exports.
+diff --git a/lld/test/wasm/function-reexports.s b/lld/test/wasm/function-reexports.s
+new file mode 100644
+index 0000000..3db6d49
+--- /dev/null
++++ b/lld/test/wasm/function-reexports.s
+@@ -0,0 +1,93 @@
++# SPDX-License-Identifier: MIT
++# RUN: split-file %s %t
++# RUN: llvm-mc -filetype=obj -triple=wasm32-unknown-unknown %t/provider.s -o %t/provider.o
++# RUN: wasm-ld -shared --experimental-pic -o %t/provider.so %t/provider.o
++# RUN: llvm-mc -filetype=obj -triple=wasm32-unknown-unknown %t/consumer.s -o %t/consumer.o
++# RUN: wasm-ld -shared --experimental-pic --no-export-dynamic --export=imported --export=defined -o %t/explicit.wasm %t/consumer.o %t/provider.so
++# RUN: obj2yaml %t/explicit.wasm | FileCheck %s --check-prefix=EXPLICIT
++# RUN: wasm-ld -shared --experimental-pic --no-export-dynamic --export-all -o %t/all.wasm %t/consumer.o %t/provider.so
++# RUN: obj2yaml %t/all.wasm | FileCheck %s --check-prefix=ALL
++# RUN: wasm-ld -shared --experimental-pic --no-export-dynamic --export-if-defined=imported -o %t/if-defined.wasm %t/consumer.o %t/provider.so
++# RUN: obj2yaml %t/if-defined.wasm | FileCheck %s --check-prefix=IF-DEFINED
++# RUN: llvm-mc -filetype=obj -triple=wasm32-unknown-unknown %t/got-only.s -o %t/got-only.o
++# RUN: wasm-ld -shared --experimental-pic --unresolved-symbols=import-dynamic --no-export-dynamic --export=got_only -o %t/got-only.wasm %t/got-only.o
++# RUN: obj2yaml %t/got-only.wasm | FileCheck %s --check-prefix=GOT
++# RUN: not wasm-ld -shared --experimental-pic --no-export-dynamic --export=got_only -o %t/unresolved.wasm %t/got-only.o 2>&1 | FileCheck %s --check-prefix=UNRESOLVED
++
++# The imported function is exported at its function import index, and the
++# defined function retains the normal explicit-export behavior.
++# EXPLICIT:        - Type:            IMPORT
++# EXPLICIT:          - Field:           imported
++# EXPLICIT-NEXT:       Kind:            FUNCTION
++# EXPLICIT-NEXT:       SigIndex:        {{[0-9]+}}
++# EXPLICIT:        - Type:            EXPORT
++# EXPLICIT:            - Name:            imported
++# EXPLICIT-NEXT:         Kind:            FUNCTION
++# EXPLICIT-NEXT:         Index:           0
++# EXPLICIT:            - Name:            defined
++# EXPLICIT-NEXT:         Kind:            FUNCTION
++# EXPLICIT-NEXT:         Index:           {{[0-9]+}}
++
++# --export-all still exports the module's own functions, without re-exporting
++# the function imported from provider.so.
++# ALL:              - Type:            EXPORT
++# ALL-NEXT:           Exports:
++# ALL-NOT:              - Name:            imported
++# ALL:                  - Name:            defined
++# ALL-NOT:              - Name:            imported
++
++# --export-if-defined does not request an imported symbol's re-export.
++# IF-DEFINED:       - Type:            EXPORT
++# IF-DEFINED-NEXT:    Exports:
++# IF-DEFINED-NOT:     - Name:            imported
++
++# A function referenced only by its address through PIC data is still emitted
++# as a function import when explicitly re-exported.
++# GOT:              - Type:            IMPORT
++# GOT:                - Field:           got_only
++# GOT-NEXT:            Kind:            FUNCTION
++# GOT:              - Type:            EXPORT
++# GOT:                - Name:            got_only
++# GOT-NEXT:             Kind:            FUNCTION
++# GOT-NEXT:             Index:           0
++
++# An unresolved function that is not allowed to import keeps the explicit
++# export diagnostic.
++# UNRESOLVED: error: symbol exported via --export not found: got_only
++
++#--- provider.s
++.globl imported
++imported:
++  .functype imported (i32) -> (i32)
++  local.get 0
++  i32.const 41
++  i32.add
++  end_function
++
++#--- consumer.s
++.globl imported
++.functype imported (i32) -> (i32)
++
++.globl defined
++defined:
++  .functype defined (i32) -> (i32)
++  local.get 0
++  i32.const 1
++  i32.add
++  end_function
++
++.globl use_imported
++use_imported:
++  .functype use_imported () -> (i32)
++  i32.const 1
++  call imported
++  end_function
++
++#--- got-only.s
++.globl got_only
++.functype got_only (i32) -> (i32)
++
++.section .data.address,"",@
++address:
++  .int32 got_only
++  .size address, 4
+diff --git a/lld/wasm/Driver.cpp b/lld/wasm/Driver.cpp
+index d18126b..2780ae2 100644
+--- a/lld/wasm/Driver.cpp
++++ b/lld/wasm/Driver.cpp
+@@ -1473,6 +1473,14 @@ void LinkerDriver::linkerMain(ArrayRef<const char *> argsArr) {
+       sym->forceExport = true;
+   }
+ 
++  // --export may re-export an imported function from a shared library. Keep
++  // this separate from --export-if-defined, which does not request imports.
++  if (ctx.arg.shared && !ctx.arg.relocatable)
++    for (StringRef name : ctx.arg.requiredExports)
++      if (Symbol *sym = symtab->find(name))
++        if (isa<FunctionSymbol>(sym) && (sym->isUndefined() || sym->isShared()))
++          sym->forceReExport = true;
++
+   if (!ctx.arg.relocatable && !ctx.isPic) {
+     // Add synthetic dummies for weak undefined functions.  Must happen
+     // after LTO otherwise functions may not yet have signatures.
+diff --git a/lld/wasm/SymbolTable.cpp b/lld/wasm/SymbolTable.cpp
+index 91677b3..869c0c1 100644
+--- a/lld/wasm/SymbolTable.cpp
++++ b/lld/wasm/SymbolTable.cpp
+@@ -125,6 +125,7 @@ std::pair<Symbol *, bool> SymbolTable::insertName(StringRef name) {
+   sym->canInline = true;
+   sym->traced = trace;
+   sym->forceExport = false;
++  sym->forceReExport = false;
+   sym->referenced = !ctx.arg.gcSections;
+   symVector.emplace_back(sym);
+   return {sym, true};
+@@ -933,6 +934,7 @@ bool SymbolTable::getFunctionVariant(Symbol* sym, const WasmSignature *sig,
+     variant->canInline = true;
+     variant->traced = false;
+     variant->forceExport = false;
++    variant->forceReExport = false;
+     variants.push_back(variant);
+   } else {
+     LLVM_DEBUG(dbgs() << "variant already exists: " << toString(*variant) << "\n");
+@@ -1025,6 +1027,7 @@ DefinedFunction *SymbolTable::createUndefinedStub(const WasmSignature &sig) {
+   sym->canInline = true;
+   sym->traced = false;
+   sym->forceExport = false;
++  sym->forceReExport = false;
+   sym->signature = &sig;
+   replaceSymbol<DefinedFunction>(
+       sym, "undefined_stub", WASM_SYMBOL_VISIBILITY_HIDDEN, nullptr, nullptr);
+diff --git a/lld/wasm/Symbols.cpp b/lld/wasm/Symbols.cpp
+index f204044..3ce5bcf 100644
+--- a/lld/wasm/Symbols.cpp
++++ b/lld/wasm/Symbols.cpp
+@@ -203,8 +203,33 @@ bool Symbol::isImported() const {
+          (isUndefined() && (importName.has_value() || forceImport));
+ }
+ 
++static bool canReExportFunction(const Symbol *sym) {
++  if (!ctx.arg.shared || ctx.arg.relocatable || sym->isLocal())
++    return false;
++
++  if (auto *shared = dyn_cast<SharedFunctionSymbol>(sym))
++    return shared->signature != nullptr;
++
++  auto *undef = dyn_cast<UndefinedFunction>(sym);
++  if (!undef || !undef->signature || undef->isWeak())
++    return false;
++
++  // Re-exporting an undefined function is only valid when it is an actual
++  // import. In particular, don't turn a weak undefined function into a stub
++  // that looks callable to consumers.
++  return undef->isImported() || ctx.arg.importUndefined ||
++         ctx.arg.unresolvedSymbols == UnresolvedPolicy::ImportDynamic ||
++         ctx.arg.allowUndefinedSymbols.count(sym->getName()) != 0;
++}
++
+ bool Symbol::isExported() const {
+-  if (!isDefined() || isShared() || isLocal())
++  if (isLocal())
++    return false;
++
++  if (forceReExport && canReExportFunction(this))
++    return true;
++
++  if (!isDefined() || isShared())
+     return false;
+ 
+   // Shared libraries must export all weakly defined symbols
+diff --git a/lld/wasm/Symbols.h b/lld/wasm/Symbols.h
+index 55ee219..f26613c 100644
+--- a/lld/wasm/Symbols.h
++++ b/lld/wasm/Symbols.h
+@@ -141,8 +141,8 @@ protected:
+   Symbol(StringRef name, Kind k, uint32_t flags, InputFile *f)
+       : name(name), file(f), symbolKind(k), referenced(!ctx.arg.gcSections),
+         requiresGOT(false), isUsedInRegularObj(false), forceExport(false),
+-        forceImport(false), canInline(false), traced(false), isStub(false),
+-        flags(flags) {}
++        forceReExport(false), forceImport(false), canInline(false),
++        traced(false), isStub(false), flags(flags) {}
+ 
+   StringRef name;
+   InputFile *file;
+@@ -167,6 +167,11 @@ public:
+   // -e/--export command line flag)
+   bool forceExport : 1;
+ 
++  // True if a function import is explicitly requested for re-export via
++  // --export. This is separate from forceExport because symbols read from a
++  // shared library carry the WASM_SYMBOL_EXPORTED flag themselves.
++  bool forceReExport : 1;
++
+   bool forceImport : 1;
+ 
+   // False if LTO shouldn't inline whatever this symbol points to. If a symbol
+@@ -578,6 +583,7 @@ T *replaceSymbol(Symbol *s, ArgT &&... arg) {
+   T *s2 = new (s) T(std::forward<ArgT>(arg)...);
+   s2->isUsedInRegularObj = symCopy.isUsedInRegularObj;
+   s2->forceExport = symCopy.forceExport;
++  s2->forceReExport = symCopy.forceReExport;
+   s2->forceImport = symCopy.forceImport;
+   s2->canInline = symCopy.canInline;
+   s2->traced = symCopy.traced;
+diff --git a/lld/wasm/Writer.cpp b/lld/wasm/Writer.cpp
+index 9a5b56f..4579561 100644
+--- a/lld/wasm/Writer.cpp
++++ b/lld/wasm/Writer.cpp
+@@ -737,6 +737,11 @@ static bool shouldImport(Symbol *sym) {
+   if (sym->isWeak() && !ctx.arg.relocatable && !ctx.isPic)
+     return false;
+ 
++  // An explicitly exported imported function must be kept as a function
++  // import even if it is otherwise only used through the PIC GOT.
++  if (sym->isExported())
++    return true;
++
+   // In PIC mode we only need to import functions when they are called directly.
+   // Indirect usage all goes via GOT imports.
+   if (ctx.isPic) {
+@@ -792,9 +797,6 @@ void Writer::calculateExports() {
+       continue;
+     if (!sym->isLive())
+       continue;
+-    if (isa<SharedFunctionSymbol>(sym) || sym->isShared())
+-      continue;
+-
+     StringRef name = sym->getName();
+     LLVM_DEBUG(dbgs() << "Export: " << name << "\n");
+     WasmExport export_;
+@@ -803,6 +805,9 @@ void Writer::calculateExports() {
+         name = *exportName;
+       }
+       export_ = {name, WASM_EXTERNAL_FUNCTION, f->getExportedFunctionIndex()};
++    } else if (auto *f = dyn_cast<FunctionSymbol>(sym)) {
++      assert(f->hasFunctionIndex());
++      export_ = {name, WASM_EXTERNAL_FUNCTION, f->getFunctionIndex()};
+     } else if (auto *g = dyn_cast<DefinedGlobal>(sym)) {
+       if (!hasMutableGlobals && g->getGlobalType()->Mutable && !g->getFile() &&
+           !g->isExportedExplicit()) {
+@@ -1737,11 +1742,17 @@ void Writer::run() {
+       sym->forceExport = true;
+   }
+ 
++  if (ctx.arg.shared && !ctx.arg.relocatable)
++    for (StringRef name : ctx.arg.requiredExports)
++      if (Symbol *sym = symtab->find(name))
++        if (isa<FunctionSymbol>(sym) && (sym->isUndefined() || sym->isShared()))
++          sym->forceReExport = true;
++
+   // Delay reporting errors about explicit exports until after
+   // addStartStopSymbols which can create optional symbols.
+   for (auto &name : ctx.arg.requiredExports) {
+     Symbol *sym = symtab->find(name);
+-    if (!sym || !sym->isDefined()) {
++    if (!sym || (!sym->isDefined() && !sym->isExported())) {
+       if (ctx.arg.unresolvedSymbols == UnresolvedPolicy::ReportError)
+         error(Twine("symbol exported via --export not found: ") + name);
+       if (ctx.arg.unresolvedSymbols == UnresolvedPolicy::Warn)

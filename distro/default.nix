@@ -69,7 +69,11 @@ lib.makeScope (scope: lib.callPackageWith ({ inherit lib pkgs; } // scope)) (
     };
     sharedDriverToolchain = self.llvm-toolchain-unwrapped.override {
       includeHostBackend = false;
-      patches = [ ./dynamic-loader/linux-shared.patch ];
+      patches = [
+        ./dynamic-loader/linux-shared.patch
+        ./dynamic-loader/function-reexport-reader.patch
+        ./dynamic-loader/function-reexports.patch
+      ];
     };
   in
   {

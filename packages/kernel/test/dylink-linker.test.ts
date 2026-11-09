@@ -20,6 +20,7 @@ function binary(
     result64?: boolean;
     functionImports?: number;
     reexport?: boolean;
+    gotFunctionExport?: boolean;
     callImport?: boolean;
     startCall?: boolean;
     privateExport?: string;
@@ -48,13 +49,14 @@ function binary(
     section(3, options.startCall ? [2, 0, 1] : [1, 0]),
     ...(options.privateMemory ? [section(5, [1, 0, 1])] : []),
     section(7, [
-      options.privateExport ? 2 : 1,
+      1 + Number(!!options.privateExport) + Number(!!options.gotFunctionExport),
       ...text(options.trap === "ctor" ? "__wasm_call_ctors" : (options.exportName ?? "answer")),
       0,
       options.reexport ? 0 : (options.functionImports ?? 0),
       ...(options.privateExport
         ? [...text(options.privateExport), 0, options.functionImports ?? 0]
         : []),
+      ...(options.gotFunctionExport ? [...text("got_address"), 3, 0] : []),
     ]),
     ...(options.trap === "start" ? [section(8, [0])] : []),
     ...(options.startCall ? [section(8, [(options.functionImports ?? 0) + 1])] : []),
@@ -416,8 +418,302 @@ test("forwarded imports cannot hide incompatible Wasm function signatures", () =
   const before = new Uint8Array(options.memory.buffer).slice();
   assert.throws(() => link_dylink_graph(options), /signature mismatch/);
   assert.deepEqual(new Uint8Array(options.memory.buffer), before);
-  const reexport = binary({ imports, functionImports: 1, reexport: true });
-  assert.throws(() => link_dylink_graph(setup(new Map([["root", reexport]]))), /re-exports/);
+
+  const aliasOptions = setup(
+    new Map([
+      ["root", binary({ needed: ["forwarder"], imports, functionImports: 1 })],
+      [
+        "forwarder",
+        binary({
+          needed: ["provider"],
+          imports: [1, ...text("env"), ...text("external"), 0, 0],
+          functionImports: 1,
+          reexport: true,
+          exportName: "alias",
+        }),
+      ],
+      ["provider", binary({ exportName: "external", result64: true })],
+    ]),
+  );
+  const aliasBefore = new Uint8Array(aliasOptions.memory.buffer).slice();
+  assert.throws(() => link_dylink_graph(aliasOptions), /signature mismatch/);
+  assert.deepEqual(new Uint8Array(aliasOptions.memory.buffer), aliasBefore);
+});
+
+test("function re-exports resolve direct calls, GOT.func and handle lookup to one provider", () => {
+  const functionImport = (module: string, name: string) => [...text(module), ...text(name), 0, 0];
+  const globalImport = (module: string, name: string) => [
+    ...text(module),
+    ...text(name),
+    3,
+    0x7f,
+    1,
+  ];
+  const imports = [2, ...functionImport("env", "alias"), ...globalImport("GOT.func", "alias")];
+  const files = new Map([
+    [
+      "root",
+      binary({
+        needed: ["forwarder"],
+        imports,
+        functionImports: 1,
+        callImport: true,
+        gotFunctionExport: true,
+      }),
+    ],
+    [
+      "forwarder",
+      binary({
+        needed: ["provider"],
+        imports: [1, ...functionImport("env", "origin")],
+        functionImports: 1,
+        reexport: true,
+        exportName: "alias",
+      }),
+    ],
+    ["provider", binary({ exportName: "origin" })],
+  ]);
+  const options = setup(files);
+  const linked = link_dylink_graph(options);
+  linked.initialize();
+  const provider = linked.lookupOwn("provider", "origin")!;
+  const alias = linked.lookupOwn("forwarder", "alias")!;
+  assert.equal(alias.value, provider.value);
+  assert.equal(alias.address, provider.address);
+  assert.equal(linked.lookup("alias")!.address, provider.address);
+  assert.equal(linked.lookupFrom("root", "alias")!.address, provider.address);
+  assert.equal((linked.instances.get("root")!.exports.answer as CallableFunction)(), 42);
+  assert.equal(
+    (linked.instances.get("root")!.exports.got_address as WebAssembly.Global).value,
+    Number(provider.address),
+  );
+});
+
+test("same-name, multi-hop re-exports honor main preemption and preserve the provider slot", () => {
+  const functionImport = (name: string) => [1, ...text("env"), ...text(name), 0, 0];
+  const files = new Map([
+    [
+      "root",
+      binary({
+        needed: ["top"],
+        imports: functionImport("public_alias"),
+        functionImports: 1,
+        callImport: true,
+      }),
+    ],
+    [
+      "top",
+      binary({
+        needed: ["middle", "provider", "fallback"],
+        imports: functionImport("middle_alias"),
+        functionImports: 1,
+        reexport: true,
+        exportName: "public_alias",
+      }),
+    ],
+    [
+      "middle",
+      binary({
+        needed: ["provider"],
+        imports: functionImport("origin"),
+        functionImports: 1,
+        reexport: true,
+        exportName: "middle_alias",
+      }),
+    ],
+    [
+      "provider",
+      binary({
+        imports: functionImport("origin"),
+        functionImports: 1,
+        reexport: true,
+        exportName: "origin",
+      }),
+    ],
+  ]);
+  // Add a concrete fallback after the provider's deliberately same-name alias.
+  files.set("fallback", binary({ exportName: "origin" }));
+  const local = link_dylink_graph(setup(files));
+  const fallback = local.lookupOwn("fallback", "origin")!;
+  const forwarded = local.lookupOwn("top", "public_alias")!;
+  assert.equal(forwarded.value, fallback.value);
+  assert.equal(forwarded.address, fallback.address);
+  assert.equal((local.instances.get("root")!.exports.answer as CallableFunction)(), 42);
+
+  const main = new WebAssembly.Instance(new WebAssembly.Module(binary())).exports
+    .answer as CallableFunction;
+  const linked = link_dylink_graph({
+    ...setup(files),
+    externalSymbols: new Map([["origin", { value: main, signature: "[[],[127]]" }]]),
+  });
+  linked.initialize();
+  const alias = linked.lookupOwn("top", "public_alias")!;
+  const rootImport = linked.lookup("public_alias")!;
+  assert.equal(alias.value, main);
+  assert.equal(alias.address, rootImport.address);
+  assert.equal((linked.instances.get("root")!.exports.answer as CallableFunction)(), 42);
+});
+
+test("same-name alias cycles reach a later concrete provider", () => {
+  const functionImport = (name: string) => [1, ...text("env"), ...text(name), 0, 0];
+  const linked = link_dylink_graph(
+    setup(
+      new Map([
+        [
+          "root",
+          binary({
+            needed: ["first", "third"],
+            imports: functionImport("shared"),
+            functionImports: 1,
+            callImport: true,
+          }),
+        ],
+        [
+          "first",
+          binary({
+            needed: ["second"],
+            imports: functionImport("loop"),
+            functionImports: 1,
+            reexport: true,
+            exportName: "shared",
+          }),
+        ],
+        [
+          "second",
+          binary({
+            imports: functionImport("shared"),
+            functionImports: 1,
+            reexport: true,
+            exportName: "loop",
+          }),
+        ],
+        [
+          "third",
+          binary({
+            needed: ["provider"],
+            imports: functionImport("provider_fn"),
+            functionImports: 1,
+            reexport: true,
+            exportName: "shared",
+          }),
+        ],
+        ["provider", binary({ exportName: "provider_fn" })],
+      ]),
+    ),
+  );
+  const provider = linked.lookupOwn("provider", "provider_fn")!;
+  for (const [object, name] of [
+    ["first", "shared"],
+    ["second", "loop"],
+    ["third", "shared"],
+  ]) {
+    const alias = linked.lookupOwn(object!, name!)!;
+    assert.equal(alias.value, provider.value);
+    assert.equal(alias.address, provider.address);
+  }
+  assert.equal((linked.instances.get("root")!.exports.answer as CallableFunction)(), 42);
+});
+
+test("re-export-only cycles fail before memory or table mutation", () => {
+  const functionImport = (name: string) => [1, ...text("env"), ...text(name), 0, 0];
+  const cyclic = new Map([
+    [
+      "root",
+      binary({
+        needed: ["peer"],
+        imports: functionImport("peer_alias"),
+        functionImports: 1,
+        reexport: true,
+        exportName: "root_alias",
+      }),
+    ],
+    [
+      "peer",
+      binary({
+        needed: ["root"],
+        imports: functionImport("root_alias"),
+        functionImports: 1,
+        reexport: true,
+        exportName: "peer_alias",
+      }),
+    ],
+  ]);
+  const missing = new Map([
+    [
+      "root",
+      binary({
+        imports: functionImport("not_provided"),
+        functionImports: 1,
+        reexport: true,
+        exportName: "alias",
+      }),
+    ],
+  ]);
+  for (const files of [cyclic, missing]) {
+    const options = setup(files);
+    const before = new Uint8Array(options.memory.buffer).slice();
+    assert.throws(() => link_dylink_graph(options), /unresolved dynamic re-export/);
+    assert.deepEqual(new Uint8Array(options.memory.buffer), before);
+    for (let index = 0; index < options.table.length; index++)
+      assert.equal(options.table.get(index), null);
+  }
+});
+
+test("host-only re-export providers are rejected before memory or table mutation", () => {
+  const bytes = binary({
+    imports: [1, ...text("env"), ...text("host_fn"), 0, 0],
+    functionImports: 1,
+    reexport: true,
+    exportName: "alias",
+  });
+  const hostOptions = setup(new Map([["root", bytes]]));
+  const hostFunctions = new Map([["env", new Map([["host_fn", () => 42]])]]);
+  const before = new Uint8Array(hostOptions.memory.buffer).slice();
+  assert.throws(
+    () => link_dylink_graph({ ...hostOptions, hostFunctions }),
+    /unsupported dynamic re-export host import/,
+  );
+  assert.deepEqual(new Uint8Array(hostOptions.memory.buffer), before);
+  for (let index = 0; index < hostOptions.table.length; index++)
+    assert.equal(hostOptions.table.get(index), null);
+
+  const providerOptions = setup(
+    new Map([
+      [
+        "root",
+        binary({
+          needed: ["provider"],
+          imports: [1, ...text("env"), ...text("host_fn"), 0, 0],
+          functionImports: 1,
+          reexport: true,
+          exportName: "alias",
+        }),
+      ],
+      ["provider", binary({ exportName: "host_fn" })],
+    ]),
+  );
+  const providerBefore = new Uint8Array(providerOptions.memory.buffer).slice();
+  assert.throws(
+    () => link_dylink_graph({ ...providerOptions, hostFunctions }),
+    /unsupported dynamic re-export host import/,
+  );
+  assert.deepEqual(new Uint8Array(providerOptions.memory.buffer), providerBefore);
+  for (let index = 0; index < providerOptions.table.length; index++)
+    assert.equal(providerOptions.table.get(index), null);
+
+  const mainOptions = setup(new Map([["root", bytes]]));
+  const mainBefore = new Uint8Array(mainOptions.memory.buffer).slice();
+  assert.throws(
+    () =>
+      link_dylink_graph({
+        ...mainOptions,
+        externalSymbols: new Map([["host_fn", { value: () => 42, signature: "[[],[127]]" }]]),
+      }),
+    /unsupported dynamic re-export host function/,
+  );
+  assert.deepEqual(new Uint8Array(mainOptions.memory.buffer), mainBefore);
+  for (let index = 0; index < mainOptions.table.length; index++)
+    assert.equal(mainOptions.table.get(index), null);
 });
 
 test("object handles use their own dependency scope and reserve distinct shadowed function pointers", () => {

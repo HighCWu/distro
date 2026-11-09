@@ -30,6 +30,7 @@ let
       output,
       inputs,
       runpath ? null,
+      extraFlags ? [ ],
     }:
     let
       flags = [
@@ -42,7 +43,8 @@ let
         "--export=__tls_base"
         "--soname=${name}"
       ]
-      ++ lib.optional (runpath != null) "--rpath=${runpath}";
+      ++ lib.optional (runpath != null) "--rpath=${runpath}"
+      ++ extraFlags;
     in
     # Both the SDK and the standalone compiler dispatch shared links through
     # Clang. Their Linux driver selects the shared object's runtime inputs.
@@ -76,6 +78,7 @@ pkgs.stdenvNoCC.mkDerivation (finalAttrs: {
   nativeBuildInputs = [
     sdk-dynamic-loader
     llvm-toolchain
+    pkgs.nodejs
   ];
   buildPhase = ''
     runHook preBuild
@@ -110,6 +113,9 @@ pkgs.stdenvNoCC.mkDerivation (finalAttrs: {
     ${sideCC} -O2 -fPIC -c ${./next-front.c} -o next-front.o
     ${sideCC} -O2 -fPIC -c ${./next-middle.c} -o next-middle.o
     ${sideCC} -O2 -fPIC -c ${./next-leaf.c} -o next-leaf.o
+    ${sideCC} -O2 -fPIC -c ${./reexport-provider.c} -o reexport-provider.o
+    ${sideCC} -O2 -fPIC -c ${./reexport-forwarder.c} -o reexport-forwarder.o
+    ${sideCC} -O2 -fPIC -c ${./reexport-consumer.c} -o reexport-consumer.o
     ${linkShared {
       name = "next-leaf.so";
       output = "next-leaf.so";
@@ -133,6 +139,33 @@ pkgs.stdenvNoCC.mkDerivation (finalAttrs: {
       ];
       runpath = "$ORIGIN/next";
     }}
+    ${linkShared {
+      name = "libreexport-provider.so";
+      output = "libreexport-provider.so";
+      inputs = [ "reexport-provider.o" ];
+    }}
+    ${linkShared {
+      name = "libreexport-forwarder.so";
+      output = "libreexport-forwarder.so";
+      inputs = [
+        "reexport-forwarder.o"
+        "libreexport-provider.so"
+      ];
+      runpath = "$ORIGIN";
+      extraFlags = [ "--export=reexport_target" ];
+    }}
+    ${linkShared {
+      name = "libreexport-consumer.so";
+      output = "libreexport-consumer.so";
+      inputs = [
+        "reexport-consumer.o"
+        "libreexport-forwarder.so"
+      ];
+      runpath = "$ORIGIN";
+    }}
+    # Inspect the actual linked bytes: dlsym could find the symbol through
+    # dependency scope even if this DSO forgot its own import-function export.
+    node ${./reexport-check.js} ${../../packages/kernel/src/wasm_binary.ts} libreexport-forwarder.so libreexport-provider.so libreexport-consumer.so
     ${linkShared {
       name = "reentrant-root.so";
       output = "reentrant-root.so";
@@ -188,6 +221,9 @@ pkgs.stdenvNoCC.mkDerivation (finalAttrs: {
     install -Dm644 next-front.so $out/lib/next-front.so
     install -Dm644 next-middle.so $out/lib/next/next-middle.so
     install -Dm644 next-leaf.so $out/lib/next/next-leaf.so
+    install -Dm644 libreexport-provider.so $out/lib/libreexport-provider.so
+    install -Dm644 libreexport-forwarder.so $out/lib/libreexport-forwarder.so
+    install -Dm644 libreexport-consumer.so $out/lib/libreexport-consumer.so
     install -Dm644 ${../sdk/LICENSE.MIT} $out/share/licenses/dynamic-loader/LICENSE.MIT
     cp ${musl.src}/COPYRIGHT $out/share/licenses/dynamic-loader/musl-COPYRIGHT
     cp ${llvm-runtimes.src}/compiler-rt/LICENSE.TXT $out/share/licenses/dynamic-loader/compiler-rt-LICENSE.TXT
@@ -196,6 +232,8 @@ pkgs.stdenvNoCC.mkDerivation (finalAttrs: {
     cp ${./path-library.c} $buildMaterials/share/dynamic-loader-materials/
     cp ${./reentrant-root.c} ${./reentrant-leaf.c} ${./reentrant-reject.c} $buildMaterials/share/dynamic-loader-materials/
     cp ${./next-front.c} ${./next-middle.c} ${./next-leaf.c} $buildMaterials/share/dynamic-loader-materials/
+    cp ${./reexport-provider.c} ${./reexport-forwarder.c} ${./reexport-consumer.c} $buildMaterials/share/dynamic-loader-materials/
+    cp ${./reexport-check.js} $buildMaterials/share/dynamic-loader-materials/
     cp ${compilerCommands} $buildMaterials/share/dynamic-loader-materials/compiler-commands.json
     ln -s ${sdk-dynamic-loader.buildMaterials} $buildMaterials/share/dynamic-loader-materials/sdk
     ${lib.optionalString (sharedCompiler != null) ''
@@ -221,6 +259,9 @@ pkgs.stdenvNoCC.mkDerivation (finalAttrs: {
         "/plugins/next-front.so" = "${finalAttrs.finalPackage}/lib/next-front.so";
         "/plugins/next/next-middle.so" = "${finalAttrs.finalPackage}/lib/next/next-middle.so";
         "/plugins/next/next-leaf.so" = "${finalAttrs.finalPackage}/lib/next/next-leaf.so";
+        "/plugins/libreexport-provider.so" = "${finalAttrs.finalPackage}/lib/libreexport-provider.so";
+        "/plugins/libreexport-forwarder.so" = "${finalAttrs.finalPackage}/lib/libreexport-forwarder.so";
+        "/plugins/libreexport-consumer.so" = "${finalAttrs.finalPackage}/lib/libreexport-consumer.so";
       };
     };
   }
