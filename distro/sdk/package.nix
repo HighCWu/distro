@@ -234,6 +234,7 @@ let
             ''}
             SDK_LINK_CC=${cc}/bin/wasm-linux-cc \
               SDK_LINK_CXX=${cxx}/bin/wasm-linux-c++ \
+              SDK_LINK_AR=${llvm-toolchain}/bin/llvm-ar \
               SDK_LINK_PARSER=${../../packages/kernel/src/wasm_binary.ts} \
               SDK_LINK_BITS=${toString platform.addressBits} \
               SDK_LINK_MAXIMUM=${toString platform.maximumMemoryBytes} \

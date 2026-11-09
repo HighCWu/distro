@@ -43,6 +43,17 @@ const runCompilerWithEnvironment = (compiler, directory, environment, ...argumen
 const runCompiler = (compiler, directory, ...arguments_) =>
   runCompilerWithEnvironment(compiler, directory, process.env, ...arguments_);
 
+const runArchiver = (archiver, directory, ...arguments_) => {
+  const result = spawnSync(archiver, arguments_, { cwd: directory, encoding: "utf8" });
+  const command = arguments_.map((argument) => JSON.stringify(argument)).join(" ");
+  assert.equal(
+    result.status,
+    0,
+    `SDK_LINK_AR arguments: ${command}\n${result.stderr || String(result.error)}`,
+  );
+  return result;
+};
+
 const runProfileCompiler = (compiler, directory, wasmOptProbe, ...arguments_) =>
   wasmOptProbe
     ? runCompilerWithEnvironment(compiler, directory, wasmOptProbe.environment, ...arguments_)
@@ -219,8 +230,10 @@ test(
   { skip: !process.env.SDK_LINK_CC && "requires the built SDK C compiler" },
   async () => {
     const compiler = process.env.SDK_LINK_CC;
+    const archiver = process.env.SDK_LINK_AR;
     const bits = Number(process.env.SDK_LINK_BITS);
     const maximumBytes = BigInt(process.env.SDK_LINK_MAXIMUM);
+    assert.ok(archiver, "SDK_LINK_AR must name the SDK's LLVM archiver");
     assert.ok(bits === 32 || bits === 64, "SDK_LINK_BITS must be 32 or 64");
     assert.ok(maximumBytes > 0n, "SDK_LINK_MAXIMUM must be a positive byte count");
     const api = await wasmApi();
@@ -297,6 +310,8 @@ test(
         "C -r must retain the unresolved main_value import",
       );
       assert.ok(readFileSync(join(directory, "nested combined.o")).byteLength > 0);
+      runArchiver(archiver, directory, "rcs", "libcombined.a", "combined.o");
+      assert.ok(readFileSync(join(directory, "libcombined.a")).byteLength > 0, "LLVM ar archive");
 
       const mainDryRun = runProfileCompiler(
         compiler,
@@ -305,10 +320,20 @@ test(
         "-###",
         "-O2",
         "main.c",
+        "-Wl,--start-group",
+        "libcombined.a",
+        "-Wl,--end-group",
         "-o",
         "main.wasm",
       );
       const mainCommand = wasmLdArguments(mainDryRun, "ordinary C main");
+      const groupStart = mainCommand.indexOf("--start-group");
+      const archiveInput = mainCommand.indexOf("libcombined.a");
+      const groupEnd = mainCommand.indexOf("--end-group");
+      assert.ok(
+        groupStart >= 0 && groupStart < archiveInput && archiveInput < groupEnd,
+        "C driver must forward the archive input inside the requested LLD group",
+      );
       const executableResponse = assertProfileResponse(
         mainCommand,
         "wasm-linux-executable.rsp",
@@ -326,7 +351,9 @@ test(
         "-Wextra",
         "-Werror",
         "main.c",
-        "combined.o",
+        "-Wl,--start-group",
+        "libcombined.a",
+        "-Wl,--end-group",
         "-o",
         "main.wasm",
       );
