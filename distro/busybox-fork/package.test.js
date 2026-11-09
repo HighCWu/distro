@@ -43,6 +43,9 @@ test("BusyBox fork recipe uses upstream sources and an isolated install prefix",
   );
   assert.doesNotMatch(configure, /shell\/ash\.c|libbb\/vfork_daemon_rexec\.c/);
 
+  assert.match(configure, /^config BUSYBOX y$/m);
+  assert.match(configure, /^config SHOW_USAGE y$/m);
+
   assert.match(
     recipe,
     /sh\s+applets\/install\.sh\s+["']?\$out\/opt\/busybox-fork["']?\s+--symlinks/,

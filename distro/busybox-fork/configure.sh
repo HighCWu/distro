@@ -34,6 +34,8 @@ config() {
 # Kernel CONFIG_MMU remains n.
 config NOMMU n
 config STATIC y
+config BUSYBOX y
+config SHOW_USAGE y
 config INSTALL_NO_USR y
 config LFS y
 config ASH y
