@@ -8,8 +8,14 @@
   sysroot,
   llvm-toolchain,
   sdk,
+  sharedCompiler ? null,
 }:
 let
+  compiler =
+    if sharedCompiler == null then
+      llvm-toolchain
+    else
+      llvm-toolchain.override { llvm-toolchain-unwrapped = sharedCompiler; };
   dynamicMusl = musl.override { enableDynamicLoader = true; };
   dynamicBase = sysroot-base.override { musl = dynamicMusl; };
   dynamicRoot = sysroot.override { sysroot-base = dynamicBase; };
@@ -41,26 +47,34 @@ let
         } \
           -O2 -Wall -Wextra -Werror -c ${./execution.c} -o $out/dynamic-execution.o
       '';
+  startupRoot = import ./startup.nix {
+    inherit
+      pkgs
+      lib
+      platform
+      execution
+      exportedLibc
+      ;
+    llvm-toolchain = compiler;
+    sysroot = dynamicRoot;
+  };
   config = pkgs.writeText "dynamic-${platform.wasmArch}.cfg" (
     lib.concatMapStringsSep "\n" lib.escapeShellArg (
       [
         "--target=${platform.targetTriple}"
-        "--sysroot=${dynamicRoot}"
+        "--sysroot=${startupRoot}"
       ]
       ++ platform.compilerFlags
-      ++ [
-        ("$" + "${execution}/dynamic-execution.o")
-        "$-Wl,--whole-archive"
-        ("$" + "${exportedLibc}/libc-exports.a")
-        "$-Wl,--no-whole-archive"
-      ]
-      ++ map (flag: "$-Wl,${flag}") (
-        platform.linkerFlags
-        ++ [
-          "--growable-table"
-          "--export-all"
-        ]
-      )
+      ++ map (flag: "$-Wl,${flag}") ([
+        "--import-memory"
+        "--max-memory=${toString platform.maximumMemoryBytes}"
+        "--shared-memory"
+        "--export=__stack_pointer"
+        "--growable-table"
+        "--export-all"
+        "-z"
+        "stack-size=8388608"
+      ])
     )
     + "\n"
   );
@@ -70,7 +84,7 @@ let
       builtins.replaceStrings
         [ "@compiler@" "@configArgument@" ]
         [
-          (lib.escapeShellArg "${llvm-toolchain}/bin/clang")
+          (lib.escapeShellArg "${compiler}/bin/clang")
           (lib.escapeShellArg "--config=${config}")
         ]
         (builtins.readFile ../sdk/compiler.sh);
@@ -83,6 +97,10 @@ let
     cp ${../sdk/LICENSE.MIT} $out/licenses/SDK-MIT.txt
     cp ${dynamicMusl.src}/COPYRIGHT $out/licenses/musl-COPYRIGHT
     ln -s ${sdk.buildMaterials} $out/default-sdk-materials
+    ln -s ${startupRoot} $out/startup-sysroot
+    ln -s ${startupRoot.buildMaterials} $out/startup-materials
+    ln -s ${compiler} $out/compiler
+    ln -s ${compiler.licenseSource} $out/compiler-source
   '';
 in
 pkgs.symlinkJoin {
@@ -94,8 +112,19 @@ pkgs.symlinkJoin {
     ln -s ${materials} $out/share/linux-wasm-dynamic-sdk/build-materials
   '';
   passthru = {
-    sysroot = dynamicRoot;
+    sysroot = startupRoot;
     buildMaterials = materials;
-    inherit config execution;
+    inherit config execution compiler;
+    checks.driver =
+      pkgs.runCommand "dynamic-sdk-driver-${platform.wasmArch}"
+        {
+          passthru.ci.heavy = true;
+          nativeBuildInputs = [ pkgs.nodejs ];
+        }
+        ''
+          DYNAMIC_SDK_CC=${cc}/bin/wasm-linux-dlopen-cc \
+            node --test ${./sdk-driver.test.js}
+          touch $out
+        '';
   };
 }

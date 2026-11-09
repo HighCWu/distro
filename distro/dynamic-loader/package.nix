@@ -9,6 +9,7 @@
   llvm-runtimes,
   vm-test,
   sharedCompiler ? null,
+  extraChecks ? { },
 }:
 let
   sideCC =
@@ -43,29 +44,25 @@ let
       ]
       ++ lib.optional (runpath != null) "--rpath=${runpath}";
     in
-    if sharedCompiler == null then
-      "wasm-ld -m ${platform.wasmArch} --shared --no-entry --unresolved-symbols=import-dynamic "
-      + lib.escapeShellArgs (
-        flags
-        ++ inputs
-        ++ [
-          "-o"
-          output
-        ]
-      )
-    else
-      # Keep main-only execution objects/libc export archives out of DSOs.
-      # This is the actual Linux driver; no -nostdlib or manual wasm-ld fallback.
-      sideCC
-      + " -shared "
-      + lib.escapeShellArgs (
-        (map (flag: "-Wl,${flag}") flags)
-        ++ inputs
-        ++ [
-          "-o"
-          output
-        ]
-      );
+    # Both the SDK and the standalone compiler dispatch shared links through
+    # Clang. Their Linux driver selects the shared object's runtime inputs.
+    sideCC
+    + " -shared "
+    + lib.escapeShellArgs (
+      (map (flag: "-Wl,${flag}") flags)
+      ++ inputs
+      ++ [
+        "-o"
+        output
+      ]
+    );
+  compilerCommands = pkgs.writeText "dynamic-loader-compiler-commands.json" (
+    builtins.toJSON {
+      executable = "wasm-linux-dlopen-cc";
+      shared = sideCC;
+      sharedMode = if sharedCompiler == null then "dynamic-sdk" else "standalone-linux-driver";
+    }
+  );
 in
 pkgs.stdenvNoCC.mkDerivation (finalAttrs: {
   pname = if sharedCompiler == null then "dynamic-loader" else "dynamic-loader-driver";
@@ -169,6 +166,7 @@ pkgs.stdenvNoCC.mkDerivation (finalAttrs: {
     cp ${./runtime.c} ${./library-a.c} ${./library-b.c} ${./cycle-a.c} ${./cycle-b.c} ${./package.nix} $buildMaterials/share/dynamic-loader-materials/
     cp ${./path-library.c} $buildMaterials/share/dynamic-loader-materials/
     cp ${./reentrant-root.c} ${./reentrant-leaf.c} ${./reentrant-reject.c} $buildMaterials/share/dynamic-loader-materials/
+    cp ${compilerCommands} $buildMaterials/share/dynamic-loader-materials/compiler-commands.json
     ln -s ${sdk-dynamic-loader.buildMaterials} $buildMaterials/share/dynamic-loader-materials/sdk
     ${lib.optionalString (sharedCompiler != null) ''
       cp ${./linux-shared.patch} $buildMaterials/share/dynamic-loader-materials/
@@ -177,18 +175,21 @@ pkgs.stdenvNoCC.mkDerivation (finalAttrs: {
     runHook postInstall
   '';
   meta.license = lib.licenses.mit;
-  passthru.checks.runtime = vm-test.rawInitramfsTest {
-    name = "${finalAttrs.pname}-${platform.wasmArch}";
-    init = "${finalAttrs.finalPackage}/dynamic-loader.wasm";
-    files = {
-      "/plugins/libplugin-b.so" = "${finalAttrs.finalPackage}/lib/libplugin-b.so";
-      "/plugins/path-library.so" = "${finalAttrs.finalPackage}/lib/path-library.so";
-      "/plugins/deps/libplugin-a.so" = "${finalAttrs.finalPackage}/lib/libplugin-a.so";
-      "/plugins/cycle-a.so" = "${finalAttrs.finalPackage}/lib/cycle-a.so";
-      "/plugins/cycle-b.so" = "${finalAttrs.finalPackage}/lib/cycle-b.so";
-      "/plugins/reentrant-root.so" = "${finalAttrs.finalPackage}/lib/reentrant-root.so";
-      "/plugins/reentrant-leaf.so" = "${finalAttrs.finalPackage}/lib/reentrant-leaf.so";
-      "/plugins/reentrant-reject.so" = "${finalAttrs.finalPackage}/lib/reentrant-reject.so";
+  passthru.checks = {
+    runtime = vm-test.rawInitramfsTest {
+      name = "${finalAttrs.pname}-${platform.wasmArch}";
+      init = "${finalAttrs.finalPackage}/dynamic-loader.wasm";
+      files = {
+        "/plugins/libplugin-b.so" = "${finalAttrs.finalPackage}/lib/libplugin-b.so";
+        "/plugins/path-library.so" = "${finalAttrs.finalPackage}/lib/path-library.so";
+        "/plugins/deps/libplugin-a.so" = "${finalAttrs.finalPackage}/lib/libplugin-a.so";
+        "/plugins/cycle-a.so" = "${finalAttrs.finalPackage}/lib/cycle-a.so";
+        "/plugins/cycle-b.so" = "${finalAttrs.finalPackage}/lib/cycle-b.so";
+        "/plugins/reentrant-root.so" = "${finalAttrs.finalPackage}/lib/reentrant-root.so";
+        "/plugins/reentrant-leaf.so" = "${finalAttrs.finalPackage}/lib/reentrant-leaf.so";
+        "/plugins/reentrant-reject.so" = "${finalAttrs.finalPackage}/lib/reentrant-reject.so";
+      };
     };
-  };
+  }
+  // extraChecks;
 })

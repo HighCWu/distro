@@ -7,26 +7,28 @@
 `dlopen`, `dlsym`, `dlerror` and resident `dlclose` paths enabled.
 The normal SDK stays unchanged. This is not an ELF format or stable new file ABI.
 
-Compile main sources normally with this compiler. Compile side objects using
-`-fPIC -c`, then use the SDK's ordinary `wasm-ld -m wasm32` (or `-m wasm64`)
-with `--shared --no-entry --unresolved-symbols=import-dynamic`,
-`--shared-memory --import-memory --import-table`, the platform's maximum memory,
-SONAME and exports. The runtime recipe demonstrates the exact commands.
-The current Linux Clang driver still injects a static `--table-base` for shared
-links, so the general-purpose `cc -shared` path requires a separate driver fix.
-No application source calls a private loader API. Main linking includes libc
-and exports its definitions, as needed by side libraries.
+Use the same compiler for main sources, PIC objects and shared libraries.
+For example, build an executable with `wasm-linux-dlopen-cc main.c -o main`,
+compile a library object with `wasm-linux-dlopen-cc -fPIC -c library.c -o library.o`,
+then link it with `wasm-linux-dlopen-cc -shared library.o -Wl,-soname,libexample.so -o libexample.so`.
+Clang expands response files and selects the appropriate link mode. The SDK
+provides the shared-memory limits, exports and stack configuration.
 
-`dynamic-driver-check-build` separately builds a candidate Clang with the
-Linux shared-link branch corrected: no executable crt1, no fixed table base,
-and no implicit static system archives in side modules. Explicit user library
-inputs remain available; system/runtime imports resolve from the main module.
-The shared driver selects dynamic unresolved imports before explicit linker
-arguments, so a user's later stricter unresolved-symbol policy still wins.
-It checks static/shared driver commands and links and instantiates real PIC
-libraries in both widths. This candidate does not change the default compiler
-or this SDK wrapper's configuration, and its engine checks are not Linux
-process or ELF acceptance.
+The SDK uses the Linux shared-link driver branch that selects relocatable
+table placement and dynamic imports for shared libraries. Main startup and the
+private execution support come from its sysroot CRT archive. Default main links
+also export the libc definitions needed by side libraries. Explicit user library
+inputs remain available, and a later stricter unresolved-symbol policy wins.
+The compiler's `-nostdlib`, `-nostartfiles` and `-nodefaultlibs` switches control
+the corresponding startup and default-library inputs.
+
+`sdk-dynamic-loader-check-driver` and the wasm64 equivalent exercise the built
+SDK compiler with nested response files, an ordinary main and a PIC library,
+including startup/default-library switches and the signal restorer export.
+`dynamic-driver-check-build` separately exercises the underlying Clang branch.
+These compiler and engine checks require their own Linux process acceptance.
+Relocatable `-r` links still conflict with the SDK's configured shared-memory
+and growable-table linker options.
 
 Library files are opened through Linux in the process's credentials, not host
 fetch. Direct paths, LD_LIBRARY_PATH, direct-dependency RUNPATH/$ORIGIN and

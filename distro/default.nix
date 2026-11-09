@@ -134,7 +134,9 @@ lib.makeScope (scope: lib.callPackageWith ({ inherit lib pkgs; } // scope)) (
           '';
     };
     sdk = callPackage ./sdk/package.nix { };
-    sdk-dynamic-loader = callPackage ./dynamic-loader/sdk.nix { };
+    sdk-dynamic-loader = callPackage ./dynamic-loader/sdk.nix {
+      sharedCompiler = sharedDriverToolchain;
+    };
     sdk-dynamic-loader-wasm64 = callPackage ./dynamic-loader/sdk.nix {
       platform = self.platform-wasm64;
       musl = self.musl-wasm64;
@@ -142,8 +144,18 @@ lib.makeScope (scope: lib.callPackageWith ({ inherit lib pkgs; } // scope)) (
       sysroot = self.sysroot-wasm64;
       llvm-toolchain = self.llvm-toolchain-wasm64;
       sdk = self.sdk-wasm64;
+      sharedCompiler = sharedDriverToolchain;
     };
-    dynamic-loader = callPackage ./dynamic-loader/package.nix { };
+    dynamic-loader = callPackage ./dynamic-loader/package.nix {
+      extraChecks.sdk-both = pkgs.runCommand "dynamic-sdk-both-widths" { passthru.ci.heavy = true; } ''
+        test -e ${self.sdk-dynamic-loader.checks.driver}
+        test -e ${self.sdk-dynamic-loader-wasm64.checks.driver}
+        test -e ${self.dynamic-driver.checks.build}
+        test -e ${self.dynamic-loader.checks.runtime}
+        test -e ${self.dynamic-loader-wasm64.checks.runtime}
+        touch $out
+      '';
+    };
     dynamic-symbol-versions = callPackage ./dynamic-symbol-versions/package.nix { };
     dynamic-symbol-versions-wasm64 = callPackage ./dynamic-symbol-versions/package.nix {
       platform = self.platform-wasm64;

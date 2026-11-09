@@ -11,17 +11,23 @@
    const char *Crt1;
    const char *Entry = nullptr;
  
-@@ -153,7 +155,8 @@
+@@ -153,8 +155,14 @@
      }
    }
  
 -  if (!Args.hasArg(options::OPT_nostdlib, options::OPT_nostartfiles))
 +  if (!IsLinuxShared &&
-+      !Args.hasArg(options::OPT_nostdlib, options::OPT_nostartfiles))
++      !Args.hasArg(options::OPT_nostdlib, options::OPT_nostartfiles)) {
++    if (ToolChain.getTriple().isOSLinux())
++      CmdArgs.push_back("--whole-archive");
      CmdArgs.push_back(Args.MakeArgString(ToolChain.GetFilePath(Crt1)));
++    if (ToolChain.getTriple().isOSLinux())
++      CmdArgs.push_back("--no-whole-archive");
++  }
    if (Entry) {
      CmdArgs.push_back(Args.MakeArgString("--entry"));
-@@ -162,11 +165,13 @@
+     CmdArgs.push_back(Args.MakeArgString(Entry));
+@@ -162,11 +170,13 @@
  
    if (Args.hasArg(options::OPT_shared))
      CmdArgs.push_back(Args.MakeArgString("-shared"));
@@ -36,7 +42,7 @@
      CmdArgs.push_back("--table-base=3");
  
    AddLinkerInputs(ToolChain, Inputs, Args, CmdArgs, JA);
-@@ -174,7 +179,10 @@
+@@ -174,7 +184,19 @@
    if (WantsPthread(ToolChain.getTriple(), Args))
      CmdArgs.push_back("--shared-memory");
  
@@ -45,5 +51,14 @@
 +  // static system archives into each side module duplicates process state.
 +  if (!IsLinuxShared &&
 +      !Args.hasArg(options::OPT_nostdlib, options::OPT_nodefaultlibs)) {
++    if (ToolChain.getTriple().isOSLinux()) {
++      const std::string ExportedLibc = ToolChain.GetFilePath("libc-exports.a");
++      if (ExportedLibc != "libc-exports.a" &&
++          llvm::sys::fs::exists(ExportedLibc)) {
++        CmdArgs.push_back("--whole-archive");
++        CmdArgs.push_back(Args.MakeArgString(ExportedLibc));
++        CmdArgs.push_back("--no-whole-archive");
++      }
++    }
      if (ToolChain.ShouldLinkCXXStdlib(Args))
        ToolChain.AddCXXStdlibLibArgs(Args, CmdArgs);
