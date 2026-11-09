@@ -11,13 +11,15 @@
   cooperativePoll ? false,
   libraryCoverage ? false,
   automaticFinalize ? false,
+  routedBrk ? false,
 }:
 assert !libraryCoverage || cooperativePoll;
 let
   profileSuffix =
     lib.optionalString cooperativePoll "-poll"
     + lib.optionalString libraryCoverage "-libc"
-    + lib.optionalString automaticFinalize "-auto";
+    + lib.optionalString automaticFinalize "-auto"
+    + lib.optionalString routedBrk "-brk";
   profileCompilerFlags =
     platform.compilerFlags
     ++ lib.optionals automaticFinalize [
@@ -28,6 +30,7 @@ let
   forkMusl = musl.override {
     enableForkContinuation = true;
     enableCooperativePoll = libraryCoverage;
+    enableBrkSyscall = routedBrk;
   };
   forkBase = sysroot-base.override { musl = forkMusl; };
   forkRoot = sysroot.override { sysroot-base = forkBase; };
@@ -69,6 +72,10 @@ let
     ]
     ++ lib.optional cooperativePoll "${execution}/user-poll.o"
     ++ platform.linkerFlags
+    ++ lib.optionals routedBrk [
+      "--undefined=__wasm_brk_layout_v1"
+      "--undefined=__wasm_brk_update_v1"
+    ]
     ++ [
       "--export=__stack_pointer"
       "--export=__tls_base"
@@ -113,6 +120,7 @@ let
       defaultSdkUnchanged = true;
       automaticFinalization = automaticFinalize;
       libraryPolling = libraryCoverage;
+      syscallBrk = routedBrk;
       userPollAbi =
         if libraryCoverage then
           2
@@ -185,6 +193,7 @@ let
       patches = map (patch: builtins.baseNameOf (toString patch)) forkMusl.patches;
       enableForkContinuation = true;
       enableCooperativePoll = libraryCoverage;
+      enableBrkSyscall = routedBrk;
     }
   );
   materials = pkgs.runCommand "fork-sdk-materials-${platform.wasmArch}${profileSuffix}" { } ''

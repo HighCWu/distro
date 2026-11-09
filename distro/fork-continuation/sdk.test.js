@@ -212,3 +212,24 @@ test("libc polling fork profile requires application polling and selects ABI 2",
   assert.match(recipe, /forkMusl\.patches/);
   assert.match(recipe, /cp \$\{muslProfile\} \$out\/recipes\/fork-musl-profile\.json/);
 });
+
+test("routed brk profile enables musl brk and retains its layout ABI references", () => {
+  const recipe = readFileSync(new URL("./sdk.nix", import.meta.url), "utf8");
+  assert.match(recipe, /routedBrk \? false/);
+  assert.match(recipe, /lib\.optionalString routedBrk "-brk"/);
+  const forkMuslStart = recipe.indexOf("  forkMusl =");
+  const forkBaseStart = recipe.indexOf("  forkBase =", forkMuslStart);
+  assert.ok(forkMuslStart >= 0 && forkBaseStart > forkMuslStart);
+  assert.ok(recipe.slice(forkMuslStart, forkBaseStart).includes("enableBrkSyscall = routedBrk;"));
+  assert.match(
+    recipe,
+    /lib\.optionals routedBrk \[\s*"--undefined=__wasm_brk_layout_v1"\s*"--undefined=__wasm_brk_update_v1"\s*\]/,
+  );
+  assert.match(recipe, /syscallBrk = routedBrk/);
+  const muslProfileStart = recipe.indexOf("  muslProfile =");
+  const materialsStart = recipe.indexOf("  materials =", muslProfileStart);
+  assert.ok(muslProfileStart >= 0 && materialsStart > muslProfileStart);
+  assert.ok(
+    recipe.slice(muslProfileStart, materialsStart).includes("enableBrkSyscall = routedBrk;"),
+  );
+});
