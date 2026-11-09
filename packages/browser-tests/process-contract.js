@@ -42,6 +42,7 @@ export const processStages = {
     "dynamic loader: RTLD_NEXT chains, private callers and main reentry recover pass",
     "dynamic loader: missing/malformed rejection, descriptor recovery and cleanup pass",
     "dynamic loader: imported function re-export, provider identity and direct/GOT calls pass",
+    "dynamic loader: RTLD_LAZY pending direct binding, GLOBAL constructor callback and NOW rejection pass",
   ],
   resolver: [
     "curl resolver: pending DNS does not block an independent multi transfer pass",

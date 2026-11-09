@@ -116,6 +116,10 @@ pkgs.stdenvNoCC.mkDerivation (finalAttrs: {
     ${sideCC} -O2 -fPIC -c ${./reexport-provider.c} -o reexport-provider.o
     ${sideCC} -O2 -fPIC -c ${./reexport-forwarder.c} -o reexport-forwarder.o
     ${sideCC} -O2 -fPIC -c ${./reexport-consumer.c} -o reexport-consumer.o
+    ${sideCC} -O2 -fPIC -c ${./lazy-consumer.c} -o lazy-consumer.o
+    ${sideCC} -O2 -fPIC -c ${./lazy-local.c} -o lazy-local.o
+    ${sideCC} -O2 -fPIC -c ${./lazy-provider.c} -o lazy-provider.o
+    ${sideCC} -O2 -fPIC -c ${./lazy-bad.c} -o lazy-bad.o
     ${linkShared {
       name = "next-leaf.so";
       output = "next-leaf.so";
@@ -166,6 +170,26 @@ pkgs.stdenvNoCC.mkDerivation (finalAttrs: {
     # Inspect the actual linked bytes: dlsym could find the symbol through
     # dependency scope even if this DSO forgot its own import-function export.
     node ${./reexport-check.js} ${../../packages/kernel/src/wasm_binary.ts} libreexport-forwarder.so libreexport-provider.so libreexport-consumer.so
+    ${linkShared {
+      name = "liblazy-consumer.so";
+      output = "liblazy-consumer.so";
+      inputs = [ "lazy-consumer.o" ];
+    }}
+    ${linkShared {
+      name = "liblazy-local.so";
+      output = "liblazy-local.so";
+      inputs = [ "lazy-local.o" ];
+    }}
+    ${linkShared {
+      name = "liblazy-provider.so";
+      output = "liblazy-provider.so";
+      inputs = [ "lazy-provider.o" ];
+    }}
+    ${linkShared {
+      name = "liblazy-bad.so";
+      output = "liblazy-bad.so";
+      inputs = [ "lazy-bad.o" ];
+    }}
     ${linkShared {
       name = "reentrant-root.so";
       output = "reentrant-root.so";
@@ -224,6 +248,10 @@ pkgs.stdenvNoCC.mkDerivation (finalAttrs: {
     install -Dm644 libreexport-provider.so $out/lib/libreexport-provider.so
     install -Dm644 libreexport-forwarder.so $out/lib/libreexport-forwarder.so
     install -Dm644 libreexport-consumer.so $out/lib/libreexport-consumer.so
+    install -Dm644 liblazy-consumer.so $out/lib/liblazy-consumer.so
+    install -Dm644 liblazy-local.so $out/lib/liblazy-local.so
+    install -Dm644 liblazy-provider.so $out/lib/liblazy-provider.so
+    install -Dm644 liblazy-bad.so $out/lib/liblazy-bad.so
     install -Dm644 ${../sdk/LICENSE.MIT} $out/share/licenses/dynamic-loader/LICENSE.MIT
     cp ${musl.src}/COPYRIGHT $out/share/licenses/dynamic-loader/musl-COPYRIGHT
     cp ${llvm-runtimes.src}/compiler-rt/LICENSE.TXT $out/share/licenses/dynamic-loader/compiler-rt-LICENSE.TXT
@@ -233,6 +261,7 @@ pkgs.stdenvNoCC.mkDerivation (finalAttrs: {
     cp ${./reentrant-root.c} ${./reentrant-leaf.c} ${./reentrant-reject.c} $buildMaterials/share/dynamic-loader-materials/
     cp ${./next-front.c} ${./next-middle.c} ${./next-leaf.c} $buildMaterials/share/dynamic-loader-materials/
     cp ${./reexport-provider.c} ${./reexport-forwarder.c} ${./reexport-consumer.c} $buildMaterials/share/dynamic-loader-materials/
+    cp ${./lazy-consumer.c} ${./lazy-local.c} ${./lazy-provider.c} ${./lazy-bad.c} $buildMaterials/share/dynamic-loader-materials/
     cp ${./reexport-check.js} $buildMaterials/share/dynamic-loader-materials/
     cp ${compilerCommands} $buildMaterials/share/dynamic-loader-materials/compiler-commands.json
     ln -s ${sdk-dynamic-loader.buildMaterials} $buildMaterials/share/dynamic-loader-materials/sdk
@@ -262,6 +291,10 @@ pkgs.stdenvNoCC.mkDerivation (finalAttrs: {
         "/plugins/libreexport-provider.so" = "${finalAttrs.finalPackage}/lib/libreexport-provider.so";
         "/plugins/libreexport-forwarder.so" = "${finalAttrs.finalPackage}/lib/libreexport-forwarder.so";
         "/plugins/libreexport-consumer.so" = "${finalAttrs.finalPackage}/lib/libreexport-consumer.so";
+        "/plugins/liblazy-consumer.so" = "${finalAttrs.finalPackage}/lib/liblazy-consumer.so";
+        "/plugins/liblazy-local.so" = "${finalAttrs.finalPackage}/lib/liblazy-local.so";
+        "/plugins/liblazy-provider.so" = "${finalAttrs.finalPackage}/lib/liblazy-provider.so";
+        "/plugins/liblazy-bad.so" = "${finalAttrs.finalPackage}/lib/liblazy-bad.so";
       };
     };
   }

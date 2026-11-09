@@ -3,7 +3,9 @@ import {
   DylinkInitializationError,
   link_dylink_graph,
   type DylinkExternalSymbol,
+  type DylinkLazyFunction,
   type DylinkModuleRecord,
+  type DylinkSymbolType,
 } from "./dylink_linker.ts";
 import { plan_dylink_layout } from "./dylink.ts";
 import { prepare_dylink_call_metadata } from "./dylink_call_metadata.ts";
@@ -68,6 +70,7 @@ export class ProcessDylink {
   readonly #aliases = new Map<string, string>();
   readonly #reuse = new Map<string, DylinkModuleRecord>();
   readonly #groups = new Map<string, ObjectHandle>();
+  #lazyFunctions: DylinkLazyFunction[] = [];
   readonly #handles = new Map<bigint, ObjectHandle>();
   readonly #globalOrder: string[] = [];
   readonly #caller = new WebAssembly.Global({ value: "i32", mutable: true }, 0);
@@ -368,6 +371,48 @@ export class ProcessDylink {
       for (const dependency of this.#files.get(key)!.dependencies.values()) queue.push(dependency);
     }
   }
+  #assertLazyFunctionType(name: string, type: DylinkSymbolType, signature: string) {
+    if (type.kind !== "function" || type.signature !== signature)
+      throw new Error(`incompatible lazy function provider: ${name}`);
+  }
+  #validateLazyFunctionTypes(types: ReadonlyMap<string, DylinkSymbolType>) {
+    for (const pending of this.#lazyFunctions) {
+      const existing = this.#symbols.get(pending.name);
+      if (existing) {
+        this.#assertLazyFunctionType(
+          pending.name,
+          {
+            kind: typeof existing.value === "function" ? "function" : "global",
+            signature: existing.signature,
+          },
+          pending.signature,
+        );
+        continue;
+      }
+      const candidate = types.get(pending.name);
+      if (candidate) this.#assertLazyFunctionType(pending.name, candidate, pending.signature);
+    }
+  }
+  #bindLazyFunctions() {
+    const unresolved: DylinkLazyFunction[] = [];
+    for (const pending of this.#lazyFunctions) {
+      const symbol = this.#symbols.get(pending.name);
+      if (!symbol) {
+        unresolved.push(pending);
+        continue;
+      }
+      this.#assertLazyFunctionType(
+        pending.name,
+        {
+          kind: typeof symbol.value === "function" ? "function" : "global",
+          signature: symbol.signature,
+        },
+        pending.signature,
+      );
+      pending.target.value = this.#word(this.#address(symbol), this.#options.tableType.address);
+    }
+    this.#lazyFunctions = unresolved;
+  }
   open(pathPointer: WasmAddress, flags: number): WasmAddress {
     let allocation: WasmAddress | undefined;
     let acquired = false;
@@ -438,7 +483,11 @@ export class ProcessDylink {
       const root = find(path);
       const old = this.#groups.get(root.key);
       if (old) {
-        if (flags & 256) this.#promote(old.group, old.root);
+        if (flags & 256) {
+          this.#validateLazyFunctionTypes(old.group.symbolTypesFrom(old.root));
+          this.#promote(old.group, old.root);
+          this.#bindLazyFunctions();
+        }
         for (const [name, key] of aliases) this.#aliases.set(name, key);
         this.#busy = false;
         acquired = false;
@@ -501,7 +550,6 @@ export class ProcessDylink {
       );
       const tableEnd = planned.tableEnd + BigInt(extra);
       if (tableEnd > tableLimit) throw new Error("dynamic table exceeds process capacity");
-      this.#grow(tableEnd);
       const tableStart = this.#cursor;
       // A Wasm start section can call main code which performs dlsym. Keep its
       // new canonical pointers beyond this batch's initialization/clear range.
@@ -525,6 +573,15 @@ export class ProcessDylink {
           externalSymbols: this.#symbols,
           functionPointers: this.#pointers,
           initialThreadLocalTls: true,
+          lazyFunctions: !!(flags & 1),
+          validateSymbols: (types) => {
+            if (flags & 256) this.#validateLazyFunctionTypes(types);
+          },
+          prepareTable: (minimum) => {
+            const required = minimum > tableEnd ? minimum : tableEnd;
+            if (required > tableLimit) throw new Error("dynamic table exceeds process capacity");
+            this.#grow(required);
+          },
           reuse: this.#reuse,
           resolveDependency: (name, parent) => local.get(parent)!.dependencies.get(name)!,
           isControlFlow: this.#options.isControlFlow,
@@ -569,7 +626,11 @@ export class ProcessDylink {
       for (const file of files) this.#files.set(file.key, file);
       for (const [name, key] of aliases) this.#aliases.set(name, key);
       for (const [key, record] of group.records) this.#reuse.set(key, record);
-      if (flags & 256) this.#promote(group, root.key);
+      for (const pending of group.lazyFunctions) this.#lazyFunctions.push(pending);
+      if (flags & 256) {
+        this.#promote(group, root.key);
+        this.#bindLazyFunctions();
+      }
       allocation = undefined; // Resident until exec/exit, including dlclose.
       // Instances, GOT/TLS relocations and file ownership are complete. Publish
       // before constructors so recursive dlopen sees the same records and can

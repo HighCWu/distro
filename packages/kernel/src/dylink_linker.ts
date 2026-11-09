@@ -29,6 +29,17 @@ export interface DylinkExternalSymbol {
   address?: bigint;
 }
 
+export type DylinkLazyFunction = {
+  name: string;
+  signature: string;
+  target: WebAssembly.Global;
+};
+
+export type DylinkSymbolType = {
+  kind: "function" | "global";
+  signature?: string;
+};
+
 type Initialization = { state: "pending" | "running" | "done" | "failed" };
 export type DylinkModuleRecord = {
   instance: WebAssembly.Instance;
@@ -56,6 +67,13 @@ export function link_dylink_graph(options: {
   tableArena: Readonly<DylinkArena>;
   hostFunctions?: ReadonlyMap<string, ReadonlyMap<string, CallableFunction>>;
   externalSymbols?: ReadonlyMap<string, DylinkExternalSymbol>;
+  /** Allow unresolved strong env function imports to remain callable through a
+   * typed Wasm forwarder until a later global provider publishes its slot. */
+  lazyFunctions?: boolean;
+  /** Validate the prospective exported symbol view before process arenas change. */
+  validateSymbols?(types: ReadonlyMap<string, DylinkSymbolType>): void;
+  /** Ensure the shared table covers the completed layout after validation. */
+  prepareTable?(minimum: bigint): void;
   reuse?: ReadonlyMap<string, DylinkModuleRecord>;
   functionPointers?: Map<CallableFunction, bigint>;
   /** Only the process profile which refuses Worker creation may use LLD's
@@ -357,7 +375,22 @@ export function link_dylink_graph(options: {
     }
     return found;
   };
+  const symbolTypesFrom = (root: string): ReadonlyMap<string, DylinkSymbolType> => {
+    const types = new Map<string, DylinkSymbolType>();
+    for (const [name, localSymbol] of symbolsFrom(root)) {
+      // The root's imports use the full process scope, where an already
+      // published main/global symbol preempts a candidate in this batch.
+      const symbol = root === options.root ? (symbols.get(name) ?? localSymbol) : localSymbol;
+      const signature = symbol.kind === "function" ? signatureOf(symbol, name) : undefined;
+      types.set(name, {
+        kind: symbol.kind,
+        ...(signature === undefined ? {} : { signature }),
+      });
+    }
+    return types;
+  };
   const functionGOT = new Set<string>();
+  let requiredTableMinimum = 0n;
   for (const record of fresh)
     for (const entry of record.imports) {
       const symbol = symbols.get(entry.name);
@@ -388,11 +421,13 @@ export function link_dylink_graph(options: {
             throw new Error("dynamic memory maximum excludes process memory");
           break;
         case "table":
+          if (entry.minimum > requiredTableMinimum) requiredTableMinimum = entry.minimum;
           if (
             entry.module !== "env" ||
             entry.name !== "__indirect_function_table" ||
             entry.address !== tableArena.address ||
-            entry.minimum > BigInt(table.length) ||
+            (options.tableMaximumElements !== undefined &&
+              entry.minimum > options.tableMaximumElements) ||
             (entry.maximum !== undefined &&
               (options.tableMaximumElements === undefined ||
                 options.tableMaximumElements > entry.maximum))
@@ -407,9 +442,11 @@ export function link_dylink_graph(options: {
               );
             break;
           }
+          const unresolvedLazy =
+            !!options.lazyFunctions && entry.module === "env" && !weak && !symbol;
           if (
             entry.module !== "env" ||
-            (!weak && symbol?.kind !== "function") ||
+            (!weak && symbol?.kind !== "function" && !unresolvedLazy) ||
             (symbol && symbol.kind !== "function")
           )
             throw new Error(`unresolved dynamic function: ${entry.module}.${entry.name}`);
@@ -458,8 +495,7 @@ export function link_dylink_graph(options: {
     options.memoryMaximumPages * 65536n < BigInt(memory.buffer.byteLength) ||
     (options.tableMaximumElements !== undefined &&
       options.tableMaximumElements < BigInt(table.length)) ||
-    memoryArena.limit > BigInt(memory.buffer.byteLength) ||
-    tableArena.limit > BigInt(table.length)
+    memoryArena.limit > BigInt(memory.buffer.byteLength)
   )
     throw new RangeError("dynamic arenas must already belong to committed process resources");
   const layout = plan_dylink_layout(
@@ -482,9 +518,18 @@ export function link_dylink_graph(options: {
     { ...memoryArena, cursor: layout.memoryEnd },
     { ...tableArena, cursor: layout.tableEnd },
   );
+  options.validateSymbols?.(symbolTypesFrom(options.root));
+  const requiredTableCapacity =
+    extra.tableEnd > requiredTableMinimum ? extra.tableEnd : requiredTableMinimum;
+  options.prepareTable?.(requiredTableCapacity);
+  if (requiredTableMinimum > BigInt(table.length))
+    throw new Error("incompatible dynamic table import");
+  if (tableArena.limit > BigInt(table.length))
+    throw new RangeError("dynamic table arena must already belong to committed process resources");
   for (const [index, record] of fresh.entries()) Object.assign(record, layout.items[index]);
   const word = (value: bigint, type: "i32" | "i64") => (type === "i64" ? value : Number(value));
   const got: { entry: { module: string; name: string }; global: WebAssembly.Global }[] = [];
+  const lazyFunctions: DylinkLazyFunction[] = [];
   const forwards = new Map<Record, { providerName: string; target: WebAssembly.Global }[]>();
   let nextSlot = layout.tableEnd;
   function functionPointer(fn: CallableFunction): bigint {
@@ -540,6 +585,12 @@ export function link_dylink_graph(options: {
               )!.signature;
               const forward = create_dylink_forwarder(signature, table, tableArena.address);
               group[entry.name] = forward.call;
+              const attributes = record.metadata.imports.find(
+                (item) => item.module === entry.module && item.name === entry.name,
+              );
+              const weak = !!(attributes && attributes.flags & 1);
+              if (options.lazyFunctions && entry.module === "env" && !weak && !definition)
+                lazyFunctions.push({ name: entry.name, signature, target: forward.target });
               if (definition) {
                 const provider = definition.owner;
                 if (!provider) throw new Error("unavailable dynamic function");
@@ -737,6 +788,8 @@ export function link_dylink_graph(options: {
     lookupFrom,
     lookupOwn,
     symbolNamesFrom: (root: string) => [...symbolsFrom(root).keys()],
+    symbolTypesFrom,
+    lazyFunctions: Object.freeze(lazyFunctions),
     initialize() {
       if (initialized) throw new Error("dynamic constructors cannot be retried");
       initialized = true;

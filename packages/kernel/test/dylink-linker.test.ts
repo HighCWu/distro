@@ -22,6 +22,7 @@ function binary(
     reexport?: boolean;
     gotFunctionExport?: boolean;
     callImport?: boolean;
+    callLazyExport?: boolean;
     startCall?: boolean;
     privateExport?: string;
   } = {},
@@ -46,10 +47,13 @@ function binary(
       ...(options.startCall ? [0x60, 0, 0] : []),
     ]),
     ...(options.imports ? [section(2, options.imports)] : []),
-    section(3, options.startCall ? [2, 0, 1] : [1, 0]),
+    section(3, options.startCall ? [2, 0, 1] : options.callLazyExport ? [2, 0, 0] : [1, 0]),
     ...(options.privateMemory ? [section(5, [1, 0, 1])] : []),
     section(7, [
-      1 + Number(!!options.privateExport) + Number(!!options.gotFunctionExport),
+      1 +
+        Number(!!options.privateExport) +
+        Number(!!options.gotFunctionExport) +
+        Number(!!options.callLazyExport),
       ...text(options.trap === "ctor" ? "__wasm_call_ctors" : (options.exportName ?? "answer")),
       0,
       options.reexport ? 0 : (options.functionImports ?? 0),
@@ -57,14 +61,18 @@ function binary(
         ? [...text(options.privateExport), 0, options.functionImports ?? 0]
         : []),
       ...(options.gotFunctionExport ? [...text("got_address"), 3, 0] : []),
+      ...(options.callLazyExport
+        ? [...text("calls_lazy"), 0, (options.functionImports ?? 0) + 1]
+        : []),
     ]),
     ...(options.trap === "start" ? [section(8, [0])] : []),
     ...(options.startCall ? [section(8, [(options.functionImports ?? 0) + 1])] : []),
     section(10, [
-      options.startCall ? 2 : 1,
+      options.startCall || options.callLazyExport ? 2 : 1,
       body.length,
       ...body,
       ...(options.startCall ? [11, 0, 0x10, 0, 0x41, 42, 0x47, 0x04, 0x40, 0, 0x0b, 0x0b] : []),
+      ...(options.callLazyExport ? [4, 0, 0x10, 0, 11] : []),
     ]),
   ];
   return new Uint8Array([0, 97, 115, 109, 1, 0, 0, 0, ...parts.flat()]);
@@ -405,6 +413,123 @@ test("missing dependencies, TLS, extensions, private memory and missing symbols 
     for (let index = 0; index < options.table.length; index++)
       assert.equal(options.table.get(index), null);
   }
+});
+
+test("RTLD_LAZY keeps unresolved direct imports typed and updates their target later", () => {
+  const functionImport = [1, ...text("env"), ...text("late"), 0, 0];
+  const options = setup(
+    new Map([
+      ["root", binary({ imports: functionImport, functionImports: 1, callLazyExport: true })],
+    ]),
+  );
+  const before = new Uint8Array(options.memory.buffer).slice();
+  assert.throws(() => link_dylink_graph(options), /unresolved dynamic function/);
+  assert.deepEqual(new Uint8Array(options.memory.buffer), before);
+  assert.equal(options.table.get(3), null);
+
+  const linked = link_dylink_graph({ ...options, lazyFunctions: true });
+  assert.equal(linked.lazyFunctions.length, 1);
+  const lazy = linked.lazyFunctions[0]!;
+  assert.deepEqual(
+    { name: lazy.name, signature: lazy.signature },
+    { name: "late", signature: "[[],[127]]" },
+  );
+  assert.equal(lazy.target.value, 0);
+  const root = linked.instances.get("root")!.exports;
+  assert.equal((root.answer as CallableFunction)(), 42, "unrelated local calls still work");
+  assert.throws(() => (root.calls_lazy as CallableFunction)(), WebAssembly.RuntimeError);
+
+  const provider = new WebAssembly.Instance(new WebAssembly.Module(binary({ exportName: "late" })))
+    .exports.late as CallableFunction;
+  options.table.set(10, provider);
+  lazy.target.value = 10;
+  assert.equal((root.calls_lazy as CallableFunction)(), 42);
+
+  const weakOptions = setup(
+    new Map([
+      [
+        "root",
+        binary({
+          imports: functionImport,
+          functionImports: 1,
+          callLazyExport: true,
+          extra: section(4, [1, ...text("env"), ...text("late"), 1]),
+        }),
+      ],
+    ]),
+  );
+  const weak = link_dylink_graph({ ...weakOptions, lazyFunctions: true });
+  assert.equal(
+    weak.lazyFunctions.length,
+    0,
+    "weak undefined calls retain the existing null target",
+  );
+
+  const gotOptions = setup(
+    new Map([["root", binary({ imports: [1, ...text("GOT.func"), ...text("late"), 3, 0x7f, 1] })]]),
+  );
+  const gotBefore = new Uint8Array(gotOptions.memory.buffer).slice();
+  assert.throws(
+    () => link_dylink_graph({ ...gotOptions, lazyFunctions: true }),
+    /unresolved dynamic GOT: GOT.func.late/,
+  );
+  assert.deepEqual(new Uint8Array(gotOptions.memory.buffer), gotBefore);
+  assert.equal(gotOptions.table.get(3), null);
+});
+
+test("symbol validation uses the preempting provider and runs before resource mutation", () => {
+  const options = setup();
+  const main = new WebAssembly.Instance(new WebAssembly.Module(binary({ result64: true }))).exports
+    .answer as CallableFunction;
+  const before = new Uint8Array(options.memory.buffer).slice();
+  const veto = new Error("symbol type conflict");
+  assert.throws(
+    () =>
+      link_dylink_graph({
+        ...options,
+        externalSymbols: new Map([["answer", { value: main, signature: "[[],[126]]" }]]),
+        validateSymbols(types) {
+          assert.deepEqual(types.get("answer"), { kind: "function", signature: "[[],[126]]" });
+          throw veto;
+        },
+      }),
+    (error: unknown) => error === veto,
+  );
+  assert.deepEqual(new Uint8Array(options.memory.buffer), before);
+  for (let index = 0; index < options.table.length; index++)
+    assert.equal(options.table.get(index), null);
+});
+
+test("table preparation follows symbol validation and covers imported minimum", () => {
+  const options = setup(
+    new Map([
+      [
+        "root",
+        binary({
+          imports: [1, ...text("env"), ...text("__indirect_function_table"), 1, 0x70, 0, 5],
+        }),
+      ],
+    ]),
+  );
+  const table = new WebAssembly.Table({ element: "anyfunc", initial: 3, maximum: 20 });
+  const events: string[] = [];
+  const linked = link_dylink_graph({
+    ...options,
+    table,
+    tableArena: { ...options.tableArena, limit: 5n },
+    validateSymbols() {
+      events.push("validate");
+      assert.equal(table.length, 3);
+    },
+    prepareTable(minimum) {
+      events.push("prepare");
+      assert.equal(minimum, 5n);
+      table.grow(Number(minimum - BigInt(table.length)));
+    },
+  });
+  assert.deepEqual(events, ["validate", "prepare"]);
+  assert.equal(table.length, 5);
+  assert.equal(linked.instances.get("root")!.exports.answer !== undefined, true);
 });
 
 test("forwarded imports cannot hide incompatible Wasm function signatures", () => {

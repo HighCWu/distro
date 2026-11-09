@@ -52,6 +52,15 @@ static void *symbol(void *handle, const char *name)
     return address;
 }
 
+static int (*lazy_use_callback)(int);
+int main_lazy_bad_count;
+
+int main_lazy_call(int value)
+{
+    require(lazy_use_callback != NULL, "lazy callback is installed before constructors");
+    return lazy_use_callback(value);
+}
+
 __attribute__((noinline)) static int main_private_next_lookup(int value)
 {
     int (*next)(int) = symbol(RTLD_NEXT, "next_chain");
@@ -335,6 +344,48 @@ int main(void)
             !dlclose(reexport_provider) && descriptors() == baseline,
             "re-export dependency close and descriptor cleanup");
     puts("dynamic loader: imported function re-export, provider identity and direct/GOT calls pass");
+
+    require(main_lazy_bad_count == 0, "bad lazy-provider counter starts at zero");
+    require(!dlopen("liblazy-consumer.so", RTLD_NOW | RTLD_LOCAL) && dlerror(),
+            "NOW rejects unresolved strong direct function import");
+    require(!dlopen("liblazy-consumer.so", RTLD_NOW | RTLD_NOLOAD) && dlerror() &&
+            descriptors() == baseline, "failed NOW consumer is unpublished and closes its descriptor");
+
+    void *lazy_consumer = dlopen("liblazy-consumer.so", RTLD_LAZY | RTLD_LOCAL);
+    require(lazy_consumer != NULL, "LAZY accepts unresolved strong direct function import");
+    int (*lazy_ready)(void) = symbol(lazy_consumer, "lazy_ready");
+    int (*lazy_use)(int) = symbol(lazy_consumer, "lazy_use");
+    lazy_use_callback = lazy_use;
+    require(lazy_ready() == 7, "independent consumer function works before binding");
+
+    void *lazy_local = dlopen("liblazy-local.so", RTLD_NOW | RTLD_LOCAL);
+    require(lazy_local != NULL, "load LOCAL same-name shadow provider");
+    int (*local_later)(int) = symbol(lazy_local, "lazy_later");
+    require(local_later(1) == 9001, "LOCAL shadow has a distinguishable implementation");
+
+    require(!dlopen("liblazy-bad.so", RTLD_NOW | RTLD_GLOBAL) && dlerror(),
+            "GLOBAL provider with wrong function ABI is rejected");
+    require(!dlopen("liblazy-bad.so", RTLD_NOW | RTLD_NOLOAD) && dlerror() &&
+            main_lazy_bad_count == 0 && descriptors() == baseline,
+            "wrong-ABI provider is unpublished, runs no constructor and closes its descriptor");
+
+    void *lazy_provider = dlopen("liblazy-provider.so", RTLD_NOW | RTLD_GLOBAL);
+    require(lazy_provider != NULL, "GLOBAL provider binds pending direct import");
+    int *lazy_provider_count = symbol(lazy_provider, "lazy_provider_count");
+    int *lazy_provider_observed = symbol(lazy_provider, "lazy_provider_observed");
+    int (*provider_later)(int) = symbol(lazy_provider, "lazy_later");
+    require(*lazy_provider_count == 1 && *lazy_provider_observed == 42 &&
+            main_lazy_call(1) == 42,
+            "provider constructor calls the already-bound consumer before returning");
+    require(lazy_use(1) == 42 && lazy_ready() == 7 && local_later(1) == 9001 &&
+            provider_later(1) == 42 && symbol(lazy_consumer, "lazy_use") == (void *)lazy_use &&
+            main_lazy_bad_count == 0,
+            "delayed import selects GLOBAL provider, ignores LOCAL shadow and keeps consumer function identity");
+    require(!dlclose(lazy_consumer) && !dlclose(lazy_local) && !dlclose(lazy_provider) &&
+            descriptors() == baseline,
+            "lazy consumer, shadows, provider and failure descriptors clean up");
+    lazy_use_callback = NULL;
+    puts("dynamic loader: RTLD_LAZY pending direct binding, GLOBAL constructor callback and NOW rejection pass");
     puts("::vm-test::pass");
     return 0;
 }
