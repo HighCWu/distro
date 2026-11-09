@@ -5,6 +5,7 @@ import io
 import json
 import os
 from pathlib import Path
+import re
 import tarfile
 import tempfile
 import unittest
@@ -50,6 +51,17 @@ class MaterialsTest(unittest.TestCase):
         (Path(self.spec["trees"]["licenses"]) / "sources.json").write_text(json.dumps({
             "schemaVersion": 1, "sourceStoreIdentities": origins}))
         self.archive = self.root / "result/materials.tar.gz"
+
+    def test_file_whitelist_matches_build_materials_recipe(self):
+        recipe = Path(__file__).with_name("build-materials.nix").read_text()
+        match = re.search(
+            r"(?ms)^[ \t]*files[ \t]*=[ \t]*\{(?P<body>.*?)^[ \t]*\};",
+            recipe,
+        )
+        self.assertIsNotNone(match, "build-materials.nix must declare its files set")
+        keys = re.findall(r'(?m)^[ \t]*"([^"]+)"[ \t]*=', match.group("body"))
+        self.assertEqual(len(keys), len(set(keys)), "duplicate build-material file key")
+        self.assertEqual(set(keys), set(materials.FILES))
 
     def test_reproducible_archive_and_exact_verification(self):
         sdk = Path(self.spec["trees"]["recipes/sdk"])

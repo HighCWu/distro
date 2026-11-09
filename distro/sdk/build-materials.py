@@ -16,6 +16,7 @@ FILES = (
     "installed/bin/wasm-linux-sdk-info", "installed/profile.json",
     "installed/config.site", "installed/linux-wasm.cmake", "installed/linux-wasm.ini",
     "configuration/compiler.cfg", "configuration/clang++.cfg",
+    "configuration/executable-linker.rsp", "configuration/cxx-linker.rsp",
     "integration/flake.nix", "integration/flake.lock", "integration/platform.nix",
     "integration/stdenv.nix", "integration/default.nix",
 )
