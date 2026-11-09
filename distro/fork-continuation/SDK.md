@@ -21,7 +21,27 @@ The unused sixth syscall register is ignored. The existing pthread callback
 clone explicitly retains `linux.syscall`; import versions, not argument values,
 select the ABI. The default SDK continues to use the original import.
 
-Compile separate objects, link the complete executable, then transform it once:
+The independent `sdk-fork-automatic` and `sdk-fork-automatic-wasm64` candidates
+perform whole-link finalization in Clang. They use the same compiler command
+name and fork execution ABI. Select the appropriate SDK in the build environment
+and use ordinary compile and link commands.
+
+```sh
+wasm-linux-fork-cc -O0 -c main.c -o main.o
+wasm-linux-fork-cc main.o -o app.wasm
+```
+
+These configurations pass `--wasm-fork-asyncify` and a pinned Binaryen search
+path to Clang. Final static executable links run the required transform even
+at `-O0`, without an optimization flag, or with `--no-wasm-opt`. Compile-only
+and `-r` partial links retain ordinary objects. Missing Binaryen and final
+shared/PIE links are errors. The final output inherits the linker output's
+permissions. The driver flag alone does not select the fork libc or execution
+support. The automatic candidates retain the static C and single-thread limits
+below. Their target acceptance is recorded separately in the project.
+
+With `sdk-fork-continuation` or its wasm64 variant, compile separate objects,
+link the complete executable, then transform it once.
 
 ```sh
 wasm-linux-fork-cc -O2 -c main.c -o main.o
@@ -42,7 +62,8 @@ For Autoconf builds, select this profile's
 SDK's negative fork/vfork cache answers so the normal compile/link probes can run;
 it does not prefill success. The default SDK's policy is unchanged. The profile
 still disables fixed/file-mapping capability probes and dynamic loading.
-Every complete executable still needs the finalizer after linking.
+The manual configurations require the finalizer after every complete executable
+link. The automatic configurations perform that step within Clang.
 
 Current supported scope: static C, fork from ordinary single-thread program
 execution. Fork from a signal handler, runtime callback, or a process with sibling
