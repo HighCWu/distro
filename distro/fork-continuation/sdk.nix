@@ -195,19 +195,23 @@ pkgs.symlinkJoin {
           ];
         }
         ''
-          mkdir fork-continuation
-          cp ${./sdk.test.js} fork-continuation/sdk.test.js
-          cp ${./finalize.sh} fork-continuation/finalize.sh
-          cp ${./package.nix} fork-continuation/package.nix
-          cp ${./sdk.nix} fork-continuation/sdk.nix
-          cp ${./execution.c} fork-continuation/execution.c
-          cp ${./raw-clone.c} fork-continuation/raw-clone.c
-          cp ${./config.site} fork-continuation/config.site
-          cp ${../config.site} config.site
-          cp ${./execution-link.test.js} fork-continuation/execution-link.test.js
-          cp ${../default.nix} default.nix
-          node --test fork-continuation/sdk.test.js
-          node --test fork-continuation/execution-link.test.js
+          mkdir -p distro/fork-continuation packages/kernel/src
+          cp ${../../package.json} package.json
+          cp ${../../packages/kernel/package.json} packages/kernel/package.json
+          cp ${./sdk.test.js} distro/fork-continuation/sdk.test.js
+          cp ${./finalize.sh} distro/fork-continuation/finalize.sh
+          cp ${./package.nix} distro/fork-continuation/package.nix
+          cp ${./sdk.nix} distro/fork-continuation/sdk.nix
+          cp ${./execution.c} distro/fork-continuation/execution.c
+          cp ${./raw-clone.c} distro/fork-continuation/raw-clone.c
+          cp ${./config.site} distro/fork-continuation/config.site
+          cp ${../config.site} distro/config.site
+          cp ${./execution-link.test.js} distro/fork-continuation/execution-link.test.js
+          cp ${../../packages/kernel/src/user-functions.ts} packages/kernel/src/user-functions.ts
+          cp ${../../packages/kernel/src/wasm_binary.ts} packages/kernel/src/wasm_binary.ts
+          cp ${../default.nix} distro/default.nix
+          node --test distro/fork-continuation/sdk.test.js
+          FORK_LINK_CLANG=${lib.escapeShellArg "${llvm-toolchain}/bin/clang"} node --test distro/fork-continuation/execution-link.test.js
           grep -F -- ${lib.escapeShellArg "${execution}/fork-execution.o"} ${linkRoot}/lib/wasm-linux-executable.rsp
           ${lib.optionalString cooperativePoll ''
             grep -F -- ${lib.escapeShellArg "${execution}/user-poll.o"} ${linkRoot}/lib/wasm-linux-executable.rsp
