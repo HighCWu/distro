@@ -16,8 +16,7 @@ function phase(name) {
 }
 
 test("BusyBox fork recipe uses upstream sources and an isolated install prefix", () => {
-  assert.match(recipe, /src\s*=\s*pkgs\.busybox\.src\s*;/);
-  assert.match(recipe, /patches\s*=\s*pkgs\.busybox\.patches\s*;/);
+  assert.match(recipe, /inherit\s*\(pkgs\.busybox\)\s+version\s+src\s+patches\s*;/);
   assert.doesNotMatch(recipe, /fetchFromGitHub|owner\s*=\s*["']tombl|repo\s*=\s*["']busybox/);
 
   assert.match(recipe, /wasm-linux-fork-cc/);

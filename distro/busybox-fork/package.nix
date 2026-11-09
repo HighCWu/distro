@@ -25,9 +25,7 @@ let
 in
 pkgs.stdenvNoCC.mkDerivation (finalAttrs: {
   pname = "busybox-fork";
-  version = pkgs.busybox.version;
-  src = pkgs.busybox.src;
-  patches = pkgs.busybox.patches;
+  inherit (pkgs.busybox) version src patches;
   outputs = [
     "out"
     "buildMaterials"
