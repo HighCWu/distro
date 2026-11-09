@@ -1169,6 +1169,23 @@ lib.makeScope (scope: lib.callPackageWith ({ inherit lib pkgs; } // scope)) (
       vm-test = vmTestWasm64;
     };
     findutils = callPackage ./findutils/package.nix { };
+    findutils-fork = callPackage ./findutils-fork/package.nix {
+      extraChecks.both = pkgs.runCommand "findutils-standard-fork-both" { passthru.ci.heavy = true; } ''
+        test -e ${self.findutils-fork.checks.runtime}
+        test -e ${self.findutils-fork-wasm64.checks.runtime}
+        touch $out
+      '';
+    };
+    findutils-fork-wasm64 = callPackage ./findutils-fork/package.nix {
+      platform = self.platform-wasm64;
+      sdk = self.sdk-wasm64;
+      sdk-fork-continuation = self.sdk-fork-continuation-wasm64;
+      llvm-toolchain = self.llvm-toolchain-wasm64;
+      musl = self.musl-wasm64;
+      llvm-runtimes = self.llvm-runtimes-wasm64;
+      busybox = self.busybox-wasm64;
+      vm-test = vmTestWasm64;
+    };
     gawk = callPackage ./gawk/package.nix { };
     git = callPackage ./git/package.nix { };
     git-wasm64 = self.git.override {
@@ -1372,6 +1389,32 @@ lib.makeScope (scope: lib.callPackageWith ({ inherit lib pkgs; } // scope)) (
       busybox = self.busybox-wasm64;
     };
     tar = callPackage ./tar/package.nix { };
+    tar-fork = callPackage ./tar-fork/package.nix {
+      extraChecks.both = pkgs.runCommand "tar-standard-fork-both" { passthru.ci.heavy = true; } ''
+        test -e ${self.tar-fork.checks.runtime}
+        test -e ${self.tar-fork-wasm64.checks.runtime}
+        touch $out
+      '';
+      extraChecks.process-tools-both =
+        pkgs.runCommand "gnu-standard-process-tools-both" { passthru.ci.heavy = true; }
+          ''
+            test -e ${self.findutils-fork.checks.runtime}
+            test -e ${self.findutils-fork-wasm64.checks.runtime}
+            test -e ${self.tar-fork.checks.runtime}
+            test -e ${self.tar-fork-wasm64.checks.runtime}
+            touch $out
+          '';
+    };
+    tar-fork-wasm64 = callPackage ./tar-fork/package.nix {
+      platform = self.platform-wasm64;
+      sdk = self.sdk-wasm64;
+      sdk-fork-continuation = self.sdk-fork-continuation-wasm64;
+      llvm-toolchain = self.llvm-toolchain-wasm64;
+      musl = self.musl-wasm64;
+      llvm-runtimes = self.llvm-runtimes-wasm64;
+      busybox = self.busybox-wasm64;
+      vm-test = vmTestWasm64;
+    };
     util-linux = callPackage ./util-linux/package.nix { };
     util-linux-wasm64 = self.util-linux.override {
       platform = self.platform-wasm64;
