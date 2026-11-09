@@ -350,6 +350,7 @@ test(
         "-Wall",
         "-Wextra",
         "-Werror",
+        "-Wl,--warn-common",
         "main.c",
         "-Wl,--start-group",
         "libcombined.a",
