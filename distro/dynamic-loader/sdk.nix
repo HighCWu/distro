@@ -50,7 +50,6 @@ let
   startupRoot = import ./startup.nix {
     inherit
       pkgs
-      lib
       platform
       execution
       exportedLibc
@@ -65,7 +64,7 @@ let
         "--sysroot=${startupRoot}"
       ]
       ++ platform.compilerFlags
-      ++ map (flag: "$-Wl,${flag}") ([
+      ++ map (flag: "$-Wl,${flag}") [
         "--import-memory"
         "--max-memory=${toString platform.maximumMemoryBytes}"
         "--shared-memory"
@@ -74,7 +73,7 @@ let
         "--export-all"
         "-z"
         "stack-size=8388608"
-      ])
+      ]
     )
     + "\n"
   );

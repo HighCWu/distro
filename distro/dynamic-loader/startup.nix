@@ -1,7 +1,6 @@
 # SPDX-License-Identifier: MIT
 {
   pkgs,
-  lib,
   platform,
   llvm-toolchain,
   sysroot,
