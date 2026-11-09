@@ -1065,6 +1065,22 @@ lib.makeScope (scope: lib.callPackageWith ({ inherit lib pkgs; } // scope)) (
         test -e ${self.findutils-fork-wasm64.checks.runtime}
         touch $out
       '';
+      extraChecks.tools =
+        pkgs.runCommand "fork-automatic-tools-check-both" { passthru.ci.heavy = true; }
+          ''
+            test -e ${self.fork-automatic.checks.both}
+            test -e ${self.dash-fork.checks.runtime}
+            test -e ${self.dash-fork-wasm64.checks.runtime}
+            test -e ${self.bash-fork.checks.sjlj}
+            test -e ${self.bash-fork-wasm64.checks.sjlj}
+            test -e ${self.bash-fork.checks.runtime}
+            test -e ${self.bash-fork-wasm64.checks.runtime}
+            test -e ${self.tar-fork.checks.runtime}
+            test -e ${self.tar-fork-wasm64.checks.runtime}
+            test -e ${self.git-fork.checks.runtime}
+            test -e ${self.git-fork-wasm64.checks.runtime}
+            touch $out
+          '';
     };
     fork-automatic-wasm64 = callPackage ./fork-automatic/package.nix {
       platform = self.platform-wasm64;
@@ -1076,14 +1092,14 @@ lib.makeScope (scope: lib.callPackageWith ({ inherit lib pkgs; } // scope)) (
     bash-fork = callPackage ./bash-fork/package.nix { };
     bash-fork-wasm64 = callPackage ./bash-fork/package.nix {
       platform = self.platform-wasm64;
-      sdk-fork-continuation = self.sdk-fork-continuation-wasm64;
+      sdk-fork-automatic = self.sdk-fork-automatic-wasm64;
       llvm-toolchain = self.llvm-toolchain-wasm64;
       busybox = self.busybox-wasm64;
       vm-test = vmTestWasm64;
     };
     dash-fork-wasm64 = callPackage ./dash-fork/package.nix {
       platform = self.platform-wasm64;
-      sdk-fork-continuation = self.sdk-fork-continuation-wasm64;
+      sdk-fork-automatic = self.sdk-fork-automatic-wasm64;
       busybox = self.busybox-wasm64;
       vm-test = vmTestWasm64;
     };
@@ -1399,7 +1415,7 @@ lib.makeScope (scope: lib.callPackageWith ({ inherit lib pkgs; } // scope)) (
     git-fork-wasm64 = callPackage ./git-fork/package.nix {
       platform = self.platform-wasm64;
       sdk = self.sdk-wasm64;
-      sdk-fork-continuation = self.sdk-fork-continuation-wasm64;
+      sdk-fork-automatic = self.sdk-fork-automatic-wasm64;
       llvm-toolchain = self.llvm-toolchain-wasm64;
       musl = self.musl-wasm64;
       llvm-runtimes = self.llvm-runtimes-wasm64;
@@ -1671,7 +1687,7 @@ lib.makeScope (scope: lib.callPackageWith ({ inherit lib pkgs; } // scope)) (
     tar-fork-wasm64 = callPackage ./tar-fork/package.nix {
       platform = self.platform-wasm64;
       sdk = self.sdk-wasm64;
-      sdk-fork-continuation = self.sdk-fork-continuation-wasm64;
+      sdk-fork-automatic = self.sdk-fork-automatic-wasm64;
       llvm-toolchain = self.llvm-toolchain-wasm64;
       musl = self.musl-wasm64;
       llvm-runtimes = self.llvm-runtimes-wasm64;

@@ -5,7 +5,7 @@
   platform,
   tar,
   sdk,
-  sdk-fork-continuation,
+  sdk-fork-automatic,
   llvm-toolchain,
   musl,
   llvm-runtimes,
@@ -23,7 +23,7 @@ pkgs.stdenvNoCC.mkDerivation (finalAttrs: {
   dontFixup = true;
   nativeBuildInputs = [
     sdk
-    sdk-fork-continuation
+    sdk-fork-automatic
     llvm-toolchain
     pkgs.stdenv.cc
     pkgs.bison
@@ -33,7 +33,7 @@ pkgs.stdenvNoCC.mkDerivation (finalAttrs: {
   ];
   configurePhase = ''
     runHook preConfigure
-    CONFIG_SITE=${sdk-fork-continuation.configSite} \
+    CONFIG_SITE=${sdk-fork-automatic.configSite} \
       CC=wasm-linux-fork-cc \
       CC_FOR_BUILD=${pkgs.stdenv.cc}/bin/cc \
       BUILD_CC=${pkgs.stdenv.cc}/bin/cc \
@@ -56,7 +56,7 @@ pkgs.stdenvNoCC.mkDerivation (finalAttrs: {
     make -C src -j$NIX_BUILD_CORES tar
 
     sha256sum lib/rtapelib.c src/common.h src/misc.c src/system.c > program-source.sha256
-    wasm-linux-fork-finalize src/tar tar.wasm
+    cp src/tar tar.wasm
     ${sdk}/bin/wasm-linux-cc -O2 -Wall -Wextra -Werror ${./helper.c} -o tar-fork-helper.wasm
     node ${../busybox/check-binary.mjs} ${../../packages/kernel/src/wasm_binary.ts} \
       tar.wasm ${toString platform.addressBits} ${toString platform.maximumMemoryBytes}
@@ -83,7 +83,7 @@ pkgs.stdenvNoCC.mkDerivation (finalAttrs: {
       "$materials/"
     ln -s $src "$materials/source"
     ln -s ${sdk.buildMaterials} "$materials/sdk"
-    ln -s ${sdk-fork-continuation.buildMaterials} "$materials/fork-sdk"
+    ln -s ${sdk-fork-automatic.buildMaterials} "$materials/fork-sdk"
     runHook postInstall
   '';
   meta = {

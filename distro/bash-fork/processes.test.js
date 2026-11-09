@@ -50,7 +50,12 @@ test("candidate reuses upstream material without default Bash callback patches",
   assert.match(recipe, /toString bash.gnuPatches/);
   assert.match(recipe, /patches = \[ ..\/bash\/wasm-anonfile.patch \]/);
   assert.doesNotMatch(recipe, /bash-clone\.c|fork-shim\.c|Dvfork=fork/);
-  assert.match(recipe, /wasm-linux-fork-finalize bash bash.wasm/);
+  assert.match(recipe, /sdk-fork-automatic/);
+  assert.match(recipe, /CONFIG_SITE=.*sdk-fork-automatic\.configSite/);
+  assert.match(recipe, /wasm-linux-fork-cc -O2 .* -o \$out\/probe\.wasm/);
+  assert.match(recipe, /cp bash \$out\/bin\/bash/);
+  assert.match(recipe, /sdk-fork-automatic\.buildMaterials/);
+  assert.doesNotMatch(recipe, /wasm-linux-fork-finalize/);
   assert.match(recipe, /cp COPYING/);
   assert.match(recipe, /gpl3Plus/);
   assert.match(recipe, /cpus = 2/);

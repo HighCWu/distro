@@ -5,7 +5,7 @@
   platform,
   bash,
   llvm-toolchain,
-  sdk-fork-continuation,
+  sdk-fork-automatic,
   busybox,
   vm-test,
 }:
@@ -15,17 +15,16 @@ let
   sjlj =
     pkgs.runCommand "fork-sjlj-${platform.wasmArch}"
       {
-        nativeBuildInputs = [ sdk-fork-continuation ];
+        nativeBuildInputs = [ sdk-fork-automatic ];
       }
       ''
         mkdir $out
-        wasm-linux-fork-cc -O2 -Wall -Wextra -Werror ${./sjlj.c} -o linked.wasm
-        wasm-linux-fork-finalize linked.wasm $out/probe.wasm
+        wasm-linux-fork-cc -O2 -Wall -Wextra -Werror ${./sjlj.c} -o $out/probe.wasm
       '';
   candidate = pkgs.stdenvNoCC.mkDerivation {
     pname = "bash-standard-fork-candidate";
     inherit (bash) version src;
-    nativeBuildInputs = [ sdk-fork-continuation ];
+    nativeBuildInputs = [ sdk-fork-automatic ];
     CC_FOR_BUILD = "${pkgs.stdenv.cc}/bin/cc";
     CFLAGS_FOR_BUILD = "-std=gnu17";
     AR = "${llvm-toolchain}/bin/llvm-ar";
@@ -39,7 +38,7 @@ let
     patches = [ ../bash/wasm-anonfile.patch ];
     configurePhase = ''
       runHook preConfigure
-      CONFIG_SITE=${sdk-fork-continuation.configSite} CC=wasm-linux-fork-cc \
+      CONFIG_SITE=${sdk-fork-automatic.configSite} CC=wasm-linux-fork-cc \
         CFLAGS='-O2 -std=gnu17 -mllvm -wasm-enable-sjlj' ./configure \
         --build=${pkgs.stdenv.buildPlatform.config} --host=${platform.targetTriple} \
         --prefix=/ --enable-static-link --disable-readline --disable-nls \
@@ -55,13 +54,12 @@ let
     buildPhase = ''
       runHook preBuild
       make -j$NIX_BUILD_CORES
-      wasm-linux-fork-finalize bash bash.wasm
       runHook postBuild
     '';
     installPhase = ''
       runHook preInstall
       mkdir -p $out/bin $out/share/licenses/bash $out/share/bash-fork-materials
-      cp bash.wasm $out/bin/bash
+      cp bash $out/bin/bash
       chmod 0755 $out/bin/bash
       cp COPYING $out/share/licenses/bash/COPYING
       cp config.h config.log ${./package.nix} ${./processes.sh} \
@@ -73,7 +71,7 @@ let
         cp "$patch" $out/share/bash-fork-materials/gnu-patches/
       done
       ln -s $src $out/share/bash-fork-materials/source
-      ln -s ${sdk-fork-continuation.buildMaterials} $out/share/bash-fork-materials/sdk
+      ln -s ${sdk-fork-automatic.buildMaterials} $out/share/bash-fork-materials/sdk
       runHook postInstall
     '';
     dontFixup = true;

@@ -45,9 +45,12 @@ test("native Dash executes the complete process workload and refuses failed depe
 test("candidate builds upstream Dash with the platform fork SDK", () => {
   const recipe = readFileSync(new URL("./package.nix", import.meta.url), "utf8");
   assert.match(recipe, /CC=wasm-linux-fork-cc CFLAGS='-O2' \.\/configure/);
+  assert.match(recipe, /sdk-fork-automatic/);
+  assert.doesNotMatch(recipe, /sdk-fork-continuation/);
   assert.doesNotMatch(recipe, /Dvfork=fork/);
   assert.match(recipe, /CC_FOR_BUILD = "\$\{pkgs.stdenv.cc\}\/bin\/cc"/);
-  assert.match(recipe, /wasm-linux-fork-finalize src\/dash dash.wasm/);
+  assert.doesNotMatch(recipe, /wasm-linux-fork-finalize/);
+  assert.match(recipe, /cp src\/dash \$out\/bin\/dash/);
   assert.match(recipe, /cp COPYING/);
   assert.match(recipe, /bsd3\s+gpl2Plus/);
   assert.match(recipe, /cpus = 2/);

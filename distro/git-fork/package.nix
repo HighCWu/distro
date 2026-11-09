@@ -5,7 +5,7 @@
   platform,
   git,
   sdk,
-  sdk-fork-continuation,
+  sdk-fork-automatic,
   llvm-toolchain,
   musl,
   llvm-runtimes,
@@ -31,7 +31,7 @@ pkgs.stdenvNoCC.mkDerivation (finalAttrs: {
 
   nativeBuildInputs = [
     sdk
-    sdk-fork-continuation
+    sdk-fork-automatic
     llvm-toolchain
     pkgs.stdenv.cc
     pkgs.nodejs
@@ -41,7 +41,7 @@ pkgs.stdenvNoCC.mkDerivation (finalAttrs: {
 
   makeFlags = [
     "uname_S=Linux"
-    "CC=${sdk-fork-continuation}/bin/wasm-linux-fork-cc"
+    "CC=${sdk-fork-automatic}/bin/wasm-linux-fork-cc"
     "AR=${llvm-toolchain}/bin/llvm-ar"
     "RANLIB=${llvm-toolchain}/bin/llvm-ranlib"
     "ZLIB_PATH=${zlib}"
@@ -97,8 +97,8 @@ pkgs.stdenvNoCC.mkDerivation (finalAttrs: {
       DESTDIR="$out" install
 
     find "$out" -type f -print0 > installed-files.nul
-    : > finalized-programs.txt
-    finalized_count=0
+    : > linked-programs.txt
+    linked_count=0
     while IFS= read -r -d "" program; do
       if [ ! -x "$program" ]; then
         continue
@@ -114,18 +114,32 @@ pkgs.stdenvNoCC.mkDerivation (finalAttrs: {
         continue
       fi
 
-      finalized="$program.fork-finalized"
-      wasm-linux-fork-finalize "$program" "$finalized"
-      chmod 0755 "$finalized"
-      mv -f "$finalized" "$program"
+      WASM_PROGRAM="$program" node --input-type=module <<'NODE'
+      import assert from "node:assert/strict";
+      import { readFileSync } from "node:fs";
+
+      const path = process.env.WASM_PROGRAM;
+      assert.ok(path, "missing executable Wasm path");
+      const module = new WebAssembly.Module(readFileSync(path));
+      const exports = new Set(WebAssembly.Module.exports(module).map(({ name }) => name));
+      const asyncifyExports = [
+        "asyncify_get_state",
+        "asyncify_start_unwind",
+        "asyncify_stop_unwind",
+        "asyncify_start_rewind",
+        "asyncify_stop_rewind",
+      ];
+      for (const name of asyncifyExports)
+        assert.ok(exports.has(name), "automatic fork link omitted " + name + " from " + path);
+    NODE
       node ${../busybox/check-binary.mjs} ${../../packages/kernel/src/wasm_binary.ts} \
         "$program" ${toString platform.addressBits} ${toString platform.maximumMemoryBytes}
       relative_program=$(realpath --relative-to="$out" "$program")
-      printf '%s\n' "$relative_program" >> finalized-programs.txt
-      finalized_count=$((finalized_count + 1))
+      printf '%s\n' "$relative_program" >> linked-programs.txt
+      linked_count=$((linked_count + 1))
     done < installed-files.nul
-    if [ "$finalized_count" -eq 0 ]; then
-      echo 'Git install contained no executable Wasm modules to finalize' >&2
+    if [ "$linked_count" -eq 0 ]; then
+      echo 'Git install contained no executable Wasm modules to validate' >&2
       exit 1
     fi
 
@@ -150,9 +164,9 @@ pkgs.stdenvNoCC.mkDerivation (finalAttrs: {
     install -Dm644 ${zlib.src}/zlib.h "$notices/zlib-header-notice.h"
     install -Dm644 ${../sdk/LICENSE.MIT} "$notices/LOCAL-ADDITIONS.MIT"
     install -Dm644 ${sdk}/share/linux-wasm-sdk/licenses/SDK-MIT.txt "$notices/SDK-MIT.txt"
-    install -Dm644 ${sdk-fork-continuation.buildMaterials}/licenses/SDK-MIT.txt \
+    install -Dm644 ${sdk-fork-automatic.buildMaterials}/licenses/SDK-MIT.txt \
       "$notices/FORK-SDK-MIT.txt"
-    install -Dm644 ${sdk-fork-continuation.buildMaterials}/licenses/Binaryen-LICENSE \
+    install -Dm644 ${sdk-fork-automatic.buildMaterials}/licenses/Binaryen-LICENSE \
       "$notices/Binaryen-LICENSE"
     install -Dm644 ${llvm-toolchain.licenseSource}/llvm/LICENSE.TXT \
       "$notices/LLVM-LICENSE.TXT"
@@ -165,14 +179,14 @@ pkgs.stdenvNoCC.mkDerivation (finalAttrs: {
       "$notices/compiler-rt-LICENSE.TXT"
 
     cp Makefile GIT-CFLAGS process-source.sha256 git-make-arguments.nul \
-      finalized-programs.txt ${./package.nix} ${./helper.c} ${./runtime-test.sh} \
+      linked-programs.txt ${./package.nix} ${./helper.c} ${./runtime-test.sh} \
       ${../zlib/package.nix} ${../busybox/check-binary.mjs} \
       ${../../packages/kernel/src/wasm_binary.ts} \
       "$materials/"
     cp COPYING "$materials/COPYING"
     ln -s "$src" "$materials/source"
     ln -s ${sdk.buildMaterials} "$materials/standard-sdk"
-    ln -s ${sdk-fork-continuation.buildMaterials} "$materials/fork-sdk"
+    ln -s ${sdk-fork-automatic.buildMaterials} "$materials/fork-sdk"
     ln -s ${llvm-toolchain.licenseSource} "$materials/llvm-toolchain-source"
     ln -s ${llvm-runtimes.src} "$materials/llvm-runtimes-source"
     ln -s ${musl.src} "$materials/musl-source"
@@ -181,7 +195,7 @@ pkgs.stdenvNoCC.mkDerivation (finalAttrs: {
   '';
 
   meta = {
-    description = "Unpatched Git using the opt-in static C fork profile";
+    description = "Unpatched Git using the automatic static C fork profile";
     license = [
       lib.licenses.gpl2Only
       lib.licenses.mit

@@ -3,7 +3,7 @@
   pkgs,
   lib,
   platform,
-  sdk-fork-continuation,
+  sdk-fork-automatic,
   busybox,
   vm-test,
 }:
@@ -19,7 +19,7 @@ let
       hash = "sha256-0Q39Qc2lkWVWDbOcqRXCxKdjb/8EKB2NLfd62Sx1Pis=";
     };
     nativeBuildInputs = [
-      sdk-fork-continuation
+      sdk-fork-automatic
       pkgs.nodejs
     ];
     DASH_HOST_SHELL = "${pkgs.dash}/bin/dash";
@@ -39,22 +39,21 @@ let
       runHook preBuild
       node --test ${./.}/processes.test.js
       make -j$NIX_BUILD_CORES
-      wasm-linux-fork-finalize src/dash dash.wasm
       runHook postBuild
     '';
     installPhase = ''
       runHook preInstall
       mkdir -p $out/bin $out/share/licenses/dash $out/share/dash-fork-materials
-      cp dash.wasm $out/bin/dash
+      cp src/dash $out/bin/dash
       chmod 0755 $out/bin/dash
       cp COPYING $out/share/licenses/dash/COPYING
       cp config.h config.log ${./package.nix} $out/share/dash-fork-materials/
       cp ${./processes.sh} $out/share/dash-fork-materials/processes.sh
-      ln -s ${sdk-fork-continuation.buildMaterials} $out/share/dash-fork-materials/sdk
+      ln -s ${sdk-fork-automatic.buildMaterials} $out/share/dash-fork-materials/sdk
       ln -s $src $out/share/dash-fork-materials/source.tar.gz
       runHook postInstall
     '';
-    # The finalizer publishes an executable Wasm module, not a host ELF binary.
+    # Keep Nix fixup from treating the target Wasm executable as a host binary.
     dontFixup = true;
     meta = {
       description = "Opt-in upstream Dash fork execution candidate, not the default shell";
