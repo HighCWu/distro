@@ -14,6 +14,27 @@ then link it with `wasm-linux-dlopen-cc -shared library.o -Wl,-soname,libexample
 Clang expands response files and selects the appropriate link mode. The SDK
 provides the shared-memory limits, exports and stack configuration.
 
+The C++ candidate provides `wasm-linux-dlopen-c++` for a static C++ main and
+shared libraries using the same libc++, libc++abi and libunwind instance.
+
+```sh
+wasm-linux-dlopen-c++ -std=c++17 main.cc -o main
+wasm-linux-dlopen-c++ -std=c++17 -fPIC -shared plugin.cc -o plugin.so
+```
+
+Main links export the complete C++ runtime archive. Shared links import their
+runtime functions and the main's canonical exception tags. PIC typed catches
+obtain the main thread's landing-pad context through the libunwind accessor;
+ordinary main code keeps its existing TLS lowering. The compiler and runtime
+patch are applied together within this optional SDK. The C++ configuration
+selects the WebAssembly destructor ABI and applies unwinder selection during
+linking, so compile-only jobs can use `-Werror`.
+
+The C++ driver checks and four-stage consumer cover library string allocation,
+typed exceptions in both directions, callback rethrow, RAII cleanup and process
+exit. Native references and lightweight Wasm tag tests have passed. Patched LLVM,
+Linux/Wasm execution and browser acceptance still need their target results.
+
 Configure GNU Autoconf consumers with the profile's installed site file and
 the standard `CONFIG_SITE` variable.
 
@@ -63,8 +84,9 @@ fd closes. Close-range operations cannot release these references; exec/exit
 teardown releases them without calling old user code. Older kernels without
 this private execution capability reject the profile before exec commits.
 
-This first profile supports single-thread static C mains and numeric C/SIMD side-module
-graphs, including cyclic dependencies. Each object is instantiated once; all
+The execution model uses a single-thread static main and numeric C/SIMD
+side-module graphs, including cyclic dependencies. The C++ candidate uses the
+same execution boundary. Each object is instantiated once; all
 GOT bindings and data relocations precede the constructor pass. Constructors
 follow dependency DFS postorder, skipping already visited edges. A cycle has
 no universal dependency-before-dependent order; its members must tolerate peers
@@ -91,8 +113,9 @@ the recursive-loading guard until their graph is ready.
 `RTLD_NEXT` lookup and imported-function re-exports are implemented. `RTLD_LAZY`
 can defer direct function imports; a module that requires an unavailable GOT
 relocation is still rejected. Reference-value function signatures, ELF
-symbol-version tables and `dlvsym`, cross-module setjmp/longjmp and C++ exceptions,
-and cross-Worker publication remain outside the accepted profile.
+symbol-version tables and `dlvsym`, cross-module setjmp/longjmp and cross-Worker
+publication remain outside the accepted profile. C++ exception support is a new
+candidate whose target acceptance is tracked separately.
 Linux names and paths preserve their original bytes. Valid UTF-8 remains Unicode;
 undecodable bytes use reversible private host escapes. A leading BOM is a name
 character, including in Wasm dependency metadata. Strings stay bounded to 4096
