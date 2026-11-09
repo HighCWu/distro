@@ -14,6 +14,22 @@ then link it with `wasm-linux-dlopen-cc -shared library.o -Wl,-soname,libexample
 Clang expands response files and selects the appropriate link mode. The SDK
 provides the shared-memory limits, exports and stack configuration.
 
+Configure GNU Autoconf consumers with the profile's installed site file and
+the standard `CONFIG_SITE` variable.
+
+```sh
+CONFIG_SITE=/path/to/sdk/share/linux-wasm-dynamic-sdk/config.site \
+  CC=wasm-linux-dlopen-cc ./configure --host=wasm32-unknown-linux-musl
+```
+
+The file disables `fork`, `vfork` and their `*_works` probes. It reports that
+the complete fixed, file-backed mapping contract tested by `AC_FUNC_MMAP` is
+unavailable. It leaves `dlopen` cache answers unset so Autoconf can confirm
+the enabled musl loader with its normal compile/link probes. The
+libtool search-path caches are set to the target's `/lib` and `/usr/lib`, so
+build-host loader paths do not enter target libraries. The SDK's `configSite`
+passthru attribute points to this same installed file.
+
 The SDK uses the Linux shared-link driver branch that selects relocatable
 table placement and dynamic imports for shared libraries. Main startup and the
 private execution support come from its sysroot CRT archive. Default main links
@@ -72,9 +88,11 @@ failed ones stay poisoned. Constructor reentry is verified in the nine-stage
 1894258 Linux/Node and browser profile. File I/O, allocator callbacks and Wasm start sections retain
 the recursive-loading guard until their graph is ready.
 
-RTLD_NEXT, reference-value
-function signatures, dynamic symbol versions, cross-module setjmp/longjmp and C++ exceptions
-and cross-Worker publication still need implementation and acceptance.
+`RTLD_NEXT` lookup and imported-function re-exports are implemented. `RTLD_LAZY`
+can defer direct function imports; a module that requires an unavailable GOT
+relocation is still rejected. Reference-value function signatures, ELF
+symbol-version tables and `dlvsym`, cross-module setjmp/longjmp and C++ exceptions,
+and cross-Worker publication remain outside the accepted profile.
 Linux names and paths preserve their original bytes. Valid UTF-8 remains Unicode;
 undecodable bytes use reversible private host escapes. A leading BOM is a name
 character, including in Wasm dependency metadata. Strings stay bounded to 4096
@@ -87,10 +105,10 @@ inode aliases keep the same handle and name. A dependency handle searches
 only its own dependency scope. The SDK asserts the five-word C layout.
 `l_addr` describes the module's linear data base; `l_ld` is NULL because
 these files have no ELF dynamic section. This is not ELF loading or program
-header support. The nine-stage 1894258 combination was verified at both widths
-in Node and Chromium/Firefox (two boots and shutdown per browser). The current
-ten-stage byte-path extension and new default compiler/kernel combination still
-need their own target acceptance; no new musl wrapper or public header is added. The private
+header support. The ten-stage profile at 6b1777e passed Node acceptance. The
+current 13-stage profile at 5202cce still needs actual Node and browser
+acceptance; the earlier result does not cover the newer code. No new musl
+wrapper or public header is added. The private
 `linux_dlopen_v1.link_map_abi` import makes older hosts reject this SDK before
 exec commits, rather than accepting it with the old integer-handle behavior.
 UTF-8 decoding uses an owned byte snapshot, since browser TextDecoder
