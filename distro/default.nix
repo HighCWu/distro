@@ -1182,8 +1182,25 @@ lib.makeScope (scope: lib.callPackageWith ({ inherit lib pkgs; } // scope)) (
           };
         };
       };
-    busybox = callPackage ./busybox/package.nix { };
+    busybox = callPackage ./busybox/package.nix {
+      extraChecks.shell-status-both =
+        pkgs.runCommand "busybox-shell-status-check-both"
+          {
+            passthru.ci.heavy = true;
+          }
+          ''
+            test -e ${self.busybox.checks.shell-status}
+            test -e ${self.busybox-wasm64.checks.shell-status}
+            test -e ${self.busybox.checks.processes}
+            test -e ${self.busybox-wasm64.checks.processes}
+            test -e ${self.busybox.checks.source-bundle-host}
+            test -e ${self.busybox.checks.source-bundle}
+            test -e ${self.busybox-wasm64.checks.source-bundle}
+            touch $out
+          '';
+    };
     busybox-wasm64 = self.busybox.override {
+      extraChecks = { };
       stdenv = self.stdenv-wasm64;
       musl = self.musl-wasm64;
       llvm-runtimes = self.llvm-runtimes-wasm64;
@@ -1191,21 +1208,6 @@ lib.makeScope (scope: lib.callPackageWith ({ inherit lib pkgs; } // scope)) (
       linux = self.linux-wasm64;
       vm-test = vmTestWasm64;
     };
-    busybox-shell-status-check-both =
-      pkgs.runCommand "busybox-shell-status-check-both"
-        {
-          passthru.ci.heavy = true;
-        }
-        ''
-          test -e ${self.busybox.checks.shell-status}
-          test -e ${self.busybox-wasm64.checks.shell-status}
-          test -e ${self.busybox.checks.processes}
-          test -e ${self.busybox-wasm64.checks.processes}
-          test -e ${self.busybox.checks.source-bundle-host}
-          test -e ${self.busybox.checks.source-bundle}
-          test -e ${self.busybox-wasm64.checks.source-bundle}
-          touch $out
-        '';
     busybox-fork = callPackage ./busybox-fork/package.nix {
       extraChecks.both =
         pkgs.runCommand "busybox-fork-check-both"

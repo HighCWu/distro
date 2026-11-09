@@ -14,6 +14,7 @@
     hash = "sha256-IwdmKbP2LPrw011n3DmsX75siuBlzc358Zk+IulwaVw=";
   },
   vm-test,
+  extraChecks ? { },
 }:
 
 let
@@ -236,5 +237,6 @@ stdenv.mkDerivation (finalAttrs: {
           mode = "0755";
         };
       };
-    };
+    }
+    // extraChecks;
 })
