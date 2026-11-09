@@ -1234,6 +1234,14 @@ lib.makeScope (scope: lib.callPackageWith ({ inherit lib pkgs; } // scope)) (
             test -e ${self.sdk-dynamic-loader-wasm64.checks.driver}
             test -e ${self.cxx-dynamic-runtime.checks.runtime}
             test -e ${self.cxx-dynamic-runtime-wasm64.checks.runtime}
+            test -e ${self.dynamic-loader.checks.runtime}
+            test -e ${self.dynamic-loader-wasm64.checks.runtime}
+            test -e ${self.libltdl-runtime.checks.runtime}
+            test -e ${self.libltdl-runtime-wasm64.checks.runtime}
+            test -e ${self.sqlite3-extension-runtime.checks.runtime}
+            test -e ${self.sqlite3-extension-runtime-wasm64.checks.runtime}
+            test -e ${self.python-extension-runtime.checks.runtime}
+            test -e ${self.python-extension-runtime-wasm64.checks.runtime}
             touch $out
           '';
     };

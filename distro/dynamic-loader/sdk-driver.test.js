@@ -99,11 +99,12 @@ test(
         "-o",
         "nostartfiles.wasm",
       );
-      assert.equal(
-        exportsOf("nostartfiles.wasm").has("__wasm_dlopen_io_v1"),
-        false,
-        "-nostartfiles",
+      const withoutStartFiles = exportsOf("nostartfiles.wasm");
+      assert.ok(
+        withoutStartFiles.has("__wasm_dlopen_io_v1"),
+        "-nostartfiles keeps default runtime helpers",
       );
+      assert.equal(withoutStartFiles.has("_start"), false, "-nostartfiles omits CRT entry point");
       const defaultsDisabled = run("-###", "-nodefaultlibs", "main source.c", "-o", "unused.wasm");
       assert.doesNotMatch(defaultsDisabled.stderr, /libc-exports\.a/);
       assert.doesNotMatch(defaultsDisabled.stderr, /"-lc"/);

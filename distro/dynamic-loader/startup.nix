@@ -37,12 +37,12 @@ pkgs.runCommand "dynamic-startup-sysroot-${platform.wasmArch}"
     ln -s ${exportedCxx}/libcxx-exports.a $out/lib/libcxx-exports.a
 
     # The Linux driver selects crt1 only for an executable and surrounds it
-    # with --whole-archive. Keep each original object intact: a relocatable
-    # link would discard Wasm export_name aliases used by execution callbacks.
+    # with --whole-archive. Keep the original CRT object intact: a relocatable
+    # link would discard Wasm export_name aliases used by startup callbacks.
+    # Execution adapters live in libc-exports.a as ordinary runtime helpers.
     llvm-ar -M <<EOF
     CREATE $out/lib/crt1.o
     ADDMOD ${sysroot}/lib/crt1.o
-    ADDMOD ${execution}/dynamic-execution.o
     SAVE
     END
     EOF
