@@ -992,6 +992,10 @@ lib.makeScope (scope: lib.callPackageWith ({ inherit lib pkgs; } // scope)) (
       extraChecks = vtimeChecks vtimeVm64 self.toolchain-smoke-wasm64 self.fork-continuation-wasm64;
     };
     sdk-fork-continuation = callPackage ./fork-continuation/sdk.nix { };
+    sdk-fork-automatic = self.sdk-fork-continuation.override { automaticFinalize = true; };
+    sdk-fork-automatic-wasm64 = self.sdk-fork-continuation-wasm64.override {
+      automaticFinalize = true;
+    };
     sdk-fork-cooperative-poll = self.sdk-fork-continuation.override { cooperativePoll = true; };
     sdk-fork-cooperative-poll-wasm64 = self.sdk-fork-continuation-wasm64.override {
       cooperativePoll = true;
@@ -1050,6 +1054,23 @@ lib.makeScope (scope: lib.callPackageWith ({ inherit lib pkgs; } // scope)) (
       llvm-toolchain = self.llvm-toolchain-wasm64;
       vm-test = vmTestWasm64;
       sdk-fork-continuation = self.sdk-fork-continuation-wasm64;
+    };
+    fork-automatic = callPackage ./fork-automatic/package.nix {
+      extraChecks.both = pkgs.runCommand "fork-automatic-check-both" { passthru.ci.heavy = true; } ''
+        test -e ${self.fork-automatic.checks.runtime}
+        test -e ${self.fork-automatic-wasm64.checks.runtime}
+        test -e ${self.sdk-fork-automatic.checks.wrapper}
+        test -e ${self.sdk-fork-automatic-wasm64.checks.wrapper}
+        test -e ${self.findutils-fork.checks.runtime}
+        test -e ${self.findutils-fork-wasm64.checks.runtime}
+        touch $out
+      '';
+    };
+    fork-automatic-wasm64 = callPackage ./fork-automatic/package.nix {
+      platform = self.platform-wasm64;
+      sdk = self.sdk-wasm64;
+      sdk-fork-automatic = self.sdk-fork-automatic-wasm64;
+      vm-test = vmTestWasm64;
     };
     dash-fork = callPackage ./dash-fork/package.nix { };
     bash-fork = callPackage ./bash-fork/package.nix { };
@@ -1324,6 +1345,7 @@ lib.makeScope (scope: lib.callPackageWith ({ inherit lib pkgs; } // scope)) (
     };
     findutils = callPackage ./findutils/package.nix { };
     findutils-fork = callPackage ./findutils-fork/package.nix {
+      sdk-fork-automatic = self.sdk-fork-automatic;
       extraChecks.both = pkgs.runCommand "findutils-standard-fork-both" { passthru.ci.heavy = true; } ''
         test -e ${self.findutils-fork.checks.runtime}
         test -e ${self.findutils-fork-wasm64.checks.runtime}
@@ -1333,7 +1355,7 @@ lib.makeScope (scope: lib.callPackageWith ({ inherit lib pkgs; } // scope)) (
     findutils-fork-wasm64 = callPackage ./findutils-fork/package.nix {
       platform = self.platform-wasm64;
       sdk = self.sdk-wasm64;
-      sdk-fork-continuation = self.sdk-fork-continuation-wasm64;
+      sdk-fork-automatic = self.sdk-fork-automatic-wasm64;
       llvm-toolchain = self.llvm-toolchain-wasm64;
       musl = self.musl-wasm64;
       llvm-runtimes = self.llvm-runtimes-wasm64;

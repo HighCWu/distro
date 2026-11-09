@@ -10,11 +10,14 @@
   sdk,
   cooperativePoll ? false,
   libraryCoverage ? false,
+  automaticFinalize ? false,
 }:
 assert !libraryCoverage || cooperativePoll;
 let
   profileSuffix =
-    lib.optionalString cooperativePoll "-poll" + lib.optionalString libraryCoverage "-libc";
+    lib.optionalString cooperativePoll "-poll"
+    + lib.optionalString libraryCoverage "-libc"
+    + lib.optionalString automaticFinalize "-auto";
   forkMusl = musl.override {
     enableForkContinuation = true;
     enableCooperativePoll = libraryCoverage;
@@ -73,6 +76,8 @@ let
         "--sysroot=${linkRoot}"
       ]
       ++ platform.compilerFlags
+      ++ lib.optional automaticFinalize "--wasm-fork-asyncify"
+      ++ lib.optional automaticFinalize "-B${pkgs.binaryen}/bin"
       ++ lib.optional cooperativePoll "-fsanitize-coverage=trace-pc,no-prune,edge"
     )
     + "\n"
@@ -102,6 +107,7 @@ let
       applicationPolling = cooperativePoll;
       inherit (platform) addressBits targetTriple;
       defaultSdkUnchanged = true;
+      automaticFinalization = automaticFinalize;
       libraryPolling = libraryCoverage;
       userPollAbi =
         if libraryCoverage then
@@ -110,7 +116,7 @@ let
           1
         else
           null;
-      requiresFinalization = true;
+      requiresFinalization = !automaticFinalize;
       syscallContinuationAbi = 2;
       syscallImport = "linux.syscall_v2";
       callbackCloneImport = "linux.syscall";

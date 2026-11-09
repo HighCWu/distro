@@ -155,6 +155,27 @@ test("fork execution object is linked through the sysroot executable response fi
   assert.ok(recipe.includes("ln -s ${sdk.sourceBundle} $out/default-sdk-selected-sources"));
 });
 
+test("automatic finalization is opt-in and records its pinned driver configuration", () => {
+  const recipe = readFileSync(new URL("./sdk.nix", import.meta.url), "utf8");
+  assert.match(recipe, /automaticFinalize \? false/);
+  assert.match(recipe, /lib\.optionalString automaticFinalize "-auto"/);
+  assert.match(recipe, /automaticFinalization = automaticFinalize/);
+  assert.match(recipe, /requiresFinalization = !automaticFinalize/);
+
+  const configStart = recipe.indexOf("  config = pkgs.writeText");
+  const configEnd = recipe.indexOf("  cc = pkgs.writeShellApplication", configStart);
+  assert.ok(configStart >= 0 && configEnd > configStart);
+  const config = recipe.slice(configStart, configEnd);
+  assert.match(config, /lib\.optional automaticFinalize "--wasm-fork-asyncify"/);
+  assert.match(config, /lib\.optional automaticFinalize "-B\$\{pkgs\.binaryen\}\/bin"/);
+  assert.ok(!config.includes("$--wasm-fork-asyncify"));
+
+  assert.match(recipe, /name = "wasm-linux-fork-finalize"/);
+  assert.match(recipe, /paths = \[\s*cc\s*finalize\s*metadata\s*\]/);
+  assert.ok(recipe.includes("cp ${config} $out/recipes/compiler.cfg"));
+  assert.ok(recipe.includes("ln -s ${pkgs.binaryen.src} $out/binaryen-source"));
+});
+
 test("libc polling fork profile requires application polling and selects ABI 2", () => {
   const recipe = readFileSync(new URL("./sdk.nix", import.meta.url), "utf8");
   assert.match(recipe, /cooperativePoll \? false/);
