@@ -149,7 +149,7 @@ pkgs.stdenvNoCC.mkDerivation (finalAttrs: {
     install -Dm644 ${zlib.src}/LICENSE "$notices/zlib-LICENSE"
     install -Dm644 ${zlib.src}/zlib.h "$notices/zlib-header-notice.h"
     install -Dm644 ${../sdk/LICENSE.MIT} "$notices/LOCAL-ADDITIONS.MIT"
-    install -Dm644 ${sdk.buildMaterials}/licenses/SDK-MIT.txt "$notices/SDK-MIT.txt"
+    install -Dm644 ${sdk}/share/linux-wasm-sdk/licenses/SDK-MIT.txt "$notices/SDK-MIT.txt"
     install -Dm644 ${sdk-fork-continuation.buildMaterials}/licenses/SDK-MIT.txt \
       "$notices/FORK-SDK-MIT.txt"
     install -Dm644 ${sdk-fork-continuation.buildMaterials}/licenses/Binaryen-LICENSE \
