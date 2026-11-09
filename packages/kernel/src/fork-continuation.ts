@@ -245,8 +245,18 @@ export class ForkContinuation {
         "missing syscall descriptor",
       );
       const version = this.call("__wasm_fork_syscall_abi");
-      this.require(version === 1 || version === 2, "unsupported syscall ABI version");
+      this.require(
+        version === 1 || version === 2 || version === 3,
+        "unsupported syscall ABI version",
+      );
       syscallAbi = version;
+      if (version === 3) {
+        const guard = this.e.__wasm_fork_cxx_quiescent_v1;
+        this.require(
+          typeof guard === "function" && guard.length === 0,
+          "invalid C++ fork quiescence guard signature",
+        );
+      }
     }
     this.syscallAbi = syscallAbi;
     this.require(this.state() === 0, "instance is not idle");
@@ -265,6 +275,23 @@ export class ForkContinuation {
   }
   private state(): WasmAddress {
     return this.call("asyncify_get_state");
+  }
+  private cxxForkQuiescenceError(): number | null {
+    if (this.syscallAbi !== 3) return null;
+    const result = this.call("__wasm_fork_cxx_quiescent_v1");
+    this.require(
+      typeof result === "number" && Number.isInteger(result) && (result === 0 || result === 1),
+      "invalid C++ fork quiescence guard result",
+    );
+    return result === 1 ? null : -95;
+  }
+  private beginFreshCheckpoint(descriptor: WasmAddress): number {
+    if (this.kernelDepth !== 0) return -95; // EOPNOTSUPP
+    if (this.state() !== 0 || this.descriptor !== null) return -16; // EBUSY
+    if (!this.validDescriptor(descriptor)) return -22; // EINVAL
+    this.descriptor = descriptor;
+    this.call("asyncify_start_unwind", descriptor);
+    return 0; // ignored by Asyncify's unwind path
   }
   private pointer(value: WasmAddress): number {
     this.require(
@@ -324,13 +351,16 @@ export class ForkContinuation {
     }
     // Do not unwind through a kernel call, signal trampoline or callback clone.
     if (this.state() !== 0 || this.descriptor !== null) return -16; // EBUSY
-    if (!this.validDescriptor(descriptor)) return -22; // EINVAL
-    this.descriptor = descriptor;
-    this.call("asyncify_start_unwind", descriptor);
-    return 0; // ignored by Asyncify's unwind path
+    const rejected = this.cxxForkQuiescenceError();
+    if (rejected !== null) return rejected;
+    return this.beginFreshCheckpoint(descriptor);
   }
 
   syscallCheckpoint(allowed: boolean): number {
+    return this.syscallCheckpointInternal(allowed, false);
+  }
+
+  private syscallCheckpointInternal(allowed: boolean, admitted: boolean): number {
     if (!allowed || this.kernelDepth !== 0 || !("__wasm_fork_syscall_abi" in this.e)) return -95;
     // Never reset the saved-frame cursor while rewinding or while busy.
     if (this.state() === 2) {
@@ -338,13 +368,19 @@ export class ForkContinuation {
       return this.checkpoint(this.descriptor, allowed);
     }
     if (this.state() !== 0 || this.descriptor !== null) return -16;
-    return this.checkpoint(this.call("__wasm_fork_descriptor"), allowed);
+    if (!admitted) {
+      const rejected = this.cxxForkQuiescenceError();
+      if (rejected !== null) return rejected;
+    }
+    return this.beginFreshCheckpoint(this.call("__wasm_fork_descriptor"));
   }
 
   cloneCheckpoint(args: WasmAddress[], allowed: boolean): number {
     if (!allowed || this.kernelDepth !== 0 || !this.syscallAbi || args.length !== 6) return -95;
     if (this.state() === 2) return this.syscallCheckpoint(allowed);
     if (this.state() !== 0 || this.descriptor !== null) return -16;
+    const rejected = this.cxxForkQuiescenceError();
+    if (rejected !== null) return rejected;
     const request = clone_fork_request(this.memory, this.address, args);
     return typeof request === "number" ? request : this.requestCheckpoint(request, allowed, false);
   }
@@ -356,6 +392,8 @@ export class ForkContinuation {
     // second request from memory that the saved-frame machinery may change.
     if (this.state() === 2) return this.syscallCheckpoint(allowed);
     if (this.state() !== 0 || this.descriptor !== null) return -16;
+    const rejected = this.cxxForkQuiescenceError();
+    if (rejected !== null) return rejected;
     const request = clone3_fork_request(this.memory, this.address, pointer, size);
     if (typeof request === "number") return request;
     return this.requestCheckpoint(request, allowed, true);
@@ -492,7 +530,7 @@ export class ForkContinuation {
           typeof this.e.__wasm_fork_clone_pidfd !== "function"))
     )
       return -95;
-    const result = this.syscallCheckpoint(allowed);
+    const result = this.syscallCheckpointInternal(allowed, true);
     if (result === 0) {
       this.pidfd = request.pidfd;
       this.namespaceFlags = request.namespaceFlags ?? null;

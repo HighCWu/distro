@@ -998,6 +998,8 @@ lib.makeScope (scope: lib.callPackageWith ({ inherit lib pkgs; } // scope)) (
     };
     sdk-fork-brk = self.sdk-fork-automatic.override { routedBrk = true; };
     sdk-fork-brk-wasm64 = self.sdk-fork-automatic-wasm64.override { routedBrk = true; };
+    sdk-fork-cxx = self.sdk-fork-automatic.override { cxxExceptions = true; };
+    sdk-fork-cxx-wasm64 = self.sdk-fork-automatic-wasm64.override { cxxExceptions = true; };
     sdk-fork-cooperative-poll = self.sdk-fork-continuation.override { cooperativePoll = true; };
     sdk-fork-cooperative-poll-wasm64 = self.sdk-fork-continuation-wasm64.override {
       cooperativePoll = true;
@@ -1108,6 +1110,23 @@ lib.makeScope (scope: lib.callPackageWith ({ inherit lib pkgs; } // scope)) (
       sdk-fork-brk = self.sdk-fork-brk-wasm64;
       sdk = self.sdk-wasm64;
       llvm-toolchain = self.llvm-toolchain-wasm64;
+      vm-test = vmTestWasm64;
+    };
+    fork-cxx = callPackage ./fork-cxx/package.nix {
+      extraChecks.both = pkgs.runCommand "fork-cxx-check-both" { passthru.ci.heavy = true; } ''
+        test -e ${self.fork-cxx.checks.runtime}
+        test -e ${self.fork-cxx-wasm64.checks.runtime}
+        test -e ${self.sdk-fork-cxx.checks.wrapper}
+        test -e ${self.sdk-fork-cxx-wasm64.checks.wrapper}
+        test -e ${self.fork-automatic.checks.runtime}
+        test -e ${self.fork-automatic-wasm64.checks.runtime}
+        touch $out
+      '';
+    };
+    fork-cxx-wasm64 = callPackage ./fork-cxx/package.nix {
+      platform = self.platform-wasm64;
+      sdk = self.sdk-wasm64;
+      sdk-fork-cxx = self.sdk-fork-cxx-wasm64;
       vm-test = vmTestWasm64;
     };
     dash-fork = callPackage ./dash-fork/package.nix { };

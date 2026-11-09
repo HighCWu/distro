@@ -190,7 +190,10 @@ test("automatic finalization is opt-in and records its pinned driver configurati
   assert.ok(!execution.includes("profileCompilerFlags"));
 
   assert.match(recipe, /name = "wasm-linux-fork-finalize"/);
-  assert.match(recipe, /paths = \[\s*cc\s*finalize\s*metadata\s*\]/);
+  assert.match(
+    recipe,
+    /paths = \[\s*cc\s*finalize\s*metadata\s*\]\s*\+\+\s*lib\.optional cxxExceptions cxx/,
+  );
   assert.ok(recipe.includes("cp ${config} $out/recipes/compiler.cfg"));
   assert.ok(recipe.includes("ln -s ${pkgs.binaryen.src} $out/binaryen-source"));
 });
@@ -232,4 +235,45 @@ test("routed brk profile enables musl brk and retains its layout ABI references"
   assert.ok(
     recipe.slice(muslProfileStart, materialsStart).includes("enableBrkSyscall = routedBrk;"),
   );
+});
+
+test("static C++ fork candidate is gated and exports its quiescence probe", () => {
+  const recipe = readFileSync(new URL("./sdk.nix", import.meta.url), "utf8");
+  const execution = readFileSync(new URL("./execution.c", import.meta.url), "utf8");
+  const cxxState = readFileSync(new URL("./cxx-state.cc", import.meta.url), "utf8");
+
+  assert.match(recipe, /cxxExceptions \? false/);
+  assert.match(
+    recipe,
+    /assert !cxxExceptions \|\| \(automaticFinalize && !cooperativePoll && !routedBrk\)/,
+  );
+  assert.match(recipe, /lib\.optionalString cxxExceptions "-cxx"/);
+  assert.match(recipe, /-DWASM_FORK_CXX=1/);
+  assert.match(recipe, /clang\+\+ [\s\S]*cxx-state\.cc/);
+  assert.match(recipe, /name = "wasm-linux-fork-c\+\+"/);
+  assert.match(recipe, /lib\.optional cxxExceptions "\$\{cxxState\}\/cxx-state\.o"/);
+  assert.match(
+    recipe,
+    /lib\.optionals cxxExceptions \[\s*"-lc\+\+"\s*"-lc\+\+abi"\s*"-lunwind"\s*\]/,
+  );
+  assert.match(recipe, /experimental-static-cxx-fork-candidate-v1/);
+  assert.match(recipe, /syscallContinuationAbi = if cxxExceptions then 3 else 2/);
+  assert.match(recipe, /"static single-module C\+\+"/);
+  assert.match(recipe, /fork only outside an active C\+\+ exception/);
+  const cxxStateBuildStart = recipe.indexOf("  cxxState =");
+  const cxxStateBuildEnd = recipe.indexOf("  config =", cxxStateBuildStart);
+  assert.ok(cxxStateBuildStart >= 0 && cxxStateBuildEnd > cxxStateBuildStart);
+  assert.ok(recipe.slice(cxxStateBuildStart, cxxStateBuildEnd).includes("platform.compilerFlags"));
+  assert.ok(!recipe.slice(cxxStateBuildStart, cxxStateBuildEnd).includes("profileCompilerFlags"));
+  assert.match(recipe, /cxxStateObject = "\$\{cxxState\}\/cxx-state\.o"/);
+  assert.match(recipe, /cp \$\{cxxState\}\/cxx-state\.o \$out\/recipes\/cxx-state\.o/);
+
+  assert.match(execution, /#ifdef WASM_FORK_CXX[\s\S]*?return 3;[\s\S]*?#else[\s\S]*?return 2;/);
+  assert.match(cxxState, /std::uncaught_exceptions\(\) == 0/);
+  assert.match(cxxState, /__cxxabiv1::__cxa_get_globals_fast\(\)/);
+  assert.match(cxxState, /std::memcpy\(&caught, globals, sizeof caught\)/);
+  assert.doesNotMatch(cxxState, /__cxa_current_exception_type/);
+  assert.match(cxxState, /export_name\("__wasm_fork_cxx_quiescent_v1"\)/);
+  assert.match(cxxState, /__wasm_fork_cxx_quiescent_v1\(void\) noexcept/);
+  assert.doesNotMatch(cxxState, /\bthrow\b/);
 });

@@ -93,6 +93,7 @@ function fixture(
   nativeClone3 = false,
   userPoll: number | boolean = false,
   userPollAbi?: number,
+  cxxQuiescent: () => unknown = () => 1,
 ) {
   const pointer = (n: number): WasmAddress => (address === "i64" ? BigInt(n) : n);
   const memory = new WebAssembly.Memory({ initial: 1 });
@@ -135,7 +136,7 @@ function fixture(
       state = 0;
     },
   };
-  const calls = { descriptors: 0 };
+  const calls = { descriptors: 0, cxxGuards: 0 };
   if (userPoll) {
     const version = typeof userPoll === "number" ? userPoll : 1;
     Object.assign(exports, {
@@ -152,6 +153,13 @@ function fixture(
         return pointer(64);
       },
     });
+  if (syscall && syscallAbi === 3)
+    Object.assign(exports, {
+      __wasm_fork_cxx_quiescent_v1: () => {
+        calls.cxxGuards++;
+        return cxxQuiescent();
+      },
+    });
   const controller = new ForkContinuation(
     { exports } as unknown as WebAssembly.Instance,
     memory,
@@ -162,6 +170,28 @@ function fixture(
   );
   return { controller, exports, memory, pointer, descriptor, calls };
 }
+
+test("descriptor callbacks cannot change Asyncify state before a fresh checkpoint starts", () => {
+  const f = fixture("i32", true, 1);
+  let descriptorCallbackRan = false;
+  let unwindStarts = 0;
+  Object.assign(f.exports, {
+    asyncify_get_state: () => (descriptorCallbackRan ? 1 : 0),
+    asyncify_start_unwind: () => {
+      unwindStarts++;
+    },
+    __wasm_fork_descriptor: () => {
+      f.calls.descriptors++;
+      descriptorCallbackRan = true;
+      return f.pointer(64);
+    },
+  });
+
+  assert.equal(f.controller.syscallCheckpoint(true), -16);
+  assert.equal(unwindStarts, 0);
+  assert.equal(f.controller.unwinding(), false);
+  assert.equal(f.calls.descriptors, 1);
+});
 
 for (const address of ["i32", "i64"] as const)
   for (const fatal of [false, true])
@@ -1140,7 +1170,7 @@ for (const address of ["i32", "i64"] as const) {
       p(0),
     );
     assert.equal(old.calls.descriptors, 1);
-    assert.throws(() => fixture(address, true, 3), /unsupported syscall ABI version/);
+    assert.throws(() => fixture(address, true, 4), /unsupported syscall ABI version/);
     const current = fixture(address, true, 2);
     assert.equal(
       dispatch_fork_syscall(
@@ -1154,6 +1184,94 @@ for (const address of ["i32", "i64"] as const) {
       p(-95),
     );
     assert.equal(current.calls.descriptors, 0);
+  });
+
+  test(`${address}: syscall ABI 3 checks C++ quiescence before fresh fork state changes`, () => {
+    let quiescent = 0;
+    const parent = fixture(
+      address,
+      true,
+      3,
+      true,
+      undefined,
+      false,
+      false,
+      undefined,
+      () => quiescent,
+    );
+    const c = parent.controller;
+    const p = parent.pointer;
+    const state = c as unknown as { descriptor: WasmAddress | null; pidfd: WasmAddress | null };
+
+    assert.equal(parent.calls.cxxGuards, 0, "construction validates but does not call the guard");
+    assert.equal(c.checkpoint(p(64), true), -95);
+    assert.equal(c.syscallCheckpoint(true), -95);
+    assert.equal(c.cloneCheckpoint([p(0), p(1), p(0), p(0), p(0), p(0)], true), -95);
+    assert.equal(c.clone3Checkpoint(p(0), p(0), true), -95);
+    assert.equal(parent.calls.cxxGuards, 4);
+    assert.equal(parent.calls.descriptors, 0);
+    assert.equal(state.descriptor, null);
+    assert.equal(state.pidfd, null);
+    assert.equal(parent.exports.asyncify_get_state(), 0);
+
+    quiescent = 1;
+    assert.equal(c.clone3Checkpoint(p(0), p(0), true), -22, "guard passes before clone3 parsing");
+    assert.equal(parent.calls.cxxGuards, 5);
+    assert.equal(c.cloneCheckpoint([p(17), p(0), p(0), p(0), p(0), p(0)], true), 0);
+    assert.equal(parent.calls.cxxGuards, 6, "the admitted request is not guarded a second time");
+    assert.equal(parent.calls.descriptors, 1);
+    const snapshot = c.suspend();
+    const cloneResult = c.clone();
+    assert.equal(cloneResult, p(1234));
+    c.resumeParent(cloneResult);
+    assert.equal(c.cloneCheckpoint([p(0), p(1), p(0), p(0), p(0), p(0)], true), 1234);
+    assert.equal(parent.calls.cxxGuards, 6, "parent rewind does not repeat the guard");
+
+    const child = fixture(address, true, 3);
+    child.controller.resumeChild(snapshot);
+    assert.equal(child.controller.clone3Checkpoint(p(0), p(0), true), 0);
+    assert.equal(child.calls.cxxGuards, 0, "child rewind uses the admitted request");
+  });
+
+  test(`${address}: syscall ABI 3 rejects missing, malformed and invalid C++ guards`, () => {
+    const base = fixture(address, true, 3);
+    assert.equal(base.calls.cxxGuards, 0);
+    const construct = (exports: Record<string, unknown>) =>
+      new ForkContinuation(
+        { exports: exports as WebAssembly.Exports } as unknown as WebAssembly.Instance,
+        base.memory,
+        address,
+      );
+
+    const missing = { ...base.exports } as Record<string, unknown>;
+    delete missing.__wasm_fork_cxx_quiescent_v1;
+    assert.throws(() => construct(missing), /invalid C\+\+ fork quiescence guard signature/);
+
+    const malformed = {
+      ...base.exports,
+      __wasm_fork_cxx_quiescent_v1: (_argument: number) => 1,
+    } as unknown as Record<string, unknown>;
+    assert.throws(() => construct(malformed), /invalid C\+\+ fork quiescence guard signature/);
+
+    for (const invalid of [2, 1n, "quiescent"]) {
+      const broken = fixture(
+        address,
+        true,
+        3,
+        true,
+        undefined,
+        false,
+        false,
+        undefined,
+        () => invalid,
+      );
+      assert.equal(broken.calls.cxxGuards, 0, "the constructor must not call the guard");
+      assert.throws(
+        () => broken.controller.syscallCheckpoint(true),
+        /invalid C\+\+ fork quiescence guard result/,
+      );
+      assert.equal(broken.calls.descriptors, 0);
+    }
   });
 
   test(`${address}: clone3 resumes the admitted parent/child request without rereading arguments`, () => {

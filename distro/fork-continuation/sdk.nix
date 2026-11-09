@@ -12,14 +12,17 @@
   libraryCoverage ? false,
   automaticFinalize ? false,
   routedBrk ? false,
+  cxxExceptions ? false,
 }:
 assert !libraryCoverage || cooperativePoll;
+assert !cxxExceptions || (automaticFinalize && !cooperativePoll && !routedBrk);
 let
   profileSuffix =
     lib.optionalString cooperativePoll "-poll"
     + lib.optionalString libraryCoverage "-libc"
     + lib.optionalString automaticFinalize "-auto"
-    + lib.optionalString routedBrk "-brk";
+    + lib.optionalString routedBrk "-brk"
+    + lib.optionalString cxxExceptions "-cxx";
   profileCompilerFlags =
     platform.compilerFlags
     ++ lib.optionals automaticFinalize [
@@ -56,6 +59,7 @@ let
           )
         } ${lib.optionalString cooperativePoll "-DWASM_FORK_USER_POLL=1"} \
           ${lib.optionalString libraryCoverage "-DWASM_FORK_POLL_LIBC=1"} \
+          ${lib.optionalString cxxExceptions "-DWASM_FORK_CXX=1"} \
           -O2 -Wall -Wextra -Werror -c ${./execution.c} -o $out/fork-execution.o
         ${lib.optionalString cooperativePoll ''
           clang ${lib.escapeShellArgs ([ "--target=${platform.targetTriple}" ] ++ platform.compilerFlags)} \
@@ -70,6 +74,12 @@ let
     executableArgs = [
       "${execution}/fork-execution.o"
     ]
+    ++ lib.optional cxxExceptions "${cxxState}/cxx-state.o"
+    ++ lib.optionals cxxExceptions [
+      "-lc++"
+      "-lc++abi"
+      "-lunwind"
+    ]
     ++ lib.optional cooperativePoll "${execution}/user-poll.o"
     ++ platform.linkerFlags
     ++ lib.optionals routedBrk [
@@ -83,6 +93,26 @@ let
     ]
     ++ lib.optional cooperativePoll "--export=__wasm_user_poll_abi";
   };
+  cxxState =
+    if cxxExceptions then
+      pkgs.runCommand "fork-cxx-state-${platform.wasmArch}${profileSuffix}"
+        {
+          nativeBuildInputs = [ llvm-toolchain ];
+        }
+        ''
+          mkdir $out
+          clang++ ${
+            lib.escapeShellArgs (
+              [
+                "--target=${platform.targetTriple}"
+                "--sysroot=${forkRoot}"
+              ]
+              ++ platform.compilerFlags
+            )
+          } -std=c++17 -O2 -Wall -Wextra -Werror -c ${./cxx-state.cc} -o $out/cxx-state.o
+        ''
+    else
+      null;
   config = pkgs.writeText "fork-${platform.wasmArch}${profileSuffix}.cfg" (
     lib.concatMapStringsSep "\n" lib.escapeShellArg (
       [
@@ -104,6 +134,21 @@ let
         ]
         (builtins.readFile ../sdk/compiler.sh);
   };
+  cxx =
+    if cxxExceptions then
+      pkgs.writeShellApplication {
+        name = "wasm-linux-fork-c++";
+        text =
+          builtins.replaceStrings
+            [ "@compiler@" "@configArgument@" ]
+            [
+              (lib.escapeShellArg "${llvm-toolchain}/bin/clang++")
+              (lib.escapeShellArg "--config=${config}")
+            ]
+            (builtins.readFile ../sdk/compiler.sh);
+      }
+    else
+      null;
   finalize = pkgs.writeShellApplication {
     name = "wasm-linux-fork-finalize";
     runtimeInputs = [ pkgs.coreutils ];
@@ -114,7 +159,11 @@ let
   metadata = pkgs.writeTextDir "share/linux-wasm-fork-sdk/profile.json" (
     builtins.toJSON {
       schemaVersion = 1;
-      profile = "experimental-static-c-fork-v1";
+      profile =
+        if cxxExceptions then
+          "experimental-static-cxx-fork-candidate-v1"
+        else
+          "experimental-static-c-fork-v1";
       applicationPolling = cooperativePoll;
       inherit (platform) addressBits targetTriple;
       defaultSdkUnchanged = true;
@@ -129,7 +178,7 @@ let
         else
           null;
       requiresFinalization = !automaticFinalize;
-      syscallContinuationAbi = 2;
+      syscallContinuationAbi = if cxxExceptions then 3 else 2;
       syscallImport = "linux.syscall_v2";
       callbackCloneImport = "linux.syscall";
       clone3ForkSubset = true;
@@ -171,12 +220,22 @@ let
       binaryenVersion = pkgs.binaryen.version;
       continuationBufferBytes = 262144;
       overflowBehavior = "trap";
-      limitations = [
-        "static C"
-        "single-thread fork only"
-        "no dynamic linking"
-        "no C++ EH/SjLj"
-      ];
+      limitations =
+        if cxxExceptions then
+          [
+            "static single-module C++"
+            "single-thread fork only"
+            "no dynamic linking"
+            "no SjLj exception support"
+            "fork only outside an active C++ exception"
+          ]
+        else
+          [
+            "static C"
+            "single-thread fork only"
+            "no dynamic linking"
+            "no C++ EH/SjLj"
+          ];
       paths = {
         sysroot = "${linkRoot}";
         sourceSysroot = "${forkRoot}";
@@ -184,6 +243,10 @@ let
         compilerConfiguration = "${config}";
         executionObject = "${execution}/fork-execution.o";
         configSite = "${configSite}";
+      }
+      // lib.optionalAttrs cxxExceptions {
+        cxxStateObject = "${cxxState}/cxx-state.o";
+        cxxCompiler = "${cxx}/bin/wasm-linux-fork-c++";
       };
     }
   );
@@ -210,6 +273,17 @@ let
     ln -s ${forkMusl.src} $out/fork-musl-source
     cp ${pkgs.binaryen.src}/LICENSE $out/licenses/Binaryen-LICENSE
     cp ${../sdk/LICENSE.MIT} $out/licenses/SDK-MIT.txt
+    ${lib.optionalString cxxExceptions ''
+      mkdir -p $out/licenses/cxx
+      cp ${forkRoot.licenseSources.llvm-runtimes}/libcxx/LICENSE.TXT $out/licenses/cxx/libcxx-LICENSE.TXT
+      cp ${forkRoot.licenseSources.llvm-runtimes}/libcxxabi/LICENSE.TXT $out/licenses/cxx/libcxxabi-LICENSE.TXT
+      cp ${forkRoot.licenseSources.llvm-runtimes}/libunwind/LICENSE.TXT $out/licenses/cxx/libunwind-LICENSE.TXT
+      cp ${forkRoot.licenseSources.llvm-runtimes}/compiler-rt/LICENSE.TXT $out/licenses/cxx/compiler-rt-LICENSE.TXT
+      cp ${./cxx-state.cc} $out/recipes/fork-continuation/cxx-state.cc
+      cp ${cxxState}/cxx-state.o $out/recipes/cxx-state.o
+      cp ${llvm-toolchain}/bin/clang++.cfg $out/recipes/clang++.cfg
+      ln -s ${forkRoot.licenseSources.llvm-runtimes} $out/llvm-runtimes-source
+    ''}
     ln -s ${pkgs.binaryen.src} $out/binaryen-source
     ln -s ${sdk.buildMaterials} $out/default-sdk-build-materials
     ln -s ${sdk.sourceBundle} $out/default-sdk-selected-sources
@@ -221,7 +295,8 @@ pkgs.symlinkJoin {
     cc
     finalize
     metadata
-  ];
+  ]
+  ++ lib.optional cxxExceptions cxx;
   postBuild = ''
     mkdir -p $out/share/linux-wasm-fork-sdk
     ln -s ${materials} $out/share/linux-wasm-fork-sdk/build-materials
@@ -250,6 +325,7 @@ pkgs.symlinkJoin {
           cp ${./package.nix} distro/fork-continuation/package.nix
           cp ${./sdk.nix} distro/fork-continuation/sdk.nix
           cp ${./execution.c} distro/fork-continuation/execution.c
+          cp ${./cxx-state.cc} distro/fork-continuation/cxx-state.cc
           cp ${../cooperative-poll/execution.c} distro/cooperative-poll/execution.c
           cp ${./raw-clone.c} distro/fork-continuation/raw-clone.c
           cp ${./config.site} distro/fork-continuation/config.site
