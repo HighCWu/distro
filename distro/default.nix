@@ -996,6 +996,14 @@ lib.makeScope (scope: lib.callPackageWith ({ inherit lib pkgs; } // scope)) (
     sdk-fork-cooperative-poll-wasm64 = self.sdk-fork-continuation-wasm64.override {
       cooperativePoll = true;
     };
+    sdk-fork-cooperative-poll-libc = self.sdk-fork-continuation.override {
+      cooperativePoll = true;
+      libraryCoverage = true;
+    };
+    sdk-fork-cooperative-poll-libc-wasm64 = self.sdk-fork-continuation-wasm64.override {
+      cooperativePoll = true;
+      libraryCoverage = true;
+    };
     fork-poll = callPackage ./fork-poll/package.nix {
       extraChecks.both = pkgs.runCommand "fork-poll-both-widths" { passthru.ci.heavy = true; } ''
         test -e ${self.fork-poll.checks.runtime}
@@ -1006,6 +1014,23 @@ lib.makeScope (scope: lib.callPackageWith ({ inherit lib pkgs; } // scope)) (
     fork-poll-wasm64 = callPackage ./fork-poll/package.nix {
       platform = self.platform-wasm64;
       sdk-fork-cooperative-poll = self.sdk-fork-cooperative-poll-wasm64;
+      vm-test = vmTestWasm64;
+    };
+    fork-poll-libc = callPackage ./fork-poll/package.nix {
+      libraryCoverage = true;
+      sdk-fork-cooperative-poll = self.sdk-fork-cooperative-poll-libc;
+      extraChecks.both = pkgs.runCommand "fork-poll-libc-check-both" { passthru.ci.heavy = true; } ''
+        test -e ${self.fork-poll-libc.checks.runtime}
+        test -e ${self.fork-poll-libc-wasm64.checks.runtime}
+        test -e ${self.fork-poll.checks.runtime}
+        test -e ${self.fork-poll-wasm64.checks.runtime}
+        touch $out
+      '';
+    };
+    fork-poll-libc-wasm64 = callPackage ./fork-poll/package.nix {
+      libraryCoverage = true;
+      platform = self.platform-wasm64;
+      sdk-fork-cooperative-poll = self.sdk-fork-cooperative-poll-libc-wasm64;
       vm-test = vmTestWasm64;
     };
     sdk-fork-continuation-wasm64 = callPackage ./fork-continuation/sdk.nix {

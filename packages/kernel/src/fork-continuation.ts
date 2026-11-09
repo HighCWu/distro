@@ -206,13 +206,30 @@ export class ForkContinuation {
     this.childRewound = childRewound;
     this.childReturnWork = childReturnWork;
     this.e = instance.exports;
-    this.userPollSupported = typeof this.e.__wasm_fork_user_poll_abi === "function";
+    this.userPollSupported = Object.prototype.hasOwnProperty.call(
+      this.e,
+      "__wasm_fork_user_poll_abi",
+    );
     if (this.userPollSupported) {
+      const forkPollAbi = this.e.__wasm_fork_user_poll_abi;
       this.require(
-        (this.e.__wasm_fork_user_poll_abi as CallableFunction).length === 0,
+        typeof forkPollAbi === "function" && forkPollAbi.length === 0,
         "invalid fork polling ABI signature",
       );
-      this.require(this.call("__wasm_fork_user_poll_abi") === 1, "unsupported fork polling ABI");
+      const version = this.call("__wasm_fork_user_poll_abi");
+      this.require(
+        typeof version === "number" && (version === 1 || version === 2),
+        "unsupported fork polling ABI",
+      );
+      const userPollAbi = this.e.__wasm_user_poll_abi;
+      this.require(
+        typeof userPollAbi === "function" && userPollAbi.length === 0,
+        "invalid user polling ABI signature",
+      );
+      this.require(
+        this.call("__wasm_user_poll_abi") === version,
+        "fork and user polling ABI versions differ",
+      );
     }
     this.memory = memory;
     this.address = address;

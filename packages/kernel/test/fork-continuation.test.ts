@@ -91,7 +91,8 @@ function fixture(
   pidfdSupported = true,
   registers = { stack: 32768, tls: 1024 },
   nativeClone3 = false,
-  userPoll = false,
+  userPoll: number | boolean = false,
+  userPollAbi?: number,
 ) {
   const pointer = (n: number): WasmAddress => (address === "i64" ? BigInt(n) : n);
   const memory = new WebAssembly.Memory({ initial: 1 });
@@ -135,7 +136,13 @@ function fixture(
     },
   };
   const calls = { descriptors: 0 };
-  if (userPoll) Object.assign(exports, { __wasm_fork_user_poll_abi: () => 1 });
+  if (userPoll) {
+    const version = typeof userPoll === "number" ? userPoll : 1;
+    Object.assign(exports, {
+      __wasm_fork_user_poll_abi: () => version,
+      __wasm_user_poll_abi: () => userPollAbi ?? version,
+    });
+  }
   if (syscall)
     Object.assign(exports, {
       __wasm_fork_syscall_abi: () => syscallAbi,
@@ -207,30 +214,99 @@ for (const address of ["i32", "i64"] as const)
     });
 
 for (const address of ["i32", "i64"] as const)
-  test(`${address}: fork polling requires capability and defers every snapshot transition`, () => {
-    assert.equal(fixture(address).controller.userPollAllowed(), false);
-    const { controller: c, pointer: p } = fixture(address, false, 1, true, undefined, false, true);
-    assert.equal(c.userPollAllowed(), true);
-    const jump = Symbol("kernel unwind");
-    assert.throws(
-      () =>
-        c.kernelCall(() => {
-          assert.equal(c.userPollAllowed(), false);
-          assert.equal(c.userPollAllowed(true), true);
-          throw jump;
-        }),
-      (error) => error === jump,
+  for (const version of [1, 2] as const)
+    test(`${address}: fork polling ABI ${version} requires capability and defers every snapshot transition`, () => {
+      assert.equal(fixture(address).controller.userPollAllowed(), false);
+      const { controller: c, pointer: p } = fixture(
+        address,
+        false,
+        1,
+        true,
+        undefined,
+        false,
+        version,
+      );
+      assert.equal(c.userPollAllowed(), true);
+      const jump = Symbol("kernel unwind");
+      assert.throws(
+        () =>
+          c.kernelCall(() => {
+            assert.equal(c.userPollAllowed(), false);
+            assert.equal(c.userPollAllowed(true), true);
+            throw jump;
+          }),
+        (error) => error === jump,
+      );
+      assert.equal(c.userPollAllowed(), true);
+      assert.equal(c.checkpoint(p(64), true), 0);
+      assert.equal(c.userPollAllowed(true), false);
+      c.suspend();
+      assert.equal(c.userPollAllowed(true), false, "stopped unwind still owns descriptor");
+      c.resumeParent(p(-11));
+      assert.equal(c.userPollAllowed(true), false);
+      assert.equal(c.checkpoint(p(64), true), -11);
+      assert.equal(c.userPollAllowed(), true);
+    });
+
+test("fork polling accepts only matching zero-argument ABI markers", () => {
+  const base = fixture("i32");
+  const construct = (overrides: Record<string, unknown>) =>
+    new ForkContinuation(
+      { exports: { ...base.exports, ...overrides } } as unknown as WebAssembly.Instance,
+      base.memory,
+      "i32",
     );
-    assert.equal(c.userPollAllowed(), true);
-    assert.equal(c.checkpoint(p(64), true), 0);
-    assert.equal(c.userPollAllowed(true), false);
-    c.suspend();
-    assert.equal(c.userPollAllowed(true), false, "stopped unwind still owns descriptor");
-    c.resumeParent(p(-11));
-    assert.equal(c.userPollAllowed(true), false);
-    assert.equal(c.checkpoint(p(64), true), -11);
-    assert.equal(c.userPollAllowed(), true);
-  });
+
+  assert.equal(
+    fixture("i32", false, 1, true, undefined, false, 2).controller.userPollAllowed(),
+    true,
+  );
+  assert.throws(
+    () => construct({ __wasm_fork_user_poll_abi: () => 2 }),
+    /invalid user polling ABI signature/,
+    "a fork polling marker needs the matching user ABI export",
+  );
+  assert.throws(
+    () =>
+      construct({
+        __wasm_fork_user_poll_abi: () => 2,
+        __wasm_user_poll_abi: () => 1,
+      }),
+    /versions differ/,
+  );
+  assert.throws(
+    () =>
+      construct({
+        __wasm_fork_user_poll_abi: () => 3,
+        __wasm_user_poll_abi: () => 3,
+      }),
+    /unsupported fork polling ABI/,
+  );
+  assert.throws(
+    () =>
+      construct({
+        __wasm_fork_user_poll_abi: 2,
+        __wasm_user_poll_abi: () => 2,
+      }),
+    /invalid fork polling ABI signature/,
+  );
+  assert.throws(
+    () =>
+      construct({
+        __wasm_fork_user_poll_abi: () => 2,
+        __wasm_user_poll_abi: (_unused: unknown) => 2,
+      }),
+    /invalid user polling ABI signature/,
+  );
+  assert.throws(
+    () =>
+      construct({
+        __wasm_fork_user_poll_abi: () => 2,
+        __wasm_user_poll_abi: 2,
+      }),
+    /invalid user polling ABI signature/,
+  );
+});
 
 for (const address of ["i32", "i64"] as const)
   for (const native of [true, false])

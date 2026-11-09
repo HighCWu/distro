@@ -9,18 +9,25 @@
   llvm-toolchain,
   sdk,
   cooperativePoll ? false,
+  libraryCoverage ? false,
 }:
+assert !libraryCoverage || cooperativePoll;
 let
-  forkMusl = musl.override { enableForkContinuation = true; };
+  profileSuffix =
+    lib.optionalString cooperativePoll "-poll" + lib.optionalString libraryCoverage "-libc";
+  forkMusl = musl.override {
+    enableForkContinuation = true;
+    enableCooperativePoll = libraryCoverage;
+  };
   forkBase = sysroot-base.override { musl = forkMusl; };
   forkRoot = sysroot.override { sysroot-base = forkBase; };
-  configSite = pkgs.writeText "fork-${platform.wasmArch}-config.site" (
+  configSite = pkgs.writeText "fork-${platform.wasmArch}${profileSuffix}-config.site" (
     builtins.readFile ../config.site + "\n" + builtins.readFile ./config.site
   );
   # Execution-state support is not a musl implementation detail. Other libc
   # ports and raw syscall callers can link the same object and use this ABI.
   execution =
-    pkgs.runCommand "fork-execution-${platform.wasmArch}"
+    pkgs.runCommand "fork-execution-${platform.wasmArch}${profileSuffix}"
       {
         nativeBuildInputs = [ llvm-toolchain ];
       }
@@ -35,16 +42,18 @@ let
             ++ platform.compilerFlags
           )
         } ${lib.optionalString cooperativePoll "-DWASM_FORK_USER_POLL=1"} \
+          ${lib.optionalString libraryCoverage "-DWASM_FORK_POLL_LIBC=1"} \
           -O2 -Wall -Wextra -Werror -c ${./execution.c} -o $out/fork-execution.o
         ${lib.optionalString cooperativePoll ''
           clang ${lib.escapeShellArgs ([ "--target=${platform.targetTriple}" ] ++ platform.compilerFlags)} \
+            ${lib.optionalString libraryCoverage "-DWASM_POLL_THREAD_GLOBAL=1"} \
             -O2 -Wall -Wextra -Werror -c ${../cooperative-poll/execution.c} -o $out/user-poll.o
         ''}
       '';
   linkRoot = import ../sdk/link-sysroot.nix {
     inherit pkgs lib;
     sysroot = forkRoot;
-    name = "fork-${platform.wasmArch}${lib.optionalString cooperativePoll "-poll"}";
+    name = "fork-${platform.wasmArch}${profileSuffix}";
     executableArgs = [
       "${execution}/fork-execution.o"
     ]
@@ -57,7 +66,7 @@ let
     ]
     ++ lib.optional cooperativePoll "--export=__wasm_user_poll_abi";
   };
-  config = pkgs.writeText "fork-${platform.wasmArch}.cfg" (
+  config = pkgs.writeText "fork-${platform.wasmArch}${profileSuffix}.cfg" (
     lib.concatMapStringsSep "\n" lib.escapeShellArg (
       [
         "--target=${platform.targetTriple}"
@@ -93,6 +102,14 @@ let
       applicationPolling = cooperativePoll;
       inherit (platform) addressBits targetTriple;
       defaultSdkUnchanged = true;
+      libraryPolling = libraryCoverage;
+      userPollAbi =
+        if libraryCoverage then
+          2
+        else if cooperativePoll then
+          1
+        else
+          null;
       requiresFinalization = true;
       syscallContinuationAbi = 2;
       syscallImport = "linux.syscall_v2";
@@ -152,16 +169,26 @@ let
       };
     }
   );
-  materials = pkgs.runCommand "fork-sdk-materials-${platform.wasmArch}" { } ''
+  muslProfile = pkgs.writeText "fork-musl-profile-${platform.wasmArch}${profileSuffix}.json" (
+    builtins.toJSON {
+      source = builtins.baseNameOf (toString forkMusl.src);
+      patches = map (patch: builtins.baseNameOf (toString patch)) forkMusl.patches;
+      enableForkContinuation = true;
+      enableCooperativePoll = libraryCoverage;
+    }
+  );
+  materials = pkgs.runCommand "fork-sdk-materials-${platform.wasmArch}${profileSuffix}" { } ''
     mkdir -p $out/recipes $out/licenses
     cp -r ${./.} $out/recipes/fork-continuation
     cp -r ${../musl} $out/recipes/musl
     ${lib.optionalString cooperativePoll "cp -r ${../cooperative-poll} $out/recipes/cooperative-poll"}
     cp ${../sdk/compiler.sh} $out/recipes/compiler.sh
     cp ${config} $out/recipes/compiler.cfg
+    cp ${muslProfile} $out/recipes/fork-musl-profile.json
     cp ${../config.site} $out/recipes/config.site
     cp ${configSite} $out/recipes/fork-config.site
     ln -s ${linkRoot} $out/actualsysroot
+    ln -s ${forkMusl.src} $out/fork-musl-source
     cp ${pkgs.binaryen.src}/LICENSE $out/licenses/Binaryen-LICENSE
     cp ${../sdk/LICENSE.MIT} $out/licenses/SDK-MIT.txt
     ln -s ${pkgs.binaryen.src} $out/binaryen-source
@@ -170,7 +197,7 @@ let
   '';
 in
 pkgs.symlinkJoin {
-  name = "linux-wasm-fork-sdk-${platform.wasmArch}${lib.optionalString cooperativePoll "-poll"}";
+  name = "linux-wasm-fork-sdk-${platform.wasmArch}${profileSuffix}";
   paths = [
     cc
     finalize

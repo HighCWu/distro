@@ -25,7 +25,7 @@ assert builtins.elem wasmBits [
   64
 ];
 assert !(enableForkContinuation && enableDynamicLoader);
-assert !(enableCooperativePoll && (enableForkContinuation || enableDynamicLoader));
+assert !(enableCooperativePoll && enableDynamicLoader);
 
 pkgs.stdenvNoCC.mkDerivation (
   {

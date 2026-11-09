@@ -82,7 +82,7 @@ test("finalizer applies whole-link Asyncify with the explicit checkpoint import"
   assert.ok(args.includes("--asyncify"));
   assert.ok(
     args.includes(
-      "--pass-arg=asyncify-imports@linux_fork_v1.checkpoint,linux.syscall,linux.syscall_v2,linux_user_poll_v1.checkpoint",
+      "--pass-arg=asyncify-imports@linux_fork_v1.checkpoint,linux.syscall,linux.syscall_v2,linux_user_poll_v1.checkpoint,linux_user_poll_v2.checkpoint",
     ),
   );
   assert.ok(args.includes("--pass-arg=asyncify-asserts"));
@@ -153,4 +153,22 @@ test("fork execution object is linked through the sysroot executable response fi
   assert.ok(recipe.includes("ln -s ${linkRoot} $out/actualsysroot"));
   assert.ok(recipe.includes("ln -s ${sdk.buildMaterials} $out/default-sdk-build-materials"));
   assert.ok(recipe.includes("ln -s ${sdk.sourceBundle} $out/default-sdk-selected-sources"));
+});
+
+test("libc polling fork profile requires application polling and selects ABI 2", () => {
+  const recipe = readFileSync(new URL("./sdk.nix", import.meta.url), "utf8");
+  assert.match(recipe, /cooperativePoll \? false/);
+  assert.match(recipe, /libraryCoverage \? false/);
+  assert.match(recipe, /assert !libraryCoverage \|\| cooperativePoll/);
+  assert.match(recipe, /enableCooperativePoll = libraryCoverage/);
+  assert.match(recipe, /-DWASM_FORK_POLL_LIBC=1/);
+  assert.match(recipe, /-DWASM_POLL_THREAD_GLOBAL=1/);
+  assert.match(recipe, /libraryPolling = libraryCoverage/);
+  assert.match(
+    recipe,
+    /userPollAbi =\s*if libraryCoverage then\s*2\s*else if cooperativePoll then\s*1\s*else\s*null/,
+  );
+  assert.match(recipe, /optionalString libraryCoverage "-libc"/);
+  assert.match(recipe, /forkMusl\.patches/);
+  assert.match(recipe, /cp \$\{muslProfile\} \$out\/recipes\/fork-musl-profile\.json/);
 });

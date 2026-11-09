@@ -204,8 +204,6 @@ export function user_module_imports_supported(module: WebAssembly.Module): boole
       imports.some((entry) => entry.module === "linux_fork_v1")
     ) {
       if (
-        !poll1 ||
-        poll2 ||
         !exports.some(
           (entry) => entry.name === "__wasm_fork_user_poll_abi" && entry.kind === "function",
         )

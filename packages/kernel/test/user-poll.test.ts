@@ -265,7 +265,17 @@ test("poll ABI2 admission requires both imports and refuses mixed execution vers
   const text = (value: string) => [value.length, ...new TextEncoder().encode(value)];
   const leb = (n: number): number[] => (n < 128 ? [n] : [(n & 127) | 128, ...leb(n >>> 7)]);
   const section = (id: number, bytes: number[]) => [id, ...leb(bytes.length), ...bytes];
-  for (const variant of ["normal", "no-tp", "no-checkpoint", "mixed", "future"] as const) {
+  for (const variant of [
+    "normal",
+    "fork",
+    "fork-no-marker",
+    "fork-global-marker",
+    "fork-mixed",
+    "no-tp",
+    "no-checkpoint",
+    "mixed",
+    "future",
+  ] as const) {
     const imports: number[][] = [];
     let functions = 0;
     if (variant !== "no-checkpoint") {
@@ -274,16 +284,39 @@ test("poll ABI2 admission requires both imports and refuses mixed execution vers
     }
     if (variant !== "no-tp")
       imports.push([...text("linux_user_poll_v2"), ...text("thread_pointer"), 3, 0x7f, 1]);
-    if (variant === "mixed" || variant === "future") {
+    if (variant === "mixed" || variant === "fork-mixed" || variant === "future") {
       imports.push([
-        ...text(variant === "mixed" ? "linux_user_poll_v1" : "linux_user_poll_v3"),
+        ...text(variant === "future" ? "linux_user_poll_v3" : "linux_user_poll_v1"),
         ...text("checkpoint"),
         0,
         0,
       ]);
       functions++;
     }
+    if (variant.startsWith("fork")) {
+      imports.push([...text("linux_fork_v1"), ...text("checkpoint"), 0, 0]);
+      functions++;
+    }
     const offset = variant === "no-tp" ? 0 : 1;
+    const exports = [
+      ...text("__wasm_user_poll_abi"),
+      0,
+      functions,
+      ...text("__tls_base"),
+      3,
+      offset,
+      ...text("__stack_pointer"),
+      3,
+      offset + 1,
+    ];
+    let exportCount = 3;
+    if (variant === "fork" || variant === "fork-mixed") {
+      exports.push(...text("__wasm_fork_user_poll_abi"), 0, functions);
+      exportCount++;
+    } else if (variant === "fork-global-marker") {
+      exports.push(...text("__wasm_fork_user_poll_abi"), 3, offset);
+      exportCount++;
+    }
     const module = new WebAssembly.Module(
       new Uint8Array([
         0,
@@ -298,21 +331,14 @@ test("poll ABI2 admission requires both imports and refuses mixed execution vers
         ...section(2, [imports.length, ...imports.flat()]),
         ...section(3, [1, 0]),
         ...section(6, [2, 0x7f, 1, 0x41, 0, 0x0b, 0x7f, 1, 0x41, 0, 0x0b]),
-        ...section(7, [
-          3,
-          ...text("__wasm_user_poll_abi"),
-          0,
-          functions,
-          ...text("__tls_base"),
-          3,
-          offset,
-          ...text("__stack_pointer"),
-          3,
-          offset + 1,
-        ]),
+        ...section(7, [exportCount, ...exports]),
         ...section(10, [1, 4, 0, 0x41, 2, 0x0b]),
       ]),
     );
-    assert.equal(user_module_imports_supported(module), variant === "normal", variant);
+    assert.equal(
+      user_module_imports_supported(module),
+      variant === "normal" || variant === "fork",
+      variant,
+    );
   }
 });

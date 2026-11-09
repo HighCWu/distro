@@ -8,10 +8,11 @@ import { fileURLToPath } from "node:url";
 import { spawnSync } from "node:child_process";
 import test from "node:test";
 import { user_function_imports_supported } from "../../packages/kernel/src/user-functions.ts";
+import { read_wasm_memories } from "../../packages/kernel/src/wasm_binary.ts";
 
 const compiler = process.env.FORK_LINK_CLANG || "clang";
 for (const width of [32, 64]) {
-  test(`wasm${width}: callback and flags-first imports link separately, collision fails`, (t) => {
+  test(`wasm${width}: callback and flags-first imports link separately, collision fails`, async (t) => {
     const dir = mkdtempSync(join(tmpdir(), "fork-link-"));
     t.after(() => rmSync(dir, { recursive: true, force: true }));
     mkdirSync(join(dir, "sys"));
@@ -52,6 +53,7 @@ for (const width of [32, 64]) {
       );
     const execution = fileURLToPath(new URL("./execution.c", import.meta.url));
     const raw = fileURLToPath(new URL("./raw-clone.c", import.meta.url));
+    const userPoll = fileURLToPath(new URL("../cooperative-poll/execution.c", import.meta.url));
     const callbackObject = join(dir, "callback.o"),
       rawObject = join(dir, "raw.o"),
       memoryObject = join(dir, "memory.o");
@@ -109,6 +111,87 @@ for (const width of [32, 64]) {
         .sort(),
       ["linux.syscall:function", "linux.syscall_v2:function"],
     );
+    await t.test("library polling ABI 2 preserves its imported global contract", (pollTest) => {
+      const forkPollObject = join(dir, "fork-poll.o"),
+        userPollObject = join(dir, "user-poll-v2.o"),
+        instrumentedRawObject = join(dir, "raw-poll.o");
+      for (const [args, object] of [
+        [["-DWASM_FORK_USER_POLL=1", "-DWASM_FORK_POLL_LIBC=1", "-c", execution], forkPollObject],
+        [["-DWASM_POLL_THREAD_GLOBAL=1", "-mbulk-memory", "-c", userPoll], userPollObject],
+        [["-fsanitize-coverage=trace-pc,no-prune,edge", "-c", raw], instrumentedRawObject],
+      ]) {
+        const compiled = run([...args, "-o", object]);
+        assert.equal(compiled.status, 0, compiled.stderr || String(compiled.error));
+      }
+      const pollV2Output = join(dir, "combined-v2.wasm");
+      const pollV2Linked = run([
+        forkPollObject,
+        userPollObject,
+        instrumentedRawObject,
+        memoryObject,
+        ...flags,
+        "-o",
+        pollV2Output,
+      ]);
+      assert.equal(pollV2Linked.status, 0, pollV2Linked.stderr || String(pollV2Linked.error));
+      const pollV2Bytes = readFileSync(pollV2Output),
+        pointerType = width === 64 ? "i64" : "i32",
+        pointerZero = width === 64 ? 0n : 0,
+        pollGlobals = [];
+      let pollV2Module;
+      try {
+        pollV2Module = new WebAssembly.Module(pollV2Bytes);
+      } catch (error) {
+        const version = spawnSync(compiler, ["--version"], { encoding: "utf8" });
+        if (
+          error instanceof WebAssembly.CompileError &&
+          /no valid UTF-8 string/.test(error.message) &&
+          /clang version 18\./.test(`${version.stdout}${version.stderr}`)
+        ) {
+          pollTest.skip(
+            "Clang 18's wasm-ld emits malformed module names for imported mutable globals; this ABI check requires a fixed Wasm linker",
+          );
+          return;
+        }
+        throw error;
+      }
+      read_wasm_memories(pollV2Bytes, pollGlobals);
+      assert.deepEqual(pollGlobals, [
+        {
+          module: "linux_user_poll_v2",
+          name: "thread_pointer",
+          value: pointerType,
+          mutable: true,
+        },
+      ]);
+      assert.deepEqual(
+        WebAssembly.Module.imports(pollV2Module)
+          .map(({ module, name, kind }) => `${module}.${name}:${kind}`)
+          .sort(),
+        [
+          "linux.syscall:function",
+          "linux.syscall_v2:function",
+          "linux_user_poll_v2.checkpoint:function",
+          "linux_user_poll_v2.thread_pointer:global",
+        ],
+      );
+      assert(user_function_imports_supported(pollV2Bytes, pointerType));
+      const pollV2Instance = new WebAssembly.Instance(pollV2Module, {
+        linux: {
+          syscall: () => (width === 64 ? -11n : -11),
+          syscall_v2: () => (width === 64 ? -95n : -95),
+        },
+        linux_user_poll_v2: {
+          checkpoint: () => 0,
+          thread_pointer: new WebAssembly.Global(
+            { value: pointerType, mutable: true },
+            pointerZero,
+          ),
+        },
+      });
+      assert.equal(pollV2Instance.exports.__wasm_fork_user_poll_abi(), 2);
+      assert.equal(pollV2Instance.exports.__wasm_user_poll_abi(), 2);
+    });
     const calls = [];
     const instance = new WebAssembly.Instance(module, {
       linux: {

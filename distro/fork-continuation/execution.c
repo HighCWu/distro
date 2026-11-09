@@ -5,9 +5,16 @@
 #include <signal.h>
 #include <sys/syscall.h>
 
-#ifdef WASM_FORK_USER_POLL
+#if defined(WASM_FORK_USER_POLL) || defined(WASM_FORK_POLL_LIBC)
 __attribute__((export_name("__wasm_fork_user_poll_abi")))
-int __wasm_fork_user_poll_abi(void) { return 1; }
+int __wasm_fork_user_poll_abi(void)
+{
+#ifdef WASM_FORK_POLL_LIBC
+	return 2;
+#else
+	return 1;
+#endif
+}
 #endif
 
 __attribute__((import_module("linux"), import_name("syscall")))
