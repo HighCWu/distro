@@ -84,6 +84,7 @@ pkgs.stdenvNoCC.mkDerivation (finalAttrs: {
     runHook preBuild
     wasm-linux-dlopen-cc -O2 -Wall -Wextra -Werror ${./runtime.c} -o dynamic-loader.wasm
     ${sideCC} -O2 -fPIC -c ${./library-a.c} -o a.o
+    ${sideCC} -r a.o -o a-partial.o
     ${sideCC} -O2 -fPIC -c ${./library-b.c} -o b.o
     ${sideCC} -O2 -fPIC -c ${./path-library.c} -o path-library.o
     ${linkShared {
@@ -94,7 +95,7 @@ pkgs.stdenvNoCC.mkDerivation (finalAttrs: {
     ${linkShared {
       name = "libplugin-a.so";
       output = "libplugin-a.so";
-      inputs = [ "a.o" ];
+      inputs = [ "a-partial.o" ];
     }}
     ${linkShared {
       name = "libplugin-b.so";

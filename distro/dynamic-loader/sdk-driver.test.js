@@ -6,6 +6,46 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
 
+const linkerArguments = (result) => {
+  const line = result.stderr
+    .split(/\r?\n/)
+    .find((candidate) => candidate.trimStart().startsWith('"') && candidate.includes("wasm-ld"));
+  assert.ok(line, `no wasm-ld command in -### output:\n${result.stderr}`);
+  return Array.from(line.matchAll(/"((?:\\.|[^"])*)"|(\S+)/g), (match) =>
+    match[1] === undefined ? match[2] : match[1].replaceAll('\\"', '"'),
+  );
+};
+
+const assertRelocatableCommand = (result, description) => {
+  const arguments_ = linkerArguments(result);
+  for (const argument of arguments_) {
+    assert.doesNotMatch(argument, /(?:^|\/)crt[^/]*\.o$/i, `${description}: CRT ${argument}`);
+    assert.doesNotMatch(argument, /libc-exports\.a$/i, `${description}: libc ${argument}`);
+    assert.doesNotMatch(argument, /libcxx-exports\.a$/i, `${description}: libc++ ${argument}`);
+    assert.ok(
+      ![
+        "-lc",
+        "-lpthread",
+        "-lunwind",
+        "-lc++",
+        "-lc++abi",
+        "--shared-memory",
+        "--growable-table",
+        "--export=__stack_pointer",
+      ].includes(argument),
+      `${description}: unexpected default argument ${argument}`,
+    );
+  }
+  for (let index = 0; index + 1 < arguments_.length; index++)
+    assert.notDeepEqual(
+      arguments_.slice(index, index + 2),
+      ["--export", "__stack_pointer"],
+      `${description}: stack pointer export`,
+    );
+  assert.doesNotMatch(result.stderr, /wasm[-_]opt/i, `${description}: must not run wasmopt`);
+  return arguments_;
+};
+
 test(
   "one dynamic SDK compiler handles object, executable and shared links",
   {
@@ -49,9 +89,28 @@ test(
         '-shared "side object.o" -Wl,-soname,libordinary.so -o "ordinary library.so"\n',
       );
       writeFileSync(join(directory, "shared outer.rsp"), '@"shared inner.rsp"\n');
+      writeFileSync(
+        join(directory, "merge inner.rsp"),
+        '-r "side object.o" -o "nested combined.o"\n',
+      );
+      writeFileSync(join(directory, "merge outer.rsp"), '@"merge inner.rsp"\n');
       run("@compile outer.rsp");
       run("-O2", "main source.c", "-o", "ordinary main.wasm");
       run("@shared outer.rsp");
+
+      const relocatableArguments = assertRelocatableCommand(
+        run("-###", "-r", "side object.o", "-o", "combined.o"),
+        "direct C -r",
+      );
+      assert.ok(relocatableArguments.includes("-r"), "direct C -r reaches wasm-ld");
+      const nestedRelocatableArguments = assertRelocatableCommand(
+        run("-###", "@merge outer.rsp"),
+        "response-file C -r",
+      );
+      assert.ok(nestedRelocatableArguments.includes("-r"), "response-file -r reaches wasm-ld");
+      run("-r", "side object.o", "-o", "combined.o");
+      run("@merge outer.rsp");
+      run("-shared", "combined.o", "-Wl,-soname,libcombined.so", "-o", "combined.so");
 
       const main = exportsOf("ordinary main.wasm");
       for (const name of [
@@ -81,6 +140,14 @@ test(
           (entry) => entry.name === "main_value" && entry.kind === "function",
         ),
       );
+      const combinedSide = new WebAssembly.Module(readFileSync(join(directory, "combined.so")));
+      assert.ok(
+        WebAssembly.Module.imports(combinedSide).some(
+          (entry) => entry.name === "main_value" && entry.kind === "function",
+        ),
+        "-r retains the undefined PIC reference for the following shared link",
+      );
+      assert.ok(WebAssembly.Module.customSections(combinedSide, "dylink.0").length === 1);
 
       run(
         "-nostdlib",
@@ -138,17 +205,6 @@ test(
       );
       return result;
     };
-    const linkerArguments = (result) => {
-      const line = result.stderr
-        .split(/\r?\n/)
-        .find(
-          (candidate) => candidate.trimStart().startsWith('"') && candidate.includes("wasm-ld"),
-        );
-      assert.ok(line, `no wasm-ld command in -### output:\n${result.stderr}`);
-      return Array.from(line.matchAll(/"((?:\\.|[^"])*)"|(\S+)/g), (match) =>
-        match[1] === undefined ? match[2] : match[1].replaceAll('\\"', '"'),
-      );
-    };
     try {
       writeFileSync(
         join(directory, "main.cpp"),
@@ -202,6 +258,20 @@ test(
       assert.equal(sideCommand.includes("-lc"), false);
       run("-shared", "side.o", "-Wl,-soname,libcxx-side.so", "-o", "side.so");
 
+      const partialCommand = assertRelocatableCommand(
+        run("-###", "-r", "side.o", "-o", "side.partial.o"),
+        "C++ -r",
+      );
+      assert.ok(partialCommand.includes("-r"), "C++ -r reaches wasm-ld");
+      run("-r", "side.o", "-o", "side.partial.o");
+      run(
+        "-shared",
+        "side.partial.o",
+        "-Wl,-soname,libcxx-side-partial.so",
+        "-o",
+        "side-partial.so",
+      );
+
       const mainModule = new WebAssembly.Module(readFileSync(join(directory, "main.wasm")));
       const mainExports = new Set(
         WebAssembly.Module.exports(mainModule).map((entry) => entry.name),
@@ -242,6 +312,20 @@ test(
         "PIC exception code uses the accessor instead of importing main TLS directly",
       );
       assert.equal(WebAssembly.Module.customSections(sideModule, "dylink.0").length, 1);
+      const partialSideModule = new WebAssembly.Module(
+        readFileSync(join(directory, "side-partial.so")),
+      );
+      const partialImports = WebAssembly.Module.imports(partialSideModule);
+      assert.ok(
+        partialImports.some((entry) => entry.name === "__cpp_exception" && entry.kind === "tag"),
+        "C++ -r preserves the shared exception tag import",
+      );
+      assert.ok(
+        partialImports.some(
+          (entry) => entry.name === "cxx_main_throw" && entry.kind === "function",
+        ),
+        "C++ -r preserves unresolved main runtime imports",
+      );
     } finally {
       rmSync(directory, { recursive: true, force: true });
     }

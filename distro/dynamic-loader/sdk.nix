@@ -102,9 +102,6 @@ let
   linkerConfigFlags = map (flag: "$-Wl,${flag}") [
     "--import-memory"
     "--max-memory=${toString platform.maximumMemoryBytes}"
-    "--shared-memory"
-    "--export=__stack_pointer"
-    "--growable-table"
     "--export-all"
     "-z"
     "stack-size=8388608"
@@ -160,7 +157,6 @@ let
     cp -r ${./.} $out/recipes/dynamic-loader
     cp -r ${../musl} $out/recipes/musl
     cp ${config} $out/recipes/compiler.cfg
-    cp ${cxxConfig} $out/recipes/compiler-cxx.cfg
     cp ${cxxConfig} $out/recipes/compiler-cxx.cfg
     cp ${../sdk/LICENSE.MIT} $out/licenses/SDK-MIT.txt
     cp ${dynamicMusl.src}/COPYRIGHT $out/licenses/musl-COPYRIGHT

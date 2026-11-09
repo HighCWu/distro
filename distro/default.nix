@@ -1230,6 +1230,7 @@ lib.makeScope (scope: lib.callPackageWith ({ inherit lib pkgs; } // scope)) (
             passthru.ci.heavy = true;
           }
           ''
+            test -e ${self.dynamic-driver.checks.build}
             test -e ${self.sdk-dynamic-loader.checks.driver}
             test -e ${self.sdk-dynamic-loader-wasm64.checks.driver}
             test -e ${self.cxx-dynamic-runtime.checks.runtime}

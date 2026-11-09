@@ -26,6 +26,25 @@ def linker_command(result):
     return next(command for command in commands if "wasm-ld" in Path(command[0]).name)
 
 
+def assert_relocatable_has_no_link_defaults(linker):
+    assert "-r" in linker or "--relocatable" in linker, linker
+    assert not any(
+        Path(word).name.startswith("crt") and Path(word).name.endswith(".o")
+        for word in linker
+    ), linker
+    assert not any(word.startswith("-l") for word in linker), linker
+    assert "-lpthread" not in linker, linker
+    assert "--shared-memory" not in linker, linker
+    assert not any(word.startswith("--table-base") for word in linker), linker
+    assert "--export=__stack_pointer" not in linker, linker
+    assert "--growable-table" not in linker, linker
+    assert "--whole-archive" not in linker, linker
+    assert "--no-whole-archive" not in linker, linker
+    assert not any(
+        Path(word).name in ("libc-exports.a", "libcxx-exports.a") for word in linker
+    ), linker
+
+
 compiler, directory = sys.argv[1:]
 root = Path(directory)
 main = root / "main.c"
@@ -53,6 +72,11 @@ for width in (32, 64):
         (
             root / f"wasm{width}-{'shared' if shared else 'static'}-command.json"
         ).write_text(json.dumps(linker))
+    relocatable_linker = linker_command(run(*common, "-###", "-r", str(side)))
+    assert_relocatable_has_no_link_defaults(relocatable_linker)
+    (root / f"wasm{width}-relocatable-command.json").write_text(
+        json.dumps(relocatable_linker)
+    )
     # Keep executable startup and default-library selection independent. The
     # SDK's CRT archive contains original objects with Wasm export aliases.
     sysroot = root / f"wasm{width}-sysroot"
@@ -67,6 +91,7 @@ for width in (32, 64):
         (["-nodefaultlibs"], True, False),
         (["-nostartfiles"], False, True),
         (["-nostdlib"], False, False),
+        (["-r"], False, False),
     ):
         linker = linker_command(
             run(*common, "-###", f"--sysroot={sysroot}", *mode, str(side))
@@ -79,6 +104,19 @@ for width in (32, 64):
                 assert linker[position - 1] == "--whole-archive", linker
                 assert linker[position + 1] == "--no-whole-archive", linker
         assert linker.count("--whole-archive") == int(startup) + int(libc), linker
+    dynamic_default_linker = linker_command(
+        run(*common, "-###", f"--sysroot={sysroot}", str(side))
+    )
+    for default in (
+        "--shared-memory",
+        "--growable-table",
+        "--export=__stack_pointer",
+    ):
+        assert default in dynamic_default_linker, dynamic_default_linker
+    dynamic_relocatable_linker = linker_command(
+        run(*common, "-###", f"--sysroot={sysroot}", "-r", str(side))
+    )
+    assert_relocatable_has_no_link_defaults(dynamic_relocatable_linker)
     # A missing toolchain lookup returns the bare filename. An unrelated
     # archive in the build directory must not become an implicit default lib.
     collision_directory = root / f"wasm{width}-unrelated-cwd"
@@ -89,12 +127,15 @@ for width in (32, 64):
     )
     assert not any(Path(word).name == "libc-exports.a" for word in linker), linker
     output = root / f"wasm{width}-side.wasm"
+    side_object = root / f"wasm{width}-side.o"
+    side_partial = root / f"wasm{width}-side-partial.o"
+    run(*common, "-O2", "-fPIC", "-c", str(side), "-o", str(side_object))
+    run(*common, "-r", str(side_object), "-o", str(side_partial))
     run(
         *common,
         "-O2",
-        "-fPIC",
         "-shared",
-        str(side),
+        str(side_partial),
         "-Wl,--shared-memory,--max-memory=16777216,--export-all",
         "-Wl,-soname,libdriver.so",
         "-o",
@@ -111,4 +152,6 @@ for width in (32, 64):
         "-o",
         str(root / f"wasm{width}-main.wasm"),
     )
-    print(f"shared driver wasm{width}: static/shared dispatch and real PIC link pass")
+    print(
+        f"shared driver wasm{width}: static/shared dispatch and real PIC partial link pass"
+    )
