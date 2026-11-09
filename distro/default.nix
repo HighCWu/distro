@@ -1146,6 +1146,24 @@ lib.makeScope (scope: lib.callPackageWith ({ inherit lib pkgs; } // scope)) (
     # images merely because the surrounding default scope is wasm32.
     stdenv-wasm64 =
       if debug then pkgs.stdenvAdapters.keepDebugInfo stdenvReleaseWasm64 else stdenvReleaseWasm64;
+    stdenv-fork-automatic = import ./stdenv.nix {
+      inherit pkgs;
+      inherit (self) llvm-toolchain;
+      sysroot = self.sdk-fork-automatic.sysroot;
+      configSite = self.sdk-fork-automatic.configSite;
+      platform = self.platform // {
+        compilerFlags = self.sdk-fork-automatic.compilerFlags;
+      };
+    };
+    stdenv-fork-automatic-wasm64 = import ./stdenv.nix {
+      inherit pkgs;
+      llvm-toolchain = self.llvm-toolchain-wasm64;
+      sysroot = self.sdk-fork-automatic-wasm64.sysroot;
+      configSite = self.sdk-fork-automatic-wasm64.configSite;
+      platform = self.platform-wasm64 // {
+        compilerFlags = self.sdk-fork-automatic-wasm64.compilerFlags;
+      };
+    };
     stdenv-dynamic-loader = import ./stdenv.nix {
       inherit pkgs;
       llvm-toolchain = self.sdk-dynamic-loader.compiler;
@@ -1533,6 +1551,24 @@ lib.makeScope (scope: lib.callPackageWith ({ inherit lib pkgs; } // scope)) (
       readline = self.readline-wasm64;
       ncurses = self.ncurses-wasm64;
       openssl = self.openssl-wasm64;
+      busybox = self.busybox-wasm64;
+      vm-test = vmTestWasm64;
+    };
+    python-fork = callPackage ./python-fork/package.nix {
+      extraChecks.both =
+        pkgs.runCommand "python-standard-fork-check-both" { passthru.ci.heavy = true; }
+          ''
+            test -e ${self.fork-automatic.checks.both}
+            test -e ${self.python-fork.checks.runtime}
+            test -e ${self.python-fork-wasm64.checks.runtime}
+            touch $out
+          '';
+    };
+    python-fork-wasm64 = callPackage ./python-fork/package.nix {
+      platform = self.platform-wasm64;
+      python = self.python-wasm64;
+      stdenv-fork-automatic = self.stdenv-fork-automatic-wasm64;
+      sdk-fork-automatic = self.sdk-fork-automatic-wasm64;
       busybox = self.busybox-wasm64;
       vm-test = vmTestWasm64;
     };

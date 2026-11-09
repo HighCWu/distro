@@ -18,6 +18,13 @@ let
     lib.optionalString cooperativePoll "-poll"
     + lib.optionalString libraryCoverage "-libc"
     + lib.optionalString automaticFinalize "-auto";
+  profileCompilerFlags =
+    platform.compilerFlags
+    ++ lib.optionals automaticFinalize [
+      "--wasm-fork-asyncify"
+      "-B${pkgs.binaryen}/bin"
+    ]
+    ++ lib.optional cooperativePoll "-fsanitize-coverage=trace-pc,no-prune,edge";
   forkMusl = musl.override {
     enableForkContinuation = true;
     enableCooperativePoll = libraryCoverage;
@@ -75,10 +82,7 @@ let
         "--target=${platform.targetTriple}"
         "--sysroot=${linkRoot}"
       ]
-      ++ platform.compilerFlags
-      ++ lib.optional automaticFinalize "--wasm-fork-asyncify"
-      ++ lib.optional automaticFinalize "-B${pkgs.binaryen}/bin"
-      ++ lib.optional cooperativePoll "-fsanitize-coverage=trace-pc,no-prune,edge"
+      ++ profileCompilerFlags
     )
     + "\n"
   );
@@ -217,6 +221,7 @@ pkgs.symlinkJoin {
   '';
   passthru = {
     inherit configSite;
+    compilerFlags = profileCompilerFlags;
     sysroot = linkRoot;
     buildMaterials = materials;
     checks.wrapper =

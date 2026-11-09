@@ -18,6 +18,7 @@
   vm-test,
   busybox,
   ca-certificates,
+  enableForkContinuation ? false,
 }:
 
 let
@@ -121,10 +122,9 @@ let
       openssl # _ssl + _hashlib (static libssl.a/libcrypto.a)
     ];
 
-    # Launch subprocess and multiprocessing children on a platform with no
-    # fork(). _posixsubprocess is disabled below; os.posix_spawn() is the
-    # honest common primitive for both callers.
-    patches = [ ./process-posix-spawn.patch ];
+    # The default profile uses the local posix_spawn patch. The optional fork
+    # SDK uses upstream CPython behavior and lets configure probe the module.
+    patches = lib.optionals (!enableForkContinuation) [ ./process-posix-spawn.patch ];
 
     # configure runs a host interpreter (build python of the same minor) for
     # its freeze steps and never executes the wasm binary it produces.
@@ -168,7 +168,9 @@ let
       "--with-openssl=${openssl}"
 
       # Module selection. py_cv_module_<name>=n/a forces a module off.
-      "py_cv_module__posixsubprocess=n/a" # fork_exec: no usable fork(); see patch
+    ]
+    ++ lib.optional (!enableForkContinuation) "py_cv_module__posixsubprocess=n/a"
+    ++ [
       # Let upstream detect mmap from the installed musl headers. Only private
       # anonymous read/write mappings are supported by the default kernel;
       # notably Python's default MAP_SHARED request still fails explicitly.
@@ -190,10 +192,12 @@ let
     preConfigure = ''
       export LIBREADLINE_LIBS="-lreadline -lncursesw"
 
-      # musl exposes addchdir_np under _GNU_SOURCE, but CPython 3.13 does not
-      # probe it. Enable the guarded os.POSIX_SPAWN_CHDIR support added by our
-      # patch; the sysroot header and implementation are checked by the build.
-      export NIX_CFLAGS_COMPILE="$NIX_CFLAGS_COMPILE -DHAVE_POSIX_SPAWN_FILE_ACTIONS_ADDCHDIR_NP=1"
+      ${lib.optionalString (!enableForkContinuation) ''
+        # musl exposes addchdir_np under _GNU_SOURCE, but CPython 3.13 does not
+        # probe it. Enable the guarded os.POSIX_SPAWN_CHDIR support added by our
+        # patch; the sysroot header and implementation are checked by the build.
+        export NIX_CFLAGS_COMPILE="$NIX_CFLAGS_COMPILE -DHAVE_POSIX_SPAWN_FILE_ACTIONS_ADDCHDIR_NP=1"
+      ''}
     '';
 
     installFlags = [ "DESTDIR=$(out)" ];

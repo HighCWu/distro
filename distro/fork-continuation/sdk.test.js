@@ -136,10 +136,8 @@ test("fork execution object is linked through the sysroot executable response fi
   const config = recipe.slice(configStart, configEnd);
   assert.match(config, /--target=\$\{platform\.targetTriple\}/);
   assert.match(config, /--sysroot=\$\{linkRoot\}/);
-  assert.ok(config.includes("platform.compilerFlags"));
-  assert.ok(
-    config.includes('lib.optional cooperativePoll "-fsanitize-coverage=trace-pc,no-prune,edge"'),
-  );
+  assert.ok(config.includes("profileCompilerFlags"));
+  assert.ok(!config.includes("lib.optional cooperativePoll"));
   assert.ok(!config.includes("${execution}"), "execution inputs belong to the link response");
   assert.ok(!config.includes("platform.linkerFlags"), "link defaults belong to the response");
   assert.ok(recipe.includes("-c ${./execution.c} -o $out/fork-execution.o"));
@@ -159,6 +157,19 @@ test("automatic finalization is opt-in and records its pinned driver configurati
   const recipe = readFileSync(new URL("./sdk.nix", import.meta.url), "utf8");
   assert.match(recipe, /automaticFinalize \? false/);
   assert.match(recipe, /lib\.optionalString automaticFinalize "-auto"/);
+  const profileFlagsStart = recipe.indexOf("  profileCompilerFlags =");
+  const profileFlagsEnd = recipe.indexOf("  forkMusl =", profileFlagsStart);
+  assert.ok(profileFlagsStart >= 0 && profileFlagsEnd > profileFlagsStart);
+  const profileFlags = recipe.slice(profileFlagsStart, profileFlagsEnd);
+  assert.ok(profileFlags.includes("platform.compilerFlags"));
+  assert.match(
+    profileFlags,
+    /lib\.optionals automaticFinalize \[\s*"--wasm-fork-asyncify"\s*"-B\$\{pkgs\.binaryen\}\/bin"\s*\]/,
+  );
+  assert.match(
+    profileFlags,
+    /lib\.optional cooperativePoll "-fsanitize-coverage=trace-pc,no-prune,edge"/,
+  );
   assert.match(recipe, /automaticFinalization = automaticFinalize/);
   assert.match(recipe, /requiresFinalization = !automaticFinalize/);
 
@@ -166,9 +177,17 @@ test("automatic finalization is opt-in and records its pinned driver configurati
   const configEnd = recipe.indexOf("  cc = pkgs.writeShellApplication", configStart);
   assert.ok(configStart >= 0 && configEnd > configStart);
   const config = recipe.slice(configStart, configEnd);
-  assert.match(config, /lib\.optional automaticFinalize "--wasm-fork-asyncify"/);
-  assert.match(config, /lib\.optional automaticFinalize "-B\$\{pkgs\.binaryen\}\/bin"/);
+  assert.ok(config.includes("++ profileCompilerFlags"));
+  assert.ok(!config.includes("--wasm-fork-asyncify"));
   assert.ok(!config.includes("$--wasm-fork-asyncify"));
+  assert.match(recipe, /compilerFlags = profileCompilerFlags/);
+
+  const executionStart = recipe.indexOf("  execution =");
+  const executionEnd = recipe.indexOf("  linkRoot =", executionStart);
+  assert.ok(executionStart >= 0 && executionEnd > executionStart);
+  const execution = recipe.slice(executionStart, executionEnd);
+  assert.ok(execution.includes("platform.compilerFlags"));
+  assert.ok(!execution.includes("profileCompilerFlags"));
 
   assert.match(recipe, /name = "wasm-linux-fork-finalize"/);
   assert.match(recipe, /paths = \[\s*cc\s*finalize\s*metadata\s*\]/);
