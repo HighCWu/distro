@@ -2,6 +2,7 @@
 // Private execution support for the Wasm loader, not a public libc API.
 #define _GNU_SOURCE
 #include <errno.h>
+#include <dlfcn.h>
 #include <fcntl.h>
 #include <limits.h>
 #include <link.h>
@@ -19,6 +20,12 @@ _Static_assert(sizeof(struct link_map) == 5 * sizeof(void *) &&
     offsetof(struct link_map, l_ld) == 2 * sizeof(void *) &&
     offsetof(struct link_map, l_next) == 3 * sizeof(void *) &&
     offsetof(struct link_map, l_prev) == 4 * sizeof(void *), "Wasm link_map execution ABI");
+
+_Static_assert(sizeof(Dl_info) == 4 * sizeof(void *), "Wasm Dl_info execution ABI");
+_Static_assert(offsetof(Dl_info, dli_fname) == 0 * sizeof(void *), "Wasm Dl_info filename ABI");
+_Static_assert(offsetof(Dl_info, dli_fbase) == 1 * sizeof(void *), "Wasm Dl_info base ABI");
+_Static_assert(offsetof(Dl_info, dli_sname) == 2 * sizeof(void *), "Wasm Dl_info symbol ABI");
+_Static_assert(offsetof(Dl_info, dli_saddr) == 3 * sizeof(void *), "Wasm Dl_info symbol address ABI");
 
 #ifdef __wasm__
 #define EXPORT(name) __attribute__((export_name(name)))
@@ -167,6 +174,14 @@ uintptr_t __wasm_dlopen_library_path(void)
 	return (uintptr_t)getenv("LD_LIBRARY_PATH");
 }
 
+EXPORT("__wasm_dlopen_main_path")
+uintptr_t __wasm_dlopen_main_path(void)
+{
+	static const char empty_main_path[] = "";
+	const char *path = program_invocation_name;
+	return (uintptr_t)(path ? path : empty_main_path);
+}
+
 #ifdef __wasm__
 __attribute__((import_module("linux_dlopen_v1"), import_name("abi")))
 extern int dynamic_abi(void);
@@ -178,6 +193,8 @@ __attribute__((import_module("linux_dlopen_v1"), import_name("valid")))
 extern int dynamic_valid(uintptr_t);
 __attribute__((import_module("linux_dlopen_v1"), import_name("error")))
 extern int dynamic_error(char *, size_t);
+__attribute__((import_module("linux_dlopen_v1"), import_name("address")))
+extern int dynamic_address(uintptr_t pointer, uintptr_t info);
 __attribute__((visibility("hidden"))) extern void __dl_seterr(const char *, ...);
 static void report_error(void)
 {
@@ -209,5 +226,10 @@ int __wasm_dynamic_invalid(void *handle)
 	if (dynamic_valid((uintptr_t)handle)) return 0;
 	report_error();
 	return 1;
+}
+__attribute__((visibility("hidden")))
+int __wasm_dynamic_address(const void *pointer, Dl_info *info)
+{
+	return dynamic_address((uintptr_t)pointer, (uintptr_t)info);
 }
 #endif

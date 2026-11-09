@@ -11,6 +11,11 @@ import {
 import { plan_dylink_layout } from "./dylink.ts";
 import { prepare_dylink_call_metadata } from "./dylink_call_metadata.ts";
 import { create_dylink_call_wrapper } from "./dylink_call_wrapper.ts";
+import {
+  resolve_dylink_address,
+  type DylinkAddressFunction,
+  type DylinkAddressObject,
+} from "./dylink_address.ts";
 import { decode_linux_bytes, encode_linux_string } from "./linux-string.ts";
 import {
   read_wasm_dylink,
@@ -55,6 +60,22 @@ type Options = {
   unpinFile(id: number): number;
 };
 
+const mainControlGlobals = new Set([
+  "__stack_pointer",
+  "__tls_base",
+  "__tls_size",
+  "__tls_align",
+  "__memory_base",
+  "__table_base",
+  "__table_base32",
+  "__heap_base",
+  "__heap_end",
+  "__data_end",
+  "__global_base",
+  "__wasm_first_page_end",
+  "__dso_handle",
+]);
+
 // Only failures to open a path may advance to a later search directory.
 // An opened object's admission, read or format failure must retain precedence.
 class DylinkSearchMiss extends Error {}
@@ -73,19 +94,24 @@ export class ProcessDylink {
   readonly #aliases = new Map<string, string>();
   readonly #reuse = new Map<string, DylinkModuleRecord>();
   readonly #groups = new Map<string, ObjectHandle>();
+  readonly #addressNames = new Map<string, bigint>();
   #lazyFunctions: DylinkLazyFunction[] = [];
   readonly #handles = new Map<bigint, ObjectHandle>();
   readonly #globalOrder: string[] = [];
   readonly #caller = new WebAssembly.Global({ value: "i32", mutable: true }, 0);
   readonly #owners = new Map<string, number>();
   readonly #ownerNames = new Map<number, string>();
-  readonly #functions = new Map<CallableFunction, { owner: number | null; signature: string }>();
+  readonly #functions = new Map<
+    CallableFunction,
+    { owner: number | null; addressOwner?: number; signature?: string }
+  >();
   readonly #wrappers = new Map<CallableFunction, CallableFunction>();
   #nextOwner = 1;
   #mainHandle = 0n;
   #lastMap = 0n;
   #cursor: bigint;
   #busy = false;
+  #addressBusy = false;
   #error = "Dynamic loader failure";
 
   constructor(options: Options) {
@@ -117,8 +143,12 @@ export class ProcessDylink {
       if (options.privateExports?.has(name)) continue;
       if (typeof value === "function") {
         const signature = options.signatures.get(name);
-        if (signature && !this.#functions.has(value))
-          this.#functions.set(value, { owner: 0, signature });
+        if (!this.#functions.has(value))
+          this.#functions.set(value, {
+            owner: 0,
+            addressOwner: 0,
+            ...(signature === undefined ? {} : { signature }),
+          });
         this.#symbols.set(name, {
           value,
           signature,
@@ -156,16 +186,19 @@ export class ProcessDylink {
     for (const [name, description] of metadata) {
       const fn = instance.exports[name];
       if (typeof fn !== "function") throw new Error("missing private dynamic function alias");
-      if (!this.#functions.has(fn))
-        this.#functions.set(fn, {
-          owner: description.imported ? null : owner,
-          signature: description.signature,
-        });
+      if (!this.#functions.has(fn)) {
+        this.#functions.set(
+          fn,
+          description.imported
+            ? { owner: null, signature: description.signature }
+            : { owner, addressOwner: owner, signature: description.signature },
+        );
+      }
     }
   }
   #callable(fn: CallableFunction): CallableFunction {
     const info = this.#functions.get(fn);
-    if (!info || info.owner === null) return fn;
+    if (!info || info.owner === null || !info.signature) return fn;
     const existing = this.#wrappers.get(fn);
     if (existing) return existing;
     const wrapped = create_dylink_call_wrapper(info.signature, fn, this.#caller, info.owner);
@@ -710,6 +743,221 @@ export class ProcessDylink {
       if (found) return found;
     }
     return undefined;
+  }
+  #addressObjects(): DylinkAddressObject[] {
+    const dataSymbols: { name: string; address: bigint }[] = [];
+    let mainBase = 0n;
+    let mainSize = 0n;
+    const readMainBoundary = (name: string): bigint | undefined => {
+      const global = this.#options.main.exports[name];
+      if (!(global instanceof WebAssembly.Global)) return undefined;
+      const value = global.value;
+      if (
+        (typeof value !== "number" && typeof value !== "bigint") ||
+        (typeof value === "number" && !Number.isInteger(value))
+      )
+        return undefined;
+      return this.#unsigned(value);
+    };
+    const dataStart = readMainBoundary("__global_base");
+    const dataEnd = readMainBoundary("__data_end");
+    if (
+      dataStart !== undefined &&
+      dataEnd !== undefined &&
+      dataStart <= dataEnd &&
+      dataEnd <= BigInt(this.#options.memory.buffer.byteLength)
+    ) {
+      mainBase = dataStart;
+      mainSize = dataEnd - dataStart;
+    }
+    for (const [name, value] of Object.entries(this.#options.main.exports)) {
+      if (
+        this.#options.privateExports?.has(name) ||
+        mainControlGlobals.has(name) ||
+        !(value instanceof WebAssembly.Global)
+      )
+        continue;
+      const globalValue = value.value;
+      if (
+        (typeof globalValue !== "number" && typeof globalValue !== "bigint") ||
+        (typeof globalValue === "number" && !Number.isInteger(globalValue))
+      )
+        continue;
+      dataSymbols.push({ name, address: this.#unsigned(globalValue) });
+    }
+    const objects: DylinkAddressObject[] = [
+      { id: "@main", base: mainBase, memorySize: mainSize, dataSymbols },
+    ];
+    for (const [key, file] of this.#files) {
+      const record = this.#reuse.get(key);
+      const loaded = this.#groups.get(key);
+      if (!record || !loaded) continue;
+      const symbols: { name: string; address: bigint }[] = [];
+      for (const entry of WebAssembly.Module.exports(file.module)) {
+        if (entry.kind !== "global") continue;
+        const symbol = loaded.group.lookupOwn(key, entry.name);
+        if (symbol?.value instanceof WebAssembly.Global && symbol.address !== undefined)
+          symbols.push({ name: entry.name, address: symbol.address });
+      }
+      objects.push({
+        id: key,
+        base: record.base,
+        memorySize: BigInt(file.metadata.memorySize),
+        dataSymbols: symbols,
+      });
+    }
+    return objects;
+  }
+  #addressFunction(address: bigint): DylinkAddressFunction | null | undefined {
+    if (address <= 0n || address >= BigInt(this.#table.length)) return undefined;
+    const tableAddress = this.#word(address, this.#options.tableType.address);
+    const fn = wasm_table_get(this.#table, tableAddress);
+    if (!fn) return undefined;
+    const functionInfo = this.#functions.get(fn);
+    if (!functionInfo || functionInfo.addressOwner === undefined) return null;
+    const ownerId = functionInfo.addressOwner;
+    const owner = ownerId === 0 ? "@main" : this.#ownerNames.get(ownerId);
+    if (!owner) return null;
+    if (ownerId !== 0 && (!this.#files.has(owner) || !this.#reuse.has(owner))) return null;
+
+    const canonical = this.#pointers.get(fn);
+    if (canonical === undefined || canonical >= BigInt(this.#table.length)) return { owner };
+    const canonicalFunction = wasm_table_get(
+      this.#table,
+      this.#word(canonical, this.#options.tableType.address),
+    );
+    if (
+      !canonicalFunction ||
+      this.#functions.get(canonicalFunction)?.addressOwner !== ownerId ||
+      this.#pointers.get(canonicalFunction) !== canonical
+    )
+      return { owner };
+
+    const candidates: { name: string; address: bigint }[] = [];
+    const addCandidate = (name: string, value: unknown) => {
+      if (typeof value !== "function") return;
+      const valueInfo = this.#functions.get(value);
+      const valuePointer = this.#pointers.get(value);
+      if (valueInfo?.addressOwner !== ownerId || valuePointer !== canonical) return;
+      const actual = wasm_table_get(
+        this.#table,
+        this.#word(valuePointer, this.#options.tableType.address),
+      );
+      if (
+        !actual ||
+        this.#functions.get(actual)?.addressOwner !== ownerId ||
+        this.#pointers.get(actual) !== valuePointer
+      )
+        return;
+      candidates.push({ name, address: valuePointer });
+    };
+
+    if (ownerId === 0) {
+      for (const [name, value] of Object.entries(this.#options.main.exports))
+        if (!this.#options.privateExports?.has(name)) addCandidate(name, value);
+    } else {
+      const loaded = this.#groups.get(owner);
+      const file = this.#files.get(owner);
+      const instance = loaded?.group.instances.get(owner);
+      if (!loaded || !file || !instance) return { owner };
+      for (const entry of WebAssembly.Module.exports(file.module)) {
+        if (entry.kind !== "function") continue;
+        const raw = instance.exports[entry.name];
+        if (
+          typeof raw !== "function" ||
+          this.#functions.get(raw)?.addressOwner !== ownerId ||
+          this.#pointers.get(raw) !== canonical
+        )
+          continue;
+        const symbol = loaded.group.lookupOwn(owner, entry.name);
+        if (symbol && typeof symbol.value === "function") addCandidate(entry.name, symbol.value);
+      }
+    }
+    candidates.sort((a, b) => (a.name < b.name ? -1 : a.name > b.name ? 1 : 0));
+    const symbol = candidates[0];
+    return symbol ? { owner, symbol } : { owner };
+  }
+  #addressName(name: string): bigint | undefined {
+    const existing = this.#addressNames.get(name);
+    if (existing !== undefined) return existing;
+    const encoded = encode_linux_string(name + "\0");
+    const pointer = this.#call(
+      "__wasm_dlopen_allocate",
+      this.#word(BigInt(encoded.length)),
+      this.#word(1n),
+    );
+    const address = this.#unsigned(pointer);
+    if (!address) return undefined;
+    const target = memory_bytes(this.#options.memory, pointer, encoded.length);
+    if (!target)
+      throw new DylinkInitializationError(new Error("invalid dynamic symbol name backing"));
+    target.set(encoded);
+    this.#addressNames.set(name, address);
+    return address;
+  }
+  address(pointer: WasmAddress, info: WasmAddress): number {
+    if (this.#addressBusy) return 0;
+    this.#addressBusy = true;
+    try {
+      const wordBytes = this.#options.address === "i64" ? 8 : 4;
+      const size = 4 * wordBytes;
+      if (!memory_bytes(this.#options.memory, info, size)) return 0;
+
+      const address = this.#unsigned(pointer);
+      const functionMatch = this.#addressFunction(address);
+      if (functionMatch === null) return 0;
+      const resolved = resolve_dylink_address(address, this.#addressObjects(), functionMatch);
+      if (!resolved) return 0;
+
+      let filename: bigint;
+      let base = 0n;
+      if (resolved.owner === "@main") {
+        filename = this.#unsigned(this.#call("__wasm_dlopen_main_path"));
+      } else {
+        const file = this.#files.get(resolved.owner);
+        const record = this.#reuse.get(resolved.owner);
+        if (!file?.handle || !record) return 0;
+        filename = file.handle + BigInt(5 * wordBytes);
+        base = record.base;
+      }
+      if (!filename) return 0;
+
+      let symbolName = 0n;
+      let symbolAddress = 0n;
+      if (resolved.symbol) {
+        const name = this.#addressName(resolved.symbol.name);
+        if (name === undefined) return 0;
+        symbolName = name;
+        symbolAddress = resolved.symbol.address;
+      }
+      const maximum = (1n << BigInt(wordBytes * 8)) - 1n;
+      if (
+        [filename, base, symbolName, symbolAddress].some((value) => value < 0n || value > maximum)
+      )
+        return 0;
+
+      const output = new Uint8Array(size);
+      const view = new DataView(output.buffer);
+      const values = [filename, base, symbolName, symbolAddress];
+      for (let index = 0; index < values.length; index++) {
+        const value = values[index]!;
+        if (wordBytes === 8) view.setBigUint64(index * wordBytes, value, true);
+        else view.setUint32(index * wordBytes, Number(value), true);
+      }
+      const target = memory_bytes(this.#options.memory, info, size);
+      if (!target) return 0;
+      target.set(output);
+      return 1;
+    } catch (error) {
+      if (this.#options.isControlFlow(error)) throw error;
+      if (error instanceof DylinkInitializationError) {
+        this.#caller.value = 0;
+        this.#options.fatal(error);
+      }
+      return 0;
+    } finally {
+      this.#addressBusy = false;
+    }
   }
   valid(handle: WasmAddress): number {
     const key = this.#unsigned(handle);

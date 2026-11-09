@@ -1,3 +1,21 @@
+diff --git a/src/ldso/dladdr.c b/src/ldso/dladdr.c
+--- a/src/ldso/dladdr.c
++++ b/src/ldso/dladdr.c
+@@ -1,9 +1,14 @@
+ #define _GNU_SOURCE
+ #include <dlfcn.h>
+ 
+ static int stub_dladdr(const void *addr, Dl_info *info)
+ {
++#if defined(__wasm__) && defined(WASM_DYNAMIC_LOADER)
++	extern hidden int __wasm_dynamic_address(const void *, Dl_info *);
++	return __wasm_dynamic_address(addr, info);
++#else
+ 	return 0;
++#endif
+ }
+ 
+ weak_alias(stub_dladdr, dladdr);
 diff --git a/src/ldso/dlopen.c b/src/ldso/dlopen.c
 --- a/src/ldso/dlopen.c
 +++ b/src/ldso/dlopen.c

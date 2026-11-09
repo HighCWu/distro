@@ -178,6 +178,7 @@ const supported_user_module_imports = new Set([
   "linux_dlopen_v1\0link_map_abi\0function",
   "linux_dlopen_v1\0open\0function",
   "linux_dlopen_v1\0symbol\0function",
+  "linux_dlopen_v1\0address\0function",
   "linux_dlopen_v1\0valid\0function",
   "linux_dlopen_v1\0error\0function",
 ]);

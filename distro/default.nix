@@ -1346,6 +1346,25 @@ lib.makeScope (scope: lib.callPackageWith ({ inherit lib pkgs; } // scope)) (
             touch $out
           '';
     };
+    dladdr-runtime = callPackage ./dladdr-runtime/package.nix {
+      extraChecks.both = pkgs.runCommand "dladdr-runtime-both-widths" { passthru.ci.heavy = true; } ''
+        test -e ${self.sdk-dynamic-loader.checks.driver}
+        test -e ${self.sdk-dynamic-loader-wasm64.checks.driver}
+        test -e ${self.dladdr-runtime.checks.runtime}
+        test -e ${self.dladdr-runtime-wasm64.checks.runtime}
+        test -e ${self.dynamic-loader.checks.runtime}
+        test -e ${self.dynamic-loader-wasm64.checks.runtime}
+        touch $out
+      '';
+    };
+    dladdr-runtime-wasm64 = callPackage ./dladdr-runtime/package.nix {
+      platform = self.platform-wasm64;
+      sdk-dynamic-loader = self.sdk-dynamic-loader-wasm64;
+      musl = self.musl-wasm64;
+      llvm-runtimes = self.llvm-runtimes-wasm64;
+      vm-test = vmTestWasm64;
+      busybox = self.busybox-wasm64;
+    };
     cxx-dynamic-runtime-wasm64 = callPackage ./cxx-dynamic-runtime/package.nix {
       platform = self.platform-wasm64;
       sdk-dynamic-loader = self.sdk-dynamic-loader-wasm64;

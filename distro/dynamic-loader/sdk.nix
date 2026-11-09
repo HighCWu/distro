@@ -43,11 +43,16 @@ let
     "-z"
     "stack-size=8388608"
   ];
+  # Export static bounds so main-module address metadata can cover interiors.
+  executableLinkerArgs = linkerConfigArgs ++ [
+    "--export=__global_base"
+    "--export=__data_end"
+  ];
   linkRoot = import ../sdk/link-sysroot.nix {
     inherit pkgs lib;
     sysroot = dynamicRoot;
     name = "dynamic-link-sysroot-${platform.wasmArch}";
-    executableArgs = linkerConfigArgs;
+    executableArgs = executableLinkerArgs;
     sharedArgs = linkerConfigArgs;
     cxxArgs = [ ];
   };

@@ -394,6 +394,7 @@ function user_imports({
         link_map_abi: () => 1,
         open: (path: WasmAddress, flags: number) => loader().open(path, flags),
         symbol: (handle: WasmAddress, name: WasmAddress) => loader().symbol(handle, name),
+        address: (pointer: WasmAddress, info: WasmAddress) => loader().address(pointer, info),
         valid: (handle: WasmAddress) => loader().valid(handle),
         error: (pointer: WasmAddress, size: WasmAddress) => loader().error(pointer, size),
       },

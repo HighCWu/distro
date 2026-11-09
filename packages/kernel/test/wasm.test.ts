@@ -267,7 +267,7 @@ test("userspace modules may only import the supported host ABI", () => {
   assert.equal(user_module_imports_supported(unsupported), false);
 });
 
-test("link-map capability is explicitly named and still requires the complete dynamic bridge", () => {
+test("dynamic loader imports are explicitly named and still require the complete bridge", () => {
   const leb = (n: number) => {
     const bytes: number[] = [];
     do {
@@ -284,6 +284,11 @@ test("link-map capability is explicitly named and still requires the complete dy
     const names = complete
       ? ["io_v1", "read", "read_release", "origin", "fd", "allocate", "deallocate", "library_path"]
       : [];
+    const address_import = feature === "address";
+    const type = address_import ? [0x60, 2, 0x7f, 0x7f, 1, 0x7f] : [0x60, 0, 1, 0x7f];
+    const body = address_import
+      ? [0, 0x20, 0, 0x1a, 0x20, 1, 0x1a, 0x41, 1, 0x0b]
+      : [0, 0x41, 1, 0x0b];
     return new WebAssembly.Module(
       new Uint8Array([
         0,
@@ -294,7 +299,7 @@ test("link-map capability is explicitly named and still requires the complete dy
         0,
         0,
         0,
-        ...section(1, [1, 0x60, 0, 1, 0x7f]),
+        ...section(1, [1, ...type]),
         ...section(2, [
           1,
           ...text("linux_dlopen_v1"),
@@ -307,14 +312,16 @@ test("link-map capability is explicitly named and still requires the complete dy
           names.length,
           ...names.flatMap((name) => [...text("__wasm_dlopen_" + name), 0, kind === 0 ? 1 : 0]),
         ]),
-        ...section(10, [1, 4, 0, 0x41, 1, 0x0b]),
+        ...section(10, [1, body.length, ...body]),
       ]),
     );
   };
   assert.equal(user_module_imports_supported(module("link_map_abi")), true);
+  assert.equal(user_module_imports_supported(module("address")), true);
   assert.equal(user_module_imports_supported(module("link_map_abi", false)), false);
   assert.equal(user_module_imports_supported(module("link_map_abi", true, 3)), false);
   assert.equal(user_module_imports_supported(module("link_map_abi_v2")), false);
+  assert.equal(user_module_imports_supported(module("address_v2")), false);
 });
 
 test("userspace memory must match the kernel address width", () => {
