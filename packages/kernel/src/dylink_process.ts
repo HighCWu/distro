@@ -834,27 +834,34 @@ export class ProcessDylink {
       return { owner };
 
     const candidates: { name: string; address: bigint }[] = [];
-    const addCandidate = (name: string, value: unknown) => {
-      if (typeof value !== "function") return;
+    const addCandidate = (name: string, value: unknown, valueAddress?: bigint) => {
+      if (typeof value !== "function" || valueAddress !== canonical) return;
       const valueInfo = this.#functions.get(value);
-      const valuePointer = this.#pointers.get(value);
-      if (valueInfo?.addressOwner !== ownerId || valuePointer !== canonical) return;
+      if (valueInfo?.addressOwner !== ownerId) return;
       const actual = wasm_table_get(
         this.#table,
-        this.#word(valuePointer, this.#options.tableType.address),
+        this.#word(canonical, this.#options.tableType.address),
       );
       if (
         !actual ||
         this.#functions.get(actual)?.addressOwner !== ownerId ||
-        this.#pointers.get(actual) !== valuePointer
+        this.#pointers.get(actual) !== canonical
       )
         return;
-      candidates.push({ name, address: valuePointer });
+      candidates.push({ name, address: canonical });
     };
 
     if (ownerId === 0) {
-      for (const [name, value] of Object.entries(this.#options.main.exports))
-        if (!this.#options.privateExports?.has(name)) addCandidate(name, value);
+      for (const [name, value] of Object.entries(this.#options.main.exports)) {
+        if (this.#options.privateExports?.has(name)) continue;
+        const symbol = this.#symbols.get(name);
+        if (symbol)
+          addCandidate(
+            name,
+            symbol.value,
+            symbol.address ?? (typeof value === "function" ? this.#pointers.get(value) : undefined),
+          );
+      }
     } else {
       const loaded = this.#groups.get(owner);
       const file = this.#files.get(owner);
@@ -863,14 +870,12 @@ export class ProcessDylink {
       for (const entry of WebAssembly.Module.exports(file.module)) {
         if (entry.kind !== "function") continue;
         const raw = instance.exports[entry.name];
-        if (
-          typeof raw !== "function" ||
-          this.#functions.get(raw)?.addressOwner !== ownerId ||
-          this.#pointers.get(raw) !== canonical
-        )
-          continue;
+        if (typeof raw !== "function") continue;
         const symbol = loaded.group.lookupOwn(owner, entry.name);
-        if (symbol && typeof symbol.value === "function") addCandidate(entry.name, symbol.value);
+        if (!symbol || typeof symbol.value !== "function") continue;
+        const rawOwner = this.#functions.get(raw)?.addressOwner;
+        if (rawOwner !== undefined && rawOwner !== ownerId) continue;
+        addCandidate(entry.name, symbol.value, symbol.address);
       }
     }
     candidates.sort((a, b) => (a.name < b.name ? -1 : a.name > b.name ? 1 : 0));
