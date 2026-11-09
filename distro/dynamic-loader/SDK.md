@@ -66,8 +66,11 @@ SDK compiler with nested response files, an ordinary main and a PIC library,
 including startup/default-library switches and the signal restorer export.
 `dynamic-driver-check-build` separately exercises the underlying Clang branch.
 These compiler and engine checks require their own Linux process acceptance.
-Relocatable `-r` links still conflict with the SDK's configured shared-memory
-and growable-table linker options.
+Relocatable `-r` links combine PIC objects before a later executable or shared
+link. The driver selects startup, default libraries and executable memory/table
+defaults during final links. Response files follow the same selection rules.
+The partial-link candidate has lightweight Clang/LLD reference coverage;
+built-SDK and Linux process acceptance remain separately tracked.
 
 Library files are opened through Linux in the process's credentials, not host
 fetch. Direct paths, LD_LIBRARY_PATH, direct-dependency RUNPATH/$ORIGIN and
