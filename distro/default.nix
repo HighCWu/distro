@@ -1556,6 +1556,29 @@ lib.makeScope (scope: lib.callPackageWith ({ inherit lib pkgs; } // scope)) (
       extraChecks = { };
     };
     grep = callPackage ./grep/package.nix { };
+    pcre2 = callPackage ./pcre2/package.nix { };
+    pcre2-wasm64 = self.pcre2.override {
+      platform = self.platform-wasm64;
+      sdk = self.sdk-wasm64;
+      llvm-toolchain = self.llvm-toolchain-wasm64;
+    };
+    grep-pcre2 = callPackage ./grep-pcre2/package.nix {
+      extraChecks.both = pkgs.runCommand "grep-pcre2-check-both" { passthru.ci.heavy = true; } ''
+        test -e ${self.grep-pcre2.checks.pcre-runtime}
+        test -e ${self.grep-pcre2-wasm64.checks.pcre-runtime}
+        touch $out
+      '';
+    };
+    grep-pcre2-wasm64 = self.grep-pcre2.override {
+      stdenv = self.stdenv-wasm64;
+      platform = self.platform-wasm64;
+      sdk = self.sdk-wasm64;
+      llvm-toolchain = self.llvm-toolchain-wasm64;
+      pcre2 = self.pcre2-wasm64;
+      busybox = self.busybox-wasm64;
+      vm-test = vmTestWasm64;
+      extraChecks = { };
+    };
     jq = callPackage ./jq/package.nix { };
     less = callPackage ./less/package.nix { };
     lua = callPackage ./lua/package.nix { };
