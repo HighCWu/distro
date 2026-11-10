@@ -341,6 +341,7 @@ test("ProcessDylink publishes canonical wrappers and tail wrappers at the same s
     maximumPages: 1,
     tableType: { address: "i32", minimum: 4n, maximum: 20n },
     signatures: new Map(),
+    blocked: () => false,
     isControlFlow: () => false,
     fatal(error) {
       throw error;

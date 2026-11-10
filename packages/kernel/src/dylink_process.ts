@@ -58,6 +58,7 @@ type Options = {
   tagSignatures?: ReadonlyMap<string, string>;
   functionMetadata?: ReadonlyMap<string, { signature: string; imported: boolean }>;
   privateExports?: ReadonlySet<string>;
+  blocked(): boolean;
   isControlFlow(error: unknown): boolean;
   fatal(error: unknown): never;
   pinFile(fd: number, device: bigint, inode: bigint): number;
@@ -309,6 +310,11 @@ export class ProcessDylink {
     this.#error = error instanceof Error ? error.message : "Dynamic loader failure";
     return this.#word(0n);
   }
+  #blockedFailure() {
+    if (!this.#options.blocked()) return false;
+    this.#error = "dynamic loading is disabled while a vfork child is active";
+    return true;
+  }
   #read(path: string, known: ReadonlyMap<string, File>): File {
     const encoded = encode_linux_string(path + "\0");
     if (encoded.length > 4096) throw new DylinkSearchMiss("dynamic path exceeds PATH_MAX");
@@ -525,6 +531,7 @@ export class ProcessDylink {
     this.#lazyFunctions = unresolved;
   }
   open(pathPointer: WasmAddress, flags: number): WasmAddress {
+    if (this.#blockedFailure()) return this.#word(0n);
     let allocation: WasmAddress | undefined;
     let acquired = false;
     let committed = false;
@@ -805,6 +812,7 @@ export class ProcessDylink {
     }
   }
   symbol(handle: WasmAddress, namePointer: WasmAddress): WasmAddress {
+    if (this.#blockedFailure()) return this.#word(0n);
     try {
       const key = this.#unsigned(handle);
       const name = this.#string(namePointer);
@@ -999,6 +1007,7 @@ export class ProcessDylink {
     return address;
   }
   address(pointer: WasmAddress, info: WasmAddress): number {
+    if (this.#blockedFailure()) return 0;
     if (this.#addressBusy) return 0;
     this.#addressBusy = true;
     try {
@@ -1063,6 +1072,7 @@ export class ProcessDylink {
     }
   }
   valid(handle: WasmAddress): number {
+    if (this.#blockedFailure()) return 0;
     const key = this.#unsigned(handle);
     const valid = (key !== 0n && key === this.#mainHandle) || this.#handles.has(key);
     if (!valid) this.#error = "Invalid dynamic library handle";

@@ -130,6 +130,7 @@ test("dladdr follows canonical plugin and main function slots across Wasm export
     maximumPages: 1,
     tableType: { address: "i32", minimum: 4n, maximum: 128n },
     signatures: new Map([["dladdr_runtime_main_function", "[[127],[127]]"]]),
+    blocked: () => false,
     isControlFlow: () => false,
     fatal(error) {
       throw error;

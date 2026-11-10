@@ -89,6 +89,7 @@ import {
 } from "./wasm_binary.ts";
 import { ProcessDylink } from "./dylink_process.ts";
 import { prepare_dylink_call_metadata } from "./dylink_call_metadata.ts";
+import { DynamicVforkState, dynamic_vfork_allowed } from "./dynamic-vfork.ts";
 import { user_function_imports_supported } from "./user-functions.ts";
 import {
   allocate_shared_memory,
@@ -193,6 +194,7 @@ function user_imports({
   let pending: UserContext | null = null;
   let fork: ForkContinuation | null = null;
   let signal_depth = 0;
+  const dynamic_vfork = new DynamicVforkState();
   // One slot per nested SA_SIGINFO callback; null means its trampoline has
   // not requested the active signal payload yet.
   const siginfo_copy_results: (number | null)[] = [];
@@ -319,6 +321,7 @@ function user_imports({
           functionMetadata: context.dynamic.functionMetadata,
           tagSignatures: context.dynamic.tagSignatures,
           privateExports: context.dynamic.privateExports,
+          blocked: () => dynamic_vfork.blocked(context),
           isControlFlow: control,
           pinFile: (fd, device, inode) =>
             file_kernel(() => kernel_instance.exports.dynamic_file_pin_v1!(fd, device, inode)),
@@ -341,19 +344,35 @@ function user_imports({
         arg4: WasmAddress,
         arg5: WasmAddress,
       ) => {
-        // No dynamic Worker publication/fork snapshot protocol exists yet.
-        // Refuse creation in this opt-in profile instead of losing loaded tables.
-        if (
-          context.dynamic &&
-          kernel_instance.exports.seccomp_strict_v1?.() !== 1 &&
-          (nr === 220 || nr === 220n || nr === 435 || nr === 435n)
-        )
+        const strict = kernel_instance.exports.seccomp_strict_v1?.() === 1;
+        const clone = nr === 220 || nr === 220n;
+        const clone3 = nr === 435 || nr === 435n;
+        const dynamicVfork =
+          Boolean(context.dynamic) &&
+          !strict &&
+          clone &&
+          dynamic_vfork_allowed({
+            context,
+            loaderCreated: dynamic !== undefined,
+            layout,
+            number: nr,
+            args: [arg0, arg1, arg2, arg3, arg4, arg5],
+            signalDepth: signal_depth,
+            callEntryIsStart: call_entry === call_start,
+            dynamicOperationDepth,
+            pending: dynamic_vfork.pending,
+          });
+        // Strict seccomp always reaches the actual kernel entry first. Outside
+        // strict mode, a dynamic image may create only the pristine callback
+        // vfork child used by posix_spawn.
+        if (context.dynamic && !strict && (clone || clone3) && !dynamicVfork)
           return kernel_address === "i64" ? -95n : -95;
         const original_instance = instance;
-        const invoke = () =>
+        const kernelInvoke = () =>
           call_kernel_entry(kernel_instance.exports, kernel_address, () =>
             kernel_instance.exports.syscall(nr, arg0, arg1, arg2, arg3, arg4, arg5),
           );
+        const invoke = () => (dynamicVfork ? dynamic_vfork.run(kernelInvoke) : kernelInvoke());
         const ret = dispatch_fork_syscall(
           fork,
           nr,
@@ -361,7 +380,7 @@ function user_imports({
           signal_depth === 0 && call_entry === call_start,
           invoke,
           layout,
-          kernel_instance.exports.seccomp_strict_v1?.() === 1,
+          strict,
         );
         if (instance !== original_instance) {
           call_entry = call_start;
@@ -580,7 +599,7 @@ function user_imports({
       },
     },
     get context() {
-      return context;
+      return dynamic_vfork.context(context);
     },
     prepare() {
       if (parent) instantiate(false);

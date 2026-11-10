@@ -67,6 +67,8 @@ export interface UserContext {
     tagSignatures: ReadonlyMap<string, string>;
     functionMetadata: ReadonlyMap<string, { signature: string; imported: boolean }>;
     privateExports: ReadonlySet<string>;
+    /** Private marker copied only to a callback-vfork child Worker. */
+    vfork_child?: boolean;
   };
 }
 
