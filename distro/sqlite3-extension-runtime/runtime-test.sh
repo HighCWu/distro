@@ -1,10 +1,12 @@
 #!/bin/busybox sh
+# shellcheck shell=sh
 # SPDX-License-Identifier: MIT
 set -eu
 export PATH=/bin:/sbin:/usr/bin:/usr/sbin
 
 sqlite3=${SQLITE3:-/bin/sqlite3}
 extension=${SQLITE_EXTENSION_PATH:-/plugins/sample.so}
+client=${SQLITE_EXTENSION_CLIENT:-/bin/sqlite3-extension-runtime-client}
 native_reference=${SQLITE_NATIVE_REFERENCE:-0}
 workdir=$(mktemp -d /tmp/sqlite3-extension-runtime.XXXXXX)
 trap 'rm -rf "$workdir"' EXIT
@@ -14,6 +16,8 @@ fail() {
   printf 'sqlite extension runtime failure: %s\n' "$*" >&2
   exit 1
 }
+
+[ -x "$client" ] || fail "linked SQLite client is not executable: $client"
 
 first_sql=$workdir/first.sql
 first_output=$workdir/first.out
@@ -80,6 +84,25 @@ grep -Fq "$workdir/missing.so" "$recovery_output" || fail "load error omitted th
 grep -qx '42' "$recovery_output" || fail "valid .load did not recover in the same sqlite3 process"
 grep -qx '1002' "$recovery_output" || fail "recovered extension callback state is wrong"
 printf '%s\n' 'sqlite extension: failed load reports an error and later load recovers pass'
+
+client_output=$workdir/linked-client.out
+client_stderr=$workdir/linked-client.err
+client_expected=$workdir/linked-client.expected
+printf '%s\n' \
+  'sqlite3-extension-runtime: linked client passed load, callback, and 64-bit checks' \
+  >"$client_expected"
+if [ "$native_reference" = 1 ]; then
+  "$client" "$extension" >"$client_output" 2>"$client_stderr" ||
+    fail 'linked SQLite client failed'
+else
+  /bin/busybox timeout 30 "$client" "$extension" \
+    >"$client_output" 2>"$client_stderr" ||
+    fail 'linked SQLite client failed or exceeded the timeout'
+fi
+cmp -s "$client_expected" "$client_output" ||
+  fail 'linked SQLite client output differed'
+[ ! -s "$client_stderr" ] || fail 'linked SQLite client wrote diagnostics'
+printf '%s\n' 'sqlite extension: linked static-library C client passed'
 
 rm -rf "$workdir"
 trap - EXIT

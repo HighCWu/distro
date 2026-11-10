@@ -1927,6 +1927,7 @@ lib.makeScope (scope: lib.callPackageWith ({ inherit lib pkgs; } // scope)) (
     sqlite3-dynamic = callPackage ./sqlite3-dynamic/package.nix { };
     sqlite3-dynamic-wasm64 = callPackage ./sqlite3-dynamic/package.nix {
       platform = self.platform-wasm64;
+      sdk = self.sdk-wasm64;
       sdk-dynamic-loader = self.sdk-dynamic-loader-wasm64;
       llvm-toolchain = self.llvm-toolchain-wasm64;
       llvm-runtimes = self.llvm-runtimes-wasm64;

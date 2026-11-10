@@ -4,6 +4,7 @@
   lib,
   platform,
   sqlite3,
+  sdk,
   sdk-dynamic-loader,
   llvm-toolchain,
   llvm-runtimes,
@@ -40,6 +41,7 @@ pkgs.stdenvNoCC.mkDerivation {
     sdk-dynamic-loader
     llvm-toolchain
     pkgs.gnumake
+    pkgs.nodejs
   ];
 
   dontFixup = true;
@@ -49,6 +51,8 @@ pkgs.stdenvNoCC.mkDerivation {
     runHook preConfigure
     CONFIG_SITE=${lib.escapeShellArg sdk-dynamic-loader.configSite} \
       CC=wasm-linux-dlopen-cc \
+      CC_FOR_BUILD=${pkgs.stdenv.cc}/bin/cc \
+      BUILD_CC=${pkgs.stdenv.cc}/bin/cc \
       CFLAGS=${lib.escapeShellArg cflags} \
       AR=${lib.escapeShellArg "${llvm-toolchain}/bin/llvm-ar"} \
       RANLIB=${lib.escapeShellArg "${llvm-toolchain}/bin/llvm-ranlib"} \
@@ -73,44 +77,73 @@ pkgs.stdenvNoCC.mkDerivation {
 
   buildPhase = ''
     runHook preBuild
-    make -j"''${NIX_BUILD_CORES:-1}" sqlite3
+    make -j"''${NIX_BUILD_CORES:-1}" sqlite3 libsqlite3.a
+    test -s sqlite3
+    test -s libsqlite3.a
+    test -s sqlite3.pc
+    grep -qx 'prefix=/' sqlite3.pc
+    node ${../busybox/check-binary.mjs} ${../../packages/kernel/src/wasm_binary.ts} \
+      sqlite3 ${toString platform.addressBits} ${toString platform.maximumMemoryBytes}
     runHook postBuild
   '';
 
   installPhase = ''
-        runHook preInstall
-        mkdir -p \
-          $out/bin \
-          $out/include \
-          $out/share/licenses/sqlite3-dynamic \
-          ${materialDir}
+    runHook preInstall
+    mkdir -p \
+      "$out/bin" \
+      "$out/include" \
+      "$out/lib" \
+      "$out/lib/pkgconfig" \
+      "$out/share/licenses/sqlite3-dynamic/sqlite" \
+      ${materialDir}
 
-        install -m755 sqlite3 $out/bin/sqlite3
-        install -m644 ${sourceTree}/sqlite3.h $out/include/sqlite3.h
-        install -m644 ${sourceTree}/sqlite3ext.h $out/include/sqlite3ext.h
+    install -m755 sqlite3 "$out/bin/sqlite3"
+    install -m644 libsqlite3.a "$out/lib/libsqlite3.a"
+    install -m644 sqlite3.pc "$out/lib/pkgconfig/sqlite3.pc"
+    install -m644 ${sourceTree}/sqlite3.h "$out/include/sqlite3.h"
+    install -m644 ${sourceTree}/sqlite3ext.h "$out/include/sqlite3ext.h"
 
-        # SQLite ships its public-domain blessing in these original headers rather
-        # than in a top-level LICENSE/COPYING file.
-        install -m644 ${sourceTree}/sqlite3.h \
-          $out/share/licenses/sqlite3-dynamic/sqlite3.h
-        install -m644 ${sourceTree}/sqlite3ext.h \
-          $out/share/licenses/sqlite3-dynamic/sqlite3ext.h
-        install -m644 ${sdk-dynamic-loader.buildMaterials}/licenses/SDK-MIT.txt \
-          $out/share/licenses/sqlite3-dynamic/SDK-MIT.txt
-        install -m644 ${sdk-dynamic-loader.buildMaterials}/licenses/musl-COPYRIGHT \
-          $out/share/licenses/sqlite3-dynamic/musl-COPYRIGHT
-        install -m644 ${llvm-runtimes.src}/compiler-rt/LICENSE.TXT \
-          $out/share/licenses/sqlite3-dynamic/compiler-rt-LICENSE.TXT
+    # SQLite ships its public-domain blessing in these original headers rather
+    # than in a top-level LICENSE/COPYING file.
+    install -m644 ${sourceTree}/sqlite3.h \
+      "$out/share/licenses/sqlite3-dynamic/sqlite/sqlite3.h"
+    install -m644 ${sourceTree}/sqlite3ext.h \
+      "$out/share/licenses/sqlite3-dynamic/sqlite/sqlite3ext.h"
+    install -Dm644 ${../sdk/LICENSE.MIT} \
+      "$out/share/licenses/sqlite3-dynamic/LOCAL-ADDITIONS.MIT"
+    cp -r ${sdk}/share/linux-wasm-sdk/licenses \
+      "$out/share/licenses/sqlite3-dynamic/standard-sdk"
+    cp -r ${sdk-dynamic-loader.buildMaterials}/licenses \
+      "$out/share/licenses/sqlite3-dynamic/dynamic-sdk"
+    install -Dm644 ${sdk-dynamic-loader.compiler.licenseSource}/llvm/LICENSE.TXT \
+      "$out/share/licenses/sqlite3-dynamic/LLVM-LICENSE.TXT"
+    install -Dm644 ${sdk-dynamic-loader.compiler.licenseSource}/clang/LICENSE.TXT \
+      "$out/share/licenses/sqlite3-dynamic/Clang-LICENSE.TXT"
+    install -Dm644 ${sdk-dynamic-loader.compiler.licenseSource}/lld/LICENSE.TXT \
+      "$out/share/licenses/sqlite3-dynamic/LLD-LICENSE.TXT"
+    install -Dm644 ${llvm-runtimes.src}/compiler-rt/LICENSE.TXT \
+      "$out/share/licenses/sqlite3-dynamic/compiler-rt-LICENSE.TXT"
 
-        # sqlite3.src is the same fixed fetchzip source used by the existing
-        # sqlite3 package. Preserve the unpacked upstream tree and exact target
-        # configuration alongside the generated executable.
-        ln -s ${sourceTree} ${materialDir}/source-tree
-        ln -s ${sdk-dynamic-loader.buildMaterials} ${materialDir}/dynamic-sdk
-        cp ${sdk-dynamic-loader.configSite} ${materialDir}/config.site
-        cp config.log sqlite_cfg.h Makefile ${materialDir}/
-        cp ${./package.nix} ${materialDir}/
-        cat > ${materialDir}/build-parameters.txt <<EOF
+    # sqlite3.src is the same fixed fetchzip source used by the existing
+    # sqlite3 package. Preserve the source and target configuration with output.
+    ln -s ${sourceTree} "${materialDir}/source-tree"
+    ln -s ${sdk-dynamic-loader.buildMaterials} \
+      "${materialDir}/dynamic-sdk"
+    ln -s ${sdk-dynamic-loader.compiler.licenseSource} \
+      "${materialDir}/llvm-toolchain-source"
+    ln -s ${llvm-runtimes.src} \
+      "${materialDir}/llvm-runtimes-source"
+    cp ${sdk-dynamic-loader.configSite} \
+      "${materialDir}/config.site"
+    cp config.log sqlite_cfg.h Makefile libsqlite3.a sqlite3 sqlite3.pc \
+      ${./package.nix} ${../busybox/check-binary.mjs} \
+      ${../../packages/kernel/src/wasm_binary.ts} \
+      "${materialDir}/"
+    cp -r ${sdk}/share/linux-wasm-sdk/licenses \
+      "${materialDir}/standard-sdk-licenses"
+    cp -r ${sdk-dynamic-loader.buildMaterials}/licenses \
+      "${materialDir}/dynamic-sdk-licenses"
+    cat > "${materialDir}/build-parameters.txt" <<EOF
     source=SQLite ${sqlite3.version}; inherited from sqlite3.src
     source-tree=${sourceTree}
     CC=wasm-linux-dlopen-cc
@@ -121,14 +154,14 @@ pkgs.stdenvNoCC.mkDerivation {
     NM=${llvm-toolchain}/bin/llvm-nm
     CONFIG_SITE=${sdk-dynamic-loader.configSite}
     configure=./configure ${configureArgsText}
-    build=make -j$NIX_BUILD_CORES sqlite3
+    build=make -j$NIX_BUILD_CORES sqlite3 libsqlite3.a
     load-extension=enabled by the upstream target dlopen compile/link probe
     EOF
-        runHook postInstall
+    runHook postInstall
   '';
 
   meta = {
-    description = "SQLite batch CLI with dlopen-based extension loading for Linux/Wasm";
+    description = "SQLite CLI and static library with dlopen-based extension loading for Linux/Wasm";
     homepage = "https://sqlite.org/";
     license = lib.licenses.publicDomain;
   };
