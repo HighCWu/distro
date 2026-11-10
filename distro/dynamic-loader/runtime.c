@@ -9,6 +9,7 @@
 #include <fcntl.h>
 #include <link.h>
 #include <stdint.h>
+#include <signal.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -19,6 +20,113 @@
 
 int main_value = 5;
 static _Thread_local int main_tls_guard = 501;
+static int main_constructor_poll_calls;
+static volatile sig_atomic_t explicit_poll_alarm_seen;
+static void require(int condition, const char *message);
+
+#if __SIZEOF_POINTER__ == 8
+#define WASM_WORD_TYPE "i64"
+#else
+#define WASM_WORD_TYPE "i32"
+#endif
+__asm__(".globaltype __stack_pointer, " WASM_WORD_TYPE "\n"
+        ".globaltype __tls_base, " WASM_WORD_TYPE "\n");
+
+__attribute__((import_module("linux_user_poll_v1"), import_name("checkpoint")))
+extern int user_poll_checkpoint(void);
+
+__attribute__((export_name("__wasm_user_poll_abi"), no_sanitize("coverage")))
+int __wasm_user_poll_abi(void)
+{
+    return 1;
+}
+
+static uintptr_t wasm_stack_pointer(void)
+{
+    uintptr_t value;
+    __asm__ volatile("global.get __stack_pointer\nlocal.set %0" : "=r"(value) :: "memory");
+    return value;
+}
+
+static uintptr_t wasm_tls_base(void)
+{
+    uintptr_t value;
+    __asm__ volatile("global.get __tls_base\nlocal.set %0" : "=r"(value) :: "memory");
+    return value;
+}
+
+/* Called from reentrant-root's constructor while the loader is still running
+ * that graph's initialization pass. Keep the callback's TLS, errno, and Wasm
+ * execution globals stable across several explicit user-poll checkpoints. */
+int main_reentrant_poll_checkpoints(void)
+{
+    const int saved_errno = errno;
+    const int saved_tls_guard = main_tls_guard;
+    const uintptr_t saved_stack_pointer = wasm_stack_pointer();
+    const uintptr_t saved_tls_base = wasm_tls_base();
+    errno = EINTR;
+
+    for (unsigned i = 0; i < 4; ++i) {
+        if (user_poll_checkpoint() != 0) {
+            errno = saved_errno;
+            return -1;
+        }
+    }
+
+    const int state_preserved = errno == EINTR && main_tls_guard == saved_tls_guard &&
+                                wasm_stack_pointer() == saved_stack_pointer && wasm_tls_base() == saved_tls_base;
+    errno = saved_errno;
+    if (!state_preserved) return -1;
+
+    main_constructor_poll_calls++;
+    return 0;
+}
+
+static void explicit_poll_alarm_handler(int signal_number)
+{
+    (void)signal_number;
+    explicit_poll_alarm_seen = 1;
+}
+
+static void check_explicit_poll_signal_delivery(void)
+{
+    struct sigaction action = { .sa_handler = explicit_poll_alarm_handler };
+    struct sigaction previous_action;
+    sigemptyset(&action.sa_mask);
+    require(sigaction(SIGALRM, &action, &previous_action) == 0, "install explicit-poll SIGALRM handler");
+
+    explicit_poll_alarm_seen = 0;
+    (void)alarm(0);
+    require(alarm(1) == 0, "arm explicit-poll SIGALRM");
+
+    const int saved_errno = errno;
+    const int saved_tls_guard = main_tls_guard;
+    const uintptr_t saved_stack_pointer = wasm_stack_pointer();
+    const uintptr_t saved_tls_base = wasm_tls_base();
+    errno = EINTR;
+    int checkpoint_result = 0;
+    uint64_t checkpoint_count = 0;
+    while (!explicit_poll_alarm_seen && checkpoint_count < (UINT64_C(1) << 20)) {
+        checkpoint_result = user_poll_checkpoint();
+        if (checkpoint_result != 0) break;
+        checkpoint_count++;
+    }
+
+    // Capture before alarm(0): delivery caused by the cleanup syscall itself
+    // must not count as a checkpoint returning control to Linux.
+    const int delivered_during_checkpoint = explicit_poll_alarm_seen;
+    const int state_preserved = errno == EINTR && main_tls_guard == saved_tls_guard &&
+                                wasm_stack_pointer() == saved_stack_pointer && wasm_tls_base() == saved_tls_base;
+    (void)alarm(0);
+    errno = saved_errno;
+
+    require(checkpoint_result == 0, "explicit user-poll checkpoint returns zero");
+    require(delivered_during_checkpoint, "SIGALRM is delivered during an explicit checkpoint");
+    require(state_preserved, "explicit polling preserves errno, main TLS and Wasm stack/TLS globals");
+    require(checkpoint_count != 0, "explicit-poll loop executes checkpoints");
+    require(sigaction(SIGALRM, &previous_action, NULL) == 0, "restore prior SIGALRM handler");
+}
+
 struct TailChain {
     uint64_t Remaining;
     uint64_t Value;
@@ -106,6 +214,7 @@ static void copy_path_library(const char *destination)
 
 int main(void)
 {
+    require(__wasm_user_poll_abi() == 1, "user-poll ABI v1 export");
     require(!mount("proc", "/proc", "proc", 0, 0), "mount proc");
     int baseline = descriptors();
     void *self = dlopen(0, RTLD_NOW);
@@ -208,6 +317,8 @@ int main(void)
 
     void *recursive = dlopen("reentrant-root.so", RTLD_NOW | RTLD_GLOBAL);
     require(recursive != 0, "constructor can open a new graph");
+    require(main_constructor_poll_calls == 1 && *(int *)symbol(recursive, "reentrant_root_count") == 1,
+            "constructor callback performs explicit polling exactly once");
     void *recursive_leaf = dlopen("reentrant-leaf.so", RTLD_NOW | RTLD_NOLOAD);
     require(recursive_leaf != 0 && *(int *)symbol(recursive, "reentrant_root_errors") == 0 &&
             *(int *)symbol(recursive_leaf, "reentrant_leaf_errors") == 0,
@@ -222,6 +333,9 @@ int main(void)
             !dlclose(recursive) && !dlclose(recursive_leaf) && descriptors() == baseline,
             "recursive resident reuse and descriptor cleanup");
     puts("dynamic loader: constructor dlopen, nested rejection recovery and single initialization pass");
+
+    check_explicit_poll_signal_delivery();
+    puts("dynamic loader: explicit polling, signal delivery and constructor deferral pass");
 
     struct link_map *head = 0;
     require(!dlinfo(self, RTLD_DI_LINKMAP, &head) && head == (struct link_map *)self &&

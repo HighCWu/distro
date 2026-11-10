@@ -1,6 +1,8 @@
 // SPDX-License-Identifier: MIT
 #include <dlfcn.h>
 
+extern int main_reentrant_poll_checkpoints(void);
+
 int reentrant_root_count;
 int reentrant_root_value;
 int reentrant_root_observed;
@@ -11,6 +13,10 @@ __attribute__((constructor)) static void initialize(void)
 {
     reentrant_root_count++;
     reentrant_root_value = 20;
+    if (main_reentrant_poll_checkpoints() != 0) {
+        reentrant_root_errors = 4;
+        return;
+    }
     (void)dlerror();
     if (dlopen("reentrant-reject.so", RTLD_NOW) || !dlerror()) {
         reentrant_root_errors = 1;

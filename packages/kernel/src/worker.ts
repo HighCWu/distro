@@ -270,6 +270,15 @@ function user_imports({
       : undefined;
     let created: WebAssembly.Instance;
     let dynamic: ProcessDylink | undefined;
+    let dynamicOperationDepth = 0;
+    const dynamic_operation = <T>(invoke: () => T): T => {
+      dynamicOperationDepth++;
+      try {
+        return invoke();
+      } finally {
+        dynamicOperationDepth--;
+      }
+    };
     const control = (error: unknown) => error === HALT_KERNEL || error === HALT_USER;
     const file_kernel = (invoke: () => number): number => {
       try {
@@ -374,7 +383,7 @@ function user_imports({
           created.exports,
           context.memory,
           kernel_address,
-          !!context.dynamic,
+          dynamicOperationDepth !== 0,
           signal_depth !== 0,
         );
       const result = fork ? fork.kernelCall(invoke) : invoke();
@@ -392,11 +401,15 @@ function user_imports({
       linux_dlopen_v1: {
         abi: () => 1,
         link_map_abi: () => 1,
-        open: (path: WasmAddress, flags: number) => loader().open(path, flags),
-        symbol: (handle: WasmAddress, name: WasmAddress) => loader().symbol(handle, name),
-        address: (pointer: WasmAddress, info: WasmAddress) => loader().address(pointer, info),
-        valid: (handle: WasmAddress) => loader().valid(handle),
-        error: (pointer: WasmAddress, size: WasmAddress) => loader().error(pointer, size),
+        open: (path: WasmAddress, flags: number) =>
+          dynamic_operation(() => loader().open(path, flags)),
+        symbol: (handle: WasmAddress, name: WasmAddress) =>
+          dynamic_operation(() => loader().symbol(handle, name)),
+        address: (pointer: WasmAddress, info: WasmAddress) =>
+          dynamic_operation(() => loader().address(pointer, info)),
+        valid: (handle: WasmAddress) => dynamic_operation(() => loader().valid(handle)),
+        error: (pointer: WasmAddress, size: WasmAddress) =>
+          dynamic_operation(() => loader().error(pointer, size)),
       },
       env: { memory: context.memory },
       linux_fork_v1: {

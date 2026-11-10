@@ -215,13 +215,32 @@ test("poll admission requires explicit ABI/globals and a separate fork compositi
   const text = (value: string) => [value.length, ...new TextEncoder().encode(value)];
   const section = (id: number, bytes: number[]) => [id, ...leb(bytes.length), ...bytes];
   const leb = (n: number): number[] => (n < 128 ? [n] : [(n & 127) | 128, ...leb(n >>> 7)]);
-  for (const variant of ["normal", "no-abi", "fork", "fork-poll", "dynamic", "unknown"] as const) {
+  const dynamic_exports = [
+    "__wasm_dlopen_io_v1",
+    "__wasm_dlopen_read",
+    "__wasm_dlopen_read_release",
+    "__wasm_dlopen_origin",
+    "__wasm_dlopen_fd",
+    "__wasm_dlopen_allocate",
+    "__wasm_dlopen_deallocate",
+    "__wasm_dlopen_library_path",
+  ] as const;
+  for (const variant of [
+    "normal",
+    "no-abi",
+    "fork",
+    "fork-poll",
+    "dynamic-incomplete",
+    "dynamic-poll",
+    "unknown",
+  ] as const) {
+    const has_dynamic_import = variant === "dynamic-incomplete" || variant === "dynamic-poll";
     const imports = [
       ...text("linux_user_poll_v1"),
       ...text(variant === "unknown" ? "future" : "checkpoint"),
       0,
       0,
-      ...(variant === "dynamic" ? [...text("linux_dlopen_v1"), ...text("abi"), 0, 0] : []),
+      ...(has_dynamic_import ? [...text("linux_dlopen_v1"), ...text("abi"), 0, 0] : []),
     ];
     const exports = [
       ...text("__tls_base"),
@@ -233,6 +252,9 @@ test("poll admission requires explicit ABI/globals and a separate fork compositi
       ...(variant !== "no-abi" ? [...text("__wasm_user_poll_abi"), 0, 0] : []),
       ...(["fork", "fork-poll"].includes(variant) ? [...text("__wasm_fork_abi"), 0, 0] : []),
       ...(variant === "fork-poll" ? [...text("__wasm_fork_user_poll_abi"), 0, 0] : []),
+      ...(variant === "dynamic-poll"
+        ? dynamic_exports.flatMap((name) => [...text(name), 0, 1])
+        : []),
     ];
     const module = new WebAssembly.Module(
       new Uint8Array([
@@ -245,17 +267,25 @@ test("poll admission requires explicit ABI/globals and a separate fork compositi
         0,
         0,
         ...section(1, [1, 0x60, 0, 1, 0x7f]),
-        ...section(2, [variant === "dynamic" ? 2 : 1, ...imports]),
+        ...section(2, [has_dynamic_import ? 2 : 1, ...imports]),
         ...section(6, [2, 0x7f, 1, 0x41, 0, 0x0b, 0x7f, 1, 0x41, 0, 0x0b]),
         ...section(7, [
-          variant === "no-abi" ? 2 : variant === "fork" ? 4 : variant === "fork-poll" ? 5 : 3,
+          variant === "dynamic-poll"
+            ? 3 + dynamic_exports.length
+            : variant === "no-abi"
+              ? 2
+              : variant === "fork"
+                ? 4
+                : variant === "fork-poll"
+                  ? 5
+                  : 3,
           ...exports,
         ]),
       ]),
     );
     assert.equal(
       user_module_imports_supported(module),
-      variant === "normal" || variant === "fork-poll",
+      variant === "normal" || variant === "fork-poll" || variant === "dynamic-poll",
       variant,
     );
   }

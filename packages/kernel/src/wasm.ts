@@ -202,7 +202,6 @@ export function user_module_imports_supported(module: WebAssembly.Module): boole
   )
     return false;
   if (poll1 || poll2) {
-    if (imports.some((entry) => entry.module === "linux_dlopen_v1")) return false;
     const exports = WebAssembly.Module.exports(module);
     if (
       exports.some((entry) => entry.name === "__wasm_fork_abi") ||
