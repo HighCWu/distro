@@ -330,6 +330,10 @@ lib.makeScope (scope: lib.callPackageWith ({ inherit lib pkgs; } // scope)) (
       vm-test = vmTestWasm64;
       busybox = self.busybox-wasm64;
     };
+    linux64-abi-dynamic-wasm64 = callPackage ./linux64-abi/dynamic.nix {
+      linux64Abi = self.linux64-abi-wasm64;
+      vm-test = vmTestWasm64;
+    };
     sdk-elf-container-wasm64 = self.sdk-wasm64.override {
       elfContainer = true;
       vm-test = vmTestElfContainerWasm64;
