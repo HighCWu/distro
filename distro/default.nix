@@ -1826,6 +1826,21 @@ lib.makeScope (scope: lib.callPackageWith ({ inherit lib pkgs; } // scope)) (
       busybox = self.busybox-wasm64;
       vm-test = vmTestWasm64;
     };
+    xz-threads = callPackage ./xz-threads/package.nix {
+      extraChecks.both = pkgs.runCommand "xz-threads-check-both" { passthru.ci.heavy = true; } ''
+        test -e ${self.xz-threads.checks.runtime}
+        test -e ${self.xz-threads-wasm64.checks.runtime}
+        touch $out
+      '';
+    };
+    xz-threads-wasm64 = self.xz-threads.override {
+      stdenv = self.stdenv-wasm64;
+      platform = self.platform-wasm64;
+      sdk = self.sdk-wasm64;
+      xz = self.xz-wasm64;
+      vm-test = vmTestWasm64;
+      extraChecks = { };
+    };
     zlib = callPackage ./zlib/package.nix { };
     zlib-wasm64 = self.zlib.override {
       stdenv = self.stdenv-wasm64;
