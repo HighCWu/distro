@@ -1518,6 +1518,22 @@ lib.makeScope (scope: lib.callPackageWith ({ inherit lib pkgs; } // scope)) (
       openssl = self.openssl-wasm64;
       vm-test = vmTestWasm64;
     };
+    gawk-fork = callPackage ./gawk-fork/package.nix {
+      extraChecks.both = pkgs.runCommand "gawk-fork-check-both" { passthru.ci.heavy = true; } ''
+        test -e ${self.gawk-fork.checks.runtime}
+        test -e ${self.gawk-fork-wasm64.checks.runtime}
+        touch $out
+      '';
+    };
+    gawk-fork-wasm64 = self.gawk-fork.override {
+      platform = self.platform-wasm64;
+      sdk = self.sdk-wasm64;
+      sdk-fork-automatic = self.sdk-fork-automatic-wasm64;
+      llvm-toolchain = self.llvm-toolchain-wasm64;
+      busybox = self.busybox-wasm64;
+      vm-test = vmTestWasm64;
+      extraChecks = { };
+    };
     grep = callPackage ./grep/package.nix { };
     jq = callPackage ./jq/package.nix { };
     less = callPackage ./less/package.nix { };
