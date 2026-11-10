@@ -20,8 +20,8 @@
     inherit pkgs;
     owner = "HighCWu";
     repo = "linux";
-    rev = "031d284f4d88dfdff8289a7a5e5d541364c5db95";
-    hash = "sha256-gZGtLg2LVfH2bDhlgT+mj+Hz/A7nrGo7bljUQUsfTV4=";
+    rev = "3535ad2adeba982976ce62af048bf874e8c9e01b";
+    hash = "sha256-GFe6Xats/xAJGKhaX0qo0JgHRapKcE0S4wVX/6T5Vno=";
   },
 }:
 
@@ -181,6 +181,8 @@ pkgs.stdenvNoCC.mkDerivation (finalAttrs: {
       fi
     done
     grep -qx 'CONFIG_FSNOTIFY=y' .config
+    grep -qx 'CONFIG_EXT4_FS_POSIX_ACL=y' .config
+    grep -qx 'CONFIG_FS_POSIX_ACL=y' .config
     grep -qx 'CONFIG_IPV6=y' .config
     grep -qx 'CONFIG_SYSVIPC=y' .config
     grep -qx 'CONFIG_FUSE_PASSTHROUGH=y' .config
