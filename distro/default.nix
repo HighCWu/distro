@@ -1933,6 +1933,23 @@ lib.makeScope (scope: lib.callPackageWith ({ inherit lib pkgs; } // scope)) (
       busybox = self.busybox-wasm64;
       vm-test = vmTestWasm64;
     };
+    zstd-threads = callPackage ./zstd-threads/package.nix {
+      extraChecks.both = pkgs.runCommand "zstd-threads-check-both" { passthru.ci.heavy = true; } ''
+        test -e ${self.zstd-threads.checks.runtime}
+        test -e ${self.zstd-threads-wasm64.checks.runtime}
+        touch $out
+      '';
+    };
+    zstd-threads-wasm64 = self.zstd-threads.override {
+      stdenv = self.stdenv-wasm64;
+      platform = self.platform-wasm64;
+      sdk = self.sdk-wasm64;
+      zstd = self.zstd-wasm64;
+      llvm-toolchain = self.llvm-toolchain-wasm64;
+      busybox = self.busybox-wasm64;
+      vm-test = vmTestWasm64;
+      extraChecks = { };
+    };
     zstd = callPackage ./zstd/package.nix {
       vm-test-closed = vmTestClosed32;
       vm-test-file = self.vm-test.override {
