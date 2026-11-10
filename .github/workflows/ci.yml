@@ -18,6 +18,11 @@ on:
         required: false
         type: boolean
         default: false
+      sdk-export-include-runtime:
+        description: Include the matching wasm64 kernel and Node VM runner in the SDK archive
+        required: false
+        type: boolean
+        default: false
       sdk-export-profile:
         description: Public Wasm64 SDK profile to export
         required: false
@@ -88,10 +93,11 @@ jobs:
             nix-wasm64-v2-${{ runner.os }}-
             nix-ci-${{ runner.os }}-
           gc-max-store-size-linux: 9G
-      - name: Build the allowlisted public SDK
+      - name: Build the selected public SDK and optional runtime assets
         id: sdk
         env:
           SDK_EXPORT_PROFILE: ${{ inputs['sdk-export-profile'] }}
+          SDK_EXPORT_INCLUDE_RUNTIME: ${{ inputs['sdk-export-include-runtime'] }}
         run: |
           set -euo pipefail
           case "$SDK_EXPORT_PROFILE" in
@@ -108,19 +114,38 @@ jobs:
             exit 1
           fi
           printf 'sdk_path=%s\n' "${sdk_paths[0]}" >> "$GITHUB_OUTPUT"
-      - name: Export only the selected SDK store closure
+          if [[ "$SDK_EXPORT_INCLUDE_RUNTIME" == true ]]; then
+            runtime_paths_file="$RUNNER_TEMP/runtime-assets-paths.txt"
+            nix build --accept-flake-config --no-link --print-out-paths --print-build-logs \
+              '.#runtime-assets-wasm64' > "$runtime_paths_file"
+            mapfile -t runtime_paths < "$runtime_paths_file"
+            if [[ ${#runtime_paths[@]} -ne 1 ]]; then
+              echo "expected exactly one wasm64 runtime-assets output path" >&2
+              exit 1
+            fi
+            printf 'runtime_path=%s\n' "${runtime_paths[0]}" >> "$GITHUB_OUTPUT"
+          fi
+      - name: Export the SDK closure and optional runtime assets
         env:
           SDK_PATH: ${{ steps.sdk.outputs.sdk_path }}
           SDK_PROFILE: ${{ inputs['sdk-export-profile'] }}
+          INCLUDE_RUNTIME: ${{ inputs['sdk-export-include-runtime'] }}
+          RUNTIME_PATH: ${{ steps.sdk.outputs.runtime_path }}
           GITHUB_SHA: ${{ github.sha }}
           OUTPUT_DIR: ${{ runner.temp }}/sdk-closure
         run: |
           set -euo pipefail
-          bash scripts/export-sdk-closure.sh \
-            --sdk-path "$SDK_PATH" \
-            --profile "$SDK_PROFILE" \
-            --github-sha "$GITHUB_SHA" \
+          args=(
+            --sdk-path "$SDK_PATH"
+            --profile "$SDK_PROFILE"
+            --github-sha "$GITHUB_SHA"
             --output-dir "$OUTPUT_DIR"
+          )
+          if [[ "$INCLUDE_RUNTIME" == true ]]; then
+            [[ -n "$RUNTIME_PATH" ]]
+            args+=(--runtime-path "$RUNTIME_PATH")
+          fi
+          bash scripts/export-sdk-closure.sh "${args[@]}"
       - uses: actions/upload-artifact@v4
         with:
           name: sdk-closure-${{ inputs['sdk-export-profile'] }}-${{ github.sha }}

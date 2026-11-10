@@ -110,6 +110,11 @@ lib.makeScope (scope: lib.callPackageWith ({ inherit lib pkgs; } // scope)) (
     bytes = callPackage ./npm/bytes.nix { };
     kernel = callPackage ./npm/kernel.nix { };
     kernel-wasm64 = self.kernel.override { linux = self.linux-wasm64; };
+    runtime-assets-wasm64 = callPackage ./runtime-assets/package.nix {
+      platform = self.platform-wasm64;
+      kernel = self.kernel-wasm64;
+      vm-test = vmTestWasm64;
+    };
     musl = callPackage ./musl/package.nix { };
     musl-wasm64 = self.musl.override { wasmBits = 64; };
     sysroot-base = callPackage ./sysroot-base/package.nix { };
