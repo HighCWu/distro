@@ -112,6 +112,16 @@ for (const width of [32, 64]) {
       ["linux.syscall:function", "linux.syscall_v2:function"],
     );
     await t.test("library polling ABI 2 preserves its imported global contract", (pollTest) => {
+      const version = spawnSync(compiler, ["--version"], { encoding: "utf8" });
+      assert.equal(version.status, 0, version.stderr || String(version.error));
+      // This linker's corrupted import names can contain valid UTF-8 too.
+      // Detect the affected version before trusting either form of its output.
+      if (/clang version 18\./.test(`${version.stdout}${version.stderr}`)) {
+        pollTest.skip(
+          "Clang 18's Wasm linker corrupts imported mutable-global names; use the fixed candidate linker",
+        );
+        return;
+      }
       const forkPollObject = join(dir, "fork-poll.o"),
         userPollObject = join(dir, "user-poll-v2.o"),
         instrumentedRawObject = join(dir, "raw-poll.o");
@@ -138,23 +148,7 @@ for (const width of [32, 64]) {
         pointerType = width === 64 ? "i64" : "i32",
         pointerZero = width === 64 ? 0n : 0,
         pollGlobals = [];
-      let pollV2Module;
-      try {
-        pollV2Module = new WebAssembly.Module(pollV2Bytes);
-      } catch (error) {
-        const version = spawnSync(compiler, ["--version"], { encoding: "utf8" });
-        if (
-          error instanceof WebAssembly.CompileError &&
-          /no valid UTF-8 string/.test(error.message) &&
-          /clang version 18\./.test(`${version.stdout}${version.stderr}`)
-        ) {
-          pollTest.skip(
-            "Clang 18's wasm-ld emits malformed module names for imported mutable globals; this ABI check requires a fixed Wasm linker",
-          );
-          return;
-        }
-        throw error;
-      }
+      const pollV2Module = new WebAssembly.Module(pollV2Bytes);
       read_wasm_memories(pollV2Bytes, pollGlobals);
       assert.deepEqual(pollGlobals, [
         {
