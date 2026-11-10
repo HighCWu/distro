@@ -95,6 +95,8 @@ test("dladdr follows canonical plugin and main function slots across Wasm export
   const descriptor = new DataView(memory.buffer);
   let allocation = 8192;
   let pluginBase = 0;
+  let fileInode = 2n;
+  let fileReads = 0;
   const exports = Object.assign({}, mainInstance.exports, {
     __wasm_dlopen_io_v1: () => 1,
     __wasm_dlopen_allocate: (size: number, alignment = 1) => {
@@ -107,10 +109,11 @@ test("dladdr follows canonical plugin and main function slots across Wasm export
     },
     __wasm_dlopen_deallocate: () => {},
     __wasm_dlopen_read: () => {
+      fileReads++;
       descriptor.setBigUint64(descriptorAddress, BigInt(pluginAddress), true);
       descriptor.setBigUint64(descriptorAddress + 8, BigInt(picPlugin.length), true);
       descriptor.setBigUint64(descriptorAddress + 16, 1n, true);
-      descriptor.setBigUint64(descriptorAddress + 24, 2n, true);
+      descriptor.setBigUint64(descriptorAddress + 24, fileInode, true);
       descriptor.setBigUint64(descriptorAddress + 32, 0n, true);
       return descriptorAddress;
     },
@@ -233,4 +236,26 @@ test("dladdr follows canonical plugin and main function slots across Wasm export
     symbol: "dladdr_runtime_main_data",
     symbolAddress: mainDataPointer,
   });
+
+  writeString(memory, pathAddress, "/proc/self/fd/9");
+  fileInode = 3n;
+  const firstDescriptorObject = process.open(pathAddress, 2);
+  assert.notEqual(firstDescriptorObject, 0);
+  assert.notEqual(firstDescriptorObject, handle);
+  const readsBeforeReopen = fileReads;
+  assert.equal(process.open(pathAddress, 2), firstDescriptorObject);
+  assert.equal(fileReads, readsBeforeReopen + 1, "descriptor reopen checks the current inode");
+  const firstDescriptorFunction = lookup(Number(firstDescriptorObject), "dladdr_plugin_function");
+  fileInode = 4n;
+  const secondDescriptorObject = process.open(pathAddress, 2);
+  assert.notEqual(secondDescriptorObject, 0);
+  assert.notEqual(
+    secondDescriptorObject,
+    firstDescriptorObject,
+    "reused fd names do not alias a different inode",
+  );
+  const secondDescriptorFunction = lookup(Number(secondDescriptorObject), "dladdr_plugin_function");
+  assert.notEqual(secondDescriptorFunction, firstDescriptorFunction);
+  assert.equal((table.get(firstDescriptorFunction) as (value: number) => number)(5), 22);
+  assert.equal((table.get(secondDescriptorFunction) as (value: number) => number)(5), 22);
 });

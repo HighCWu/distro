@@ -71,10 +71,9 @@ int main_next_lookup(int value)
 {
     return main_private_next_lookup(value);
 }
-static void copy_path_library(const char *destination)
+static void copy_library_to_fd(int target)
 {
     int source = open("/plugins/path-library.so", O_RDONLY | O_CLOEXEC);
-    int target = open(destination, O_WRONLY | O_CREAT | O_EXCL | O_CLOEXEC, 0600);
     require(source >= 0 && target >= 0, "byte-named library files");
     char bytes[4096];
     for (;;) {
@@ -89,7 +88,13 @@ static void copy_path_library(const char *destination)
             offset += written;
         }
     }
-    require(!close(target) && !close(source), "copy library descriptors close");
+    require(!close(source), "copy library source closes");
+}
+static void copy_path_library(const char *destination)
+{
+    int target = open(destination, O_WRONLY | O_CREAT | O_EXCL | O_CLOEXEC, 0600);
+    copy_library_to_fd(target);
+    require(!close(target), "copy library destination closes");
 }
 
 int main(void)
@@ -280,6 +285,34 @@ int main(void)
     }
     require(descriptors() == baseline, "byte-path temporary descriptor cleanup");
     puts("dynamic loader: byte-preserving filenames, BOM search and Unicode metadata pass");
+
+    void *anonymous_objects[2];
+    int descriptor_number = -1;
+    for (unsigned i = 0; i < 2; i++) {
+        int fd = syscall(SYS_memfd_create, (long)(uintptr_t)"dynamic-module", 1L);
+        require(fd >= 0, "create anonymous dynamic module");
+        if (!i) descriptor_number = fd;
+        require(fd == descriptor_number, "reuse the same descriptor pathname for a new inode");
+        copy_library_to_fd(fd);
+        char path[64];
+        int length = snprintf(path, sizeof path, "/proc/self/fd/%d", fd);
+        require(length > 0 && (size_t)length < sizeof path, "format descriptor pathname");
+        anonymous_objects[i] = dlopen(path, RTLD_NOW | RTLD_LOCAL);
+        require(anonymous_objects[i] != NULL, "load anonymous module through its open descriptor");
+        int (*value)(void) = symbol(anonymous_objects[i], "path_library_value");
+        int (*instances)(void) = symbol(anonymous_objects[i], "path_library_count");
+        require(value() == 42 && instances() == 1, "anonymous module constructor runs once");
+        require(dlopen(path, RTLD_NOW | RTLD_NOLOAD) == anonymous_objects[i],
+                "live descriptor reuses the pinned inode");
+        require(!close(fd), "close anonymous source descriptor");
+        require(value() == 42 && instances() == 1, "resident module survives source descriptor close");
+    }
+    require(anonymous_objects[0] != anonymous_objects[1] &&
+            symbol(anonymous_objects[0], "path_library_value") != symbol(anonymous_objects[1], "path_library_value"),
+            "reused descriptor loads distinct code identities");
+    require(!dlclose(anonymous_objects[0]) && !dlclose(anonymous_objects[1]) && descriptors() == baseline,
+            "anonymous module descriptor cleanup");
+    puts("dynamic loader: anonymous descriptor loading, inode reuse and resident close pass");
 
     void *next_front = dlopen("next-front.so", RTLD_NOW | RTLD_GLOBAL);
     require(next_front != NULL, "load ordered NEXT dependency chain");

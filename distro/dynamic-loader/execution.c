@@ -9,6 +9,7 @@
 #include <stddef.h>
 #include <stdint.h>
 #include <stdlib.h>
+#include <string.h>
 #include <sys/auxv.h>
 #include <sys/stat.h>
 #include <sys/statvfs.h>
@@ -100,7 +101,23 @@ uintptr_t __wasm_dlopen_read(const char *path)
 	}
 	if (!realpath(path, origin)) {
 		error = errno;
-		goto done;
+		/* Anonymous and unlinked files remain openable through procfs even
+		 * though their magic-link target has no filesystem pathname. Keep
+		 * the descriptor pathname as the object's loader origin in that case.
+		 * File identity and admission still come from the opened descriptor. */
+		const char *number = !strncmp(path, "/proc/self/fd/", 14) ? path + 14 :
+		                     !strncmp(path, "/dev/fd/", 8) ? path + 8 : 0;
+		if (error != ENOENT || !number || !*number) goto done;
+		for (const char *digit = number; *digit; digit++) {
+			if (*digit < '0' || *digit > '9') goto done;
+		}
+		size_t length = strlen(path);
+		if (length >= sizeof origin) {
+			error = ENAMETOOLONG;
+			goto done;
+		}
+		memcpy(origin, path, length + 1);
+		error = 0;
 	}
 	size_t size = status.st_size;
 	data = malloc(size);

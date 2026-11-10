@@ -9,6 +9,7 @@
 #include <string.h>
 #include <sys/auxv.h>
 #include <sys/statvfs.h>
+#include <sys/mman.h>
 #include <unistd.h>
 
 static int interrupt_read, eof_read, fail_allocation, noexec, secure;
@@ -86,6 +87,16 @@ int main(int argc, char **argv)
 	       !strcmp((const char *)__wasm_dlopen_origin(), raw_name));
 	__wasm_dlopen_read_release();
 	assert(!unlink(raw_name) && descriptor_count() == baseline);
+	int anonymous = memfd_create("loader-origin", MFD_CLOEXEC);
+	assert(anonymous >= 0 && write(anonymous, "anonymous", 9) == 9);
+	char descriptor_path[64];
+	int path_length = snprintf(descriptor_path, sizeof descriptor_path, "/proc/self/fd/%d", anonymous);
+	assert(path_length > 0 && (size_t)path_length < sizeof descriptor_path);
+	result = (void *)__wasm_dlopen_read(descriptor_path);
+	assert(!result[4] && result[1] == 9 && !memcmp((void *)(uintptr_t)result[0], "anonymous", 9));
+	assert(!strcmp((const char *)__wasm_dlopen_origin(), descriptor_path));
+	__wasm_dlopen_read_release();
+	assert(!close(anonymous) && descriptor_count() == baseline);
 	rejection(argv[3], EFBIG); /* Empty regular file. */
 	rejection(argv[4], ENOENT);
 	noexec = 1;

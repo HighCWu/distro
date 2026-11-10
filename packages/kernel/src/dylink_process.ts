@@ -479,7 +479,10 @@ export class ProcessDylink {
       };
       let newBytes = 0;
       const find = (name: string, parent?: File): File => {
-        const existing = aliases.get(name);
+        // Descriptor names can refer to a different inode after close/reuse.
+        // Always reopen them and deduplicate by the pinned file identity.
+        const descriptorPath = /^\/(?:proc\/self\/fd|dev\/fd)\/[0-9]+$/.test(name);
+        const existing = descriptorPath ? undefined : aliases.get(name);
         if (existing && local.has(existing)) return local.get(existing)!;
         const origin = parent ? parent.path.slice(0, parent.path.lastIndexOf("/")) || "/" : ".";
         const runtimePaths =
@@ -494,13 +497,15 @@ export class ProcessDylink {
             ].map((directory) => `${directory || "."}/${name}`);
         let failure: unknown = new Error(`dynamic library not found: ${name}`);
         for (const candidate of candidates) {
-          const known = aliases.get(candidate);
+          const known = descriptorPath ? undefined : aliases.get(candidate);
           if (known && local.has(known)) return local.get(known)!;
           try {
             const file = this.#read(candidate, local);
             if (local.has(file.key)) {
-              aliases.set(candidate, file.key);
-              if (!aliases.has(name)) aliases.set(name, file.key);
+              if (!descriptorPath) {
+                aliases.set(candidate, file.key);
+                if (!aliases.has(name)) aliases.set(name, file.key);
+              }
               return local.get(file.key)!;
             }
             newBytes += file.bytes.length;
@@ -510,10 +515,12 @@ export class ProcessDylink {
             }
             pins.push(file.pin);
             local.set(file.key, file);
-            aliases.set(candidate, file.key);
-            if (!aliases.has(name)) aliases.set(name, file.key);
-            const basename = file.path.slice(file.path.lastIndexOf("/") + 1);
-            if (!aliases.has(basename)) aliases.set(basename, file.key);
+            if (!descriptorPath) {
+              aliases.set(candidate, file.key);
+              if (!aliases.has(name)) aliases.set(name, file.key);
+              const basename = file.path.slice(file.path.lastIndexOf("/") + 1);
+              if (!aliases.has(basename)) aliases.set(basename, file.key);
+            }
             return file;
           } catch (error) {
             if (!(error instanceof DylinkSearchMiss)) throw error;
