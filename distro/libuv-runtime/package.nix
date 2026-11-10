@@ -27,15 +27,23 @@ pkgs.stdenvNoCC.mkDerivation (finalAttrs: {
     llvm-toolchain
     pkgs.cmake
     pkgs.ninja
+    pkgs.patch
     pkgs.nodejs
   ];
 
   buildPhase = ''
     runHook preBuild
 
+    # Keep the pinned source immutable and apply the Wasm pthread ABI shim to
+    # a local copy before building libuv.
+    mkdir libuv-source
+    cp -r "$src"/. libuv-source/
+    chmod -R u+w libuv-source
+    patch -d libuv-source -p1 < ${./wasm-thread-entry.patch}
+
     # Use the automatic fork profile for the main consumer. uv_spawn runs in
     # stage one before libuv's filesystem worker pool has started.
-    cmake -S "$src" -B build -G Ninja \
+    cmake -S libuv-source -B build -G Ninja \
       -DCMAKE_SYSTEM_NAME=Linux \
       -DCMAKE_SYSTEM_PROCESSOR=${platform.wasmArch} \
       -DCMAKE_C_COMPILER=${sdk-fork-automatic}/bin/wasm-linux-fork-cc \
@@ -76,8 +84,8 @@ pkgs.stdenvNoCC.mkDerivation (finalAttrs: {
     mkdir -p "$notices" "$materials"
     install -Dm644 "$src/LICENSE" "$notices/libuv-LICENSE"
     install -Dm644 ${../sdk/LICENSE.MIT} "$notices/LOCAL-ADDITIONS.MIT"
-    cp -r ${sdk}/share/linux-wasm-sdk/licenses "$notices/standard-sdk"
-    cp -r ${sdk}/share/linux-wasm-sdk/licenses "$materials/standard-sdk-licenses"
+    cp -rL ${sdk}/share/linux-wasm-sdk/licenses "$notices/standard-sdk"
+    cp -rL ${sdk}/share/linux-wasm-sdk/licenses "$materials/standard-sdk-licenses"
     install -Dm644 ${sdk-fork-automatic.buildMaterials}/licenses/SDK-MIT.txt \
       "$notices/FORK-SDK-MIT.txt"
     install -Dm644 ${sdk-fork-automatic.buildMaterials}/licenses/Binaryen-LICENSE \
@@ -90,6 +98,7 @@ pkgs.stdenvNoCC.mkDerivation (finalAttrs: {
       "$notices/LLD-LICENSE.TXT"
 
     cp ${./package.nix} ${./helper.c} ${./runtime.c} ${./runtime-test.sh} \
+      ${./wasm-thread-entry.patch} \
       ${../busybox/check-binary.mjs} ${../../packages/kernel/src/wasm_binary.ts} \
       build/CMakeCache.txt "$materials/"
     ln -s "$src" "$materials/source"

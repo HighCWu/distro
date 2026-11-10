@@ -1,0 +1,67 @@
+--- a/src/unix/thread.c
++++ b/src/unix/thread.c
+@@ -130,6 +130,26 @@
+ }
+ 
+ 
++#if defined(__wasm__)
++struct uv__thread_start_info {
++  void (*entry)(void *arg);
++  void *arg;
++};
++
++static void *uv__thread_start(void *arg) {
++  struct uv__thread_start_info *info;
++  void (*entry)(void *arg);
++  void *entry_arg;
++
++  info = arg;
++  entry = info->entry;
++  entry_arg = info->arg;
++  uv__free(info);
++  entry(entry_arg);
++  return NULL;
++}
++#endif
++
+ int uv_thread_detach(uv_thread_t *tid) {
+   return UV__ERR(pthread_detach(*tid));
+ }
+@@ -146,11 +166,15 @@
+   size_t stack_size;
+   size_t min_stack_size;
+ 
++#if !defined(__wasm__)
+   /* Used to squelch a -Wcast-function-type warning. */
+   union {
+     void (*in)(void*);
+     void* (*out)(void*);
+   } f;
++#else
++  struct uv__thread_start_info *start_info;
++#endif
+ 
+   stack_size =
+       params->flags & UV_THREAD_HAS_STACK_SIZE ? params->stack_size : 0;
+@@ -177,8 +201,21 @@
+       abort();
+   }
+ 
++#if defined(__wasm__)
++  start_info = uv__malloc(sizeof(*start_info));
++  if (start_info == NULL) {
++    err = ENOMEM;
++  } else {
++    start_info->entry = entry;
++    start_info->arg = arg;
++    err = pthread_create(tid, attr, uv__thread_start, start_info);
++    if (err)
++      uv__free(start_info);
++  }
++#else
+   f.in = entry;
+   err = pthread_create(tid, attr, f.out, arg);
++#endif
+ 
+   if (attr != NULL)
+     pthread_attr_destroy(attr);
