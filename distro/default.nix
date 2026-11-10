@@ -1425,6 +1425,28 @@ lib.makeScope (scope: lib.callPackageWith ({ inherit lib pkgs; } // scope)) (
       busybox = self.busybox-wasm64;
       vm-test = vmTestWasm64;
     };
+    coreutils-timeout-fork = callPackage ./coreutils-timeout-fork/package.nix {
+      extraChecks.both =
+        pkgs.runCommand "coreutils-timeout-fork-check-both" { passthru.ci.heavy = true; }
+          ''
+            test -e ${self.fork-poll-automatic-libc.checks.both}
+            test -e ${self.coreutils-timeout-fork.checks.runtime}
+            test -e ${self.coreutils-timeout-fork-wasm64.checks.runtime}
+            touch $out
+          '';
+    };
+    coreutils-timeout-fork-wasm64 = self.coreutils-timeout-fork.override {
+      platform = self.platform-wasm64;
+      coreutils = self.coreutils;
+      sdk = self.sdk-wasm64;
+      sdk-fork-automatic-poll-libc = self.sdk-fork-automatic-poll-libc-wasm64;
+      llvm-toolchain = self.llvm-toolchain-wasm64;
+      musl = self.musl-wasm64;
+      llvm-runtimes = self.llvm-runtimes-wasm64;
+      busybox = self.busybox-wasm64;
+      vm-test = vmTestWasm64;
+      extraChecks = { };
+    };
     curl = callPackage ./curl/package.nix { };
     curl-wasm64 = self.curl.override {
       stdenv = self.stdenv-wasm64;
