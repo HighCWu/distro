@@ -45,6 +45,8 @@ test("BusyBox fork recipe uses upstream sources and an isolated install prefix",
 
   assert.match(configure, /^config BUSYBOX y$/m);
   assert.match(configure, /^config SHOW_USAGE y$/m);
+  assert.match(configure, /^config FEATURE_ALLOW_EXEC y$/m);
+  assert.match(phase("configurePhase"), /grep -qx 'CONFIG_FEATURE_ALLOW_EXEC=y' \.config/);
 
   assert.match(
     recipe,

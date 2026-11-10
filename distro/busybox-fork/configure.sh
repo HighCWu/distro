@@ -77,5 +77,6 @@ config FEATURE_XARGS_SUPPORT_QUOTES y
 config FEATURE_XARGS_SUPPORT_ZERO_TERM y
 config FEATURE_XARGS_SUPPORT_PARALLEL y
 config FEATURE_AWK_LIBM y
+config FEATURE_ALLOW_EXEC y
 
 printf '%s\n' 'busybox-fork: configured .config; run make oldconfig in the package recipe'

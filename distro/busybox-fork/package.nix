@@ -60,6 +60,7 @@ pkgs.stdenvNoCC.mkDerivation (finalAttrs: {
     sh ${./configure.sh}
     make -j$NIX_BUILD_CORES ${lib.escapeShellArgs finalAttrs.makeFlags} oldconfig
     grep -qx '# CONFIG_NOMMU is not set' .config
+    grep -qx 'CONFIG_FEATURE_ALLOW_EXEC=y' .config
     grep -qx 'CONFIG_STATIC=y' .config
     grep -qx 'CONFIG_INSTALL_NO_USR=y' .config
     grep -Fx 'CONFIG_BUSYBOX_EXEC_PATH="/opt/busybox-fork/bin/busybox"' .config
