@@ -56,6 +56,7 @@ pkgs.stdenvNoCC.mkDerivation (
       CFLAGS=${lib.optionalString debug "-g"}${
         lib.optionalString (!deduplicateMmapSearch) " -DWASM_MMAP_DEDUP_SEARCH=0"
       }${lib.optionalString enableForkContinuation " -DWASM_FORK_CONTINUATION=1"}${lib.optionalString enableDynamicLoader " -fvisibility=default -DWASM_DYNAMIC_LOADER=1"}${lib.optionalString enableBrkSyscall " -DWASM_BRK_SYSCALL=1"}${lib.optionalString enableCooperativePoll " -fsanitize-coverage=trace-pc,no-prune,edge"}${lib.optionalString linux64Abi " -mabi=linux64"}
+      ${lib.optionalString linux64Abi "CFLAGS_ALL += --target=${platform.targetTriple}"}
       EOF
 
       ${lib.optionalString enableCooperativePoll ''
