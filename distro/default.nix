@@ -1957,6 +1957,25 @@ lib.makeScope (scope: lib.callPackageWith ({ inherit lib pkgs; } // scope)) (
       vm-test = vmTestWasm64;
       busybox = self.busybox-wasm64;
     };
+    tmux-fork = callPackage ./tmux-fork/package.nix {
+      extraChecks.both = pkgs.runCommand "tmux-fork-check-both" { passthru.ci.heavy = true; } ''
+        test -e ${self.tmux-fork.checks.runtime}
+        test -e ${self.tmux-fork-wasm64.checks.runtime}
+        touch $out
+      '';
+    };
+    tmux-fork-wasm64 = self.tmux-fork.override {
+      platform = self.platform-wasm64;
+      sdk-fork-automatic-poll-libc = self.sdk-fork-automatic-poll-libc-wasm64;
+      llvm-toolchain = self.llvm-toolchain-wasm64;
+      llvm-runtimes = self.llvm-runtimes-wasm64;
+      musl = self.musl-wasm64;
+      ncurses = self.ncurses-wasm64;
+      libevent-runtime = self.libevent-runtime-wasm64;
+      busybox = self.busybox-wasm64;
+      vm-test = vmTestWasm64;
+      extraChecks = { };
+    };
     tar = callPackage ./tar/package.nix { };
     tar-fork = callPackage ./tar-fork/package.nix {
       extraChecks.both = pkgs.runCommand "tar-standard-fork-both" { passthru.ci.heavy = true; } ''
