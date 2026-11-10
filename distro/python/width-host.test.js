@@ -285,7 +285,7 @@ function assertNativeWorkflow(workflow) {
   assert.doesNotMatch(job, /secrets\.|cachix|cache-nix|statuses: write|contents: write/);
   assert.match(
     jobBody("plan"),
-    /if: \$\{\{ !inputs\['python-forkless-host'\] && !inputs\['fork-benchmark'\] \}\}/,
+    /^    if: \$\{\{ !inputs\['python-forkless-host'\] && !inputs\['fork-benchmark'\] && !inputs\['sdk-export'\] \}\}$/m,
   );
 }
 
