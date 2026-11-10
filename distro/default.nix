@@ -1573,6 +1573,24 @@ lib.makeScope (scope: lib.callPackageWith ({ inherit lib pkgs; } // scope)) (
       vm-test = vmTestWasm64;
       extraChecks = { };
     };
+    gdbm-runtime = callPackage ./gdbm-runtime/package.nix {
+      extraChecks.both = pkgs.runCommand "gdbm-runtime-check-both" { passthru.ci.heavy = true; } ''
+        test -e ${self.gdbm-runtime.checks.runtime}
+        test -e ${self.gdbm-runtime-wasm64.checks.runtime}
+        touch $out
+      '';
+    };
+    gdbm-runtime-wasm64 = self.gdbm-runtime.override {
+      platform = self.platform-wasm64;
+      sdk = self.sdk-wasm64;
+      sdk-fork-automatic-poll-libc = self.sdk-fork-automatic-poll-libc-wasm64;
+      llvm-toolchain = self.llvm-toolchain-wasm64;
+      musl = self.musl-wasm64;
+      llvm-runtimes = self.llvm-runtimes-wasm64;
+      busybox = self.busybox-wasm64;
+      vm-test = vmTestWasm64;
+      extraChecks = { };
+    };
     grep = callPackage ./grep/package.nix { };
     pcre2 = callPackage ./pcre2/package.nix { };
     pcre2-wasm64 = self.pcre2.override {
