@@ -267,6 +267,54 @@ test("userspace modules may only import the supported host ABI", () => {
   assert.equal(user_module_imports_supported(unsupported), false);
 });
 
+test("signal syscall imports are limited to the private ABI, frame, and finish functions", () => {
+  const leb = (n: number) => {
+    const bytes: number[] = [];
+    do {
+      let byte = n & 127;
+      n = Math.floor(n / 128);
+      if (n) byte |= 128;
+      bytes.push(byte);
+    } while (n);
+    return bytes;
+  };
+  const text = (s: string) => [...leb(s.length), ...new TextEncoder().encode(s)];
+  const section = (id: number, bytes: number[]) => [id, ...leb(bytes.length), ...bytes];
+  const module = (namespace: string, lastName: string) =>
+    new WebAssembly.Module(
+      new Uint8Array([
+        0,
+        97,
+        115,
+        109,
+        1,
+        0,
+        0,
+        0,
+        ...section(1, [2, 0x60, 0, 1, 0x7f, 0x60, 1, 0x7e, 1, 0x7f]),
+        ...section(2, [
+          3,
+          ...text(namespace),
+          ...text("abi"),
+          0,
+          0,
+          ...text(namespace),
+          ...text("frame"),
+          0,
+          1,
+          ...text(namespace),
+          ...text(lastName),
+          0,
+          1,
+        ]),
+      ]),
+    );
+
+  assert.equal(user_module_imports_supported(module("linux_signal_syscall_v1", "finish")), true);
+  assert.equal(user_module_imports_supported(module("linux_signal_syscall_v2", "finish")), false);
+  assert.equal(user_module_imports_supported(module("linux_signal_syscall_v1", "copy")), false);
+});
+
 test("dynamic loader imports are explicitly named and still require the complete bridge", () => {
   const leb = (n: number) => {
     const bytes: number[] = [];

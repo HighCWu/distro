@@ -584,6 +584,21 @@ lib.makeScope (scope: lib.callPackageWith ({ inherit lib pkgs; } // scope)) (
       vm-test = vmTestWasm64;
     };
     public-syscall = callPackage ./public-syscall/package.nix { };
+    signal-syscall-context = callPackage ./signal-syscall-context/package.nix {
+      extraChecks.both =
+        pkgs.runCommand "signal-syscall-context-both-widths" { passthru.ci.heavy = true; }
+          ''
+            test -e ${self.signal-syscall-context.checks.runtime}
+            test -e ${self.signal-syscall-context-wasm64.checks.runtime}
+            touch $out
+          '';
+    };
+    signal-syscall-context-wasm64 = self.signal-syscall-context.override {
+      platform = self.platform-wasm64;
+      sdk = self.sdk-wasm64;
+      vm-test = vmTestWasm64;
+      extraChecks = { };
+    };
     fuse-passthrough = callPackage ./fuse-passthrough/package.nix { };
     procps-vmstat = callPackage ./procps-vmstat/package.nix { };
     procps-vmstat-wasm64 = callPackage ./procps-vmstat/package.nix {

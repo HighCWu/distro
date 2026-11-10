@@ -460,6 +460,23 @@ function user_imports({
           return result;
         },
       },
+      linux_signal_syscall_v1: {
+        abi: () =>
+          typeof kernel_instance.exports.copy_signal_syscall_v1 === "function" &&
+          typeof kernel_instance.exports.finish_signal_syscall_v1 === "function"
+            ? 1
+            : 0,
+        frame(address: WasmAddress) {
+          const invoke = () =>
+            kernel_leaf(() => kernel_instance.exports.copy_signal_syscall_v1?.(address) ?? -95);
+          return fork ? fork.kernelCall(invoke) : invoke();
+        },
+        finish(address: WasmAddress) {
+          const invoke = () =>
+            kernel_leaf(() => kernel_instance.exports.finish_signal_syscall_v1?.(address) ?? -95);
+          return fork ? fork.kernelCall(invoke) : invoke();
+        },
+      },
       linux_signal_cancel_v1: { abi: () => 1 },
     });
     if (

@@ -35,6 +35,8 @@ export interface Instance extends WebAssembly.Instance {
     clear_siginfo(): void;
     copy_signal_frame?(stack: WasmAddress, mask: WasmAddress): number;
     finish_signal_frame?(stack: WasmAddress, mask: WasmAddress): number;
+    copy_signal_syscall_v1?(frame: WasmAddress): number;
+    finish_signal_syscall_v1?(frame: WasmAddress): number;
     /** Private kernel scheduling point during copy_thread; absent on older kernels. */
     copy_worker_wait?(): void;
     /** Capability 1 joins unpublished Workers after a post-copy fork failure. */
@@ -171,6 +173,9 @@ const supported_user_module_imports = new Set([
   "linux\0copy_siginfo\0function",
   "linux_signal_v1\0frame\0function",
   "linux_signal_v1\0finish\0function",
+  "linux_signal_syscall_v1\0abi\0function",
+  "linux_signal_syscall_v1\0frame\0function",
+  "linux_signal_syscall_v1\0finish\0function",
   "linux_signal_cancel_v1\0abi\0function",
   "linux_mmap_init_v1\0copy\0function",
   "linux_fork_v1\0checkpoint\0function",
