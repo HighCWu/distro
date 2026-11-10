@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: MIT
 --- a/src/unix/thread.c
 +++ b/src/unix/thread.c
 @@ -130,6 +130,26 @@
