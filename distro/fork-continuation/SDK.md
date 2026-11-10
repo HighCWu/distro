@@ -47,6 +47,16 @@ permissions. The driver flag alone does not select the fork libc or execution
 support. The automatic candidates retain the static C and single-thread limits
 below. Their target acceptance is recorded separately in the project.
 
+The `sdk-fork-automatic-poll-libc` and `sdk-fork-automatic-poll-libc-wasm64`
+candidates combine automatic final linking with application and libc computation
+checkpoints. They retain poll ABI 2 and the existing private fork/poll composition
+marker. Use the same ordinary compile and link commands shown above. Final links
+produce the executable directly. Support objects remain free of coverage callbacks.
+The independent `fork-poll-automatic-libc-check-both` check requires both pointer
+widths of the four-stage corpus and the corresponding manual-finalization
+regressions, including timer delivery inside libc and later fork/wait recovery.
+Complete target acceptance is recorded separately from wrapper and source checks.
+
 With `sdk-fork-continuation` or its wasm64 variant, compile separate objects,
 link the complete executable, then transform it once.
 

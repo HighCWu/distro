@@ -41,6 +41,14 @@ callback-fork refusal probe and exit normally after the pass marker. Their
 distinct native recovery label records that scope. The target configuration
 continues to exercise callback refusal through the existing third stage.
 
+The independent `sdk-fork-automatic-poll-libc` and `-wasm64` candidates perform
+the complete Asyncify transform in Clang's final static link. Application builds
+use ordinary compile/link commands with `wasm-linux-fork-cc`. The automatic
+corpus checks the selected SDK metadata and moves the already finalized output
+into the image. `fork-poll-automatic-libc-check-both` runs both pointer widths of
+this four-stage configuration together with the manual libc-profile regressions.
+It requires the same real phases, unique final pass and runner shutdown gate.
+
 Default SDKs and standalone fork/poll profiles remain separate. Static C,
 single-thread fork and bounded continuation storage remain required; this does
 not add C++ exception/SjLj composition or multithreaded fork support.
