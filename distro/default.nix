@@ -1620,6 +1620,27 @@ lib.makeScope (scope: lib.callPackageWith ({ inherit lib pkgs; } // scope)) (
       busybox = self.busybox-wasm64;
       vm-test = vmTestWasm64;
     };
+    openssl-fork = callPackage ./openssl-fork/package.nix {
+      extraChecks.both = pkgs.runCommand "openssl-fork-check-both" { passthru.ci.heavy = true; } ''
+        test -e ${self.fork-poll-automatic-libc.checks.both}
+        test -e ${self.openssl-fork.checks.runtime}
+        test -e ${self.openssl-fork-wasm64.checks.runtime}
+        touch $out
+      '';
+    };
+    openssl-fork-wasm64 = self.openssl-fork.override {
+      stdenv = self.stdenv-wasm64;
+      platform = self.platform-wasm64;
+      openssl = self.openssl-wasm64;
+      sdk = self.sdk-wasm64;
+      sdk-fork-automatic-poll-libc = self.sdk-fork-automatic-poll-libc-wasm64;
+      llvm-toolchain = self.llvm-toolchain-wasm64;
+      musl = self.musl-wasm64;
+      llvm-runtimes = self.llvm-runtimes-wasm64;
+      busybox = self.busybox-wasm64;
+      vm-test = vmTestWasm64;
+      extraChecks = { };
+    };
     patch = callPackage ./patch/package.nix { };
     python = callPackage ./python/package.nix { };
     python-wasm64 = self.python.override {
