@@ -1,0 +1,157 @@
+# SPDX-License-Identifier: MIT
+# This patch adds POSIX nounset handling to upstream BusyBox hush.c; the
+# upstream source remains GPL-2.0-or-later.
+--- a/shell/hush.c
++++ b/shell/hush.c
+@@ -832,6 +832,7 @@
+ #if ENABLE_HUSH_MODE_X
+ 	"xtrace\0"
+ #endif
++	"nounset\0"
+ 	;
+ enum {
+ 	OPT_O_PIPEFAIL,
+@@ -840,6 +841,7 @@
+ #if ENABLE_HUSH_MODE_X
+ 	OPT_O_XTRACE,
+ #endif
++	OPT_O_NOUNSET,
+ 	NUM_OPT_O
+ };
+ 
+@@ -1030,7 +1032,7 @@
+ # define GROUPINFO_INIT /* nothing */
+ #endif
+ 	struct sigaction sa;
+-	char optstring_buf[sizeof("eixcs")];
++	char optstring_buf[sizeof("eixcsu")];
+ #if BASH_EPOCH_VARS
+ 	char epoch_buf[sizeof("%llu.nnnnnn") + sizeof(long long)*3];
+ #endif
+@@ -6638,6 +6640,8 @@
+ 	char *exp_saveptr; /* points to expansion operator */
+ 	char *exp_word = exp_word; /* for compiler */
+ 	char arg0;
++	int var_is_unset;
++	int nounset_handled;
+ 
+ 	val = NULL;
+ 	to_be_freed = NULL;
+@@ -6713,6 +6717,8 @@
+ 			val = cp = G.optstring_buf;
+ 			if (G.o_opt[OPT_O_ERREXIT])
+ 				*cp++ = 'e';
++			if (G.o_opt[OPT_O_NOUNSET])
++				*cp++ = 'u';
+ 			if (G_interactive_fd)
+ 				*cp++ = 'i';
+ 			if (G_x_mode)
+@@ -6733,6 +6739,15 @@
+ 		}
+ 	}
+ 
++	var_is_unset = (val == NULL);
++	/* A zero-argument $@ or $* is a valid empty expansion. */
++	if (!var[1] && (var[0] == '@' || var[0] == '*'))
++		var_is_unset = 0;
++	/* $! is unset until a background command has been started. */
++	if (!var[1] && var[0] == '!' && !G.last_bg_pid)
++		var_is_unset = 1;
++	nounset_handled = 0;
++
+ 	/* Handle any expansions */
+ 	if (exp_op == 'L') {
+ 		reinit_unicode_for_hush();
+@@ -6902,6 +6917,9 @@
+ 			val = NULL;
+ #endif
+ 		} else { /* one of "-=+?" */
++			/* These operators define the result for an unset parameter. */
++			if (var_is_unset)
++				nounset_handled = 1;
+ 			/* Standard-mandated substitution ops:
+ 			 * ${var?word} - indicate error if unset
+ 			 *      If var is unset, word (or a message indicating it is unset
+@@ -7012,6 +7030,9 @@
+ 		*exp_saveptr = exp_save;
+ 	} /* if (exp_op) */
+ 
++	if (var_is_unset && !nounset_handled && G.o_opt[OPT_O_NOUNSET])
++		msg_and_die_if_script("%s: parameter not set", var);
++
+ 	arg[0] = arg0;
+ 	*pp = p;
+ 
+@@ -7428,9 +7449,9 @@
+ 		char *g_argv0, char **g_argv,
+ 		char **builtin_argv)
+ {
+-# define NOMMU_HACK_FMT ("-$%x:%x:%x:%x:%x:%llx" IF_HUSH_LOOPS(":%x"))
++# define NOMMU_HACK_FMT ("-$%x:%x:%x:%x:%x:%x:%llx" IF_HUSH_LOOPS(":%x"))
+ 	/* delims + 2 * (number of bytes in printed hex numbers) */
+-	char param_buf[sizeof(NOMMU_HACK_FMT) + 2 * (sizeof(int)*6 + sizeof(long long)*1)];
++	char param_buf[sizeof(NOMMU_HACK_FMT) + 2 * (sizeof(int)*7 + sizeof(long long)*1)];
+ 	char *heredoc_argv[4];
+ 	struct variable *cur;
+ # if ENABLE_HUSH_FUNCTIONS
+@@ -7438,6 +7459,7 @@
+ # endif
+ 	char **argv, **pp;
+ 	unsigned cnt;
++	unsigned nounset_enabled;
+ 	unsigned long long empty_trap_mask;
+ 
+ 	if (!g_argv0) { /* heredoc */
+@@ -7455,6 +7477,8 @@
+ 	if (pp) while (*pp++)
+ 		cnt++;
+ 
++	nounset_enabled = G.o_opt[OPT_O_NOUNSET];
++
+ 	empty_trap_mask = 0;
+ 	if (G_traps) {
+ 		int sig;
+@@ -7469,12 +7493,14 @@
+ 			, (unsigned) G.root_ppid
+ 			, (unsigned) G.last_bg_pid
+ 			, (unsigned) G.last_exitcode
++			, nounset_enabled
+ 			, cnt
+ 			, empty_trap_mask
+ 			IF_HUSH_LOOPS(, G.depth_of_loop)
+ 			);
+ # undef NOMMU_HACK_FMT
+-	/* 1:hush 2:-$<pid>:<pid>:<exitcode>:<etc...> <vars...> <funcs...>
++	/* 1:hush 2:-$<pid>:<ppid>:<bgpid>:<exitcode>:<nounset>:<etc...>
++	 *       <vars...> <funcs...>
+ 	 * 3:-c 4:<cmd> 5:<arg0> <argN...> 6:NULL
+ 	 */
+ 	cnt += 6;
+@@ -10312,6 +10338,9 @@
+ 	case 'e':
+ 		G.o_opt[OPT_O_ERREXIT] = state;
+ 		break;
++	case 'u':
++		G.o_opt[OPT_O_NOUNSET] = state;
++		break;
+ 	case 'o':
+ 		if (!o_opt) {
+ 			/* "set -o" or "set +o" without parameter.
+@@ -10500,7 +10529,7 @@
+ 	flags = (argv[0] && argv[0][0] == '-') ? OPT_login : 0;
+ 	while (1) {
+ 		int opt = getopt(argc, argv, "+" /* stop at 1st non-option */
+-				"cexinsl"
++				"cexinslu"
+ #if !BB_MMU
+ 				"$:R:V:"
+ # if ENABLE_HUSH_LINENO_VAR
+@@ -10566,6 +10595,8 @@
+ 			optarg++;
+ 			G.last_exitcode = bb_strtou(optarg, &optarg, 16);
+ 			optarg++;
++			G.o_opt[OPT_O_NOUNSET] = bb_strtou(optarg, &optarg, 16);
++			optarg++;
+ 			builtin_argc = bb_strtou(optarg, &optarg, 16);
+ 			optarg++;
+ 			empty_trap_mask = bb_strtoull(optarg, &optarg, 16);

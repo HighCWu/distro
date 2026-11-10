@@ -4,13 +4,15 @@
 
 `busybox-source.tar.gz` contains the selected upstream source tree under
 `busybox/` and its build materials under `build-materials/`. The source tree
-is the original derivation input. When present, the selected local patch is
-stored in `build-materials/` and covered by `SHA256SUMS`. To reproduce the
-patched package, run this from the archive root:
+is the original derivation input. Selected local Hush patches and the
+`hush-nounset-test.sh` runtime contract are stored in `build-materials/` and
+covered by `SHA256SUMS`. To reproduce the patched package, run this from the
+archive root:
 
 ```sh
 cd busybox
 patch -p1 < ../build-materials/hush-condition-status.patch
+patch -p1 < ../build-materials/hush-nounset.patch
 ```
 
 Verify the archive and companion files with `sha256sum -c SHA256SUMS`.

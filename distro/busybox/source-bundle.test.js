@@ -184,3 +184,72 @@ test("the selected hush patch is checksummed, bundled and applies to its source 
     rmSync(root, { recursive: true, force: true });
   }
 });
+
+test("condition and nounset patches are both checksummed and archived", () => {
+  const root = mkdtempSync(join(tmpdir(), "busybox-hush-patch-stack-"));
+  const source = join(root, "busybox-source");
+  const materials = join(root, "build-materials");
+  const conditionPatch = new URL("./hush-condition-status.patch", import.meta.url).pathname;
+  const nounsetPatch = new URL("./hush-nounset.patch", import.meta.url).pathname;
+  try {
+    mkdirSync(join(source, "shell"), { recursive: true });
+    writeFileSync(join(source, "LICENSE"), "upstream BusyBox license\n");
+    writeFileSync(join(source, "Makefile"), "all:\n\ttrue\n");
+    writeFileSync(join(source, ".config"), "CONFIG_NOMMU=y\nCONFIG_HUSH=y\n");
+    writeFileSync(join(source, "shell/hush.c"), "selected upstream Hush source\n");
+    const recipe = join(root, "package.nix");
+    const metadata = join(root, "build.json");
+    const readme = join(root, "README.md");
+    writeFileSync(recipe, "{ }: selected recipe\n");
+    writeFileSync(metadata, '{"schemaVersion":1,"addressBits":32}\n');
+    writeFileSync(readme, "Apply the selected hush patches in their recorded order.\n");
+
+    const exported = run("bash", [
+      exporter,
+      source,
+      materials,
+      recipe,
+      metadata,
+      readme,
+      conditionPatch,
+      nounsetPatch,
+    ]);
+    assert.equal(exported.status, 0, exported.stderr);
+    for (const [name, path] of [
+      ["hush-condition-status.patch", conditionPatch],
+      ["hush-nounset.patch", nounsetPatch],
+    ]) {
+      assert.deepEqual(readFileSync(join(materials, name)), readFileSync(path));
+      assert.match(
+        readFileSync(join(materials, "SHA256SUMS"), "utf8"),
+        new RegExp(name + "$", "m"),
+      );
+    }
+    const checked = spawnSync("sha256sum", ["--check", "SHA256SUMS"], {
+      cwd: materials,
+      encoding: "utf8",
+    });
+    assert.equal(checked.status, 0, checked.stderr);
+
+    const archive = join(root, "busybox.tar.gz");
+    const archived = run("bash", [archiver, source, materials, archive]);
+    assert.equal(archived.status, 0, archived.stderr);
+    const members = run("tar", ["-tzf", archive]);
+    assert.equal(members.status, 0, members.stderr);
+    for (const name of [
+      "build-materials/hush-condition-status.patch",
+      "build-materials/hush-nounset.patch",
+    ])
+      assert.ok(members.stdout.split("\n").includes(name), name);
+    for (const [name, path] of [
+      ["hush-condition-status.patch", conditionPatch],
+      ["hush-nounset.patch", nounsetPatch],
+    ]) {
+      const extracted = run("tar", ["-xOzf", archive, `build-materials/${name}`]);
+      assert.equal(extracted.status, 0, extracted.stderr);
+      assert.deepEqual(Buffer.from(extracted.stdout), readFileSync(path));
+    }
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});

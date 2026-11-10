@@ -1339,6 +1339,8 @@ lib.makeScope (scope: lib.callPackageWith ({ inherit lib pkgs; } // scope)) (
           ''
             test -e ${self.busybox.checks.shell-status}
             test -e ${self.busybox-wasm64.checks.shell-status}
+            test -e ${self.busybox.checks.hush-nounset}
+            test -e ${self.busybox-wasm64.checks.hush-nounset}
             test -e ${self.busybox.checks.processes}
             test -e ${self.busybox-wasm64.checks.processes}
             test -e ${self.busybox.checks.source-bundle-host}

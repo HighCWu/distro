@@ -48,7 +48,10 @@ stdenv.mkDerivation (finalAttrs: {
   pname = "busybox";
   version = "1.37.0";
   inherit src;
-  patches = [ ./hush-condition-status.patch ];
+  patches = [
+    ./hush-condition-status.patch
+    ./hush-nounset.patch
+  ];
   outputs = [
     "out"
     "buildMaterials"
@@ -177,13 +180,12 @@ stdenv.mkDerivation (finalAttrs: {
     cp ${./notices.md} "$notices/README.md"
     bash ${./build-materials.sh} "$PWD" "$buildMaterials" ${./package.nix} \
       ${buildMetadata} ${./source-bundle.README.md} \
-      ${lib.escapeShellArgs (
-        lib.optional (finalAttrs.patches == [ ./hush-condition-status.patch ]) ./hush-condition-status.patch
-      )}
+      ${lib.escapeShellArgs finalAttrs.patches}
     cp ${./check-binary.mjs} "$buildMaterials/check-binary.mjs"
     cp ${../../packages/kernel/src/wasm_binary.ts} "$buildMaterials/wasm_binary.ts"
     cp ${./notices.md} "$buildMaterials/notices.md"
-    (cd "$buildMaterials" && sha256sum check-binary.mjs wasm_binary.ts notices.md >> SHA256SUMS)
+    cp ${./hush-nounset-test.sh} "$buildMaterials/hush-nounset-test.sh"
+    (cd "$buildMaterials" && sha256sum check-binary.mjs wasm_binary.ts notices.md hush-nounset-test.sh >> SHA256SUMS)
     runHook postInstall
   '';
 
@@ -225,6 +227,7 @@ stdenv.mkDerivation (finalAttrs: {
       smoke = check "smoke" ./smoke-test.sh;
       processes = check "processes" ./process-test.sh;
       shell-status = check "shell-status" ./shell-status-test.sh;
+      hush-nounset = check "hush-nounset" ./hush-nounset-test.sh;
       networking = check "networking" ./network-test.sh;
       inotify = check "inotify" ./inotify-test.sh;
       ipv6 = check "ipv6" ./ipv6-test.sh;
