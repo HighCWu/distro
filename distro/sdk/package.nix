@@ -10,6 +10,7 @@
   zlib,
   sqlite3,
   extraLinkerInputs ? [ ],
+  extraMaterialTrees ? { },
 }:
 let
   meson = import ./meson.nix { inherit pkgs; };
@@ -39,6 +40,7 @@ let
       profileConfig
       licenseSources
       ;
+    extraTrees = extraMaterialTrees;
     sysroot = linkRoot;
   };
   profileConfig = pkgs.writeText "linux-${platform.wasmArch}.cfg" (

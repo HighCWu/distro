@@ -7,6 +7,7 @@
   profileCheck,
   profileConfig,
   licenseSources,
+  extraTrees ? { },
 }:
 let
   spec = pkgs.writeText "sdk-build-material-inputs.json" (
@@ -43,7 +44,8 @@ let
         "recipes/linux" = "${../linux}";
         "recipes/sysroot" = "${../sysroot}";
         "recipes/sysroot-base" = "${../sysroot-base}";
-      };
+      }
+      // extraTrees;
     }
   );
   sourceBundle =

@@ -3,6 +3,7 @@
   lib,
   debug,
   wasmBits ? 32,
+  linux64Abi ? false,
   deduplicateMmapSearch ? true,
   enableForkContinuation ? false,
   enableDynamicLoader ? false,
@@ -24,12 +25,13 @@ assert builtins.elem wasmBits [
   32
   64
 ];
+assert !linux64Abi || wasmBits == 64;
 assert !(enableForkContinuation && enableDynamicLoader);
 assert !(enableCooperativePoll && enableDynamicLoader);
 
 pkgs.stdenvNoCC.mkDerivation (
   {
-    name = "musl-wasm${toString wasmBits}${lib.optionalString enableCooperativePoll "-poll"}";
+    name = "musl-wasm${toString wasmBits}${lib.optionalString linux64Abi "-linux64-abi"}${lib.optionalString enableCooperativePoll "-poll"}";
     inherit src;
 
     nativeBuildInputs = [ llvm-toolchain-unwrapped ];
@@ -53,7 +55,7 @@ pkgs.stdenvNoCC.mkDerivation (
       # explicit hidden allocator declarations remain internal.
       CFLAGS=${lib.optionalString debug "-g"}${
         lib.optionalString (!deduplicateMmapSearch) " -DWASM_MMAP_DEDUP_SEARCH=0"
-      }${lib.optionalString enableForkContinuation " -DWASM_FORK_CONTINUATION=1"}${lib.optionalString enableDynamicLoader " -fvisibility=default -DWASM_DYNAMIC_LOADER=1"}${lib.optionalString enableBrkSyscall " -DWASM_BRK_SYSCALL=1"}${lib.optionalString enableCooperativePoll " -fsanitize-coverage=trace-pc,no-prune,edge"}
+      }${lib.optionalString enableForkContinuation " -DWASM_FORK_CONTINUATION=1"}${lib.optionalString enableDynamicLoader " -fvisibility=default -DWASM_DYNAMIC_LOADER=1"}${lib.optionalString enableBrkSyscall " -DWASM_BRK_SYSCALL=1"}${lib.optionalString enableCooperativePoll " -fsanitize-coverage=trace-pc,no-prune,edge"}${lib.optionalString linux64Abi " -mabi=linux64"}
       EOF
 
       ${lib.optionalString enableCooperativePoll ''

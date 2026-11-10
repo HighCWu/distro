@@ -319,6 +319,17 @@ lib.makeScope (scope: lib.callPackageWith ({ inherit lib pkgs; } // scope)) (
       sysroot = self.sysroot-wasm64;
       vm-test = vmTestWasm64;
     };
+    linux64-abi-wasm64 = callPackage ./linux64-abi/package.nix {
+      platform = self.platform-wasm64;
+      musl = self.musl-wasm64;
+      sysroot-base = self.sysroot-base-wasm64;
+      llvm-runtimes = self.llvm-runtimes-wasm64;
+      llvm-toolchain = self.llvm-toolchain-wasm64;
+      sysroot = self.sysroot-wasm64;
+      sdk = self.sdk-wasm64;
+      vm-test = vmTestWasm64;
+      busybox = self.busybox-wasm64;
+    };
     sdk-elf-container-wasm64 = self.sdk-wasm64.override {
       elfContainer = true;
       vm-test = vmTestElfContainerWasm64;

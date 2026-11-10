@@ -59,10 +59,17 @@ def directory_origins(path, ancestors=()):
 def collect(spec):
     if spec.get("schemaVersion") != 1 or spec.get("addressBits") not in (32, 64):
         raise ValueError("unsupported material schema or address width")
-    for key, expected in (("files", FILES), ("trees", TREES), ("sources", SOURCES)):
+    for key, expected in (("files", FILES), ("sources", SOURCES)):
         if set(spec[key]) != set(expected):
             raise ValueError("incomplete or unexpected material set: " + key)
     profile = json.loads(Path(spec["files"]["installed/profile.json"]).read_text())
+    expected_trees = set(TREES)
+    if "-mabi=linux64" in profile.get("compilerFlags", []):
+        if spec["addressBits"] != 64:
+            raise ValueError("Linux64 ABI requires a 64-bit profile")
+        expected_trees.add("recipes/linux64-abi")
+    if set(spec["trees"]) != expected_trees:
+        raise ValueError("incomplete or unexpected material set: trees")
     if (profile["schemaVersion"] != 1 or profile["addressBits"] != spec["addressBits"]
             or profile["targetTriple"] != spec["targetTriple"]
             or profile["linearMemory"]["maximumBytes"] != spec["maximumMemoryBytes"]):

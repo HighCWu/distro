@@ -63,6 +63,35 @@ class MaterialsTest(unittest.TestCase):
         self.assertEqual(len(keys), len(set(keys)), "duplicate build-material file key")
         self.assertEqual(set(keys), set(materials.FILES))
 
+    def test_linux64_profile_requires_its_selected_recipe(self):
+        profile_path = Path(self.spec["files"]["installed/profile.json"])
+        profile = json.loads(profile_path.read_text())
+        profile["compilerFlags"] = ["-mabi=linux64"]
+        profile_path.write_text(json.dumps(profile))
+        with self.assertRaises(ValueError):
+            materials.export(self.spec, self.archive)
+
+        recipe = self.root / "recipes/linux64-abi"
+        recipe.mkdir()
+        (recipe / "package.nix").write_text("# selected Linux64 ABI recipe\n")
+        self.spec["trees"]["recipes/linux64-abi"] = str(recipe)
+        for sources in (False, True):
+            materials.export(self.spec, self.archive, sources=sources)
+            materials.verify(self.spec, self.archive, sources=sources)
+            with tarfile.open(self.archive) as archive:
+                self.assertTrue(archive.getmember("recipes/linux64-abi/package.nix").isfile())
+
+        self.spec["addressBits"] = 32
+        with self.assertRaisesRegex(ValueError, "requires a 64-bit profile"):
+            materials.export(self.spec, self.archive)
+
+    def test_default_profile_rejects_unselected_extra_recipes(self):
+        for name in ("recipes/linux64-abi", "recipes/unselected"):
+            changed = copy.deepcopy(self.spec)
+            changed["trees"][name] = self.spec["trees"]["recipes/sdk"]
+            with self.assertRaises(ValueError):
+                materials.export(changed, self.archive)
+
     def test_reproducible_archive_and_exact_verification(self):
         sdk = Path(self.spec["trees"]["recipes/sdk"])
         (sdk / ".hidden").write_bytes(b"binary\x00material\xff")
