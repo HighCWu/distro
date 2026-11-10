@@ -97,7 +97,7 @@ stdenv.mkDerivation (finalAttrs: {
     description = "XZ Utils with POSIX multithreaded compression and decompression";
     homepage = "https://tukaani.org/xz/";
     license = with lib.licenses; [
-      zeroBSD
+      bsd0
       lgpl21Plus
     ];
   };
