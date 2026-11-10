@@ -1695,6 +1695,22 @@ lib.makeScope (scope: lib.callPackageWith ({ inherit lib pkgs; } // scope)) (
       busybox = self.busybox-wasm64;
       vm-test = vmTestWasm64;
     };
+    openssl-dynamic = callPackage ./openssl-dynamic/package.nix {
+      extraChecks.both = pkgs.runCommand "openssl-dynamic-check-both" { passthru.ci.heavy = true; } ''
+        test -e ${self.openssl-dynamic.checks.runtime}
+        test -e ${self.openssl-dynamic-wasm64.checks.runtime}
+        touch $out
+      '';
+    };
+    openssl-dynamic-wasm64 = self.openssl-dynamic.override {
+      platform = self.platform-wasm64;
+      openssl = self.openssl-wasm64;
+      sdk-dynamic-loader = self.sdk-dynamic-loader-wasm64;
+      llvm-runtimes = self.llvm-runtimes-wasm64;
+      busybox = self.busybox-wasm64;
+      vm-test = vmTestWasm64;
+      extraChecks = { };
+    };
     openssl-fork = callPackage ./openssl-fork/package.nix {
       extraChecks.both = pkgs.runCommand "openssl-fork-check-both" { passthru.ci.heavy = true; } ''
         test -e ${self.fork-poll-automatic-libc.checks.both}
