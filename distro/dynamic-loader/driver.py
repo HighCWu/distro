@@ -89,9 +89,13 @@ for width in (32, 64):
         args = (*common, "-###", "-fPIC", *(["-shared"] if shared else []), str(side))
         dry = run(*args)
         raw_linker = linker_command(dry)
-        profile_name = "wasm-linux-shared.rsp" if shared else "wasm-linux-executable.rsp"
-        assert any(
-            word.startswith("@") and Path(word[1:]).name == profile_name
+        # The standalone compiler has no SDK sysroot here. Profile response
+        # files are selected only when the sysroot supplies them below.
+        assert not any(
+            word.startswith("@")
+            and Path(word[1:]).name in (
+                "wasm-linux-shared.rsp", "wasm-linux-executable.rsp"
+            )
             for word in raw_linker
         ), raw_linker
         linker = expand_sdk_responses(raw_linker)
