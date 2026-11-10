@@ -111,9 +111,9 @@ pkgs.stdenvNoCC.mkDerivation {
       "$out/share/licenses/sqlite3-dynamic/sqlite/sqlite3ext.h"
     install -Dm644 ${../sdk/LICENSE.MIT} \
       "$out/share/licenses/sqlite3-dynamic/LOCAL-ADDITIONS.MIT"
-    cp -r ${sdk}/share/linux-wasm-sdk/licenses \
+    cp -rL ${sdk}/share/linux-wasm-sdk/licenses \
       "$out/share/licenses/sqlite3-dynamic/standard-sdk"
-    cp -r ${sdk-dynamic-loader.buildMaterials}/licenses \
+    cp -rL ${sdk-dynamic-loader.buildMaterials}/licenses \
       "$out/share/licenses/sqlite3-dynamic/dynamic-sdk"
     install -Dm644 ${sdk-dynamic-loader.compiler.licenseSource}/llvm/LICENSE.TXT \
       "$out/share/licenses/sqlite3-dynamic/LLVM-LICENSE.TXT"
@@ -139,9 +139,9 @@ pkgs.stdenvNoCC.mkDerivation {
       ${./package.nix} ${../busybox/check-binary.mjs} \
       ${../../packages/kernel/src/wasm_binary.ts} \
       "${materialDir}/"
-    cp -r ${sdk}/share/linux-wasm-sdk/licenses \
+    cp -rL ${sdk}/share/linux-wasm-sdk/licenses \
       "${materialDir}/standard-sdk-licenses"
-    cp -r ${sdk-dynamic-loader.buildMaterials}/licenses \
+    cp -rL ${sdk-dynamic-loader.buildMaterials}/licenses \
       "${materialDir}/dynamic-sdk-licenses"
     cat > "${materialDir}/build-parameters.txt" <<EOF
     source=SQLite ${sqlite3.version}; inherited from sqlite3.src

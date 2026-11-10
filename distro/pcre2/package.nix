@@ -87,7 +87,7 @@ pkgs.stdenvNoCC.mkDerivation {
       install -Dm644 deps/sljit/LICENSE "$notices/sljit-LICENSE"
     fi
     install -Dm644 ${../sdk/LICENSE.MIT} "$notices/LOCAL-ADDITIONS.MIT"
-    cp -r ${sdk}/share/linux-wasm-sdk/licenses "$notices/standard-sdk"
+    cp -rL ${sdk}/share/linux-wasm-sdk/licenses "$notices/standard-sdk"
     install -Dm644 ${llvm-toolchain.licenseSource}/llvm/LICENSE.TXT \
       "$notices/LLVM-LICENSE.TXT"
     install -Dm644 ${llvm-toolchain.licenseSource}/clang/LICENSE.TXT \
@@ -100,7 +100,7 @@ pkgs.stdenvNoCC.mkDerivation {
     ln -s "$src" "$materials/source"
     ln -s ${sdk.buildMaterials} "$materials/standard-sdk"
     ln -s ${llvm-toolchain.licenseSource} "$materials/llvm-toolchain-source"
-    cp -r ${sdk}/share/linux-wasm-sdk/licenses "$materials/standard-sdk-licenses"
+    cp -rL ${sdk}/share/linux-wasm-sdk/licenses "$materials/standard-sdk-licenses"
     cp COPYING "$materials/"
     if [ -f LICENCE.md ]; then
       cp LICENCE.md "$materials/"

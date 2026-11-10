@@ -83,9 +83,9 @@ pkgs.stdenvNoCC.mkDerivation (finalAttrs: {
       fi
     done
     cp ${../sdk/LICENSE.MIT} "$notices/LOCAL-ADDITIONS.MIT"
-    cp -r ${sdk-fork-automatic-poll-libc.buildMaterials}/licenses \
+    cp -rL ${sdk-fork-automatic-poll-libc.buildMaterials}/licenses \
       "$notices/fork-sdk"
-    cp -r ${sdk}/share/linux-wasm-sdk/licenses "$notices/standard-sdk"
+    cp -rL ${sdk}/share/linux-wasm-sdk/licenses "$notices/standard-sdk"
     cp ${musl.src}/COPYRIGHT "$notices/musl-COPYRIGHT"
     cp ${llvm-runtimes.src}/compiler-rt/LICENSE.TXT \
       "$notices/compiler-rt-LICENSE.TXT"

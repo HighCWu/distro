@@ -65,7 +65,7 @@ pkgs.stdenvNoCC.mkDerivation (finalAttrs: {
     install -Dm755 linked-client $out/bin/sqlite3-extension-runtime-client
     install -Dm644 ${../sdk/LICENSE.MIT} \
       $out/share/licenses/sqlite3-extension-runtime/LICENSE.MIT
-    cp -r ${sqlite3-dynamic}/share/licenses/sqlite3-dynamic \
+    cp -rL ${sqlite3-dynamic}/share/licenses/sqlite3-dynamic \
       $out/share/licenses/sqlite3-extension-runtime/
 
     mkdir -p $buildMaterials/share/sqlite3-extension-runtime-materials
