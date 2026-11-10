@@ -6,7 +6,10 @@
 #if defined(_LIBCPP_VERSION)
 namespace __cxxabiv1 {
 struct __cxa_eh_globals;
-extern "C" __cxa_eh_globals *__cxa_get_globals_fast();
+// This accessor only returns the current thread's exception state; keeping
+// its non-throwing contract avoids a Wasm catch/terminate frame in the
+// callback that the fork bridge re-enters while a C++ handler is active.
+extern "C" __cxa_eh_globals *__cxa_get_globals_fast() noexcept;
 }
 #endif
 
