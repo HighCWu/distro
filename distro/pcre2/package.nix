@@ -7,7 +7,7 @@
   llvm-toolchain,
   extraChecks ? { },
 }:
-pkgs.stdenvNoCC.mkDerivation (finalAttrs: {
+pkgs.stdenvNoCC.mkDerivation {
   pname = "pcre2-${platform.wasmArch}";
   inherit (pkgs.pcre2) src version;
   outputs = [
@@ -120,4 +120,4 @@ pkgs.stdenvNoCC.mkDerivation (finalAttrs: {
   };
   passthru.apk.license = "BSD-3-Clause WITH PCRE2-exception AND MIT AND Apache-2.0 WITH LLVM-exception";
   passthru.checks = extraChecks;
-})
+}
