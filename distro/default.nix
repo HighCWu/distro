@@ -1437,7 +1437,6 @@ lib.makeScope (scope: lib.callPackageWith ({ inherit lib pkgs; } // scope)) (
     };
     coreutils-timeout-fork-wasm64 = self.coreutils-timeout-fork.override {
       platform = self.platform-wasm64;
-      coreutils = self.coreutils;
       sdk = self.sdk-wasm64;
       sdk-fork-automatic-poll-libc = self.sdk-fork-automatic-poll-libc-wasm64;
       llvm-toolchain = self.llvm-toolchain-wasm64;
