@@ -1595,6 +1595,22 @@ lib.makeScope (scope: lib.callPackageWith ({ inherit lib pkgs; } // scope)) (
       busybox = self.busybox-wasm64;
       vm-test = vmTestWasm64;
     };
+    libuv-runtime = callPackage ./libuv-runtime/package.nix {
+      extraChecks.both = pkgs.runCommand "libuv-runtime-check-both" { passthru.ci.heavy = true; } ''
+        test -e ${self.libuv-runtime.checks.runtime}
+        test -e ${self.libuv-runtime-wasm64.checks.runtime}
+        touch $out
+      '';
+    };
+    libuv-runtime-wasm64 = self.libuv-runtime.override {
+      platform = self.platform-wasm64;
+      sdk = self.sdk-wasm64;
+      sdk-fork-automatic = self.sdk-fork-automatic-wasm64;
+      llvm-toolchain = self.llvm-toolchain-wasm64;
+      busybox = self.busybox-wasm64;
+      vm-test = vmTestWasm64;
+      extraChecks = { };
+    };
     openssl = callPackage ./openssl/package.nix { };
     openssl-wasm64 = self.openssl.override {
       stdenv = self.stdenv-wasm64;
