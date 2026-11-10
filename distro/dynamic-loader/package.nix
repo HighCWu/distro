@@ -106,6 +106,22 @@ pkgs.stdenvNoCC.mkDerivation (finalAttrs: {
       ];
       runpath = "$ORIGIN/deps";
     }}
+    ${sideCC} -O2 -mtail-call -Wall -Wextra -Werror -fPIC -DTAIL_STEP=1 -c ${./tail-library.c} -o tail-one.o
+    ${sideCC} -O2 -mtail-call -Wall -Wextra -Werror -fPIC -DTAIL_STEP=3 -c ${./tail-library.c} -o tail-three.o
+    ${linkShared {
+      name = "libtail-step-one.so";
+      output = "libtail-step-one.so";
+      inputs = [ "tail-one.o" ];
+    }}
+    ${linkShared {
+      name = "libtail-step-three.so";
+      output = "libtail-step-three.so";
+      inputs = [ "tail-three.o" ];
+    }}
+    # Append the opt-in ABI marker as a normal Wasm custom section. Its payload
+    # is the 20-byte section name followed by version byte 1.
+    printf '\000\026\024linux.dylink.tail.v1\001' >> libtail-step-one.so
+    printf '\000\026\024linux.dylink.tail.v1\001' >> libtail-step-three.so
     ${sideCC} -O2 -msimd128 -fPIC -c ${./cycle-a.c} -o cycle-a.o
     ${sideCC} -O2 -msimd128 -fPIC -c ${./cycle-b.c} -o cycle-b.o
     ${sideCC} -O2 -fPIC -c ${./reentrant-root.c} -o reentrant-root.o
@@ -237,6 +253,8 @@ pkgs.stdenvNoCC.mkDerivation (finalAttrs: {
     install -Dm755 dynamic-loader.wasm $out/dynamic-loader.wasm
     install -Dm644 libplugin-a.so $out/lib/libplugin-a.so
     install -Dm644 libplugin-b.so $out/lib/libplugin-b.so
+    install -Dm644 libtail-step-one.so $out/lib/libtail-step-one.so
+    install -Dm644 libtail-step-three.so $out/lib/libtail-step-three.so
     install -Dm644 path-library.so $out/lib/path-library.so
     install -Dm644 cycle-a.so $out/lib/cycle-a.so
     install -Dm644 cycle-b.so $out/lib/cycle-b.so
@@ -258,6 +276,7 @@ pkgs.stdenvNoCC.mkDerivation (finalAttrs: {
     cp ${llvm-runtimes.src}/compiler-rt/LICENSE.TXT $out/share/licenses/dynamic-loader/compiler-rt-LICENSE.TXT
     mkdir -p $buildMaterials/share/dynamic-loader-materials
     cp ${./runtime.c} ${./library-a.c} ${./library-b.c} ${./cycle-a.c} ${./cycle-b.c} ${./package.nix} $buildMaterials/share/dynamic-loader-materials/
+    cp ${./tail-library.c} $buildMaterials/share/dynamic-loader-materials/
     cp ${./path-library.c} $buildMaterials/share/dynamic-loader-materials/
     cp ${./reentrant-root.c} ${./reentrant-leaf.c} ${./reentrant-reject.c} $buildMaterials/share/dynamic-loader-materials/
     cp ${./next-front.c} ${./next-middle.c} ${./next-leaf.c} $buildMaterials/share/dynamic-loader-materials/
@@ -279,6 +298,8 @@ pkgs.stdenvNoCC.mkDerivation (finalAttrs: {
       init = "${finalAttrs.finalPackage}/dynamic-loader.wasm";
       files = {
         "/plugins/libplugin-b.so" = "${finalAttrs.finalPackage}/lib/libplugin-b.so";
+        "/plugins/libtail-step-one.so" = "${finalAttrs.finalPackage}/lib/libtail-step-one.so";
+        "/plugins/libtail-step-three.so" = "${finalAttrs.finalPackage}/lib/libtail-step-three.so";
         "/plugins/path-library.so" = "${finalAttrs.finalPackage}/lib/path-library.so";
         "/plugins/deps/libplugin-a.so" = "${finalAttrs.finalPackage}/lib/libplugin-a.so";
         "/plugins/cycle-a.so" = "${finalAttrs.finalPackage}/lib/cycle-a.so";

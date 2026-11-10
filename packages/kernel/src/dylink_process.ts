@@ -10,7 +10,10 @@ import {
 } from "./dylink_linker.ts";
 import { plan_dylink_layout } from "./dylink.ts";
 import { prepare_dylink_call_metadata } from "./dylink_call_metadata.ts";
-import { create_dylink_call_wrapper } from "./dylink_call_wrapper.ts";
+import {
+  create_dylink_call_wrapper,
+  create_dylink_tail_call_wrapper,
+} from "./dylink_call_wrapper.ts";
 import {
   resolve_dylink_address,
   type DylinkAddressFunction,
@@ -20,6 +23,7 @@ import { decode_linux_bytes, encode_linux_string } from "./linux-string.ts";
 import {
   read_wasm_dylink,
   read_wasm_dynamic_imports,
+  prepare_wasm_dynamic_tail_calls,
   type WasmDylink,
   type WasmTableType,
 } from "./wasm_binary.ts";
@@ -86,6 +90,7 @@ class DylinkSearchMiss extends Error {}
 export class ProcessDylink {
   readonly #options: Options;
   readonly #table: WebAssembly.Table;
+  #tailTable: WebAssembly.Table | null = null;
   readonly #stack: WebAssembly.Global;
   readonly #symbols = new Map<string, DylinkExternalSymbol>();
   readonly #tags = new Map<string, DylinkExternalTag>();
@@ -106,6 +111,8 @@ export class ProcessDylink {
     { owner: number | null; addressOwner?: number; signature?: string }
   >();
   readonly #wrappers = new Map<CallableFunction, CallableFunction>();
+  readonly #tailWrappers = new Map<CallableFunction, CallableFunction>();
+  readonly #originals = new Map<CallableFunction, CallableFunction>();
   #nextOwner = 1;
   #mainHandle = 0n;
   #lastMap = 0n;
@@ -196,30 +203,72 @@ export class ProcessDylink {
       }
     }
   }
+  #ensureTailTable() {
+    if (this.#tailTable) return;
+    const address = this.#options.tableType.address;
+    const initial = BigInt(this.#table.length);
+    const maximum = this.#options.tableType.maximum;
+    const descriptor = {
+      element: "anyfunc",
+      address,
+      initial: address === "i64" ? initial : Number(initial),
+      ...(maximum === undefined ? {} : { maximum: address === "i64" ? maximum : Number(maximum) }),
+    } as unknown as WebAssembly.TableDescriptor;
+    const table = new WebAssembly.Table(descriptor);
+    if (BigInt(table.length) !== initial) throw new Error("incompatible dynamic tail table");
+    this.#tailTable = table;
+    this.#settleTable();
+  }
   #callable(fn: CallableFunction): CallableFunction {
-    const info = this.#functions.get(fn);
+    const raw = this.#originals.get(fn) ?? fn;
+    const info = this.#functions.get(raw) ?? this.#functions.get(fn);
     if (!info || info.owner === null || !info.signature) return fn;
-    const existing = this.#wrappers.get(fn);
+    const existing = this.#wrappers.get(raw);
     if (existing) return existing;
-    const wrapped = create_dylink_call_wrapper(info.signature, fn, this.#caller, info.owner);
-    this.#wrappers.set(fn, wrapped);
+    const wrapped = create_dylink_call_wrapper(info.signature, raw, this.#caller, info.owner);
+    this.#wrappers.set(raw, wrapped);
     this.#wrappers.set(wrapped, wrapped);
+    this.#originals.set(wrapped, raw);
     this.#functions.set(wrapped, info);
-    const pointer = this.#pointers.get(fn);
+    const pointer = this.#pointers.get(raw) ?? this.#pointers.get(fn);
     if (pointer !== undefined) this.#pointers.set(wrapped, pointer);
+    return wrapped;
+  }
+  #tailCallable(fn: CallableFunction): CallableFunction {
+    const raw = this.#originals.get(fn) ?? fn;
+    const info = this.#functions.get(raw) ?? this.#functions.get(fn);
+    if (!info || info.owner === null || !info.signature) return raw;
+    const existing = this.#tailWrappers.get(raw);
+    if (existing) return existing;
+    const wrapped = create_dylink_tail_call_wrapper(info.signature, raw, this.#caller, info.owner);
+    this.#tailWrappers.set(raw, wrapped);
+    this.#tailWrappers.set(wrapped, wrapped);
     return wrapped;
   }
   #settleTable() {
     const set = this.#table.set as unknown as (index: WasmAddress, fn: CallableFunction) => void;
+    const tailTable = this.#tailTable;
+    const tailSet = tailTable?.set as
+      | ((index: WasmAddress, fn: CallableFunction | null) => void)
+      | undefined;
+    if (tailTable && BigInt(tailTable.length) !== BigInt(this.#table.length))
+      throw new Error("dynamic canonical and tail tables diverged");
     for (let index = 3n; index < BigInt(this.#table.length); index++) {
       const address = this.#word(index, this.#options.tableType.address);
       const fn = wasm_table_get(this.#table, address);
-      if (!fn) continue;
+      if (!fn) {
+        if (tailTable && wasm_table_get(tailTable, address) !== null)
+          tailSet!.call(tailTable, address, null);
+        continue;
+      }
       const wrapped = this.#callable(fn);
+      const tailWrapped = tailTable ? this.#tailCallable(fn) : undefined;
       const pointer = this.#pointers.get(fn) ?? this.#pointers.get(wrapped) ?? index;
       this.#pointers.set(fn, pointer);
       this.#pointers.set(wrapped, pointer);
       if (wrapped !== fn) set.call(this.#table, address, wrapped);
+      if (tailTable && tailWrapped && wasm_table_get(tailTable, address) !== tailWrapped)
+        tailSet!.call(tailTable, address, tailWrapped);
     }
   }
   #word(value: bigint, address = this.#options.address): WasmAddress {
@@ -335,12 +384,23 @@ export class ProcessDylink {
     }
   }
   #grow(end: bigint) {
-    if (end > BigInt(this.#table.length)) {
-      const grow = this.#table.grow as unknown as (delta: WasmAddress) => WasmAddress;
-      grow.call(
-        this.#table,
-        this.#word(end - BigInt(this.#table.length), this.#options.tableType.address),
-      );
+    const current = BigInt(this.#table.length);
+    const tailTable = this.#tailTable;
+    if (tailTable && BigInt(tailTable.length) !== current)
+      throw new DylinkInitializationError(new Error("dynamic canonical and tail tables diverged"));
+    if (end <= current) return;
+    const delta = this.#word(end - current, this.#options.tableType.address);
+    const grow = (table: WebAssembly.Table) =>
+      (table.grow as unknown as (delta: WasmAddress) => WasmAddress).call(table, delta);
+    try {
+      if (tailTable) grow(tailTable);
+      grow(this.#table);
+    } catch (error) {
+      if (tailTable && BigInt(tailTable.length) !== BigInt(this.#table.length))
+        throw new DylinkInitializationError(
+          new Error("dynamic canonical and tail table growth diverged", { cause: error }),
+        );
+      throw error;
     }
   }
   #unpin(pointer: number) {
@@ -356,7 +416,16 @@ export class ProcessDylink {
       pointer = this.#cursor;
       this.#grow(pointer + 1n);
       const set = this.#table.set as unknown as (index: WasmAddress, fn: CallableFunction) => void;
-      set.call(this.#table, this.#word(pointer, this.#options.tableType.address), fn);
+      const address = this.#word(pointer, this.#options.tableType.address);
+      set.call(this.#table, address, fn);
+      if (this.#tailTable) {
+        const tail = this.#tailCallable(symbol.value as CallableFunction);
+        const tailSet = this.#tailTable.set as unknown as (
+          index: WasmAddress,
+          fn: CallableFunction,
+        ) => void;
+        tailSet.call(this.#tailTable, address, tail);
+      }
       this.#cursor++;
       this.#pointers.set(symbol.value, pointer);
       this.#pointers.set(fn, pointer);
@@ -563,6 +632,12 @@ export class ProcessDylink {
       }
       const files = [...visited].map((key) => local.get(key)!);
       const fresh = files.filter((file) => !this.#reuse.has(file.key));
+      let tailTableRequired = false;
+      for (const file of fresh) {
+        const prepared = prepare_wasm_dynamic_tail_calls(file.bytes);
+        tailTableRequired ||= prepared.tailTableRequired;
+      }
+      if (tailTableRequired) this.#ensureTailTable();
       let size = 1n;
       let alignment = 1n;
       for (const file of fresh) {
@@ -614,6 +689,7 @@ export class ProcessDylink {
           files: new Map(files.map((file) => [file.key, file.bytes])),
           memory: this.#options.memory,
           table: this.#table,
+          tailTable: this.#tailTable ?? undefined,
           stack: this.#stack,
           memoryMaximumPages: BigInt(this.#options.maximumPages),
           tableMaximumElements: this.#options.tableType.maximum,
@@ -653,14 +729,29 @@ export class ProcessDylink {
             register: (name, instance) =>
               this.#registerFunctions(this.#owner(name), instance, functionMetadata.get(name)!),
             callable: (fn) => this.#callable(fn),
+            tailCallable: (fn) => this.#tailCallable(fn),
             settleTable: () => this.#settleTable(),
           },
         });
       } catch (error) {
         // Ordinary errors precede instantiation and reentrant user code. Traps
         // and control transfers leave this instance, so never roll them back.
-        if (!this.#options.isControlFlow(error) && !(error instanceof DylinkInitializationError))
+        if (!this.#options.isControlFlow(error) && !(error instanceof DylinkInitializationError)) {
           this.#cursor = tableStart;
+          const set = this.#table.set as unknown as (index: WasmAddress, fn: null) => void;
+          const tailSet = this.#tailTable?.set as
+            | ((index: WasmAddress, fn: null) => void)
+            | undefined;
+          for (
+            let index = tableStart;
+            index < tableEnd && index < BigInt(this.#table.length);
+            index++
+          ) {
+            const address = this.#word(index, tableAddress);
+            set.call(this.#table, address, null);
+            tailSet?.call(this.#tailTable!, address, null);
+          }
+        }
         throw error;
       }
       if (this.#cursor === tableEnd || group.layout.tableEnd > this.#cursor)

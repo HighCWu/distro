@@ -1,7 +1,10 @@
 // SPDX-License-Identifier: MIT
 import assert from "node:assert/strict";
 import test from "node:test";
-import { create_dylink_call_wrapper } from "../src/dylink_call_wrapper.ts";
+import {
+  create_dylink_call_wrapper,
+  create_dylink_tail_call_wrapper,
+} from "../src/dylink_call_wrapper.ts";
 
 const leb = (value: number) => {
   const bytes: number[] = [];
@@ -152,6 +155,39 @@ test("nested owners and host exceptions restore their previous context", () => {
   assert.equal(context.value, 3);
 });
 
+test("tail wrappers keep an indirect tail-call chain bounded and outer calls restore ownership", () => {
+  const context = new WebAssembly.Global({ value: "i32", mutable: true }, 9);
+  const bytes = new Uint8Array([
+    0,
+    97,
+    115,
+    109,
+    1,
+    0,
+    0,
+    0,
+    ...section(1, [1, 0x60, 1, 0x7f, 1, 0x7f]),
+    ...section(3, [1, 0]),
+    ...section(4, [1, 0x70, 0, 1]),
+    ...section(7, [2, ...string("step"), 0, 0, ...string("table"), 1, 0]),
+    ...section(
+      10,
+      [
+        1, 20, 0, 0x20, 0, 0x04, 0x7f, 0x20, 0, 0x41, 1, 0x6b, 0x41, 0, 0x13, 0, 0, 0x05, 0x41, 42,
+        0x0b, 0x0b,
+      ],
+    ),
+  ]);
+  const instance = new WebAssembly.Instance(new WebAssembly.Module(bytes));
+  const target = instance.exports.step as CallableFunction;
+  const table = instance.exports.table as WebAssembly.Table;
+  table.set(0, create_dylink_tail_call_wrapper("[[127],[127]]", target, context, 17));
+  const entry = create_dylink_call_wrapper("[[127],[127]]", target, context, 22);
+
+  assert.equal(entry(100_000), 42);
+  assert.equal(context.value, 9);
+});
+
 test("Wasm exceptions are rethrown with the original tag and payload", () => {
   const context = new WebAssembly.Global({ value: "i32", mutable: true }, 7);
   const tag = new WebAssembly.Tag({ parameters: ["i32"] });
@@ -169,6 +205,24 @@ test("Wasm exceptions are rethrown with the original tag and payload", () => {
       assert.equal(error.getArg(tag, 0), 42);
       return true;
     },
+  );
+  assert.equal(context.value, 7);
+});
+
+test("tail wrappers preserve Wasm exceptions for the outer owner-restoring boundary", () => {
+  const context = new WebAssembly.Global({ value: "i32", mutable: true }, 7);
+  const tag = new WebAssembly.Tag({ parameters: ["i32"] });
+  const target = new WebAssembly.Instance(
+    module([0x7f], [], [0x20, 0, 0x08, 0], [1, ...string("env"), ...string("tag"), 4, 0, 0]),
+    { env: { tag } } as unknown as WebAssembly.Imports,
+  ).exports.call as CallableFunction;
+  const tail = create_dylink_tail_call_wrapper("[[127],[]]", target, context, 17);
+  const outer = create_dylink_call_wrapper("[[127],[]]", tail, context, 88);
+
+  assert.throws(
+    () => outer(42),
+    (error) =>
+      error instanceof WebAssembly.Exception && error.is(tag) && error.getArg(tag, 0) === 42,
   );
   assert.equal(context.value, 7);
 });

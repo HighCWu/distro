@@ -6,6 +6,8 @@ import {
   read_wasm_dynamic_imports,
   read_wasm_dynamic_signatures,
   read_wasm_memories,
+  dynamic_tail_table_import,
+  prepare_wasm_dynamic_tail_calls,
   type WasmDylink,
 } from "./wasm_binary.ts";
 import { wasm_table_get } from "./wasm.ts";
@@ -64,6 +66,8 @@ export function link_dylink_graph(options: {
   files: ReadonlyMap<string, Uint8Array<ArrayBuffer>>;
   memory: WebAssembly.Memory;
   table: WebAssembly.Table;
+  /** Process-private table used only by marked side-module tail calls. */
+  tailTable?: WebAssembly.Table;
   /** Actual creation limits, which the JS reflection API does not expose. */
   memoryMaximumPages: bigint;
   tableMaximumElements?: bigint;
@@ -92,6 +96,7 @@ export function link_dylink_graph(options: {
     instantiate(name: string, action: () => WebAssembly.Instance): WebAssembly.Instance;
     register(name: string, instance: WebAssembly.Instance): void;
     callable(fn: CallableFunction): CallableFunction;
+    tailCallable?(fn: CallableFunction): CallableFunction;
     settleTable(): void;
   };
   resolveDependency?(name: string, parent: string): string;
@@ -112,6 +117,7 @@ export function link_dylink_graph(options: {
       base: bigint;
       tableBase: bigint;
       dependencies: string[];
+      tailTableRequired: boolean;
       initialization: Initialization;
     }
   >();
@@ -127,8 +133,12 @@ export function link_dylink_graph(options: {
     // Records are registered before following NEEDED edges. A back edge reuses
     // the same record; all instances and GOT bindings precede constructors.
     if (modules.has(name)) continue;
-    const bytes = options.files.get(name);
-    if (!bytes) throw new Error(`missing dynamic dependency: ${name}`);
+    const source = options.files.get(name);
+    if (!source) throw new Error(`missing dynamic dependency: ${name}`);
+    const tail = prepare_wasm_dynamic_tail_calls(source);
+    const bytes = tail.bytes;
+    if (tail.tailTableRequired && !options.tailTable)
+      throw new Error("dynamic tail-call ABI table is unavailable");
     const originalModule = new WebAssembly.Module(bytes);
     const metadata = read_wasm_dylink(originalModule);
     if (!metadata) throw new Error(`missing dylink.0: ${name}`);
@@ -171,6 +181,7 @@ export function link_dylink_graph(options: {
       imports: read_wasm_dynamic_imports(bytes),
       signatures: read_wasm_dynamic_signatures(bytes),
       exports,
+      tailTableRequired: tail.tailTableRequired,
       base: 0n,
       tableBase: 0n,
       dependencies: metadata.needed.map(
@@ -430,9 +441,12 @@ export function link_dylink_graph(options: {
           break;
         case "table":
           if (entry.minimum > requiredTableMinimum) requiredTableMinimum = entry.minimum;
+          const privateTailTable =
+            entry.module === "env" && entry.name === dynamic_tail_table_import;
           if (
-            entry.module !== "env" ||
-            entry.name !== "__indirect_function_table" ||
+            (privateTailTable
+              ? !record.tailTableRequired
+              : entry.module !== "env" || entry.name !== "__indirect_function_table") ||
             entry.address !== tableArena.address ||
             (options.tableMaximumElements !== undefined &&
               entry.minimum > options.tableMaximumElements) ||
@@ -560,6 +574,10 @@ export function link_dylink_graph(options: {
   options.prepareTable?.(requiredTableCapacity);
   if (requiredTableMinimum > BigInt(table.length))
     throw new Error("incompatible dynamic table import");
+  if (options.tailTable && BigInt(options.tailTable.length) !== BigInt(table.length))
+    throw new Error("dynamic canonical and tail tables have different sizes");
+  if (options.tailTable && requiredTableCapacity > BigInt(options.tailTable.length))
+    throw new Error("incompatible dynamic tail table import");
   if (tableArena.limit > BigInt(table.length))
     throw new RangeError("dynamic table arena must already belong to committed process resources");
   for (const [index, record] of fresh.entries()) Object.assign(record, layout.items[index]);
@@ -580,6 +598,14 @@ export function link_dylink_graph(options: {
       ) {
         const value = wasm_table_get(table, word(index, tableArena.address));
         if (value === wrapped || (value && callable(value) === wrapped)) {
+          if (options.tailTable) {
+            const tail = options.execution?.tailCallable?.(fn) ?? wrapped;
+            const set = options.tailTable.set as unknown as (
+              index: number | bigint,
+              value: CallableFunction,
+            ) => void;
+            set.call(options.tailTable, word(index, tableArena.address), tail);
+          }
           functionPointers.set(fn, index);
           functionPointers.set(wrapped, index);
           return index;
@@ -588,15 +614,30 @@ export function link_dylink_graph(options: {
     const index = nextSlot++;
     if (index >= extra.tableEnd) throw new RangeError("dynamic function slot budget exhausted");
     const set = table.set as unknown as (index: number | bigint, value: CallableFunction) => void;
-    set.call(table, word(index, tableArena.address), wrapped);
+    const address = word(index, tableArena.address);
+    set.call(table, address, wrapped);
+    if (options.tailTable) {
+      const tail = options.execution?.tailCallable?.(fn) ?? wrapped;
+      const tailSet = options.tailTable.set as unknown as (
+        index: number | bigint,
+        value: CallableFunction,
+      ) => void;
+      tailSet.call(options.tailTable, address, tail);
+    }
     functionPointers.set(fn, index);
     functionPointers.set(wrapped, index);
     return index;
   }
   try {
     const set = table.set as unknown as (index: number | bigint, value: null) => void;
-    for (let index = tableArena.cursor; index < extra.tableEnd; index++)
-      set.call(table, word(index, tableArena.address), null);
+    const tailSet = options.tailTable?.set as
+      | ((index: number | bigint, value: null) => void)
+      | undefined;
+    for (let index = tableArena.cursor; index < extra.tableEnd; index++) {
+      const address = word(index, tableArena.address);
+      set.call(table, address, null);
+      tailSet?.call(options.tailTable!, address, null);
+    }
     for (const record of fresh) {
       new Uint8Array(memory.buffer, Number(record.base), record.metadata.memorySize).fill(0);
       const imports: WebAssembly.Imports = Object.create(null);
@@ -607,7 +648,10 @@ export function link_dylink_graph(options: {
             group[entry.name] = memory;
             break;
           case "table":
-            group[entry.name] = table;
+            group[entry.name] =
+              entry.module === "env" && entry.name === dynamic_tail_table_import
+                ? options.tailTable!
+                : table;
             break;
           case "function": {
             const host = options.hostFunctions?.get(entry.module)?.get(entry.name);

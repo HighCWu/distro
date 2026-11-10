@@ -19,6 +19,13 @@
 
 int main_value = 5;
 static _Thread_local int main_tls_guard = 501;
+struct TailChain {
+    uint64_t Remaining;
+    uint64_t Value;
+    uint64_t (*step_one)(struct TailChain *);
+    uint64_t (*step_three)(struct TailChain *);
+};
+
 int main_add(int value) { return main_value += value; }
 static void require(int condition, const char *message)
 {
@@ -419,6 +426,35 @@ int main(void)
             "lazy consumer, shadows, provider and failure descriptors clean up");
     lazy_use_callback = NULL;
     puts("dynamic loader: RTLD_LAZY pending direct binding, GLOBAL constructor callback and NOW rejection pass");
+
+    void *tail_one = dlopen("/plugins/libtail-step-one.so", RTLD_NOW | RTLD_LOCAL);
+    void *tail_three = dlopen("/plugins/libtail-step-three.so", RTLD_NOW | RTLD_LOCAL);
+    require(tail_one != NULL && tail_three != NULL, "load explicitly marked tail-call libraries");
+    uint64_t (*step_one)(struct TailChain *) = symbol(tail_one, "tail_step");
+    uint64_t (*step_three)(struct TailChain *) = symbol(tail_three, "tail_step");
+    require(step_one != step_three, "same-name tail functions have distinct canonical addresses");
+    struct TailChain chain = {
+        .Remaining = 100000,
+        .Value = 0,
+        .step_one = step_one,
+        .step_three = step_three,
+    };
+    uint64_t tail_result = step_one(&chain);
+    require(tail_result == 200000 && chain.Remaining == 0 && chain.Value == 200000,
+            "100000 indirect musttail calls alternate across marked modules without stack growth");
+
+    void *ordinary = dlopen("/plugins/libplugin-b.so", RTLD_NOW | RTLD_LOCAL);
+    require(ordinary == plugin, "reopen the ordinary dependency library after tail calls");
+    int (*ordinary_run)(int) = symbol(ordinary, "plugin_run");
+    int *ordinary_data = symbol(ordinary, "library_value");
+    int main_before = main_value;
+    int data_before = *ordinary_data;
+    require(ordinary_run(3) == main_before + data_before + 6 &&
+            main_value == main_before + 3 && *ordinary_data == data_before + 3,
+            "ordinary cross-module calls retain owner restoration after the tail chain");
+    require(!dlclose(ordinary) && !dlclose(tail_one) && !dlclose(tail_three) &&
+            descriptors() == baseline, "tail-call library close and descriptor cleanup");
+    puts("dynamic loader: marked cross-module indirect tail calls and owner restoration pass");
     puts("::vm-test::pass");
     return 0;
 }
