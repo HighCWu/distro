@@ -1751,6 +1751,8 @@ lib.makeScope (scope: lib.callPackageWith ({ inherit lib pkgs; } // scope)) (
       extraChecks = { };
     };
     rsync-fork = callPackage ./rsync-fork/package.nix {
+      # Match the polling runtime used by the static ACL dependency.
+      sdk-fork-automatic = self.sdk-fork-automatic-poll-libc;
       extraChecks.both = pkgs.runCommand "rsync-fork-check-both" { passthru.ci.heavy = true; } ''
         test -e ${self.rsync-fork.checks.runtime}
         test -e ${self.rsync-fork-wasm64.checks.runtime}
@@ -1760,12 +1762,13 @@ lib.makeScope (scope: lib.callPackageWith ({ inherit lib pkgs; } // scope)) (
     rsync-fork-wasm64 = self.rsync-fork.override {
       platform = self.platform-wasm64;
       sdk = self.sdk-wasm64;
-      sdk-fork-automatic = self.sdk-fork-automatic-wasm64;
+      sdk-fork-automatic = self.sdk-fork-automatic-poll-libc-wasm64;
       llvm-toolchain = self.llvm-toolchain-wasm64;
       musl = self.musl-wasm64;
       llvm-runtimes = self.llvm-runtimes-wasm64;
       busybox = self.busybox-wasm64;
       vm-test = vmTestWasm64;
+      acl-runtime = self.acl-runtime-wasm64;
       extraChecks = { };
     };
     m4-fork = callPackage ./m4-fork/package.nix {

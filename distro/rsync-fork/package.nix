@@ -10,14 +10,24 @@
   llvm-runtimes,
   busybox,
   vm-test,
+  acl-runtime,
   extraChecks ? { },
 }:
 let
+  ext4Disk =
+    pkgs.runCommand "rsync-fork-ext4-disk-8m"
+      {
+        nativeBuildInputs = [ pkgs.e2fsprogs ];
+      }
+      ''
+        truncate -s 8388608 "$out"
+        mke2fs -q -F -t ext4 -O ext_attr,^has_journal -m 0 "$out"
+      '';
   configureFlags = [
-    "--disable-acl-support"
+    "--enable-acl-support"
     "--disable-lz4"
     "--disable-openssl"
-    "--disable-xattr-support"
+    "--enable-xattr-support"
     "--disable-xxhash"
     "--disable-zstd"
     "--enable-ipv6"
@@ -46,6 +56,7 @@ pkgs.stdenvNoCC.mkDerivation (finalAttrs: {
     pkgs.nodejs
     pkgs.perl
   ];
+  buildInputs = [ acl-runtime ];
 
   configurePhase = ''
     runHook preConfigure
@@ -54,6 +65,9 @@ pkgs.stdenvNoCC.mkDerivation (finalAttrs: {
       CC_FOR_BUILD=${pkgs.stdenv.cc}/bin/cc \
       BUILD_CC=${pkgs.stdenv.cc}/bin/cc \
       AR=llvm-ar RANLIB=llvm-ranlib CFLAGS=-O2 \
+      CPPFLAGS=-I${acl-runtime}/opt/acl-runtime/include\ -I${acl-runtime}/opt/attr-runtime/include \
+      LDFLAGS=-L${acl-runtime}/opt/acl-runtime/lib\ -L${acl-runtime}/opt/attr-runtime/lib \
+      LIBS="-lacl -lattr" \
       ./configure \
         --build=${lib.escapeShellArg pkgs.stdenv.buildPlatform.config} \
         --host=${lib.escapeShellArg platform.targetTriple} \
@@ -81,8 +95,10 @@ pkgs.stdenvNoCC.mkDerivation (finalAttrs: {
     cp rsync rsync.wasm
     wasm-linux-fork-cc -O2 -Wall -Wextra -Werror \
       ${./rsync-fork-helper.c} -o rsync-fork-helper.wasm
+    wasm-linux-fork-cc -O2 -Wall -Wextra -Werror \
+      ${./xattr-fixture.c} -o rsync-xattr-fixture.wasm
 
-    for binary in rsync.wasm rsync-fork-helper.wasm; do
+    for binary in rsync.wasm rsync-fork-helper.wasm rsync-xattr-fixture.wasm; do
       node ${../busybox/check-binary.mjs} ${../../packages/kernel/src/wasm_binary.ts} \
         "$binary" ${toString platform.addressBits} ${toString platform.maximumMemoryBytes}
       node --input-type=module - "$binary" <<'NODE'
@@ -113,6 +129,8 @@ pkgs.stdenvNoCC.mkDerivation (finalAttrs: {
         install -m755 rsync.wasm "$out/opt/rsync-fork/bin/rsync"
         install -m755 rsync-fork-helper.wasm \
           "$out/opt/rsync-fork/libexec/rsync-fork-helper"
+        install -m755 rsync-xattr-fixture.wasm \
+          "$out/opt/rsync-fork/libexec/rsync-xattr-fixture"
         cat > "$out/bin/rsync-fork" <<'SH'
     #!/bin/sh
     exec /opt/rsync-fork/bin/rsync "$@"
@@ -126,8 +144,9 @@ pkgs.stdenvNoCC.mkDerivation (finalAttrs: {
         cp popt/COPYING "$notices/popt-COPYING"
         cp zlib/zlib.h "$notices/zlib-license-source.h"
         cp ${../sdk/LICENSE.MIT} "$notices/LOCAL-ADDITIONS.MIT"
-        cp -r ${sdk}/share/linux-wasm-sdk/licenses "$notices/standard-sdk"
-        cp -r ${sdk-fork-automatic.buildMaterials}/licenses "$notices/fork-sdk"
+        cp -rL ${sdk}/share/linux-wasm-sdk/licenses "$notices/standard-sdk"
+        cp -rL ${sdk-fork-automatic.buildMaterials}/licenses "$notices/fork-sdk"
+        cp -rL ${acl-runtime}/share/licenses/acl-runtime "$notices/acl"
         cp ${musl.src}/COPYRIGHT "$notices/musl-COPYRIGHT"
         cp ${llvm-runtimes.src}/compiler-rt/LICENSE.TXT \
           "$notices/compiler-rt-LICENSE.TXT"
@@ -141,6 +160,7 @@ pkgs.stdenvNoCC.mkDerivation (finalAttrs: {
           process-source.sha256 \
           ${./package.nix} ${./package.test.js} ${./native-reference.sh} \
           ${./runtime-test.sh} ${./rsync-fork-helper.c} \
+          ${./xattr-fixture.c} \
           ${../busybox/check-binary.mjs} ${../../packages/kernel/src/wasm_binary.ts} \
           "$materials/"
         cp COPYING "$materials/rsync-COPYING"
@@ -149,6 +169,7 @@ pkgs.stdenvNoCC.mkDerivation (finalAttrs: {
         ln -s "$src" "$materials/source-archive"
         ln -s ${sdk.buildMaterials} "$materials/standard-sdk"
         ln -s ${sdk-fork-automatic.buildMaterials} "$materials/fork-sdk"
+        ln -s ${acl-runtime.buildMaterials} "$materials/acl-build-materials"
         ln -s ${llvm-toolchain.licenseSource} "$materials/llvm-toolchain-source"
         ln -s ${llvm-runtimes.src} "$materials/llvm-runtimes-source"
         ln -s ${musl.src} "$materials/musl-source"
@@ -160,6 +181,7 @@ pkgs.stdenvNoCC.mkDerivation (finalAttrs: {
     outputsToInstall = [ "out" ];
     license = [
       lib.licenses.gpl3Plus
+      lib.licenses.lgpl21Plus
       lib.licenses.mit
       lib.licenses.zlib
     ];
@@ -169,7 +191,7 @@ pkgs.stdenvNoCC.mkDerivation (finalAttrs: {
 
   passthru.apk = {
     depends = [ "busybox" ];
-    license = "GPL-3.0-or-later AND MIT AND zlib AND Apache-2.0 WITH LLVM-exception";
+    license = "GPL-3.0-or-later AND LGPL-2.1-or-later AND MIT AND zlib AND Apache-2.0 WITH LLVM-exception";
   };
 
   passthru.checks = {
@@ -179,8 +201,10 @@ pkgs.stdenvNoCC.mkDerivation (finalAttrs: {
       contents = [
         busybox
         finalAttrs.finalPackage
+        acl-runtime
       ];
       cpus = 2;
+      disks = [ ext4Disk ];
     };
   }
   // extraChecks;

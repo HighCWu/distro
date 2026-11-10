@@ -7,13 +7,45 @@ export LC_ALL=C
 
 rsync_program=${RSYNC_FORK_PROGRAM:-/opt/rsync-fork/bin/rsync}
 helper=${RSYNC_FORK_HELPER:-/opt/rsync-fork/libexec/rsync-fork-helper}
+xattr_fixture=${RSYNC_FORK_XATTR_FIXTURE:-/opt/rsync-fork/libexec/rsync-xattr-fixture}
+acl_tool_dir=${ACL_TOOL_DIR:-/opt/acl-runtime/bin}
 native_reference=${NATIVE_REFERENCE:-0}
 work=
+metadata_work=
+mountpoint=/mnt/rsync-fork-acl-test
+mounted=0
 
 cleanup() {
+  cleanup_status=0
+  if [ -n "$metadata_work" ] && [ -d "$metadata_work" ]; then
+    rm -rf "$metadata_work"
+    cleanup_metadata_status=$?
+    if [ "$cleanup_metadata_status" -eq 0 ]; then
+      metadata_work=
+    else
+      cleanup_status=$cleanup_metadata_status
+    fi
+  fi
+  if [ "$mounted" = 1 ]; then
+    umount "$mountpoint" >/dev/null 2>&1
+    cleanup_unmount_status=$?
+    if [ "$cleanup_unmount_status" -eq 0 ]; then
+      mounted=0
+      rmdir "$mountpoint" >/dev/null 2>&1 || true
+    else
+      cleanup_status=$cleanup_unmount_status
+    fi
+  fi
   if [ -n "$work" ]; then
     rm -rf "$work"
+    cleanup_work_status=$?
+    if [ "$cleanup_work_status" -eq 0 ]; then
+      work=
+    else
+      cleanup_status=$cleanup_work_status
+    fi
   fi
+  return "$cleanup_status"
 }
 
 fail() {
@@ -42,6 +74,12 @@ if [ "$native_reference" != 1 ]; then
   mount -t proc proc /proc >/dev/null 2>&1
   status=$?
   [ "$status" -eq 0 ] || fail "mount proc (status $status)"
+  mkdir -p "$mountpoint"
+  status=$?
+  [ "$status" -eq 0 ] || fail 'creating ext4 mount point'
+  mount -t ext4 -o acl,user_xattr /dev/vdb "$mountpoint" >/dev/null 2>&1 ||
+    fail 'mounting the fresh ext4 test disk with ACL and xattr support'
+  mounted=1
   echo 'rsync fork runtime: target wasm candidate'
 else
   echo 'rsync fork runtime: native reference'
@@ -49,6 +87,9 @@ fi
 
 [ -x "$rsync_program" ] || fail "rsync is not executable: $rsync_program"
 [ -x "$helper" ] || fail "helper is not executable: $helper"
+[ -x "$xattr_fixture" ] || fail "xattr fixture is not executable: $xattr_fixture"
+[ -x "$acl_tool_dir/setfacl" ] || fail "setfacl is not executable in $acl_tool_dir"
+[ -x "$acl_tool_dir/getfacl" ] || fail "getfacl is not executable in $acl_tool_dir"
 [ -r /proc/self/stat ] || fail 'process status is unavailable under /proc'
 
 version=$("$rsync_program" --version 2>&1)
@@ -57,6 +98,10 @@ status=$?
 case "$version" in
 *rsync*) ;;
 *) fail 'expected an rsync binary' ;;
+esac
+case "$version" in
+*ACLs*xattrs* | *xattrs*ACLs*) ;;
+*) fail 'rsync was built without ACL and xattr support' ;;
 esac
 
 work=$(mktemp -d /tmp/rsync-fork-runtime.XXXXXX 2>/dev/null)
@@ -291,10 +336,133 @@ check_remote_children_reaped remote-recovery "$before"
 assert_tree_matches "$remote_dest" remote-recovery
 echo 'rsync fork: later remote transfer recovered after child failure'
 
-rm -rf "$work"
+if [ "$native_reference" = 1 ]; then
+  metadata_work="$work/ext4-metadata"
+  metadata_filesystem='host filesystem'
+else
+  metadata_work="$mountpoint/rsync-metadata-$$"
+  metadata_filesystem=ext4
+fi
+metadata_source="$metadata_work/source"
+metadata_dest="$metadata_work/destination"
+mkdir -p "$metadata_source" "$metadata_dest"
+status=$?
+[ "$status" -eq 0 ] || fail 'creating the ACL/xattr synchronization fixture'
+metadata_source_file="$metadata_source/payload.bin"
+metadata_dest_file="$metadata_dest/payload.bin"
+printf 'rsync -aAX preserves actual ACL and user xattr metadata\n' \
+  >"$metadata_source_file"
+status=$?
+[ "$status" -eq 0 ] || fail 'writing metadata fixture payload'
+
+run_acl() {
+  run_acl_stage=$1
+  shift
+  if "$acl_tool_dir/setfacl" "$@" \
+    >"$work/$run_acl_stage.stdout" 2>"$work/$run_acl_stage.stderr"; then
+    status=0
+  else
+    status=$?
+  fi
+  [ "$status" -eq 0 ] || fail "$run_acl_stage setfacl returned $status"
+  [ ! -s "$work/$run_acl_stage.stderr" ] || fail "$run_acl_stage setfacl wrote diagnostics"
+}
+
+run_xattr_fixture() {
+  xattr_fixture_stage=$1
+  shift
+  if "$xattr_fixture" "$@" \
+    >"$work/$xattr_fixture_stage.stdout" 2>"$work/$xattr_fixture_stage.stderr"; then
+    status=0
+  else
+    status=$?
+  fi
+  [ "$status" -eq 0 ] || fail "$xattr_fixture_stage xattr fixture returned $status"
+  [ ! -s "$work/$xattr_fixture_stage.stderr" ] ||
+    fail "$xattr_fixture_stage xattr fixture wrote diagnostics"
+}
+
+set_metadata_acl() {
+  metadata_acl_stage=$1
+  metadata_acl_path=$2
+  metadata_acl_entries=$3
+  run_acl "$metadata_acl_stage" -m "$metadata_acl_entries" "$metadata_acl_path"
+}
+
+assert_metadata() {
+  metadata_assert_stage=$1
+  metadata_assert_value=$2
+  metadata_assert_expected_acl=$3
+  for metadata_assert_side in source destination; do
+    if [ "$metadata_assert_side" = source ]; then
+      metadata_assert_path=$metadata_source_file
+    else
+      metadata_assert_path=$metadata_dest_file
+    fi
+    "$acl_tool_dir/getfacl" -cnp "$metadata_assert_path" \
+      >"$work/$metadata_assert_stage-$metadata_assert_side.acl" \
+      2>"$work/$metadata_assert_stage-$metadata_assert_side-acl.stderr"
+    status=$?
+    [ "$status" -eq 0 ] ||
+      fail "$metadata_assert_stage: getfacl failed for $metadata_assert_side (status $status)"
+    [ ! -s "$work/$metadata_assert_stage-$metadata_assert_side-acl.stderr" ] ||
+      fail "$metadata_assert_stage: getfacl wrote diagnostics for $metadata_assert_side"
+    cmp "$metadata_assert_expected_acl" \
+      "$work/$metadata_assert_stage-$metadata_assert_side.acl" >/dev/null 2>&1
+    status=$?
+    [ "$status" -eq 0 ] ||
+      fail "$metadata_assert_stage: $metadata_assert_side named ACL differs from expected entries"
+    run_xattr_fixture "$metadata_assert_stage-$metadata_assert_side-xattr" \
+      check "$metadata_assert_path" "$metadata_assert_value"
+  done
+  cmp "$metadata_source_file" "$metadata_dest_file" >/dev/null 2>&1
+  status=$?
+  [ "$status" -eq 0 ] || fail "$metadata_assert_stage: payload bytes differ after rsync"
+  cmp "$work/$metadata_assert_stage-source.acl" \
+    "$work/$metadata_assert_stage-destination.acl" >/dev/null 2>&1
+  status=$?
+  [ "$status" -eq 0 ] || fail "$metadata_assert_stage: source and destination ACL text differ"
+}
+
+run_xattr_fixture metadata-initial-set set "$metadata_source_file" initial
+set_metadata_acl metadata-initial-acl "$metadata_source_file" \
+  'u:1001:r--,g::---,m::r--,o::---'
+cat >"$work/metadata-initial.expected-acl" <<'EOF'
+user::rw-
+user:1001:r--
+group::---
+mask::r--
+other::---
+
+EOF
+run_supervised metadata-initial-sync -aAX -- "$metadata_source/" "$metadata_dest/"
+status=$?
+[ "$status" -eq 0 ] || fail "local -aAX initial metadata sync (status $status)"
+assert_metadata metadata-initial initial "$work/metadata-initial.expected-acl"
+printf 'rsync fork: %s -aAX copied a named ACL and binary user xattr\n' \
+  "$metadata_filesystem"
+
+run_xattr_fixture metadata-update-set set "$metadata_source_file" updated
+set_metadata_acl metadata-update-acl "$metadata_source_file" 'u:1001:rw-,m::rw-'
+cat >"$work/metadata-update.expected-acl" <<'EOF'
+user::rw-
+user:1001:rw-
+group::---
+mask::rw-
+other::---
+
+EOF
+run_supervised metadata-incremental-sync -aAX -- \
+  "$metadata_source/" "$metadata_dest/"
+status=$?
+[ "$status" -eq 0 ] || fail "local -aAX incremental metadata sync (status $status)"
+assert_metadata metadata-incremental updated "$work/metadata-update.expected-acl"
+printf 'rsync fork: %s -aAX updated ACL and binary user xattr incrementally\n' \
+  "$metadata_filesystem"
+
+cleanup
 status=$?
 [ "$status" -eq 0 ] || fail 'temporary tree cleanup'
-work=
 trap - 0
 echo '::vm-test::pass'
 if [ "$native_reference" = 1 ]; then

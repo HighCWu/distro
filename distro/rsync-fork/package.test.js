@@ -9,6 +9,7 @@ const directory = dirname(fileURLToPath(import.meta.url));
 const recipe = readFileSync(join(directory, "package.nix"), "utf8");
 const runtime = readFileSync(join(directory, "runtime-test.sh"), "utf8");
 const helper = readFileSync(join(directory, "rsync-fork-helper.c"), "utf8");
+const xattrFixture = readFileSync(join(directory, "xattr-fixture.c"), "utf8");
 const nativeReference = readFileSync(join(directory, "native-reference.sh"), "utf8");
 
 function phase(name) {
@@ -19,6 +20,13 @@ function phase(name) {
 
 test("rsync fork recipe builds the pinned upstream source with automatic fork support", () => {
   assert.match(recipe, /inherit \(pkgs\.rsync\) version src/);
+  assert.match(recipe, /acl-runtime,/);
+  assert.match(recipe, /buildInputs = \[ acl-runtime \]/);
+  assert.match(recipe, /CPPFLAGS=-I\$\{acl-runtime\}\/opt\/acl-runtime\/include/);
+  assert.match(recipe, /-I\$\{acl-runtime\}\/opt\/attr-runtime\/include/);
+  assert.match(recipe, /LDFLAGS=-L\$\{acl-runtime\}\/opt\/acl-runtime\/lib/);
+  assert.match(recipe, /-L\$\{acl-runtime\}\/opt\/attr-runtime\/lib/);
+  assert.match(recipe, /LIBS="-lacl -lattr"/);
   assert.match(
     recipe,
     /tar -xOf \$\{pkgs\.rsync\.src\} "rsync-\$\{finalAttrs\.version\}\/\$source_file"/,
@@ -32,16 +40,17 @@ test("rsync fork recipe builds the pinned upstream source with automatic fork su
   const configureFlags = recipe.match(/configureFlags = \[([\s\S]*?)\];/);
   assert.ok(configureFlags, "missing configureFlags");
   for (const option of [
-    "--disable-acl-support",
+    "--enable-acl-support",
     "--disable-lz4",
     "--disable-openssl",
-    "--disable-xattr-support",
+    "--enable-xattr-support",
     "--disable-xxhash",
     "--disable-zstd",
     "--with-included-popt",
     "--with-included-zlib",
   ])
     assert.ok(configureFlags[1].includes(`\"${option}\"`), `missing configure option ${option}`);
+  assert.doesNotMatch(configureFlags[1], /"--disable-(?:acl|xattr)-support"/);
   assert.doesNotMatch(configureFlags[1], /"--disable-iconv(?:-open)?"/);
 
   const build = phase("buildPhase");
@@ -50,10 +59,18 @@ test("rsync fork recipe builds the pinned upstream source with automatic fork su
   assert.match(build, /sha256sum \$\{pkgs\.rsync\.src\} > source-archive\.sha256/);
   assert.match(build, /sha256sum -c source-archive\.sha256/);
   assert.match(build, /make -j"\$NIX_BUILD_CORES" rsync/);
+  assert.match(build, /wasm-linux-fork-cc -O2 -Wall -Wextra -Werror/);
+  assert.match(build, /xattr-fixture\.c/);
+  assert.match(recipe, /rsync-xattr-fixture\.wasm/);
+  assert.match(recipe, /rsync-fork-ext4-disk-8m/);
+  assert.match(recipe, /mke2fs -q -F -t ext4 -O ext_attr/);
   assert.doesNotMatch(build, /wasm-linux-fork-finalize/);
   assert.match(recipe, /sdk-fork-automatic\.buildMaterials/);
   assert.match(recipe, /cp COPYING \"\$notices\/rsync-COPYING\"/);
   assert.match(recipe, /cp popt\/COPYING \"\$notices\/popt-COPYING\"/);
+  assert.match(recipe, /cp -rL \$\{sdk\}\/share\/linux-wasm-sdk\/licenses/);
+  assert.match(recipe, /cp -rL \$\{sdk-fork-automatic\.buildMaterials\}\/licenses/);
+  assert.match(recipe, /ln -s \$\{sdk\.buildMaterials\} \"\$materials\/standard-sdk\"/);
   assert.match(recipe, /zlib-license-source\.h/);
   assert.match(recipe, /lib\.licenses\.gpl3Plus/);
   assert.match(recipe, /installedTest/);
@@ -75,6 +92,15 @@ test("runtime corpus checks local and remote sync semantics and child cleanup", 
   assert.match(runtime, /'\(rsync-fork-help\)'/);
   assert.match(runtime, /remote-error-recovery/);
   assert.match(runtime, /remote-recovery/);
+  assert.match(runtime, /mount -t ext4 -o acl,user_xattr \/dev\/vdb/);
+  assert.match(runtime, /metadata-initial-sync -aAX/);
+  assert.match(runtime, /metadata-incremental-sync -aAX/);
+  assert.match(runtime, /user:1001:r--/);
+  assert.match(runtime, /user:1001:rw-/);
+  assert.match(runtime, /assert_metadata metadata-initial initial/);
+  assert.match(runtime, /assert_metadata metadata-incremental updated/);
+  assert.match(runtime, /getfacl" -cnp/);
+  assert.match(runtime, /rsync was built without ACL and xattr support/);
   assert.match(runtime, /\[ \"\$failure_status\" -eq 11 \]/);
   assert.match(runtime, /grep -F 'mkdir \"/);
   assert.match(runtime, /failed: No such file or directory/);
@@ -98,6 +124,12 @@ test("helper and optional native reference use the same real synchronization cor
   assert.match(helper, /waitpid\(-1/);
   assert.match(helper, /execv\(argv\[2\], &argv\[2\]\)/);
   assert.match(helper, /SIGKILL/);
+  assert.match(xattrFixture, /#include <sys\/xattr\.h>/);
+  assert.match(xattrFixture, /user\.rsync_fork_fixture/);
+  assert.match(xattrFixture, /setxattr\(/);
+  assert.match(xattrFixture, /getxattr\(/);
+  assert.match(xattrFixture, /memcmp\(actual, expected/);
+  assert.match(xattrFixture, /0xff/);
   assert.match(nativeReference, /command -v rsync/);
   assert.match(nativeReference, /RSYNC_FORK_PROGRAM=/);
   assert.match(nativeReference, /NATIVE_REFERENCE=1/);
