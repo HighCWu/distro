@@ -49,8 +49,11 @@ stdenv.mkDerivation (finalAttrs: {
 
   configurePhase = ''
     runHook preConfigure
+    compiler=wasm-linux-fork-cc
+    resolved_compiler=$(command -v "$compiler")
+    test "$resolved_compiler" = "${sdk-fork-automatic-poll-libc}/bin/$compiler"
     perl ./Configure linux-generic${toString platform.addressBits} \
-      "CC=${sdk-fork-automatic-poll-libc}/bin/wasm-linux-fork-cc" \
+      "CC=$compiler" \
       "AR=${llvm-toolchain}/bin/llvm-ar" \
       "RANLIB=${llvm-toolchain}/bin/llvm-ranlib" \
       --prefix=/opt/openssl-fork \
@@ -70,6 +73,12 @@ stdenv.mkDerivation (finalAttrs: {
 
   postBuild = ''
     test -x apps/openssl
+    test -s crypto/buildinf.h
+    grep -Fq 'wasm-linux-fork-cc' crypto/buildinf.h
+    if grep -Fq '${sdk-fork-automatic-poll-libc}/bin/wasm-linux-fork-cc' crypto/buildinf.h; then
+      echo 'OpenSSL build information embeds the compiler store path' >&2
+      exit 1
+    fi
     node ${../busybox/check-binary.mjs} ${../../packages/kernel/src/wasm_binary.ts} \
       apps/openssl ${toString platform.addressBits} ${toString platform.maximumMemoryBytes}
     node --input-type=module <<'NODE'
@@ -129,7 +138,16 @@ stdenv.mkDerivation (finalAttrs: {
 
     cp ${./package.nix} ${./runtime-test.sh} \
       ${../openssl/speed-no-mlock-on-wasm.patch} configdata.pm Makefile \
+      crypto/build.info crypto/buildinf.h util/mkbuildinf.pl \
       "$materials/"
+    cat >"$materials/build-parameters.txt" <<EOF
+    OpenSSL $version for linux-generic${toString platform.addressBits}
+    Configure compiler name: wasm-linux-fork-cc
+    Resolved build compiler: ${sdk-fork-automatic-poll-libc}/bin/wasm-linux-fork-cc
+    Archive tool: ${llvm-toolchain}/bin/llvm-ar
+    Ranlib tool: ${llvm-toolchain}/bin/llvm-ranlib
+    Configure options: --prefix=/opt/openssl-fork --libdir=lib --openssldir=/opt/openssl-fork/ssl no-shared no-dso no-dynamic-engine no-async no-afalgeng no-secure-memory no-tests
+    EOF
     ln -s ${openssl.src} "$materials/source"
     ln -s ${sdk.buildMaterials} "$materials/standard-sdk"
     ln -s ${sdk-fork-automatic-poll-libc.buildMaterials} "$materials/fork-sdk"
