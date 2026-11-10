@@ -46,8 +46,8 @@ version=$("$gawk_program" --version 2>/dev/null)
 status=$?
 [ "$status" -eq 0 ] || fail "GNU Awk --version failed (status $status)"
 case "$version" in
-  *"GNU Awk"*) ;;
-  *) fail 'expected GNU Awk' ;;
+*"GNU Awk"*) ;;
+*) fail 'expected GNU Awk' ;;
 esac
 
 work=$(mktemp -d /tmp/gawk-fork-runtime.XXXXXX 2>/dev/null)
