@@ -279,7 +279,6 @@ let
       cp ${forkRoot.licenseSources.llvm-runtimes}/libcxxabi/LICENSE.TXT $out/licenses/cxx/libcxxabi-LICENSE.TXT
       cp ${forkRoot.licenseSources.llvm-runtimes}/libunwind/LICENSE.TXT $out/licenses/cxx/libunwind-LICENSE.TXT
       cp ${forkRoot.licenseSources.llvm-runtimes}/compiler-rt/LICENSE.TXT $out/licenses/cxx/compiler-rt-LICENSE.TXT
-      cp ${./cxx-state.cc} $out/recipes/fork-continuation/cxx-state.cc
       cp ${cxxState}/cxx-state.o $out/recipes/cxx-state.o
       cp ${llvm-toolchain}/bin/clang++.cfg $out/recipes/clang++.cfg
       ln -s ${forkRoot.licenseSources.llvm-runtimes} $out/llvm-runtimes-source
