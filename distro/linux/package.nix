@@ -123,19 +123,8 @@ pkgs.stdenvNoCC.mkDerivation (finalAttrs: {
     ${lib.optionalString elfContainerCandidate ''
       scripts/config --enable WASM_ELF_CONTAINER
     ''}
-    ${lib.optionalString
-      (
-        mmapCopyTest
-        || fileMmapCandidate
-        || fileMmapStreamCandidate
-        || vtimeCandidate
-        || userNamespaceCandidate
-        || elfContainerCandidate
-      )
-      ''
-        make olddefconfig
-      ''
-    }
+    scripts/config --enable MEMFD_CREATE
+    make olddefconfig
     ${
       if fileMmapCandidate || fileMmapStreamCandidate then
         ''
@@ -186,6 +175,7 @@ pkgs.stdenvNoCC.mkDerivation (finalAttrs: {
     grep -qx 'CONFIG_IPV6=y' .config
     grep -qx 'CONFIG_SYSVIPC=y' .config
     grep -qx 'CONFIG_FUSE_PASSTHROUGH=y' .config
+    grep -qx 'CONFIG_MEMFD_CREATE=y' .config
     grep -qx 'CONFIG_FS_STACK=y' .config
     grep -qx 'CONFIG_VM_EVENT_COUNTERS=y' .config
     grep -qx 'CONFIG_PACKET=y' .config
