@@ -7,8 +7,8 @@
   src ? pkgs.fetchFromGitHub {
     owner = "HighCWu";
     repo = "llvm-project";
-    rev = "e1c44e8faf9a136b50baf3f81d07831ba06a336c";
-    hash = "sha256-mvFS3ZdMom1N/LdnY6EdBfjQSS/S5v9EdYXqF5bjgkY=";
+    rev = "a98781cc1f82a26c1a7321f9f50ba4e6eebbe262";
+    hash = "sha256-Dvg7IPYbvVlKUwOeRK6LA+gGz9YHxzhcanjI2pd7rwY=";
   },
 }:
 
