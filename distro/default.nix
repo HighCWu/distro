@@ -333,6 +333,7 @@ lib.makeScope (scope: lib.callPackageWith ({ inherit lib pkgs; } // scope)) (
     linux64-abi-dynamic-wasm64 = callPackage ./linux64-abi/dynamic.nix {
       linux64Abi = self.linux64-abi-wasm64;
       vm-test = vmTestWasm64;
+      sharedCompiler = sharedDriverToolchain;
     };
     sdk-elf-container-wasm64 = self.sdk-wasm64.override {
       elfContainer = true;

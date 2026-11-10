@@ -4,6 +4,7 @@
   lib,
   linux64Abi,
   vm-test,
+  sharedCompiler,
 }:
 
 let
@@ -24,9 +25,9 @@ let
     llvm-toolchain = toolchainWord;
     llvm-runtimes = runtimesWord;
     sdk = linux64Abi.package;
-    # Build a separate Linux64-ABI libc++/unwind tree with the dynamic PIC
-    # runtime patch. Do not reuse runtimes from the ordinary static SDK.
-    sharedCompiler = null;
+    # Keep the Linux64-ABI libc++/unwind tree separate from the ordinary
+    # static SDK while reusing the dynamic shared-link and PIC-EH driver.
+    inherit sharedCompiler;
   };
 
   product = pkgs.stdenvNoCC.mkDerivation (finalAttrs: {

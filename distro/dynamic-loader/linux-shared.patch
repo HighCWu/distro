@@ -33,7 +33,7 @@
    if (Entry) {
      CmdArgs.push_back(Args.MakeArgString("--entry"));
      CmdArgs.push_back(Args.MakeArgString(Entry));
-@@ -193,10 +204,12 @@
+@@ -274,6 +285,8 @@
  
    if (Args.hasArg(options::OPT_shared))
      CmdArgs.push_back(Args.MakeArgString("-shared"));
@@ -41,12 +41,7 @@
 +    CmdArgs.push_back("--unresolved-symbols=import-dynamic");
  
    // Linux reserves function-pointer values 1 and 2 for SIG_IGN and SIG_HOLD.
-   // Keep real address-taken functions out of those wasm table slots. Linker
-   // inputs follow this default, so an explicit user --table-base wins.
--  if (IsLinux && !IsLinuxRelocatable)
-+  if (IsLinux && !IsLinuxShared && !IsLinuxRelocatable)
-     CmdArgs.push_back("--table-base=3");
- 
+   // Keep real address-taken functions out of those wasm table slots in
 @@ -209,15 +222,30 @@
  
    AddLinkerInputs(ToolChain, Inputs, Args, CmdArgs, JA);
