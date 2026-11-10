@@ -3,6 +3,7 @@
 
 #include <errno.h>
 #include <linux/landlock.h>
+#include <sched.h>
 #include <stdarg.h>
 #include <stdio.h>
 #include <string.h>
@@ -33,7 +34,7 @@ static int check_varargs(int count, void *expected_pointer, ...)
     return count == 4 && values_match && copied_values_match;
 }
 
-int main(void)
+static int run_abi_checks(void)
 {
     int marker = 0;
     void *pointer = &marker;
@@ -98,5 +99,47 @@ int main(void)
         return 11;
     }
 
+    return 0;
+}
+
+static const char *failure_stage(int result)
+{
+    switch (result) {
+    case 1: return "varargs and va_copy";
+    case 2: return "pointer formatting";
+    case 3: return "expected format construction";
+    case 4: return "snprintf formatting";
+    case 5: return "printf formatting";
+    case 6: return "getpid syscall";
+    case 7: return "PR_SET_NO_NEW_PRIVS";
+    case 8: return "PR_GET_NO_NEW_PRIVS";
+    case 9: return "word-sized prctl syscall arguments";
+    case 10: return "Landlock unsupported-version handling";
+    case 11: return "Landlock version result";
+    default: return "unknown ABI check";
+    }
+}
+
+int main(void)
+{
+    const int result = run_abi_checks();
+    if (result != 0) {
+        const int error = errno;
+        printf("::vm-test::fail: linux64-abi: %s check failed (code=%d errno=%d)\n",
+               failure_stage(result), result, error);
+        fflush(stdout);
+#ifdef __wasm__
+        for (;;) sched_yield();
+#else
+        return result;
+#endif
+    }
+
+    puts("linux64-abi: varargs, formatting, syscall, prctl and Landlock ABI checks pass");
+    puts("::vm-test::pass");
+    fflush(stdout);
+#ifdef __wasm__
+    for (;;) sched_yield();
+#endif
     return 0;
 }
