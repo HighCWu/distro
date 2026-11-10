@@ -12,7 +12,7 @@ runtime_path_supplied=0
 usage() {
   cat <<'EOF'
 Usage: export-sdk-closure.sh --sdk-path /nix/store/PATH \
-       --profile default-wasm64|dynamic-wasm64 --github-sha SHA \
+       --profile default-wasm64|dynamic-wasm64|linux64-abi-dynamic-wasm64 --github-sha SHA \
        --output-dir DIRECTORY [--runtime-path /nix/store/<hash>-linux-wasm-runtime-assets-wasm64]
 
 Export one built public SDK and optionally its matching wasm64 runtime assets
@@ -87,6 +87,10 @@ default-wasm64)
   ;;
 dynamic-wasm64)
   sdk_attribute="sdk-dynamic-loader-wasm64"
+  expected_store_name="linux-wasm-dynamic-sdk-wasm64"
+  ;;
+linux64-abi-dynamic-wasm64)
+  sdk_attribute="linux64-abi-dynamic-wasm64.sdk"
   expected_store_name="linux-wasm-dynamic-sdk-wasm64"
   ;;
 *)

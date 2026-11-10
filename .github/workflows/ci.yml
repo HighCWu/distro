@@ -30,6 +30,7 @@ on:
         options:
           - default-wasm64
           - dynamic-wasm64
+          - linux64-abi-dynamic-wasm64
         default: default-wasm64
       python-forkless-host:
         description: Run only the native Python forkless replay (leave heavy-check empty)
@@ -101,13 +102,23 @@ jobs:
         run: |
           set -euo pipefail
           case "$SDK_EXPORT_PROFILE" in
-            default-wasm64) sdk_attribute=sdk-wasm64 ;;
-            dynamic-wasm64) sdk_attribute=sdk-dynamic-loader-wasm64 ;;
+            default-wasm64)
+              sdk_attribute=sdk-wasm64
+              sdk_selector="$sdk_attribute"
+              ;;
+            dynamic-wasm64)
+              sdk_attribute=sdk-dynamic-loader-wasm64
+              sdk_selector="$sdk_attribute"
+              ;;
+            linux64-abi-dynamic-wasm64)
+              sdk_attribute=linux64-abi-dynamic-wasm64.sdk
+              sdk_selector="legacyPackages.x86_64-linux.$sdk_attribute"
+              ;;
             *) echo "unsupported SDK profile" >&2; exit 2 ;;
           esac
           sdk_paths_file="$RUNNER_TEMP/sdk-export-paths.txt"
           nix build --accept-flake-config --no-link --print-out-paths --print-build-logs \
-            ".#$sdk_attribute" > "$sdk_paths_file"
+            ".#$sdk_selector" > "$sdk_paths_file"
           mapfile -t sdk_paths < "$sdk_paths_file"
           if [[ ${#sdk_paths[@]} -ne 1 ]]; then
             echo "expected exactly one SDK output path" >&2
