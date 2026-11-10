@@ -124,7 +124,7 @@ pkgs.stdenvNoCC.mkDerivation (finalAttrs: {
     printf '\000\026\024linux.dylink.tail.v1\001' >> libtail-step-three.so
     ${sideCC} -O2 -msimd128 -fPIC -c ${./cycle-a.c} -o cycle-a.o
     ${sideCC} -O2 -msimd128 -fPIC -c ${./cycle-b.c} -o cycle-b.o
-    ${sideCC} -O2 -fPIC -c ${./reentrant-root.c} -o reentrant-root.o
+    ${sideCC} -O2 -fPIC -DDYNAMIC_MAIN_POLL_CONSUMER=1 -c ${./reentrant-root.c} -o reentrant-root.o
     ${sideCC} -O2 -fPIC -c ${./reentrant-leaf.c} -o reentrant-leaf.o
     ${sideCC} -O2 -fPIC -c ${./reentrant-reject.c} -o reentrant-reject.o
     ${sideCC} -O2 -fPIC -c ${./next-front.c} -o next-front.o
