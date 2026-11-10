@@ -229,6 +229,14 @@ static void require(int Condition, const char *What)
     _Exit(1);
 }
 
+static void timeout_handler(int Signal)
+{
+    (void)Signal;
+    static const char Message[] = "::vm-test::fail: signal syscall context timed out\n";
+    (void)write(STDOUT_FILENO, Message, sizeof(Message) - 1);
+    _Exit(124);
+}
+
 static void run_read_case(sig_atomic_t Mode, int SignalFlags, ssize_t ExpectedResult, int ExpectedErrno, char ExpectedByte)
 {
     int PipeFDs[2];
@@ -281,6 +289,10 @@ static void run_read_case(sig_atomic_t Mode, int SignalFlags, ssize_t ExpectedRe
 
 int main(void)
 {
+    struct sigaction Watchdog = { 0 };
+    Watchdog.sa_handler = timeout_handler;
+    sigemptyset(&Watchdog.sa_mask);
+    require(sigaction(SIGALRM, &Watchdog, NULL) == 0, "install the init-process watchdog");
     alarm(30);
     require(signal_syscall_abi() == 1, "kernel advertises signal syscall context ABI version 1");
 
