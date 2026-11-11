@@ -3,6 +3,7 @@
 {
   pkgs,
   includeHostBackend ? true,
+  enableLibTooling ? false,
   patches ? [ ],
   src ? pkgs.fetchFromGitHub {
     owner = "HighCWu";
@@ -23,6 +24,20 @@ let
     else
       throw "unsupported LLVM host target: ${pkgs.stdenv.hostPlatform.config}";
 
+  sharedToolingFlags =
+    if enableLibTooling then
+      [
+        "-DLLVM_BUILD_LLVM_DYLIB=ON"
+        "-DLLVM_LINK_LLVM_DYLIB=ON"
+        "-DCLANG_LINK_CLANG_DYLIB=ON"
+      ]
+    else
+      [
+        "-DLLVM_BUILD_LLVM_DYLIB=OFF"
+        "-DLLVM_LINK_LLVM_DYLIB=OFF"
+        "-DCLANG_LINK_CLANG_DYLIB=OFF"
+      ];
+
   cmakeFlags = [
     "-DCMAKE_BUILD_TYPE=Release"
     "-DCMAKE_C_COMPILER=${llvmPackages.clang}/bin/clang"
@@ -32,9 +47,9 @@ let
     "-DLLVM_ENABLE_PROJECTS=clang;lld"
     "-DLLVM_ENABLE_RUNTIMES="
     "-DBUILD_SHARED_LIBS=OFF"
-    "-DLLVM_BUILD_LLVM_DYLIB=OFF"
-    "-DLLVM_LINK_LLVM_DYLIB=OFF"
-    "-DCLANG_LINK_CLANG_DYLIB=OFF"
+  ]
+  ++ sharedToolingFlags
+  ++ [
     "-DLIBCLANG_BUILD_STATIC=ON"
     "-DLLVM_INCLUDE_BENCHMARKS=OFF"
     "-DLLVM_INCLUDE_TESTS=OFF"
@@ -58,7 +73,7 @@ let
 in
 
 llvmPackages.stdenv.mkDerivation {
-  pname = "llvm-toolchain-unwrapped";
+  pname = if enableLibTooling then "llvm-toolchain-development" else "llvm-toolchain-unwrapped";
   version = llvmPackages.release_version;
   inherit src patches;
 

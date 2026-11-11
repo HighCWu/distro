@@ -129,6 +129,17 @@ lib.makeScope (scope: lib.callPackageWith ({ inherit lib pkgs; } // scope)) (
     # must not consume it.
     llvm-toolchain-unwrapped = callPackage ./llvm-toolchain/unwrapped.nix {
     };
+    # Opt-in host development libraries for embedding Clang LibTooling. The
+    # ordinary SDK toolchain above remains static and unchanged.
+    llvm-toolchain-development = self.llvm-toolchain-unwrapped.override {
+      includeHostBackend = false;
+      enableLibTooling = true;
+    };
+    clang-tooling-check = callPackage ./clang-tooling-check/package.nix {
+      llvmToolchain = self.llvm-toolchain-development;
+      sysroot32 = self.sysroot;
+      sysroot64 = self.sysroot-wasm64;
+    };
     platform-wasm64 = callPackage ./platform.nix { wasmBits = 64; };
     linux = callPackage ./linux/package.nix { };
     linux-wasm64 = self.linux.override { wasmBits = 64; };
