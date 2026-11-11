@@ -83,8 +83,11 @@ let
       }
       ''
         mkdir -p $out
-        wasm-linux-cc -O2 -Wall -Wextra -Werror \
-          ${./runtime.c} -o $out/linux64-abi-runtime.wasm
+        wasm-linux-cc -O2 -Wall -Wextra -Werror -c ${./runtime.c} -o runtime.o
+        wasm-linux-c++ -std=c++17 -O2 -Wall -Wextra -Werror -pthread \
+          -c ${./type-model.cc} -o type-model.o
+        wasm-linux-c++ -pthread -Wl,--fatal-warnings runtime.o type-model.o \
+          -o $out/linux64-abi-runtime.wasm
         chmod 0755 $out/linux64-abi-runtime.wasm
       '';
 

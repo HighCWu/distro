@@ -2,14 +2,25 @@
 #define _GNU_SOURCE
 
 #include <errno.h>
+#include <inttypes.h>
 #include <linux/landlock.h>
 #include <sched.h>
 #include <stdarg.h>
 #include <stdio.h>
+#include <stdint.h>
 #include <string.h>
 #include <sys/prctl.h>
 #include <sys/syscall.h>
 #include <unistd.h>
+
+#if defined(__wasm_linux64__)
+_Static_assert(__builtin_types_compatible_p(int64_t, long), "int64_t must use the linux64 long ABI");
+_Static_assert(__builtin_types_compatible_p(uint64_t, unsigned long), "uint64_t must use the linux64 unsigned long ABI");
+_Static_assert(__builtin_types_compatible_p(intmax_t, long), "intmax_t must use the linux64 long ABI");
+_Static_assert(__builtin_types_compatible_p(uintptr_t, unsigned long), "uintptr_t must use the linux64 unsigned long ABI");
+#endif
+
+extern int check_cxx_type_model(void);
 
 static int check_varargs(int count, void *expected_pointer, ...)
 {
@@ -99,6 +110,21 @@ static int run_abi_checks(void)
         return 11;
     }
 
+    char uint64_text[32];
+    uint64_t parsed_uint64 = 0;
+    errno = 0;
+    int uint64_text_length = snprintf(uint64_text, sizeof(uint64_text), "%" PRIu64, UINT64_MAX);
+    if (uint64_text_length < 1 || uint64_text_length >= (int)sizeof(uint64_text) || errno != 0)
+        return 12;
+
+    errno = 0;
+    int uint64_scan_count = sscanf(uint64_text, "%" SCNu64, &parsed_uint64);
+    if (uint64_scan_count != 1 || parsed_uint64 != UINT64_MAX || errno != 0)
+        return 12;
+
+    if (!check_cxx_type_model())
+        return 13;
+
     return 0;
 }
 
@@ -116,6 +142,8 @@ static const char *failure_stage(int result)
     case 9: return "word-sized prctl syscall arguments";
     case 10: return "Landlock unsupported-version handling";
     case 11: return "Landlock version result";
+    case 12: return "PRIu64/SCNu64 UINT64_MAX roundtrip";
+    case 13: return "C++ integer type model";
     default: return "unknown ABI check";
     }
 }
@@ -135,7 +163,7 @@ int main(void)
 #endif
     }
 
-    puts("linux64-abi: varargs, formatting, syscall, prctl and Landlock ABI checks pass");
+    puts("linux64-abi: varargs, formatting, integer type model, syscall, prctl and Landlock ABI checks pass");
     puts("::vm-test::pass");
     fflush(stdout);
 #ifdef __wasm__
