@@ -90,6 +90,14 @@ import {
 import { ProcessDylink } from "./dylink_process.ts";
 import { prepare_dylink_call_metadata } from "./dylink_call_metadata.ts";
 import { DynamicVforkState, dynamic_vfork_allowed } from "./dynamic-vfork.ts";
+import {
+  claim_dynamic_loader,
+  create_dynamic_process_state,
+  dynamic_process_value,
+  dynamic_thread_clone_allowed,
+  run_dynamic_thread_clone,
+} from "./dynamic-thread.ts";
+import { encode_linux_string } from "./linux-string.ts";
 import { user_function_imports_supported } from "./user-functions.ts";
 import {
   allocate_shared_memory,
@@ -282,6 +290,35 @@ function user_imports({
       }
     };
     const control = (error: unknown) => error === HALT_KERNEL || error === HALT_USER;
+    let dynamicError = "Dynamic loader failure";
+    const dynamicBlocked = (): boolean => {
+      if (dynamic_vfork.blocked(context)) {
+        dynamicError = "dynamic loading is disabled while a vfork child is active";
+        return true;
+      }
+      const state = dynamic_process_value(context?.dynamic?.process_state);
+      if (state === null || (state >= 0 && state !== 0)) {
+        dynamicError = "dynamic loading is disabled after thread creation";
+        return true;
+      }
+      return false;
+    };
+    const write_dynamic_error = (pointer: WasmAddress, sizeValue: WasmAddress): number => {
+      try {
+        const size = wasm_size_to_number(sizeValue);
+        const bytes = memory_bytes(context!.memory, pointer, size);
+        if (!bytes) return -14;
+        if (size) {
+          const message = encode_linux_string(dynamicError);
+          const count = Math.min(message.length, size - 1);
+          bytes.set(message.subarray(0, count));
+          bytes[count] = 0;
+        }
+        return 0;
+      } catch {
+        return -14;
+      }
+    };
     const file_kernel = (invoke: () => number): number => {
       try {
         return kernel_leaf(invoke);
@@ -311,7 +348,13 @@ function user_imports({
     const loader = () => {
       try {
         if (!context.dynamic || !created) throw new Error("dynamic main is not ready");
-        return (dynamic ??= new ProcessDylink({
+        if (dynamic) return dynamic;
+        if (dynamicBlocked() || !claim_dynamic_loader(context.dynamic.process_state)) {
+          if (dynamicError === "Dynamic loader failure")
+            dynamicError = "dynamic loader initialization is already in progress";
+          return null;
+        }
+        dynamic = new ProcessDylink({
           main: created,
           memory: context.memory,
           address: context.address,
@@ -323,13 +366,17 @@ function user_imports({
           privateExports: context.dynamic.privateExports,
           userPoll:
             poll2 && poll_thread ? { checkpoint, threadPointer: poll_thread.global } : undefined,
-          blocked: () => dynamic_vfork.blocked(context),
+          blocked: () => {
+            const state = dynamic_process_value(context?.dynamic?.process_state);
+            return dynamic_vfork.blocked(context) || (state !== null && state >= 0 && state !== 0);
+          },
           isControlFlow: control,
           pinFile: (fd, device, inode) =>
             file_kernel(() => kernel_instance.exports.dynamic_file_pin_v1!(fd, device, inode)),
           unpinFile: (id) => file_kernel(() => kernel_instance.exports.dynamic_file_unpin_v1!(id)),
           fatal,
-        }));
+        });
+        return dynamic;
       } catch (error) {
         if (control(error)) throw error;
         return fatal(error);
@@ -355,7 +402,8 @@ function user_imports({
           clone &&
           dynamic_vfork_allowed({
             context,
-            loaderCreated: dynamic !== undefined,
+            loaderCreated:
+              dynamic !== undefined || dynamic_process_value(context?.dynamic?.process_state) !== 0,
             layout,
             number: nr,
             args: [arg0, arg1, arg2, arg3, arg4, arg5],
@@ -364,17 +412,43 @@ function user_imports({
             dynamicOperationDepth,
             pending: dynamic_vfork.pending,
           });
+        const dynamicThread =
+          Boolean(context.dynamic) &&
+          !strict &&
+          !dynamicVfork &&
+          dynamic_thread_clone_allowed({
+            context,
+            layout,
+            number: nr,
+            args: [arg0, arg1, arg2, arg3, arg4, arg5],
+            signalDepth: signal_depth,
+            callEntryIsStart: call_entry === call_start,
+            dynamicOperationDepth,
+            vforkPending: dynamic_vfork.pending,
+            sharedMemory:
+              typeof SharedArrayBuffer !== "undefined" &&
+              context.memory.buffer instanceof SharedArrayBuffer,
+          });
         // Strict seccomp always reaches the actual kernel entry first. Outside
-        // strict mode, a dynamic image may create only the pristine callback
-        // vfork child used by posix_spawn.
-        if (context.dynamic && !strict && (clone || clone3) && !dynamicVfork)
+        // strict mode, dynamic images admit only the selected callback vfork
+        // and shared pthread clone shapes.
+        if (context.dynamic && !strict && (clone || clone3) && !dynamicVfork && !dynamicThread)
           return kernel_address === "i64" ? -95n : -95;
         const original_instance = instance;
         const kernelInvoke = () =>
           call_kernel_entry(kernel_instance.exports, kernel_address, () =>
             kernel_instance.exports.syscall(nr, arg0, arg1, arg2, arg3, arg4, arg5),
           );
-        const invoke = () => (dynamicVfork ? dynamic_vfork.run(kernelInvoke) : kernelInvoke());
+        const invoke = () => {
+          if (dynamicVfork) return dynamic_vfork.run(kernelInvoke);
+          if (dynamicThread)
+            return run_dynamic_thread_clone(
+              context?.dynamic?.process_state,
+              kernel_address,
+              kernelInvoke,
+            );
+          return kernelInvoke();
+        };
         const ret = dispatch_fork_syscall(
           fork,
           nr,
@@ -423,14 +497,27 @@ function user_imports({
         abi: () => 1,
         link_map_abi: () => 1,
         open: (path: WasmAddress, flags: number) =>
-          dynamic_operation(() => loader().open(path, flags)),
+          dynamic_operation(
+            () => loader()?.open(path, flags) ?? wasm_address_from_number(0, kernel_address),
+          ),
         symbol: (handle: WasmAddress, name: WasmAddress) =>
-          dynamic_operation(() => loader().symbol(handle, name)),
+          dynamic_operation(
+            () => loader()?.symbol(handle, name) ?? wasm_address_from_number(0, kernel_address),
+          ),
         address: (pointer: WasmAddress, info: WasmAddress) =>
-          dynamic_operation(() => loader().address(pointer, info)),
-        valid: (handle: WasmAddress) => dynamic_operation(() => loader().valid(handle)),
+          dynamic_operation(() => loader()?.address(pointer, info) ?? 0),
+        valid: (handle: WasmAddress) =>
+          dynamic_operation(() => {
+            if (dynamic) return dynamic.valid(handle);
+            if (!dynamicBlocked()) dynamicError = "Invalid dynamic library handle";
+            return 0;
+          }),
         error: (pointer: WasmAddress, size: WasmAddress) =>
-          dynamic_operation(() => loader().error(pointer, size)),
+          dynamic_operation(() => {
+            if (dynamic) return dynamic.error(pointer, size);
+            dynamicBlocked();
+            return context ? write_dynamic_error(pointer, size) : -14;
+          }),
       },
       env: { memory: context.memory },
       linux_fork_v1: {
@@ -689,6 +776,7 @@ function user_imports({
               tagSignatures: signatures.tagExports,
               functionMetadata: metadata.functions,
               privateExports: metadata.privateExports,
+              process_state: create_dynamic_process_state(),
             };
           }
         } catch {
