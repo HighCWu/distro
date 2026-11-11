@@ -203,11 +203,25 @@ let
         ]
         (builtins.readFile ../sdk/compiler.sh);
   };
+  importStub = pkgs.writeShellApplication {
+    name = "wasm-linux-write-import-stub";
+    text =
+      builtins.replaceStrings
+        [ "@python@" "@helper@" ]
+        [
+          (lib.escapeShellArg "${pkgs.python3}/bin/python3")
+          (lib.escapeShellArg "${../sdk/write-import-stub.py}")
+        ]
+        (builtins.readFile ../sdk/write-import-stub.sh);
+  };
   materials = pkgs.runCommand "dynamic-sdk-materials-${platform.wasmArch}" { } ''
     mkdir -p $out/recipes $out/licenses
     cp -r ${./.} $out/recipes/dynamic-loader
     mkdir -p $out/recipes/sdk
     cp ${../sdk/link-sysroot.nix} $out/recipes/sdk/link-sysroot.nix
+    cp ${../sdk/write-import-stub.py} $out/recipes/sdk/write-import-stub.py
+    cp ${../sdk/write-import-stub.sh} $out/recipes/sdk/write-import-stub.sh
+    cp ${../sdk/write-import-stub.test.py} $out/recipes/sdk/write-import-stub.test.py
     cp -r ${../musl} $out/recipes/musl
     cp ${config} $out/recipes/compiler.cfg
     cp ${cxxConfig} $out/recipes/compiler-cxx.cfg
@@ -227,6 +241,7 @@ pkgs.symlinkJoin {
   paths = [
     cc
     cxx
+    importStub
     configSiteFiles
   ];
   postBuild = ''
@@ -250,7 +265,10 @@ pkgs.symlinkJoin {
       pkgs.runCommand "dynamic-sdk-driver-${platform.wasmArch}"
         {
           passthru.ci.heavy = true;
-          nativeBuildInputs = [ pkgs.nodejs ];
+          nativeBuildInputs = [
+            pkgs.nodejs
+            pkgs.python3
+          ];
         }
         ''
           DYNAMIC_SDK_CC=${cc}/bin/wasm-linux-dlopen-cc \
@@ -258,6 +276,10 @@ pkgs.symlinkJoin {
             DYNAMIC_SDK_CXX_ARCHIVE=${startupRoot}/lib/libcxx-exports.a \
             DYNAMIC_SDK_AR=${compiler}/bin/llvm-ar \
             node --test ${./sdk-driver.test.js}
+          SDK_CC=${compiler}/bin/clang \
+            SDK_LD=${compiler}/bin/wasm-ld \
+            SDK_IMPORT_STUB=${importStub}/bin/wasm-linux-write-import-stub \
+            python3 ${../sdk}/write-import-stub.test.py
           touch $out
         '';
   };
