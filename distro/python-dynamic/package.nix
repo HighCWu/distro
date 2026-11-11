@@ -17,9 +17,11 @@ package.overrideAttrs (old: {
     # These are CPython's ordinary Linux configure results. Keep its stdlib
     # modules static while requiring a real target dlopen link probe for
     # third-party shared extensions.
+    grep -E '^(#define HAVE_(DLOPEN|DYNAMIC_LOADING)[[:space:]]|DYNLOADFILE[[:space:]]*=|CCSHARED[[:space:]]*=|LDSHARED[[:space:]]*=|LINKFORSHARED[[:space:]]*=|LINK_PYTHON_OBJS[[:space:]]*=)' \
+      pyconfig.h Makefile || true
     grep -qx '#define HAVE_DLOPEN 1' pyconfig.h
     grep -qx '#define HAVE_DYNAMIC_LOADING 1' pyconfig.h
-    grep -qx 'DYNLOADFILE= dynload_shlib.o' Makefile
+    grep -Eq '^DYNLOADFILE=[[:space:]]+dynload_shlib\.o$' Makefile
     grep -Eq '^CCSHARED=[[:space:]]+-fPIC$' Makefile
     grep -Eq '^LDSHARED=[[:space:]]+[$][(]CC[)] -shared([[:space:]]|$)' Makefile
     grep -Eq '^LINKFORSHARED=[[:space:]]+-Xlinker -export-dynamic$' Makefile
