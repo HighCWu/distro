@@ -113,7 +113,7 @@ export function dynamic_thread_clone_allowed({
   number,
   args,
   signalDepth,
-  callEntryIsStart,
+  callEntryIsNormal,
   dynamicOperationDepth,
   vforkPending,
   sharedMemory,
@@ -123,7 +123,7 @@ export function dynamic_thread_clone_allowed({
   number: WasmAddress;
   args: readonly WasmAddress[];
   signalDepth: number;
-  callEntryIsStart: boolean;
+  callEntryIsNormal: boolean;
   dynamicOperationDepth: number;
   vforkPending: boolean;
   sharedMemory: boolean;
@@ -138,7 +138,7 @@ export function dynamic_thread_clone_allowed({
     args[0] === 0 ||
     args[0] === 0n ||
     signalDepth !== 0 ||
-    !callEntryIsStart ||
+    !callEntryIsNormal ||
     dynamicOperationDepth !== 0 ||
     vforkPending
   )

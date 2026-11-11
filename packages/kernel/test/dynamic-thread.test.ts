@@ -51,7 +51,7 @@ for (const address of ["i32", "i64"] as const) {
       number: word(220),
       args: [word(1), word(0x1234), flags, word(0), word(0), word(0)],
       signalDepth: 0,
-      callEntryIsStart: true,
+      callEntryIsNormal: true,
       dynamicOperationDepth: 0,
       vforkPending: false,
       sharedMemory: true,
@@ -104,7 +104,7 @@ for (const address of ["i32", "i64"] as const) {
     assert.equal(candidate({ layout: "flags-v2" }), false);
     assert.equal(candidate({ number: word(435) }), false);
     assert.equal(candidate({ signalDepth: 1 }), false);
-    assert.equal(candidate({ callEntryIsStart: false }), false);
+    assert.equal(candidate({ callEntryIsNormal: false }), false);
     assert.equal(candidate({ dynamicOperationDepth: 1 }), false);
     assert.equal(candidate({ vforkPending: true }), false);
     assert.equal(candidate({ sharedMemory: false }), false);

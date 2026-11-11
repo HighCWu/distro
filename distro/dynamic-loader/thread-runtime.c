@@ -19,6 +19,14 @@ struct thread_request {
   uint32_t expected_process;
   uint32_t process_increment;
   uint32_t thread_value;
+  uint32_t nested_increment;
+  uint32_t nested_thread_value;
+};
+
+struct nested_thread_request {
+  uint32_t expected_process;
+  uint32_t process_increment;
+  uint32_t thread_value;
 };
 
 static void require(int condition, const char *message)
@@ -27,6 +35,8 @@ static void require(int condition, const char *message)
   fprintf(stderr, "::vm-test::fail: dynamic pthread: %s errno=%d\n", message, errno);
   exit(1);
 }
+
+static void *nested_thread_main(void *opaque);
 
 static void *thread_main(void *opaque)
 {
@@ -37,17 +47,49 @@ static void *thread_main(void *opaque)
   thread_value = request->thread_value;
   errno = EDOM;
   if (thread_value != request->thread_value || errno != EDOM) return (void *)(uintptr_t)3;
+
+  struct nested_thread_request nested_request = {
+      .expected_process = process_value,
+      .process_increment = request->nested_increment,
+      .thread_value = request->nested_thread_value,
+  };
+  pthread_t nested_thread;
+  int error = pthread_create(&nested_thread, NULL, nested_thread_main, &nested_request);
+  if (error) return (void *)(uintptr_t)4;
+  void *nested_result = (void *)(uintptr_t)UINTPTR_MAX;
+  error = pthread_join(nested_thread, &nested_result);
+  if (error || nested_result != NULL) return (void *)(uintptr_t)5;
+  if (process_value != request->expected_process + request->nested_increment ||
+      thread_value != request->thread_value || errno != EDOM)
+    return (void *)(uintptr_t)6;
+
   __atomic_fetch_add(&process_value, request->process_increment, __ATOMIC_SEQ_CST);
   return NULL;
 }
 
-static void run_thread_cycle(uint32_t increment, uint32_t child_tls)
+static void *nested_thread_main(void *opaque)
+{
+  const struct nested_thread_request *request = opaque;
+  if (process_value != request->expected_process) return (void *)(uintptr_t)1;
+  if (thread_value != 0x2468ace0) return (void *)(uintptr_t)2;
+
+  thread_value = request->thread_value;
+  errno = ERANGE;
+  if (thread_value != request->thread_value || errno != ERANGE) return (void *)(uintptr_t)3;
+  __atomic_fetch_add(&process_value, request->process_increment, __ATOMIC_SEQ_CST);
+  return NULL;
+}
+
+static void run_thread_cycle(uint32_t increment, uint32_t child_tls,
+                             uint32_t nested_increment, uint32_t nested_tls)
 {
   const uint32_t before = process_value;
   struct thread_request request = {
       .expected_process = before,
       .process_increment = increment,
       .thread_value = child_tls,
+      .nested_increment = nested_increment,
+      .nested_thread_value = nested_tls,
   };
   const uint32_t parent_tls = thread_value;
   const int parent_errno = errno;
@@ -58,7 +100,8 @@ static void run_thread_cycle(uint32_t increment, uint32_t child_tls)
   void *result = (void *)(uintptr_t)UINTPTR_MAX;
   error = pthread_join(thread, &result);
   require(error == 0 && result == NULL, "pthread_join and child checks");
-  require(process_value == before + increment, "shared process data survives thread startup");
+  require(process_value == before + increment + nested_increment,
+          "shared process data survives nested thread startup");
   require(thread_value == parent_tls, "parent TLS remains private");
   require(errno == parent_errno, "parent errno remains private");
 }
@@ -73,12 +116,12 @@ int main(void)
   process_value = 0x89abcdef;
   thread_value = 0xfedcba98;
   errno = EBUSY;
-  run_thread_cycle(7, 0x11112222);
-  run_thread_cycle(13, 0x33334444);
-  require(process_value == 0x89abce03, "two joined threads update shared process data");
+  run_thread_cycle(7, 0x11112222, 3, 0x55556666);
+  run_thread_cycle(13, 0x33334444, 5, 0x77778888);
+  require(process_value == 0x89abce0b, "two nested pthread cycles update shared process data");
   require(thread_value == 0xfedcba98, "both thread TLS instances leave parent TLS unchanged");
   require(errno == EBUSY, "both thread cycles leave parent errno unchanged");
-  puts("dynamic pthread: two callback clone/join cycles preserve globals, TLS and errno");
+  puts("dynamic pthread: nested callback clone/join cycles preserve globals, TLS and errno");
 
   errno = EBUSY;
   void *library = dlopen("libmust-not-load-after-thread.so", RTLD_NOW | RTLD_LOCAL);

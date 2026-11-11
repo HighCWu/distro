@@ -239,6 +239,7 @@ function user_imports({
     throw new Error("_start reached the end without exiting");
   }
   let call_entry = call_start;
+  let thread_entry: typeof call_start | undefined;
 
   function kernel_leaf<T>(invoke: () => T): T {
     return call_kernel_entry(get_kernel_instance().exports, kernel_address, invoke, true);
@@ -422,7 +423,7 @@ function user_imports({
             number: nr,
             args: [arg0, arg1, arg2, arg3, arg4, arg5],
             signalDepth: signal_depth,
-            callEntryIsStart: call_entry === call_start,
+            callEntryIsNormal: call_entry === call_start || call_entry === thread_entry,
             dynamicOperationDepth,
             vforkPending: dynamic_vfork.pending,
             sharedMemory:
@@ -620,6 +621,8 @@ function user_imports({
       assert(pending);
       context = pending;
       pending = null;
+      call_entry = call_start;
+      thread_entry = undefined;
     }
 
     assert(context);
@@ -880,7 +883,7 @@ function user_imports({
             return;
           }
 
-          call_entry = () => {
+          const callback_entry = () => {
             assert(instance);
 
             const { __indirect_function_table } = instance.exports;
@@ -897,6 +900,8 @@ function user_imports({
             // throw new Error("thread entrypoint reached the end without exiting");
             console.warn("thread entrypoint reached the end without exiting");
           };
+          thread_entry = callback_entry;
+          call_entry = callback_entry;
         });
       },
 
