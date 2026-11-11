@@ -586,7 +586,7 @@ export class ProcessDylink {
               return local.get(file.key)!;
             }
             newBytes += file.bytes.length;
-            if (newBytes > 64 * 1024 * 1024 || local.size >= 1024) {
+            if (newBytes > 64 * 1024 * 1024) {
               this.#unpin(file.pin);
               throw new Error("dynamic graph exceeds profile capacity");
             }

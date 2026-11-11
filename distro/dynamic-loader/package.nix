@@ -83,6 +83,13 @@ pkgs.stdenvNoCC.mkDerivation (finalAttrs: {
   buildPhase = ''
     runHook preBuild
     wasm-linux-dlopen-cc -O2 -Wall -Wextra -Werror ${./runtime.c} -o dynamic-loader.wasm
+    wasm-linux-dlopen-cc -O2 -Wall -Wextra -Werror ${./capacity-consumer.c} -o capacity-consumer.wasm
+    ${sideCC} -O2 -Wall -Wextra -Werror -fPIC -c ${./capacity-leaf.c} -o capacity-leaf.o
+    ${linkShared {
+      name = "capacity-leaf.so";
+      output = "capacity-leaf.so";
+      inputs = [ "capacity-leaf.o" ];
+    }}
     wasm-linux-dlopen-cc -O2 -Wall -Wextra -Werror ${./spawn.c} -o spawn.wasm
     wasm-linux-dlopen-cc -O2 -Wall -Wextra -Werror ${./poll-runtime.c} -o poll-runtime.wasm
     wasm-linux-dlopen-cc -O2 -Wall -Wextra -Werror -pthread ${./thread-runtime.c} -o thread-runtime.wasm
@@ -260,6 +267,8 @@ pkgs.stdenvNoCC.mkDerivation (finalAttrs: {
   installPhase = ''
     runHook preInstall
     install -Dm755 dynamic-loader.wasm $out/dynamic-loader.wasm
+    install -Dm755 capacity-consumer.wasm $out/capacity-consumer.wasm
+    install -Dm644 capacity-leaf.so $out/lib/capacity-leaf.so
     install -Dm755 spawn.wasm $out/spawn.wasm
     install -Dm755 poll-runtime.wasm $out/poll-runtime.wasm
     install -Dm755 thread-runtime.wasm $out/thread-runtime.wasm
@@ -288,6 +297,7 @@ pkgs.stdenvNoCC.mkDerivation (finalAttrs: {
     cp ${musl.src}/COPYRIGHT $out/share/licenses/dynamic-loader/musl-COPYRIGHT
     cp ${llvm-runtimes.src}/compiler-rt/LICENSE.TXT $out/share/licenses/dynamic-loader/compiler-rt-LICENSE.TXT
     mkdir -p $buildMaterials/share/dynamic-loader-materials
+    cp ${./capacity-consumer.c} ${./capacity-leaf.c} $buildMaterials/share/dynamic-loader-materials/
     cp ${./runtime.c} ${./library-a.c} ${./library-b.c} ${./cycle-a.c} ${./cycle-b.c} ${./package.nix} $buildMaterials/share/dynamic-loader-materials/
     cp ${./tail-library.c} $buildMaterials/share/dynamic-loader-materials/
     cp ${./spawn.c} $buildMaterials/share/dynamic-loader-materials/
@@ -309,6 +319,11 @@ pkgs.stdenvNoCC.mkDerivation (finalAttrs: {
   '';
   meta.license = lib.licenses.mit;
   passthru.checks = {
+    capacity-runtime = vm-test.rawInitramfsTest {
+      name = "dynamic-capacity-${platform.wasmArch}";
+      init = "${finalAttrs.finalPackage}/capacity-consumer.wasm";
+      files."/capacity-leaf.so" = "${finalAttrs.finalPackage}/lib/capacity-leaf.so";
+    };
     thread-runtime = vm-test.rawInitramfsTest {
       name = "dynamic-pthread-${platform.wasmArch}";
       init = "${finalAttrs.finalPackage}/thread-runtime.wasm";
