@@ -66,6 +66,31 @@ lib.makeScope (scope: lib.callPackageWith ({ inherit lib pkgs; } // scope)) (
         linux = self.linux-wasm64.override { vtimeCandidate = true; };
       };
     };
+    linuxCheckpointRestore32 = self.linux.override { checkpointRestoreCandidate = true; };
+    kernelCheckpointRestore32 = self.kernel.override { linux = linuxCheckpointRestore32; };
+    vmTestCheckpointRestore32 = self.vm-test.override { kernel = kernelCheckpointRestore32; };
+    linuxCheckpointRestore64 = self.linux-wasm64.override { checkpointRestoreCandidate = true; };
+    kernelCheckpointRestore64 = self.kernel-wasm64.override { linux = linuxCheckpointRestore64; };
+    vmTestCheckpointRestore64 = vmTestWasm64.override { kernel = kernelCheckpointRestore64; };
+    prctlMmMapCheckpointRestore32 = callPackage ./prctl-mm-map/package.nix {
+      vm-test = vmTestCheckpointRestore32;
+    };
+    prctlMmMapCheckpointRestore64 = callPackage ./prctl-mm-map/package.nix {
+      platform = self.platform-wasm64;
+      sdk = self.sdk-wasm64;
+      busybox = self.busybox-wasm64;
+      vm-test = vmTestCheckpointRestore64;
+    };
+    prctlMmMapCheckpointRestoreBoth =
+      pkgs.runCommand "prctl-mm-map-checkpoint-restore-both-widths"
+        {
+          passthru.ci.heavy = true;
+        }
+        ''
+          test -e ${prctlMmMapCheckpointRestore32.checks.runtime}
+          test -e ${prctlMmMapCheckpointRestore64.checks.runtime}
+          touch $out
+        '';
     vtimeChecks = harness: smoke: fork: {
       deferred-cancel = (smoke.override { vm-test = harness; }).checks.deferred-cancel;
       signal-altstack = (smoke.override { vm-test = harness; }).checks.signal-altstack;
@@ -107,9 +132,15 @@ lib.makeScope (scope: lib.callPackageWith ({ inherit lib pkgs; } // scope)) (
     platform-wasm64 = callPackage ./platform.nix { wasmBits = 64; };
     linux = callPackage ./linux/package.nix { };
     linux-wasm64 = self.linux.override { wasmBits = 64; };
+    linux-checkpoint-restore = linuxCheckpointRestore32;
+    linux-checkpoint-restore-wasm64 = linuxCheckpointRestore64;
     bytes = callPackage ./npm/bytes.nix { };
     kernel = callPackage ./npm/kernel.nix { };
     kernel-wasm64 = self.kernel.override { linux = self.linux-wasm64; };
+    kernel-checkpoint-restore = kernelCheckpointRestore32;
+    kernel-checkpoint-restore-wasm64 = kernelCheckpointRestore64;
+    vm-test-checkpoint-restore = vmTestCheckpointRestore32;
+    vm-test-checkpoint-restore-wasm64 = vmTestCheckpointRestore64;
     runtime-assets-wasm64 = callPackage ./runtime-assets/package.nix {
       platform = self.platform-wasm64;
       kernel = self.kernel-wasm64;
@@ -662,6 +693,10 @@ lib.makeScope (scope: lib.callPackageWith ({ inherit lib pkgs; } // scope)) (
       busybox = self.busybox-wasm64;
       vm-test = vmTestWasm64;
     };
+    prctl-mm-map-checkpoint-restore = prctlMmMapCheckpointRestore32.override {
+      extraChecks.both = prctlMmMapCheckpointRestoreBoth;
+    };
+    prctl-mm-map-checkpoint-restore-wasm64 = prctlMmMapCheckpointRestore64;
     bpf-syscall = callPackage ./bpf-syscall/package.nix { };
     bpf-nofault = self.bpf-syscall.override {
       pname = "bpf-nofault";

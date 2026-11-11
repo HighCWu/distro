@@ -15,6 +15,7 @@
   vtimeCandidate ? false,
   userNamespaceCandidate ? false,
   elfContainerCandidate ? false,
+  checkpointRestoreCandidate ? false,
   llvm-toolchain-unwrapped,
   src ? import ./fetch-source.nix {
     inherit pkgs;
@@ -51,6 +52,7 @@ let
         vtimeCandidate
         userNamespaceCandidate
         elfContainerCandidate
+        checkpointRestoreCandidate
         ;
       sourceIdentity = identity src;
       llvmToolchainIdentity = identity llvm-toolchain-unwrapped;
@@ -122,6 +124,9 @@ pkgs.stdenvNoCC.mkDerivation (finalAttrs: {
     ''}
     ${lib.optionalString elfContainerCandidate ''
       scripts/config --enable WASM_ELF_CONTAINER
+    ''}
+    ${lib.optionalString checkpointRestoreCandidate ''
+      scripts/config --enable CHECKPOINT_RESTORE
     ''}
     scripts/config --enable MEMFD_CREATE
     make olddefconfig
@@ -242,6 +247,16 @@ pkgs.stdenvNoCC.mkDerivation (finalAttrs: {
           ! grep -qx 'CONFIG_WASM_ELF_CONTAINER=y' .config
         ''
     }
+    ${
+      if checkpointRestoreCandidate then
+        ''
+          grep -qx 'CONFIG_CHECKPOINT_RESTORE=y' .config
+        ''
+      else
+        ''
+          ! grep -qx 'CONFIG_CHECKPOINT_RESTORE=y' .config
+        ''
+    }
     ! grep -qx 'CONFIG_MMU=y' .config
 
     make vmlinux.wasm
@@ -275,9 +290,9 @@ pkgs.stdenvNoCC.mkDerivation (finalAttrs: {
         nativeBuildInputs = [ pkgs.jq ];
       }
       ''
-            cd ${finalAttrs.finalPackage}
-            sha256sum --check linux-build/SHA256SUMS
-        jq --exit-status '.schemaVersion == 1 and .wasmBits == ${toString wasmBits} and .debug == ${builtins.toJSON debug} and .mmapCopyTest == ${builtins.toJSON mmapCopyTest} and .fileMmapCandidate == ${builtins.toJSON fileMmapCandidate} and .fileMmapStreamCandidate == ${builtins.toJSON fileMmapStreamCandidate} and .vtimeCandidate == ${builtins.toJSON vtimeCandidate} and .elfContainerCandidate == ${builtins.toJSON elfContainerCandidate}' linux-build/build.json
+        cd ${finalAttrs.finalPackage}
+        sha256sum --check linux-build/SHA256SUMS
+        jq --exit-status '.schemaVersion == 1 and .wasmBits == ${toString wasmBits} and .debug == ${builtins.toJSON debug} and .mmapCopyTest == ${builtins.toJSON mmapCopyTest} and .fileMmapCandidate == ${builtins.toJSON fileMmapCandidate} and .fileMmapStreamCandidate == ${builtins.toJSON fileMmapStreamCandidate} and .vtimeCandidate == ${builtins.toJSON vtimeCandidate} and .elfContainerCandidate == ${builtins.toJSON elfContainerCandidate} and .checkpointRestoreCandidate == ${builtins.toJSON checkpointRestoreCandidate}' linux-build/build.json
             test -s linux-build/kernel.config
             test -s linux-build/LICENSES/preferred/GPL-2.0
             touch $out
