@@ -33,6 +33,7 @@ pkgs.stdenvNoCC.mkDerivation {
     sdk-dynamic-loader
     llvm-toolchain
     pkgs.gnumake
+    pkgs.m4
   ];
 
   dontFixup = true;
