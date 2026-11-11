@@ -153,6 +153,7 @@ test(
         '-shared "side object.o" -Wl,-soname,libordinary.so -o "ordinary library.so"\n',
       );
       writeFileSync(join(directory, "shared outer.rsp"), '@"shared inner.rsp"\n');
+      writeFileSync(join(directory, "stackless library.c"), "int answer(void) { return 42; }\n");
       writeFileSync(
         join(directory, "merge inner.rsp"),
         '-r "side object.o" -o "nested combined.o"\n',
@@ -161,6 +162,61 @@ test(
       run("@compile outer.rsp");
       run("-O2", "main source.c", "-o", "ordinary main.wasm");
       run("@shared outer.rsp");
+
+      const executableArguments = expandedLinkerArguments(
+        run("-###", "-O2", "main source.c", "-o", "profile main.wasm"),
+      );
+      assert.ok(
+        executableArguments.includes("--export=__stack_pointer"),
+        "main profile keeps the required stack pointer export",
+      );
+      const stacklessSharedArguments = expandedLinkerArguments(
+        run(
+          "-###",
+          "-O2",
+          "-flto",
+          "-nostdlib",
+          "-shared",
+          "-Wl,--no-entry",
+          "-Wl,-soname,libleaf.so",
+          "stackless library.c",
+          "-o",
+          "libleaf.so",
+        ),
+      );
+      assert.ok(
+        stacklessSharedArguments.includes("--export-if-defined=__stack_pointer"),
+        "shared profile exports the stack pointer only when it is defined",
+      );
+      assert.equal(
+        stacklessSharedArguments.includes("--export=__stack_pointer"),
+        false,
+        "shared profile must not require a stack pointer",
+      );
+      run(
+        "-O2",
+        "-flto",
+        "-nostdlib",
+        "-shared",
+        "-Wl,--no-entry",
+        "-Wl,-soname,libleaf.so",
+        "stackless library.c",
+        "-o",
+        "libleaf.so",
+      );
+      const stacklessLibrary = new WebAssembly.Module(readFileSync(join(directory, "libleaf.so")));
+      const stacklessExports = new Set(
+        WebAssembly.Module.exports(stacklessLibrary).map((entry) => entry.name),
+      );
+      assert.ok(
+        stacklessExports.has("answer"),
+        "stackless shared library exports its public function",
+      );
+      assert.equal(
+        stacklessExports.has("__stack_pointer"),
+        false,
+        "stackless shared library links without inventing a stack pointer export",
+      );
 
       writeFileSync(
         join(directory, "libc override main.c"),

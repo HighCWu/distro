@@ -38,22 +38,25 @@ let
     "--max-memory=${toString platform.maximumMemoryBytes}"
     "--shared-memory"
     "--growable-table"
-    "--export=__stack_pointer"
     "--export-all"
     "-z"
     "stack-size=8388608"
   ];
+  # Main modules require the stack pointer for the runtime signal ABI. Shared
+  # modules may be stackless, so export it only when the linker defines it.
   # Export static bounds so main-module address metadata can cover interiors.
   executableLinkerArgs = linkerConfigArgs ++ [
+    "--export=__stack_pointer"
     "--export=__global_base"
     "--export=__data_end"
   ];
+  sharedLinkerArgs = linkerConfigArgs ++ [ "--export-if-defined=__stack_pointer" ];
   linkRoot = import ../sdk/link-sysroot.nix {
     inherit pkgs lib;
     sysroot = dynamicRoot;
     name = "dynamic-link-sysroot-${platform.wasmArch}";
     executableArgs = executableLinkerArgs;
-    sharedArgs = linkerConfigArgs;
+    sharedArgs = sharedLinkerArgs;
     cxxArgs = [ ];
   };
   exportedLibc =
