@@ -58,6 +58,7 @@ type Options = {
   tagSignatures?: ReadonlyMap<string, string>;
   functionMetadata?: ReadonlyMap<string, { signature: string; imported: boolean }>;
   privateExports?: ReadonlySet<string>;
+  userPoll?: { checkpoint: () => number; threadPointer: WebAssembly.Global };
   blocked(): boolean;
   isControlFlow(error: unknown): boolean;
   fatal(error: unknown): never;
@@ -686,6 +687,20 @@ export class ProcessDylink {
       // new canonical pointers beyond this batch's initialization/clear range.
       this.#cursor = tableEnd;
       let group: Group;
+      const hostFunctions = this.#options.userPoll
+        ? new Map<string, ReadonlyMap<string, CallableFunction>>([
+            ["linux_user_poll_v1", new Map([["checkpoint", this.#options.userPoll.checkpoint]])],
+            ["linux_user_poll_v2", new Map([["checkpoint", this.#options.userPoll.checkpoint]])],
+          ])
+        : undefined;
+      const hostGlobals = this.#options.userPoll
+        ? new Map<string, ReadonlyMap<string, WebAssembly.Global>>([
+            [
+              "linux_user_poll_v2",
+              new Map([["thread_pointer", this.#options.userPoll.threadPointer]]),
+            ],
+          ])
+        : undefined;
       const functionMetadata = new Map<
         string,
         ReadonlyMap<string, { signature: string; imported: boolean }>
@@ -702,6 +717,8 @@ export class ProcessDylink {
           tableMaximumElements: this.#options.tableType.maximum,
           memoryArena: { cursor: base, limit: base + size, address: this.#options.address },
           tableArena: { cursor: tableStart, limit: tableEnd, address: tableAddress },
+          hostFunctions,
+          hostGlobals,
           externalSymbols: this.#symbols,
           externalTags: this.#tags,
           functionPointers: this.#pointers,

@@ -76,20 +76,11 @@ function typed_providers(address: "i32" | "i64") {
   return result;
 }
 
-/** Precommit admission only: never instantiate the user's executable. Copy its
- * type section verbatim and link a function-import-only module against inert
- * typed providers. No user function, start section, data or memory is present.
- * The engine checks parameter/result types, including same-arity mismatches. */
-export function user_function_imports_supported(
-  bytes: Uint8Array,
+function typed_function_imports_supported(
+  types: Uint8Array,
+  functions: { module: string; name: string; typeIndex: number }[],
   address: "i32" | "i64",
-  requireEntry = false,
 ) {
-  const { types, functions, entryType } = read_wasm_function_import_probe(bytes);
-  if (requireEntry) {
-    if (entryType === undefined) return false;
-    functions.push({ module: "_execution", name: "_start", typeIndex: entryType });
-  }
   if (!functions.length) return true;
   const imports = functions.flatMap(({ module, name, typeIndex }) => [
     ...string(module),
@@ -106,6 +97,62 @@ export function user_function_imports_supported(
       ]),
     );
     new WebAssembly.Instance(probe, typed_providers(address));
+    return true;
+  } catch (error) {
+    if (error instanceof WebAssembly.LinkError || error instanceof WebAssembly.CompileError)
+      return false;
+    throw error;
+  }
+}
+
+/** Precommit admission only: never instantiate the user's executable. Copy its
+ * type section verbatim and link a function-import-only module against inert
+ * typed providers. No user function, start section, data or memory is present.
+ * The engine checks parameter/result types, including same-arity mismatches. */
+export function user_function_imports_supported(
+  bytes: Uint8Array,
+  address: "i32" | "i64",
+  requireEntry = false,
+) {
+  const { types, functions, entryType } = read_wasm_function_import_probe(bytes);
+  if (requireEntry) {
+    if (entryType === undefined) return false;
+    functions.push({ module: "_execution", name: "_start", typeIndex: entryType });
+  }
+  return typed_function_imports_supported(types, functions, address);
+}
+
+/** Validate only the checkpoint imports used by side modules. Other dynamic
+ * imports must be checked against their own providers by the loader. */
+export function user_poll_function_imports_supported(bytes: Uint8Array, address: "i32" | "i64") {
+  const { types, functions } = read_wasm_function_import_probe(bytes);
+  const poll = functions.filter(
+    ({ module }) => module === "linux_user_poll_v1" || module === "linux_user_poll_v2",
+  );
+  if (poll.some(({ name }) => name !== "checkpoint")) return false;
+  return typed_function_imports_supported(types, poll, address);
+}
+
+/** Probe a supplied TLS global against the only host-global import permitted
+ * for side modules. The tiny module has no user code, memories or start. */
+export function user_poll_thread_pointer_supported(
+  provider: WebAssembly.Global,
+  address: "i32" | "i64",
+) {
+  const valueType = address === "i64" ? 0x7e : 0x7f;
+  const imports = [
+    ...leb(1),
+    ...string("linux_user_poll_v2"),
+    ...string("thread_pointer"),
+    3, // global import
+    valueType,
+    1, // mutable
+  ];
+  try {
+    const probe = new WebAssembly.Module(new Uint8Array([...header, ...section(2, imports)]));
+    new WebAssembly.Instance(probe, {
+      linux_user_poll_v2: { thread_pointer: provider },
+    });
     return true;
   } catch (error) {
     if (error instanceof WebAssembly.LinkError || error instanceof WebAssembly.CompileError)

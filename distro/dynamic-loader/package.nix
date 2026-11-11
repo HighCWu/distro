@@ -84,6 +84,13 @@ pkgs.stdenvNoCC.mkDerivation (finalAttrs: {
     runHook preBuild
     wasm-linux-dlopen-cc -O2 -Wall -Wextra -Werror ${./runtime.c} -o dynamic-loader.wasm
     wasm-linux-dlopen-cc -O2 -Wall -Wextra -Werror ${./spawn.c} -o spawn.wasm
+    wasm-linux-dlopen-cc -O2 -Wall -Wextra -Werror ${./poll-runtime.c} -o poll-runtime.wasm
+    ${sideCC} -O2 -Wall -Wextra -Werror -fPIC -c ${./poll-library.c} -o poll-library.o
+    ${linkShared {
+      name = "poll-library.so";
+      output = "poll-library.so";
+      inputs = [ "poll-library.o" ];
+    }}
     ${sideCC} -O2 -fPIC -c ${./library-a.c} -o a.o
     ${sideCC} -r a.o -o a-partial.o
     ${sideCC} -O2 -fPIC -c ${./library-b.c} -o b.o
@@ -253,6 +260,8 @@ pkgs.stdenvNoCC.mkDerivation (finalAttrs: {
     runHook preInstall
     install -Dm755 dynamic-loader.wasm $out/dynamic-loader.wasm
     install -Dm755 spawn.wasm $out/spawn.wasm
+    install -Dm755 poll-runtime.wasm $out/poll-runtime.wasm
+    install -Dm644 poll-library.so $out/lib/poll-library.so
     install -Dm644 libplugin-a.so $out/lib/libplugin-a.so
     install -Dm644 libplugin-b.so $out/lib/libplugin-b.so
     install -Dm644 libtail-step-one.so $out/lib/libtail-step-one.so
@@ -280,6 +289,7 @@ pkgs.stdenvNoCC.mkDerivation (finalAttrs: {
     cp ${./runtime.c} ${./library-a.c} ${./library-b.c} ${./cycle-a.c} ${./cycle-b.c} ${./package.nix} $buildMaterials/share/dynamic-loader-materials/
     cp ${./tail-library.c} $buildMaterials/share/dynamic-loader-materials/
     cp ${./spawn.c} $buildMaterials/share/dynamic-loader-materials/
+    cp ${./poll-runtime.c} ${./poll-library.c} $buildMaterials/share/dynamic-loader-materials/
     cp ${./path-library.c} $buildMaterials/share/dynamic-loader-materials/
     cp ${./reentrant-root.c} ${./reentrant-leaf.c} ${./reentrant-reject.c} $buildMaterials/share/dynamic-loader-materials/
     cp ${./next-front.c} ${./next-middle.c} ${./next-leaf.c} $buildMaterials/share/dynamic-loader-materials/
@@ -296,6 +306,11 @@ pkgs.stdenvNoCC.mkDerivation (finalAttrs: {
   '';
   meta.license = lib.licenses.mit;
   passthru.checks = {
+    poll-runtime = vm-test.rawInitramfsTest {
+      name = "dynamic-side-poll-${platform.wasmArch}";
+      init = "${finalAttrs.finalPackage}/poll-runtime.wasm";
+      files."/plugins/poll-library.so" = "${finalAttrs.finalPackage}/lib/poll-library.so";
+    };
     spawn-runtime = vm-test.rawInitramfsTest {
       name = "dynamic-spawn-${platform.wasmArch}";
       init = "${finalAttrs.finalPackage}/spawn.wasm";

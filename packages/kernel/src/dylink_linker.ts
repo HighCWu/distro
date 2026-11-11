@@ -12,6 +12,10 @@ import {
 } from "./wasm_binary.ts";
 import { wasm_table_get } from "./wasm.ts";
 import { create_dylink_forwarder } from "./dylink_forwarder.ts";
+import {
+  user_poll_function_imports_supported,
+  user_poll_thread_pointer_supported,
+} from "./user-functions.ts";
 
 /** An error after data/table initialization may follow arbitrary Wasm start or
  * constructor effects. The process owner must terminate, not resume dlopen with
@@ -75,6 +79,7 @@ export function link_dylink_graph(options: {
   memoryArena: Readonly<DylinkArena>;
   tableArena: Readonly<DylinkArena>;
   hostFunctions?: ReadonlyMap<string, ReadonlyMap<string, CallableFunction>>;
+  hostGlobals?: ReadonlyMap<string, ReadonlyMap<string, WebAssembly.Global>>;
   externalSymbols?: ReadonlyMap<string, DylinkExternalSymbol>;
   /** Main-module exception tags shared by dynamic objects. */
   externalTags?: ReadonlyMap<string, DylinkExternalTag>;
@@ -104,6 +109,10 @@ export function link_dylink_graph(options: {
   isControlFlow?(error: unknown): boolean;
 }) {
   const { memory, table, stack, memoryArena, tableArena } = options;
+  for (const [module, globals] of options.hostGlobals ?? [])
+    for (const name of globals.keys())
+      if (module !== "linux_user_poll_v2" || name !== "thread_pointer")
+        throw new Error(`unsupported dynamic host global: ${module}.${name}`);
   const modules = new Map<
     string,
     {
@@ -140,6 +149,8 @@ export function link_dylink_graph(options: {
     if (tail.tailTableRequired && !options.tailTable)
       throw new Error("dynamic tail-call ABI table is unavailable");
     const originalModule = new WebAssembly.Module(bytes);
+    if (!user_poll_function_imports_supported(bytes, memoryArena.address))
+      throw new Error("unsupported dynamic user poll function import");
     const metadata = read_wasm_dylink(originalModule);
     if (!metadata) throw new Error(`missing dylink.0: ${name}`);
     if (metadata.unknownSubsections.length) throw new Error("unsupported dylink extension");
@@ -488,7 +499,18 @@ export function link_dylink_graph(options: {
           }
           break;
         case "global":
-          if (entry.module === "env") {
+          if (entry.module === "linux_user_poll_v2" && entry.name === "thread_pointer") {
+            const provider = options.hostGlobals?.get(entry.module)?.get(entry.name);
+            if (
+              entry.value !== memoryArena.address ||
+              !entry.mutable ||
+              !provider ||
+              !user_poll_thread_pointer_supported(provider, memoryArena.address)
+            )
+              throw new Error("incompatible dynamic user poll thread pointer");
+          } else if (entry.module.startsWith("linux_user_poll_")) {
+            throw new Error(`unsupported dynamic user poll global: ${entry.module}.${entry.name}`);
+          } else if (entry.module === "env") {
             if (
               !["__memory_base", "__table_base", "__table_base32", "__stack_pointer"].includes(
                 entry.name,
@@ -689,7 +711,9 @@ export function link_dylink_graph(options: {
             break;
           }
           case "global":
-            if (entry.module === "env") {
+            if (entry.module === "linux_user_poll_v2" && entry.name === "thread_pointer") {
+              group[entry.name] = options.hostGlobals!.get(entry.module)!.get(entry.name)!;
+            } else if (entry.module === "env") {
               const base = entry.name === "__memory_base" ? record.base : record.tableBase;
               group[entry.name] =
                 entry.name === "__stack_pointer"

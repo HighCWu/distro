@@ -321,6 +321,8 @@ function user_imports({
           functionMetadata: context.dynamic.functionMetadata,
           tagSignatures: context.dynamic.tagSignatures,
           privateExports: context.dynamic.privateExports,
+          userPoll:
+            poll2 && poll_thread ? { checkpoint, threadPointer: poll_thread.global } : undefined,
           blocked: () => dynamic_vfork.blocked(context),
           isControlFlow: control,
           pinFile: (fd, device, inode) =>

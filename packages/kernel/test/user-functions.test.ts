@@ -2,7 +2,11 @@
 
 import assert from "node:assert/strict";
 import test from "node:test";
-import { user_function_imports_supported } from "../src/user-functions.ts";
+import {
+  user_function_imports_supported,
+  user_poll_function_imports_supported,
+  user_poll_thread_pointer_supported,
+} from "../src/user-functions.ts";
 
 const leb = (value: number) => {
   const bytes: number[] = [];
@@ -125,4 +129,69 @@ test("function import admission still requires an exported _start when requested
   assert.doesNotThrow(() => new WebAssembly.Module(bytes));
   assert.equal(user_function_imports_supported(bytes, "i32", true), false);
   assert.equal(user_function_imports_supported(bytes, "i32", false), true);
+});
+
+function poll_function_import(
+  moduleName: string,
+  name: string,
+  parameters: number[],
+  result: number,
+) {
+  const header = [0, 97, 115, 109, 1, 0, 0, 0];
+  const type = [1, 0x60, parameters.length, ...parameters, 1, result];
+  const imports = [1, ...text(moduleName), ...text(name), 0, 0];
+  return new Uint8Array([...header, ...section(1, type), ...section(2, imports)]);
+}
+
+test("side-module poll checkpoints use exact () -> i32 providers at both address widths", () => {
+  for (const address of ["i32", "i64"] as const) {
+    for (const moduleName of ["linux_user_poll_v1", "linux_user_poll_v2"])
+      assert.equal(
+        user_poll_function_imports_supported(
+          poll_function_import(moduleName, "checkpoint", [], 0x7f),
+          address,
+        ),
+        true,
+        `${address} ${moduleName}`,
+      );
+    assert.equal(
+      user_poll_function_imports_supported(
+        poll_function_import("linux_user_poll_v2", "checkpoint", [], 0x7e),
+        address,
+      ),
+      false,
+      `${address} rejects i64 result`,
+    );
+    assert.equal(
+      user_poll_function_imports_supported(
+        poll_function_import("linux_user_poll_v1", "checkpoint", [0x7f], 0x7f),
+        address,
+      ),
+      false,
+      `${address} rejects an added parameter`,
+    );
+    assert.equal(
+      user_poll_function_imports_supported(
+        poll_function_import("linux_user_poll_v2", "unknown", [], 0x7f),
+        address,
+      ),
+      false,
+      `${address} rejects unknown poll names`,
+    );
+  }
+});
+
+test("side-module poll thread pointer accepts only mutable pointer-width globals", () => {
+  for (const address of ["i32", "i64"] as const) {
+    const value = address === "i64" ? 0x1234n : 0x1234;
+    const correct = new WebAssembly.Global({ value: address, mutable: true }, value);
+    const wrongWidth = new WebAssembly.Global(
+      { value: address === "i64" ? "i32" : "i64", mutable: true },
+      address === "i64" ? 0x1234 : 0x1234n,
+    );
+    const immutable = new WebAssembly.Global({ value: address, mutable: false }, value);
+    assert.equal(user_poll_thread_pointer_supported(correct, address), true, address);
+    assert.equal(user_poll_thread_pointer_supported(wrongWidth, address), false, address);
+    assert.equal(user_poll_thread_pointer_supported(immutable, address), false, address);
+  }
 });
