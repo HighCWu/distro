@@ -74,7 +74,9 @@ pkgs.stdenvNoCC.mkDerivation {
 
   buildPhase = ''
     runHook preBuild
-    make -j"$NIX_BUILD_CORES" libltdl/libltdl.la
+    # The upstream all target builds BUILT_SOURCES before the library objects,
+    # including libltdl/libltdl/lt__argz.h when the configure probe requires it.
+    make -j"$NIX_BUILD_CORES" all
     sha256sum --check "$NIX_BUILD_TOP/libltdl-source.sha256s"
 
     ${llvm-toolchain}/bin/llvm-ar t ${archive} > "$NIX_BUILD_TOP/libltdl-archive-members.txt"
@@ -125,7 +127,7 @@ pkgs.stdenvNoCC.mkDerivation {
     NM=${llvm-toolchain}/bin/llvm-nm
     CONFIG_SITE=${sdk-dynamic-loader.configSite}
     configure=./configure ${configureArgsText}
-    build=make -j$NIX_BUILD_CORES libltdl/libltdl.la
+    build=make -j$NIX_BUILD_CORES all
     backend=LT_DLLOADERS and LT_DLPREOPEN include libltdl/dlopen.la
     EOF
         runHook postInstall
