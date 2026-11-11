@@ -1,0 +1,19 @@
+--- a/libcxx/src/filesystem/operations.cpp
++++ b/libcxx/src/filesystem/operations.cpp
+@@ -479,10 +479,16 @@
+     return false;
+   else if (exists(st))
+     return err.report(errc::file_exists);
+ 
+   const path parent = p.parent_path();
++  // A trailing separator leaves filename() empty. In that case the recursive
++  // call is already responsible for creating the requested directory; trying
++  // mkdir(p) again would only observe EEXIST and incorrectly return false.
++  if (p.filename().empty() && parent != p)
++    return __create_directories(parent, ec);
++
+   if (!parent.empty()) {
+     const file_status parent_st = status(parent, m_ec);
+     if (not status_known(parent_st))
+       return err.report(m_ec);
+     if (not exists(parent_st)) {

@@ -7,6 +7,7 @@ program=${CXX_DYNAMIC_PROGRAM:-/bin/cxx-dynamic-runtime}
 plugin=${CXX_DYNAMIC_PLUGIN:-/plugins/plugin.so}
 native_reference=${CXX_DYNAMIC_NATIVE_REFERENCE:-0}
 
+mkdir -p /tmp
 "$program" "$plugin"
 echo 'cxx dynamic: repeated calls and recovered exceptions after clean process exit pass'
 echo '::vm-test::pass'

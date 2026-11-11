@@ -5,7 +5,11 @@
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
+#include <filesystem>
+#include <fstream>
 #include <stdexcept>
+#include <system_error>
+#include <stdlib.h>
 
 CrossError::CrossError(int value) noexcept : value_(value) {}
 
@@ -56,6 +60,67 @@ using CallbackRethrowFunction = void (*)(MainThrowCallback,
                                          int *,
                                          int *);
 
+void run_filesystem_directory_creation_checks()
+{
+    char root_template[] = "/tmp/cxx-dynamic-filesystem-XXXXXX";
+    char *root_name = ::mkdtemp(root_template);
+    if (root_name == nullptr)
+        fail("mkdtemp failed for filesystem regression checks");
+
+    namespace fs = std::filesystem;
+    const fs::path root{root_name};
+    bool checks_passed = true;
+    auto check = [&checks_passed](bool condition) {
+        checks_passed = checks_passed && condition;
+    };
+    std::error_code ec;
+
+    const fs::path trailing_dir = root / "trailing" / "nested";
+    const fs::path trailing_path{trailing_dir.string() + "/"};
+    const bool trailing_created = fs::create_directories(trailing_path, ec);
+    check(trailing_created && !ec);
+
+    ec.clear();
+    const bool trailing_recreated = fs::create_directories(trailing_path, ec);
+    check(!trailing_recreated && !ec);
+
+    const fs::path repeated_dir = root / "repeated" / "nested";
+    const fs::path repeated_path{repeated_dir.string() + "//"};
+    ec.clear();
+    const bool repeated_created = fs::create_directories(repeated_path, ec);
+    check(repeated_created && !ec);
+
+    ec.clear();
+    const bool repeated_recreated = fs::create_directories(repeated_path, ec);
+    check(!repeated_recreated && !ec);
+
+    ec.clear();
+    const bool existing_root_created = fs::create_directories(root, ec);
+    check(!existing_root_created && !ec);
+
+    const fs::path regular_file = root / "ordinary-file";
+    bool regular_file_created = false;
+    {
+        std::ofstream output{regular_file};
+        if (output) {
+            output.put('x');
+            regular_file_created = static_cast<bool>(output);
+        }
+    }
+    check(regular_file_created);
+
+    ec.clear();
+    const bool child_created = fs::create_directories(regular_file / "child", ec);
+    check(!child_created && static_cast<bool>(ec));
+
+    std::error_code cleanup_ec;
+    fs::remove_all(root, cleanup_ec);
+    check(!cleanup_ec);
+    require(checks_passed,
+            "std::filesystem::create_directories trailing-separator regression checks failed");
+    std::puts("cxx dynamic: std::filesystem create_directories trailing separators and error paths pass");
+}
+
 void main_throw_callback(int value, int *cleanup_count)
 {
     CleanupGuard guard(*cleanup_count);
@@ -64,6 +129,8 @@ void main_throw_callback(int value, int *cleanup_count)
 
 void run(const char *plugin_path)
 {
+    run_filesystem_directory_creation_checks();
+
     CrossError canonical_type(0);
     require(canonical_type.value() == 0,
             "main did not retain the canonical CrossError definition");

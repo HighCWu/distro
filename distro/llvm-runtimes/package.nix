@@ -76,6 +76,7 @@ pkgs.stdenvNoCC.mkDerivation {
   pname = "llvm-runtimes-${platform.wasmArch}";
   inherit (llvm-toolchain-unwrapped) version;
   inherit src;
+  patches = [ ./create-directories-trailing-separator.patch ];
 
   nativeBuildInputs = [
     pkgs.cmake
