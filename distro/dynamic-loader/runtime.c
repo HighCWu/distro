@@ -106,7 +106,9 @@ static void check_explicit_poll_signal_delivery(void)
     errno = EINTR;
     int checkpoint_result = 0;
     uint64_t checkpoint_count = 0;
-    while (!explicit_poll_alarm_seen && checkpoint_count < (UINT64_C(1) << 20)) {
+    // The outer vm-test runner supplies the wall-clock timeout. A checkpoint
+    // count is not a time bound and could expire before alarm(1) is delivered.
+    while (!explicit_poll_alarm_seen) {
         checkpoint_result = user_poll_checkpoint();
         if (checkpoint_result != 0) break;
         checkpoint_count++;
