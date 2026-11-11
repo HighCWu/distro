@@ -1,8 +1,11 @@
 /* SPDX-License-Identifier: MIT */
 #define _GNU_SOURCE
 #include <errno.h>
+#include <limits.h>
 #include <pthread.h>
 #include <sched.h>
+#include <stddef.h>
+#include <stdint.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -10,6 +13,7 @@
 #include <sys/sem.h>
 #include <sys/shm.h>
 #include <sys/stat.h>
+#include <sys/syscall.h>
 #include <time.h>
 #include <unistd.h>
 #ifdef __wasm__
@@ -19,14 +23,52 @@
 #endif
 
 static int queue = -1, semaphores = -1;
+#ifdef __wasm__
+static int shared_memory = -1;
+
+/* The generic kernel shmid64_ds wire prefix is 84 bytes on ILP32 and 112 on
+ * LP64. Wasm32 libc appends three time64 fields after that prefix, so its
+ * complete public struct shmid_ds is 112 bytes in both pointer widths. */
+_Static_assert(sizeof(void *) == sizeof(long), "Wasm pointer and syscall word width");
+_Static_assert(sizeof(struct ipc_perm) == (sizeof(long) == 4 ? 36 : 48), "generic ipc64_perm ABI");
+_Static_assert(offsetof(struct shmid_ds, shm_nattch) == (sizeof(long) == 4 ? 72 : 88),
+	       "shmid64_ds wire-prefix field offset");
+_Static_assert(sizeof(struct shmid_ds) == 112, "libc time64 shmid_ds ABI");
+_Static_assert(sizeof(struct shminfo) == 9 * sizeof(long), "shminfo64 ABI");
+_Static_assert(sizeof(struct shm_info) == 6 * sizeof(long), "shm_info ABI");
+
+/* The 32-bit libc shmctl wrapper stages time64 IPC_STAT through a local
+ * structure. Use the kernel command directly for fault-order checks so an
+ * invalid output address is rejected by the kernel, not libc copyback. */
+static long raw_shmctl(int id, int command, void *buffer)
+{
+	return syscall(SYS_shmctl, (long)id, (long)(command & ~0x100),
+	               (long)(uintptr_t)buffer, 0L, 0L, 0L);
+}
+#endif
 union semun { int val; struct semid_ds *buf; unsigned short *array; };
 static void cleanup(void)
 {
-	if (queue >= 0) msgctl(queue, IPC_RMID, NULL);
-	if (semaphores >= 0) semctl(semaphores, 0, IPC_RMID);
+	if (queue >= 0) {
+		msgctl(queue, IPC_RMID, NULL);
+		queue = -1;
+	}
+	if (semaphores >= 0) {
+		semctl(semaphores, 0, IPC_RMID);
+		semaphores = -1;
+	}
+#ifdef __wasm__
+	if (shared_memory >= 0) {
+		shmctl(shared_memory, IPC_RMID, NULL);
+		shared_memory = -1;
+	}
+#endif
 }
 static _Noreturn void fail(const char *what)
 {
+	int saved_errno = errno;
+	cleanup();
+	errno = saved_errno;
 	printf("::vm-test::fail: sysv-ipc: %s errno=%d\n", what, errno);
 	fflush(stdout);
 #ifdef __wasm__
@@ -157,19 +199,78 @@ static void semaphores_test(void)
 	require(semaphores >= 0 && semctl(semaphores, 0, SETVAL, (union semun){.val = 1}) == 0 &&
 	        semctl(semaphores, 0, GETVAL) == 1 && semctl(semaphores, 0, IPC_RMID) == 0, "set recovery");
 	semaphores = -1;
-#ifdef __wasm__
-	struct shmid_ds shm;
-	unsigned char byte = 0x71;
-	require(shmget(IPC_PRIVATE, 65536, 0600) == -1 && errno == ENOSYS &&
-	        shmctl(-1, IPC_STAT, &shm) == -1 && errno == ENOSYS &&
-	        shmat(-1, NULL, 0) == (void *)-1 && errno == ENOSYS &&
-	        shmdt(&byte) == -1 && errno == ENOSYS && byte == 0x71,
-	        "shared backing remains unavailable");
-	puts("sysv-ipc: blocked removal, EIDRM, recovery and direct-memory boundary pass");
-#else
 	puts("sysv-ipc: blocked removal, EIDRM and recovery pass");
-#endif
 }
+
+#ifdef __wasm__
+static void shared_memory_test(void)
+{
+	shared_memory = shmget(IPC_PRIVATE, 65536, IPC_CREAT | IPC_EXCL | 0600);
+	require(shared_memory >= 0, "shared-memory create");
+
+	struct shmid_ds original = {0};
+	require(shmctl(shared_memory, IPC_STAT, &original) == 0 &&
+		original.shm_segsz == 65536 && original.shm_perm.uid == geteuid() &&
+		original.shm_perm.gid == getegid() && (original.shm_perm.mode & 0777) == 0600 &&
+		original.shm_cpid == getpid() && original.shm_nattch == 0 && original.shm_ctime > 0,
+		"shared-memory IPC_STAT metadata");
+	applet_report("-m", shared_memory, "shmid");
+	puts("sysv-ipc: shared-memory create, stat and applet identity pass");
+
+	struct shmid_ds changed = original;
+	changed.shm_perm.uid = geteuid();
+	changed.shm_perm.gid = getegid();
+	changed.shm_perm.mode = (changed.shm_perm.mode & ~0777) | 0640;
+	require(shmctl(shared_memory, IPC_SET, &changed) == 0, "shared-memory IPC_SET");
+	struct shmid_ds updated = {0};
+	require(shmctl(shared_memory, IPC_STAT, &updated) == 0 &&
+		updated.shm_segsz == original.shm_segsz && updated.shm_perm.uid == geteuid() &&
+		updated.shm_perm.gid == getegid() && (updated.shm_perm.mode & 0777) == 0640 &&
+		updated.shm_nattch == 0,
+		"shared-memory metadata update");
+
+	struct shminfo limits = {0};
+	require(shmctl(0, IPC_INFO, (struct shmid_ds *)(void *)&limits) >= 0 &&
+		limits.shmmax >= 65536 && limits.shmmni > 0,
+		"shared-memory IPC_INFO");
+	struct shm_info usage = {0};
+	require(shmctl(0, SHM_INFO, (struct shmid_ds *)(void *)&usage) >= 0 && usage.used_ids > 0,
+		"shared-memory SHM_INFO");
+	puts("sysv-ipc: shared-memory IPC_SET, IPC_INFO and SHM_INFO pass");
+
+	struct shmid_ds invalid = {0};
+	errno = 0;
+	require(raw_shmctl(shared_memory, IPC_STAT, (void *)(uintptr_t)UINTPTR_MAX) == -1 &&
+		errno == EFAULT,
+		"shared-memory valid-ID copyout fault");
+	errno = 0;
+	require(raw_shmctl(INT_MAX, IPC_STAT, &invalid) == -1 && errno == EINVAL,
+		"shared-memory invalid-ID lookup precedes copyout");
+	errno = 0;
+	require(raw_shmctl(INT_MAX, IPC_SET, (void *)(uintptr_t)UINTPTR_MAX) == -1 &&
+		errno == EFAULT,
+		"shared-memory IPC_SET copyin precedes positive invalid-ID lookup");
+	errno = 0;
+	require(raw_shmctl(-1, IPC_STAT, &invalid) == -1 && errno == EINVAL,
+		"shared-memory negative ID validation");
+	puts("sysv-ipc: shared-memory bad-pointer and invalid-ID ordering pass");
+
+	errno = 0;
+	require(shmat(shared_memory, NULL, 0) == (void *)-1 && errno == ENOSYS,
+		"shared-memory attachment remains unavailable");
+	unsigned char byte = 0x71;
+	errno = 0;
+	require(shmdt(&byte) == -1 && errno == ENOSYS && byte == 0x71,
+		"shared-memory detach remains unavailable");
+	int removed_id = shared_memory;
+	require(shmctl(shared_memory, IPC_RMID, NULL) == 0, "shared-memory IPC_RMID");
+	shared_memory = -1;
+	errno = 0;
+	require(shmctl(removed_id, IPC_STAT, &invalid) == -1 && errno == EINVAL,
+		"removed shared-memory ID is invalid");
+	puts("sysv-ipc: shmat/shmdt ENOSYS boundary and shared-memory removal pass");
+}
+#endif
 int main(void)
 {
 	atexit(cleanup);
@@ -179,6 +280,9 @@ int main(void)
 #endif
 	messages();
 	semaphores_test();
+#ifdef __wasm__
+	shared_memory_test();
+#endif
 	puts("::vm-test::pass");
 	fflush(stdout);
 #ifdef __wasm__
