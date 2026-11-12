@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: MIT
 
 import { platform } from "./platform.ts";
+import { HALT_KERNEL } from "./kernel-halt.ts";
 import type { ForkSnapshot } from "./fork-continuation.ts";
 import type { WasmTableType } from "./wasm_binary.ts";
 
@@ -475,7 +476,7 @@ export interface Imports {
   };
 }
 
-export const HALT_KERNEL = Symbol("halt kernel");
+export { HALT_KERNEL };
 
 /** Kernel/host-only version. Applications do not import this namespace. */
 export function user_context_imports(): Imports["user_context_v1"] {

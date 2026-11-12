@@ -209,7 +209,7 @@ export function call_kernel_entry<T>(
 
 /** Retire one signal frame before a non-local exception reaches its catchpad.
  * A task which exited already handed its CPU away; it must not re-enter C. */
-export function call_signal_callback<T>(invoke: () => T, cleanup: () => void, halt: symbol): T {
+export function call_signal_callback<T>(invoke: () => T, cleanup: () => void, halt: unknown): T {
   let exited = false;
   try {
     return invoke();
