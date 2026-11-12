@@ -1359,6 +1359,13 @@ lib.makeScope (scope: lib.callPackageWith ({ inherit lib pkgs; } // scope)) (
     };
     bash = callPackage ./bash/package.nix { };
     basic-init = callPackage ./basic-init/package.nix { };
+    cpio-metadata = callPackage ./cpio-metadata/package.nix { };
+    cpio-metadata-wasm64 = self.cpio-metadata.override {
+      platform = self.platform-wasm64;
+      sdk = self.sdk-wasm64;
+      kernel = self.kernel-wasm64;
+      vm-test = vmTestWasm64;
+    };
     mmap-benchmark =
       let
         fileKernel = self.kernel.override {
