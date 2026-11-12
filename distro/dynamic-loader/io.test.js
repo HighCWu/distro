@@ -26,6 +26,7 @@ for (const compiler of ["gcc", "clang"]) {
           "-Wall",
           "-Wextra",
           "-Werror",
+          "-pthread",
           fileURLToPath(new URL("io-native.c", import.meta.url)),
           "-o",
           binary,

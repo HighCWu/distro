@@ -6,8 +6,10 @@
 #include <fcntl.h>
 #include <limits.h>
 #include <link.h>
+#include <pthread.h>
 #include <stddef.h>
 #include <stdint.h>
+#include <stdatomic.h>
 #include <stdlib.h>
 #include <string.h>
 #include <sys/auxv.h>
@@ -36,16 +38,48 @@ _Static_assert(offsetof(Dl_info, dli_saddr) == 3 * sizeof(void *), "Wasm Dl_info
 
 /* Fixed u64 slots avoid host guesses about off_t, dev_t, ino_t, padding or
  * pointer width. The host copies bytes out before releasing this descriptor.
- * Only one read may be outstanding; reentrant loading is a process-loader job.
+ * A lease keeps this process-wide descriptor immutable from read through
+ * release; a competing Worker gets its own TLS EBUSY descriptor.
  */
 static uint64_t file[5]; /* data, size, device, inode, positive errno */
 static char origin[PATH_MAX];
 static int current_fd = -1;
+static atomic_flag file_lease = ATOMIC_FLAG_INIT;
+static _Thread_local int owns_file_lease;
+static _Thread_local int file_lease_cancel_state;
+static _Thread_local uint64_t busy_file[5];
+static _Thread_local char busy_origin[1];
 
 #ifdef __wasm__
 __attribute__((import_module("linux_dlopen_v1"), import_name("link_map_abi")))
 extern int dynamic_link_map_abi(void);
 #endif
+
+static uintptr_t private_read_error_descriptor(int error)
+{
+	memset(busy_file, 0, sizeof busy_file);
+	busy_file[4] = error;
+	busy_origin[0] = 0;
+	return (uintptr_t)busy_file;
+}
+
+static void release_file_lease(void)
+{
+	if (!owns_file_lease) return;
+	/* Linux close releases the descriptor even on EINTR; never retry it. */
+	if (current_fd >= 0) (void)close(current_fd);
+	current_fd = -1;
+	free((void *)(uintptr_t)file[0]);
+	for (unsigned i = 0; i < 5; i++) file[i] = 0;
+	origin[0] = 0;
+	owns_file_lease = 0;
+	atomic_flag_clear_explicit(&file_lease, memory_order_release);
+	/* A deferred cancellation requested during read() may run as soon as the
+	 * caller's prior cancellation state is restored. The lease and every owned
+	 * resource are already consistent before that point.
+	 */
+	(void)pthread_setcancelstate(file_lease_cancel_state, NULL);
+}
 
 EXPORT("__wasm_dlopen_io_v1")
 int __wasm_dlopen_io_v1(void)
@@ -60,16 +94,33 @@ int __wasm_dlopen_io_v1(void)
 EXPORT("__wasm_dlopen_read")
 uintptr_t __wasm_dlopen_read(const char *path)
 {
-	if (file[0] || current_fd >= 0) {
-		file[4] = EBUSY;
-		return (uintptr_t)file;
+	/* The lease spans cancellation points in open/stat/read and remains held
+	 * until the caller has copied the descriptor data. Disable cancellation
+	 * before claiming it so cancellation cannot strand the process-wide lease.
+	 */
+	int caller_cancel_state;
+	int cancel_error = pthread_setcancelstate(PTHREAD_CANCEL_DISABLE, &caller_cancel_state);
+	if (cancel_error) return private_read_error_descriptor(cancel_error);
+	if (atomic_flag_test_and_set_explicit(&file_lease, memory_order_acquire)) {
+		uintptr_t result = private_read_error_descriptor(EBUSY);
+		/* Do not touch the TLS state owned by a same-thread reentrant read. */
+		(void)pthread_setcancelstate(caller_cancel_state, NULL);
+		return result;
 	}
+	owns_file_lease = 1;
+	file_lease_cancel_state = caller_cancel_state;
 	for (unsigned i = 0; i < 5; i++) file[i] = 0;
 	origin[0] = 0;
+	current_fd = -1;
 	int fd = open(path, O_RDONLY | O_CLOEXEC);
 	current_fd = fd;
 	if (fd < 0) {
 		file[4] = errno;
+		if (errno == EBUSY) {
+			uintptr_t result = private_read_error_descriptor(EBUSY);
+			release_file_lease();
+			return result;
+		}
 		return (uintptr_t)file;
 	}
 	struct stat status;
@@ -138,6 +189,11 @@ done:
 	/* Keep the fd only until the host acquires the mm-owned kernel reference. */
 	if (error) {
 		free(data);
+		if (error == EBUSY) {
+			uintptr_t result = private_read_error_descriptor(EBUSY);
+			release_file_lease();
+			return result;
+		}
 		file[4] = error;
 	} else {
 		file[0] = (uintptr_t)data;
@@ -151,19 +207,17 @@ done:
 EXPORT("__wasm_dlopen_read_release")
 void __wasm_dlopen_read_release(void)
 {
-	/* Linux close releases the descriptor even on EINTR; never retry it. */
-	if (current_fd >= 0) (void)close(current_fd);
-	current_fd = -1;
-	free((void *)(uintptr_t)file[0]);
-	for (unsigned i = 0; i < 5; i++) file[i] = 0;
-	origin[0] = 0;
+	release_file_lease();
 }
 
 EXPORT("__wasm_dlopen_origin")
-uintptr_t __wasm_dlopen_origin(void) { return (uintptr_t)origin; }
+uintptr_t __wasm_dlopen_origin(void)
+{
+	return (uintptr_t)(owns_file_lease ? origin : busy_origin);
+}
 
 EXPORT("__wasm_dlopen_fd")
-int __wasm_dlopen_fd(void) { return current_fd; }
+int __wasm_dlopen_fd(void) { return owns_file_lease ? current_fd : -1; }
 
 EXPORT("__wasm_dlopen_allocate")
 uintptr_t __wasm_dlopen_allocate(size_t size, size_t alignment)
