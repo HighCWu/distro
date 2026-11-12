@@ -30,8 +30,11 @@ pkgs.stdenvNoCC.mkDerivation (finalAttrs: {
       -Wl,--export-dynamic ${./main.cc} -o cxx-dynamic-runtime
     wasm-linux-dlopen-c++ -std=c++17 -O2 -Wall -Wextra -Werror -fPIC -shared -I${./.} \
       -Wl,-soname,plugin.so ${./plugin.cc} -o plugin.so
+    wasm-linux-dlopen-c++ -std=c++17 -O2 -flto=thin -fwasm-exceptions \
+      -Wall -Wextra -Werror ${./thinlto-main.cc} ${./thinlto-indirect.cc} \
+      -o cxx-thinlto-runtime
 
-    for program in cxx-dynamic-runtime plugin.so; do
+    for program in cxx-dynamic-runtime plugin.so cxx-thinlto-runtime; do
       node ${../busybox/check-binary.mjs} ${../../packages/kernel/src/wasm_binary.ts} \
         "$program" ${toString platform.addressBits} ${toString platform.maximumMemoryBytes}
     done
@@ -42,6 +45,7 @@ pkgs.stdenvNoCC.mkDerivation (finalAttrs: {
     runHook preInstall
     mkdir -p $out/bin $out/lib $out/share/licenses/cxx-dynamic-runtime
     install -m755 cxx-dynamic-runtime $out/bin/cxx-dynamic-runtime
+    install -m755 cxx-thinlto-runtime $out/bin/cxx-thinlto-runtime
     install -m644 plugin.so $out/lib/plugin.so
 
     notices=$out/share/licenses/cxx-dynamic-runtime
@@ -62,6 +66,7 @@ pkgs.stdenvNoCC.mkDerivation (finalAttrs: {
 
     mkdir -p $buildMaterials/share/cxx-dynamic-runtime-materials
     cp ${./package.nix} ${./main.cc} ${./plugin.cc} ${./shared.hpp} \
+      ${./thinlto-main.cc} ${./thinlto-indirect.cc} \
       ${./runtime-test.sh} ${../busybox/check-binary.mjs} \
       ${../../packages/kernel/src/wasm_binary.ts} \
       $buildMaterials/share/cxx-dynamic-runtime-materials/

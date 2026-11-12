@@ -10,8 +10,10 @@ native_reference=${CXX_DYNAMIC_NATIVE_REFERENCE:-0}
 mkdir -p /tmp
 "$program" "$plugin"
 echo 'cxx dynamic: repeated calls and recovered exceptions after clean process exit pass'
-echo '::vm-test::pass'
 if [ "$native_reference" = 1 ]; then
+  echo '::vm-test::pass'
   exit 0
 fi
+/bin/cxx-thinlto-runtime
+echo '::vm-test::pass'
 while :; do sleep 1; done
