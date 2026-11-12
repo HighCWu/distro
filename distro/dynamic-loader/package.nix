@@ -79,10 +79,19 @@ pkgs.stdenvNoCC.mkDerivation (finalAttrs: {
     sdk-dynamic-loader
     llvm-toolchain
     pkgs.nodejs
+    pkgs.python3
   ];
   buildPhase = ''
     runHook preBuild
+    python3 ${./generate-unused-main-exports.py} 4096 unused-main-exports.c
     wasm-linux-dlopen-cc -O2 -Wall -Wextra -Werror ${./runtime.c} -o dynamic-loader.wasm
+    wasm-linux-dlopen-cc -O2 -Wall -Wextra -Werror ${./scope-memory-runtime.c} unused-main-exports.c -o scope-memory-runtime.wasm
+    ${sideCC} -O2 -Wall -Wextra -Werror -fPIC -c ${./scope-memory-library.c} -o scope-memory-library.o
+    ${linkShared {
+      name = "scope-memory-library.so";
+      output = "scope-memory-library.so";
+      inputs = [ "scope-memory-library.o" ];
+    }}
     wasm-linux-dlopen-cc -O2 -Wall -Wextra -Werror ${./capacity-consumer.c} -o capacity-consumer.wasm
     ${sideCC} -O2 -Wall -Wextra -Werror -fPIC -c ${./capacity-leaf.c} -o capacity-leaf.o
     ${linkShared {
@@ -267,6 +276,8 @@ pkgs.stdenvNoCC.mkDerivation (finalAttrs: {
   installPhase = ''
     runHook preInstall
     install -Dm755 dynamic-loader.wasm $out/dynamic-loader.wasm
+    install -Dm755 scope-memory-runtime.wasm $out/scope-memory-runtime.wasm
+    install -Dm644 scope-memory-library.so $out/lib/scope-memory-library.so
     install -Dm755 capacity-consumer.wasm $out/capacity-consumer.wasm
     install -Dm644 capacity-leaf.so $out/lib/capacity-leaf.so
     install -Dm755 spawn.wasm $out/spawn.wasm
@@ -297,7 +308,7 @@ pkgs.stdenvNoCC.mkDerivation (finalAttrs: {
     cp ${musl.src}/COPYRIGHT $out/share/licenses/dynamic-loader/musl-COPYRIGHT
     cp ${llvm-runtimes.src}/compiler-rt/LICENSE.TXT $out/share/licenses/dynamic-loader/compiler-rt-LICENSE.TXT
     mkdir -p $buildMaterials/share/dynamic-loader-materials
-    cp ${./capacity-consumer.c} ${./capacity-leaf.c} $buildMaterials/share/dynamic-loader-materials/
+    cp ${./capacity-consumer.c} ${./capacity-leaf.c} ${./scope-memory-runtime.c} ${./scope-memory-library.c} ${./generate-unused-main-exports.py} unused-main-exports.c $buildMaterials/share/dynamic-loader-materials/
     cp ${./runtime.c} ${./library-a.c} ${./library-b.c} ${./cycle-a.c} ${./cycle-b.c} ${./package.nix} $buildMaterials/share/dynamic-loader-materials/
     cp ${./tail-library.c} $buildMaterials/share/dynamic-loader-materials/
     cp ${./spawn.c} $buildMaterials/share/dynamic-loader-materials/
@@ -319,6 +330,12 @@ pkgs.stdenvNoCC.mkDerivation (finalAttrs: {
   '';
   meta.license = lib.licenses.mit;
   passthru.checks = {
+    scope-memory-runtime = vm-test.rawInitramfsTest {
+      name = "dynamic-scope-memory-${platform.wasmArch}";
+      init = "${finalAttrs.finalPackage}/scope-memory-runtime.wasm";
+      files."/scope-memory-library.so" = "${finalAttrs.finalPackage}/lib/scope-memory-library.so";
+      nodeArguments = [ "--max-old-space-size=192" ];
+    };
     capacity-runtime = vm-test.rawInitramfsTest {
       name = "dynamic-capacity-${platform.wasmArch}";
       init = "${finalAttrs.finalPackage}/capacity-consumer.wasm";

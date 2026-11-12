@@ -640,6 +640,20 @@ export class ProcessDylink {
       }
       const files = [...visited].map((key) => local.get(key)!);
       const fresh = files.filter((file) => !this.#reuse.has(file.key));
+      const externalSymbolNames = new Set<string>();
+      for (const file of files) {
+        for (const entry of read_wasm_dynamic_imports(file.bytes)) {
+          if (entry.module === "env" || entry.module === "GOT.func" || entry.module === "GOT.mem")
+            externalSymbolNames.add(entry.name);
+        }
+        for (const entry of WebAssembly.Module.exports(file.module))
+          externalSymbolNames.add(entry.name);
+      }
+      const loadExternalSymbols = new Map<string, DylinkExternalSymbol>();
+      for (const name of externalSymbolNames) {
+        const symbol = this.#symbols.get(name);
+        if (symbol) loadExternalSymbols.set(name, { ...symbol });
+      }
       let tailTableRequired = false;
       for (const file of fresh) {
         const prepared = prepare_wasm_dynamic_tail_calls(file.bytes);
@@ -719,7 +733,7 @@ export class ProcessDylink {
           tableArena: { cursor: tableStart, limit: tableEnd, address: tableAddress },
           hostFunctions,
           hostGlobals,
-          externalSymbols: this.#symbols,
+          externalSymbols: loadExternalSymbols,
           externalTags: this.#tags,
           functionPointers: this.#pointers,
           initialThreadLocalTls: true,

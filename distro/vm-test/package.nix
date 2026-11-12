@@ -49,6 +49,7 @@ let
       heavy ? false,
       snapshotFirstDisk ? false,
       readOnlyDisks ? false,
+      nodeArguments ? [ ],
     }:
     let
       allDisks = lib.optional (disk != null) disk ++ disks;
@@ -74,7 +75,7 @@ let
           chmod u+w ${diskCopy.name}
         '') diskCopies}
         set +e
-        timeout --kill-after=5 300 node ${runner}/run-test.js \
+        timeout --kill-after=5 300 node ${lib.escapeShellArgs nodeArguments} ${runner}/run-test.js \
           --cpus ${toString cpus} \
           ${lib.optionalString snapshotFirstDisk "--snapshot-first-disk"} \
           ${lib.optionalString readOnlyDisks "--readonly-disks"} \
@@ -181,6 +182,7 @@ let
       disks ? [ ],
       snapshotFirstDisk ? false,
       readOnlyDisks ? false,
+      nodeArguments ? [ ],
     }:
     bootInstalledSystem {
       inherit
@@ -190,6 +192,7 @@ let
         disks
         snapshotFirstDisk
         readOnlyDisks
+        nodeArguments
         ;
       initramfs = image.mkInitramfs {
         name = "${lib.replaceStrings [ "_" ] [ "-" ] name}-initramfs";
