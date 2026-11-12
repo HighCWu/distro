@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: MIT
 
 import { listen_endpoint, post_endpoint } from "./endpoint.ts";
+import { create_wasm_halt } from "./kernel-halt.ts";
 import { platform } from "./platform.ts";
 import { request_remote_memory, type RemoteMemoryMessage } from "./remote-memory.ts";
 import {
@@ -193,7 +194,7 @@ function user_imports({
   imports_fork_v1: Imports["user_fork_v1"];
   imports_brk_v1: Imports["user_brk_v1"];
 } {
-  const HALT_USER = Symbol("halt user");
+  const HALT_USER = create_wasm_halt();
 
   let context: UserContext | null = parent;
   let instance: WebAssembly.Instance | null = null;

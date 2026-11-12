@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: MIT
 
-function create_kernel_halt(): WebAssembly.RuntimeError {
+export function create_wasm_halt(): WebAssembly.RuntimeError {
   // (module (func (export "stop") unreachable))
   const module = new WebAssembly.Module(
     new Uint8Array([
@@ -22,4 +22,4 @@ function create_kernel_halt(): WebAssembly.RuntimeError {
 // A plain JS exception can enter application catch/cleanup handlers. Preserve
 // an actual engine trap so task exit skips user unwinding, including in a
 // browser Worker where close() lets the current synchronous call continue.
-export const HALT_KERNEL = create_kernel_halt();
+export const HALT_KERNEL = create_wasm_halt();

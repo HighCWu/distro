@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: MIT
 import assert from "node:assert/strict";
 import test from "node:test";
-import { HALT_KERNEL } from "../src/kernel-halt.ts";
+import { create_wasm_halt, HALT_KERNEL } from "../src/kernel-halt.ts";
 
 // (module (import "host" "stop" (func $stop))
 //   (func (export "run") (result i32)
@@ -44,5 +44,23 @@ test("kernel halt bypasses Wasm handlers through a JavaScript bridge", () => {
         }
       }),
     (error) => error === HALT_KERNEL,
+  );
+});
+
+test("user halt uses a distinct uncatchable Wasm trap identity", () => {
+  const HALT_USER = create_wasm_halt();
+  assert.ok(HALT_USER instanceof WebAssembly.RuntimeError);
+  assert.notEqual(HALT_USER, HALT_KERNEL);
+  assert.notEqual(HALT_USER, create_wasm_halt());
+  assert.throws(
+    () =>
+      invoke(() => {
+        try {
+          throw HALT_USER;
+        } catch (error) {
+          throw error;
+        }
+      }),
+    (error) => error === HALT_USER,
   );
 });
