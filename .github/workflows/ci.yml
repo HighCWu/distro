@@ -99,6 +99,8 @@ jobs:
             nix-wasm64-v2-${{ runner.os }}-
             nix-ci-${{ runner.os }}-
           gc-max-store-size-linux: 9G
+      - name: Test matching kernel bundle exporter
+        run: python3 scripts/export-runtime-kernel-test.py
       - name: Build the selected public SDK and optional runtime assets
         id: sdk
         env:
@@ -215,6 +217,35 @@ jobs:
         with:
           name: sdk-closure-${{ inputs['sdk-export-profile'] }}-${{ github.sha }}${{ inputs['sdk-export-include-tooling'] && '-tooling' || '' }}
           path: ${{ runner.temp }}/sdk-closure/
+          if-no-files-found: error
+          retention-days: 1
+      - name: Export the matching kernel bundle
+        if: ${{ inputs['sdk-export-include-runtime'] }}
+        env:
+          RUNTIME_PATH: ${{ steps.sdk.outputs.runtime_path }}
+          SDK_PROFILE: ${{ inputs['sdk-export-profile'] }}
+          INCLUDE_TOOLING: ${{ inputs['sdk-export-include-tooling'] }}
+          GITHUB_SHA: ${{ github.sha }}
+          CLOSURE_DIR: ${{ runner.temp }}/sdk-closure
+          OUTPUT_DIR: ${{ runner.temp }}/sdk-kernel
+        run: |
+          set -euo pipefail
+          tooling_suffix=""
+          if [[ "$INCLUDE_TOOLING" == true ]]; then
+            tooling_suffix="-tooling"
+          fi
+          bash scripts/export-runtime-kernel.sh \
+            --runtime-path "$RUNTIME_PATH" \
+            --profile "$SDK_PROFILE" \
+            --github-sha "$GITHUB_SHA" \
+            --sdk-closure-manifest "$CLOSURE_DIR/sdk-${SDK_PROFILE}-${GITHUB_SHA}${tooling_suffix}.json" \
+            --sdk-closure-artifact "sdk-closure-${SDK_PROFILE}-${GITHUB_SHA}${tooling_suffix}" \
+            --output-dir "$OUTPUT_DIR"
+      - uses: actions/upload-artifact@v4
+        if: ${{ inputs['sdk-export-include-runtime'] }}
+        with:
+          name: sdk-kernel-${{ inputs['sdk-export-profile'] }}-${{ github.sha }}
+          path: ${{ runner.temp }}/sdk-kernel/
           if-no-files-found: error
           retention-days: 1
 
