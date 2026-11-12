@@ -22,6 +22,8 @@ export interface Instance extends WebAssembly.Instance {
     __indirect_function_table: WebAssembly.Table;
     boot(): void;
     trigger_irq(irq: number): void;
+    /** Wake idle Workers so their execution checkpoints can observe shared work. */
+    worker_execution_notify_v1?(): void;
     syscall(
       nr: WasmAddress,
       arg0: WasmAddress,
@@ -366,6 +368,8 @@ export interface Imports {
     return_address(_level: number): WasmAddress;
     /** Unix time in nanoseconds, monotonically advancing during this session. */
     get_now_nsec(): bigint;
+    /** Kernel-only idle boundary. One requests a bounded recheck interval. */
+    worker_checkpoint_v1(): number;
     /** Writes a bounded C string, including a terminator when size is nonzero. */
     get_stacktrace(buf: WasmAddress, size: WasmAddress): void;
     spawn_worker(
@@ -494,6 +498,7 @@ export function kernel_imports({
   run_on_main,
   get_user_context,
   worker_exit,
+  worker_checkpoint,
 }: {
   address: WasmAddressType;
   is_worker: boolean;
@@ -512,6 +517,8 @@ export function kernel_imports({
   get_user_context: () => UserContext | null;
   /** Reports that this worker's kernel thread halted and the worker is closing. */
   worker_exit: () => void;
+  /** Runs only at the kernel's unlocked idle boundary. */
+  worker_checkpoint?: () => number;
 }): Imports["kernel"] {
   // These are trusted kernel pointers, not application virtual addresses.
   // A malformed range remains a kernel/host failure, never a fake errno.
@@ -524,6 +531,7 @@ export function kernel_imports({
     return bytes;
   };
   return {
+    worker_checkpoint_v1: () => (worker_checkpoint?.() === 1 ? 1 : 0),
     breakpoint: () => {
       debugger;
     },
