@@ -16,6 +16,9 @@ function makeProcess(overrides: Record<string, unknown> = {}): ProcessDylink {
     runAtWorkerCheckpoint<T>(action: () => T) {
       return action();
     },
+    recordWorkerPublicationFailure(_error: unknown, _message?: string) {
+      return 0;
+    },
     getWorkerPublicationState: () => null,
     openWithWorkerPublication: (path: number | bigint) => (typeof path === "bigint" ? 0n : 0),
     ...overrides,
@@ -56,10 +59,15 @@ test("runtime preserves the explicit owner route and does not invent a baseline"
   const channel = new DylinkWorkerChannel(1024, 1);
   const participant = unwrap(channel.register());
   const calls: unknown[][] = [];
+  let failure: { error: unknown; message?: string } | undefined;
   const runtime = new DylinkWorkerRuntime({
     shared: channel.shared,
     participant,
     process: makeProcess({
+      recordWorkerPublicationFailure(error: unknown, message?: string) {
+        failure = { error, message };
+        return 0;
+      },
       openWithWorkerPublication(
         path: number | bigint,
         flags: number,
@@ -78,7 +86,12 @@ test("runtime preserves the explicit owner route and does not invent a baseline"
   });
 
   assert.equal(runtime.open(64, 2), 0);
-  assert.deepEqual(calls, [[64, 2, "", -1]]);
+  assert.deepEqual(calls, [], "the owner path is not entered without a published baseline");
+  assert.equal(failure?.message, undefined);
+  assert.equal(
+    failure?.error instanceof Error ? failure.error.message : "",
+    "Worker publication baseline is unavailable",
+  );
 });
 
 test("runtime does not service its receiver from its active producer", () => {

@@ -30,8 +30,15 @@ const subsection = (id: number, payload: number[]) => [id, ...u32(payload.length
 
 /** A real ProcessDylink fixture: shared memory/table imports, dylink metadata,
  * an exported constructor, and one regular function export. */
-function dynamicModule(mutableGlobal = false, constructorProbe = false): Uint8Array<ArrayBuffer> {
+function dynamicModule(
+  mutableGlobal = false,
+  constructorProbe = false,
+  address: "i32" | "i64" = "i32",
+): Uint8Array<ArrayBuffer> {
   const functionIndexOffset = constructorProbe ? 1 : 0;
+  const memoryFlags = address === "i64" ? 7 : 3;
+  const memoryBaseType = address === "i64" ? 0x7e : 0x7f;
+  const memoryAddress = address === "i64" ? [0x42, 32] : [0x41, 32];
   const dylink = [
     ...subsection(1, [...u32(0), ...u32(0), ...u32(0), ...u32(0)]),
     ...subsection(2, [0]),
@@ -49,7 +56,7 @@ function dynamicModule(mutableGlobal = false, constructorProbe = false): Uint8Ar
     ...text("env"),
     ...text("memory"),
     2,
-    3,
+    memoryFlags,
     ...u32(1),
     ...u32(4),
     ...text("env"),
@@ -62,22 +69,20 @@ function dynamicModule(mutableGlobal = false, constructorProbe = false): Uint8Ar
     ...text("env"),
     ...text("__memory_base"),
     3,
-    0x7f,
+    memoryBaseType,
     0,
     ...text("env"),
     ...text("__table_base"),
     3,
-    0x7f,
+    memoryBaseType,
     0,
     ...(constructorProbe ? [...text("env"), ...text("__worker_publication_ctor_probe"), 0, 0] : []),
   ];
   const ctor = [
     0,
     ...(constructorProbe ? [0x10, 0] : []),
-    0x41,
-    32,
-    0x41,
-    32,
+    ...memoryAddress,
+    ...memoryAddress,
     0x28,
     2,
     0,
@@ -117,7 +122,9 @@ function dynamicModule(mutableGlobal = false, constructorProbe = false): Uint8Ar
   ]);
 }
 
-function mainModule(): Uint8Array<ArrayBuffer> {
+function mainModule(address: "i32" | "i64"): Uint8Array<ArrayBuffer> {
+  const memoryFlags = address === "i64" ? 7 : 3;
+  const stackGlobal = address === "i64" ? [0x7e, 1, 0x42, 0, 0x0b] : [0x7f, 1, 0x41, 0, 0x0b];
   return new Uint8Array([
     0,
     0x61,
@@ -133,7 +140,7 @@ function mainModule(): Uint8Array<ArrayBuffer> {
       ...text("env"),
       ...text("memory"),
       2,
-      3,
+      memoryFlags,
       ...u32(2),
       ...u32(4),
       ...text("env"),
@@ -143,7 +150,7 @@ function mainModule(): Uint8Array<ArrayBuffer> {
     ]),
     ...section(3, [1, 0]),
     ...section(4, [1, 0x70, 1, ...u32(3), ...u32(4096)]),
-    ...section(6, [1, 0x7f, 1, 0x41, 0, 0x0b]),
+    ...section(6, [1, ...stackGlobal]),
     ...section(7, [
       3,
       ...text("__indirect_function_table"),
@@ -173,9 +180,12 @@ function makeProcess(
       generation: number;
       snapshot: DylinkWorkerSnapshot;
     };
+    address?: "i32" | "i64";
   } = {},
 ) {
-  const main = new WebAssembly.Instance(new WebAssembly.Module(mainModule()), {
+  const address = options.address ?? "i32";
+  const wasmWord = (value: number) => (address === "i64" ? BigInt(value) : value);
+  const main = new WebAssembly.Instance(new WebAssembly.Module(mainModule(address)), {
     env: {
       memory,
       __worker_publication_ctor_probe: options.constructorProbe ?? (() => {}),
@@ -190,17 +200,20 @@ function makeProcess(
   let currentPath = "";
   const callbacks = {
     __wasm_dlopen_io_v1: () => 1,
-    __wasm_dlopen_allocate(size: number, alignment = 1) {
-      const aligned = Math.ceil(allocation / alignment) * alignment;
-      allocation = aligned + size;
-      return allocation <= memory.buffer.byteLength ? aligned : 0;
+    __wasm_dlopen_allocate(size: number | bigint, alignment: number | bigint = 1) {
+      const numericSize = Number(size);
+      const numericAlignment = Number(alignment);
+      const aligned = Math.ceil(allocation / numericAlignment) * numericAlignment;
+      allocation = aligned + numericSize;
+      return allocation <= memory.buffer.byteLength ? wasmWord(aligned) : wasmWord(0);
     },
     __wasm_dlopen_deallocate: () => {},
-    __wasm_dlopen_read(pathPointer: number) {
+    __wasm_dlopen_read(pathPointer: number | bigint) {
       const bytes = new Uint8Array(memory.buffer);
-      let end = pathPointer;
+      const pathPointerNumber = Number(pathPointer);
+      let end = pathPointerNumber;
       while (end < bytes.length && bytes[end] !== 0) end++;
-      currentPath = new TextDecoder().decode(bytes.subarray(pathPointer, end));
+      currentPath = new TextDecoder().decode(bytes.subarray(pathPointerNumber, end));
       const contents = files.get(currentPath);
       descriptor.setBigUint64(descriptorAddress, BigInt(fileAddress), true);
       descriptor.setBigUint64(descriptorAddress + 8, BigInt(contents?.length ?? 0), true);
@@ -212,13 +225,13 @@ function makeProcess(
       );
       descriptor.setBigUint64(descriptorAddress + 32, contents ? 0n : 2n, true);
       if (contents) new Uint8Array(memory.buffer, fileAddress, contents.length).set(contents);
-      return descriptorAddress;
+      return wasmWord(descriptorAddress);
     },
     __wasm_dlopen_read_release: () => {},
     __wasm_dlopen_origin() {
       const encoded = new TextEncoder().encode(`${currentPath}\0`);
       new Uint8Array(memory.buffer, originAddress, encoded.length).set(encoded);
-      return originAddress;
+      return wasmWord(originAddress);
     },
     __wasm_dlopen_fd: () => 3,
     __wasm_dlopen_library_path: () => 0,
@@ -228,7 +241,7 @@ function makeProcess(
   const process = new ProcessDylink({
     main: { exports } as unknown as WebAssembly.Instance,
     memory,
-    address: "i32",
+    address,
     maximumPages: 4,
     tableType: { address: "i32", minimum: 3n, maximum: 4096n },
     signatures: new Map([["__worker_publication_ctor_probe", "[[],[]]"]]),
@@ -248,6 +261,28 @@ function makeProcess(
   });
   const pathAddress = 256;
   return { process, pathAddress };
+}
+
+function readDlerror(
+  process: ProcessDylink,
+  memory: WebAssembly.Memory,
+  address: "i32" | "i64",
+): string {
+  const pointer = address === "i64" ? 8192n : 8192;
+  const length = address === "i64" ? 256n : 256;
+  assert.equal(process.error(pointer, length), 0);
+  const bytes = new Uint8Array(memory.buffer, 8192, 256);
+  const end = bytes.indexOf(0);
+  assert.notEqual(end, -1, "dlerror output is NUL-terminated");
+  return new TextDecoder().decode(bytes.subarray(0, end));
+}
+
+function testMemory(address: "i32" | "i64"): WebAssembly.Memory {
+  const descriptor =
+    address === "i64"
+      ? { initial: 2n, maximum: 4n, shared: true, address: "i64" }
+      : { initial: 2, maximum: 4, shared: true };
+  return new WebAssembly.Memory(descriptor as unknown as WebAssembly.MemoryDescriptor);
 }
 
 function unwrap<T>(result: { ok: true; value: T } | { ok: false; errno: number }): T {
@@ -475,7 +510,9 @@ test("writer deadlines poison a publication that cannot reach a worker barrier",
   assert.equal(baseline.generation, 0);
 });
 
-test("writer retries a reservation blocked by pending Worker admission", () => {
+test("writer retries a reservation blocked by pending Worker admission", (t) => {
+  let tick = 0;
+  t.mock.method(performance, "now", () => tick++);
   const memory = new WebAssembly.Memory({ initial: 2, maximum: 4, shared: true });
   const module = dynamicModule();
   let hasThread = false;
@@ -531,7 +568,9 @@ test("writer retries a reservation blocked by pending Worker admission", () => {
   assert.equal(owner.process.getWorkerPublicationState()?.generation, 1);
 });
 
-test("writer bounds retries while another publication owns the channel", () => {
+test("writer bounds retries while another publication owns the channel", (t) => {
+  let tick = 0;
+  t.mock.method(performance, "now", () => tick++);
   const memory = new WebAssembly.Memory({ initial: 2, maximum: 4, shared: true });
   const files = new Map([["/plugins/late.so", dynamicModule()]]);
   const owner = makeProcess(memory, files);
@@ -563,6 +602,86 @@ test("writer bounds retries while another publication owns the channel", () => {
   assert.equal(unwrap(channel.observe()).transaction, blocker.transaction);
   assert.equal(owner.process.getWorkerPublicationState()?.generation, baseline.generation);
   unwrap(channel.cancelReservation(blocker));
+});
+
+test("writer failures replace dlerror and preserve later 32/64-bit opens", (t) => {
+  let tick = 0;
+  t.mock.method(performance, "now", () => tick++);
+  for (const address of ["i32", "i64"] as const) {
+    const memory = testMemory(address);
+    const module = dynamicModule(false, false, address);
+    const files = new Map([["/plugins/late.so", module]]);
+    let hasThread = false;
+    let serviceReceiver = false;
+    let writer!: DylinkWorkerWriter;
+    const owner = makeProcess(memory, files, {
+      address,
+      postThread: () => hasThread,
+      beforeInitialize: (snapshot, ownerRollback) =>
+        writer.beforeInitialize(snapshot, ownerRollback),
+    });
+    const baseline = owner.process.initializeWorkerPublication(`error-record-${address}`);
+    const channel = new DylinkWorkerChannel(1 << 20, 2);
+    const writerParticipant = unwrap(channel.register());
+    const receiverParticipant = unwrap(channel.register());
+    const receiverProcess = makeProcess(memory, files, {
+      address,
+      postThread: () => true,
+      replay: baseline.snapshot,
+      publicationState: baseline,
+    }).process;
+    const receiver = new DylinkWorkerReceiver(
+      channel,
+      receiverParticipant,
+      receiverProcess,
+      (error) => {
+        throw error;
+      },
+    );
+    const makeWriter = (timeoutMs: number) =>
+      new DylinkWorkerWriter(
+        channel,
+        writerParticipant,
+        owner.process,
+        (error) => {
+          throw error;
+        },
+        () => {
+          if (serviceReceiver) receiver.step();
+        },
+        timeoutMs,
+      );
+    writer = makeWriter(5);
+    const wasmWord = (value: number) => (address === "i64" ? BigInt(value) : value);
+    const pathname = new TextEncoder().encode("/plugins/late.so\0");
+    new Uint8Array(memory.buffer, owner.pathAddress, pathname.length).set(pathname);
+
+    assert.equal(BigInt(owner.process.open(wasmWord(0), 0)), 0n);
+    assert.match(readDlerror(owner.process, memory, address), /invalid dlopen mode/);
+
+    const blocker = unwrap(channel.reserve(receiverParticipant));
+    hasThread = true;
+    const timedOut = writer.open(wasmWord(owner.pathAddress), 2);
+    assert.equal(BigInt(timedOut), 0n);
+    assert.match(
+      readDlerror(owner.process, memory, address),
+      /Worker publication timed out waiting for/,
+    );
+    assert.equal(owner.process.getWorkerPublicationState()?.generation, baseline.generation);
+
+    unwrap(channel.cancelReservation(blocker));
+    serviceReceiver = true;
+    writer = makeWriter(1_000);
+    const handle = writer.open(wasmWord(owner.pathAddress), 2);
+    assert.notEqual(
+      BigInt(handle),
+      0n,
+      `a later ${address} open should still succeed: ${readDlerror(owner.process, memory, address)}`,
+    );
+    assert.equal(unwrap(channel.observe()).state, "idle");
+    assert.equal(unwrap(channel.observe()).generation, baseline.generation + 1);
+    assert.equal(receiverProcess.getWorkerPublicationState()?.generation, baseline.generation + 1);
+  }
 });
 
 test("writer refreshes its publication baseline after another producer advances the generation", () => {

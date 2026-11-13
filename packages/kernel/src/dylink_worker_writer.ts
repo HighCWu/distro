@@ -45,10 +45,6 @@ function channelFailure(errno: number, operation: string): DylinkWorkerChannelEr
   return new DylinkWorkerChannelError(Math.abs(errno), `Worker publication ${operation} failed`);
 }
 
-function zeroAddress(state: DylinkWorkerPublicationState): WasmAddress {
-  return state.snapshot.address === "i64" ? 0n : 0;
-}
-
 function now(): number {
   return typeof performance !== "undefined" ? performance.now() : Date.now();
 }
@@ -97,9 +93,11 @@ export class DylinkWorkerWriter {
 
   /** Open a new replayable DSO under a frozen Worker cohort. */
   open(path: WasmAddress, flags: number): WasmAddress {
-    if (this.#active) return zeroAddress(this.#active.baseline);
+    if (this.#active)
+      return this.#recordFailure(new Error("nested Worker publication open is not supported"));
     const deadline = now() + this.#timeoutMs;
-    if (!Number.isFinite(deadline)) return this.#invalidBaselineResult(path, flags);
+    if (!Number.isFinite(deadline))
+      return this.#invalidBaselineResult("Worker publication deadline is invalid");
 
     let baseline: DylinkWorkerPublicationState | null = null;
     let reservation: DylinkWorkerReservation | null = null;
@@ -109,48 +107,73 @@ export class DylinkWorkerWriter {
       // never be built against an older generation than the channel.
       try {
         baseline = this.#process.getWorkerPublicationState();
-      } catch {
-        return this.#invalidBaselineResult(path, flags);
+      } catch (error) {
+        return this.#invalidBaselineResult("Worker publication baseline is unavailable", error);
       }
-      if (!baseline) return this.#invalidBaselineResult(path, flags);
-      if (now() >= deadline) return zeroAddress(baseline);
+      if (!baseline)
+        return this.#invalidBaselineResult("Worker publication baseline is unavailable");
+      if (now() >= deadline)
+        return this.#recordFailure(
+          new Error("Worker publication timed out waiting for channel availability"),
+        );
 
       const before = this.#channel.observe();
       if (!before.ok) {
-        if (!this.#isTransient(before.errno)) return zeroAddress(baseline);
-        if (!this.#yieldForAvailability(deadline)) return zeroAddress(baseline);
+        if (!this.#isTransient(before.errno))
+          return this.#recordFailure(channelFailure(before.errno, "channel observation"));
+        if (!this.#yieldForAvailability(deadline))
+          return this.#recordFailure(
+            new Error("Worker publication timed out waiting for channel availability"),
+          );
         continue;
       }
-      if (before.value.state === "poison") return zeroAddress(baseline);
+      if (before.value.state === "poison")
+        return this.#recordFailure(channelFailure(-EIO, "channel poison check"));
       if (before.value.state !== "idle" || before.value.generation !== baseline.generation) {
-        if (!this.#yieldForAvailability(deadline)) return zeroAddress(baseline);
+        if (!this.#yieldForAvailability(deadline))
+          return this.#recordFailure(
+            new Error("Worker publication timed out waiting for a matching channel generation"),
+          );
         continue;
       }
 
       const reserved = this.#channel.reserve(this.#participant);
       if (!reserved.ok) {
-        if (!this.#isTransient(reserved.errno)) return zeroAddress(baseline);
-        if (!this.#yieldForAvailability(deadline)) return zeroAddress(baseline);
+        if (!this.#isTransient(reserved.errno))
+          return this.#recordFailure(channelFailure(reserved.errno, "channel reservation"));
+        if (!this.#yieldForAvailability(deadline))
+          return this.#recordFailure(
+            new Error("Worker publication timed out waiting for channel availability"),
+          );
         continue;
       }
       reservation = reserved.value;
       if (reservation.generation !== baseline.generation) {
         this.#cancelReservation(reservation);
         reservation = null;
-        if (!this.#yieldForAvailability(deadline)) return zeroAddress(baseline);
+        if (!this.#yieldForAvailability(deadline))
+          return this.#recordFailure(
+            new Error("Worker publication timed out waiting for a matching channel generation"),
+          );
         continue;
       }
       if (now() >= deadline) {
         this.#cancelReservation(reservation);
-        return zeroAddress(baseline);
+        return this.#recordFailure(
+          new Error("Worker publication timed out after reserving the channel"),
+        );
       }
 
       const after = this.#channel.observe();
       if (!after.ok) {
         this.#cancelReservation(reservation);
         reservation = null;
-        if (!this.#isTransient(after.errno)) return zeroAddress(baseline);
-        if (!this.#yieldForAvailability(deadline)) return zeroAddress(baseline);
+        if (!this.#isTransient(after.errno))
+          return this.#recordFailure(channelFailure(after.errno, "channel observation"));
+        if (!this.#yieldForAvailability(deadline))
+          return this.#recordFailure(
+            new Error("Worker publication timed out waiting for channel availability"),
+          );
         continue;
       }
       if (
@@ -159,13 +182,19 @@ export class DylinkWorkerWriter {
         after.value.generation !== baseline.generation
       ) {
         this.#cancelReservation(reservation);
-        return zeroAddress(baseline);
+        return this.#recordFailure(
+          new DylinkWorkerChannelError(
+            116,
+            "Worker publication reservation changed before confirmation",
+          ),
+        );
       }
       break;
     }
 
     // The retry loop establishes these non-null values before it exits.
-    if (!baseline || !reservation) return this.#invalidBaselineResult(path, flags);
+    if (!baseline || !reservation)
+      return this.#invalidBaselineResult("Worker publication reservation could not be established");
 
     const active: ActivePublication = {
       baseline,
@@ -373,14 +402,13 @@ export class DylinkWorkerWriter {
     }
   }
 
-  #invalidBaselineResult(path: WasmAddress, flags: number): WasmAddress {
-    // Let ProcessDylink produce a correctly typed null address and dlerror while
-    // its invalid identity check guarantees that no user module graph is modified.
-    try {
-      return this.#process.openWithWorkerPublication(path, flags, "", -1);
-    } catch (error) {
-      return this.#fatal(error);
-    }
+  #invalidBaselineResult(message: string, cause?: unknown): WasmAddress {
+    if (cause !== undefined) return this.#process.recordWorkerPublicationFailure(cause, message);
+    return this.#recordFailure(new Error(message));
+  }
+
+  #recordFailure(error: unknown): WasmAddress {
+    return this.#process.recordWorkerPublicationFailure(error);
   }
 
   #assertDeadline(active: ActivePublication): void {

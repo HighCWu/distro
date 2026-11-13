@@ -740,6 +740,12 @@ export class ProcessDylink {
     this.#workerPublicationRevision = this.#workerGraphRevision;
     return this.#copyWorkerPublicationState(state);
   }
+  /** @internal Record a failure originating in the Worker publication coordinator. */
+  recordWorkerPublicationFailure(error: unknown, message?: string): WasmAddress {
+    if (this.#options.isControlFlow(error) || error instanceof DylinkInitializationError)
+      return this.#failure(error);
+    return this.#failure(message === undefined ? error : new Error(message, { cause: error }));
+  }
   /** Discard a pre-thread publication baseline after a failed clone attempt.
    * The live loader graph is left untouched; a later initialization takes a
    * fresh snapshot under a new process identity. */
