@@ -1,22 +1,57 @@
 # SPDX-License-Identifier: MIT
-# Query the existing Wasm allocator's published mapping records.
+# Query the main module static data/BSS and published Wasm mmap records.
 --- a/src/mman/mmap.c
 +++ b/src/mman/mmap.c
-@@ -48,6 +48,58 @@
+@@ -47,6 +47,97 @@
+ 
  static pthread_mutex_t mappings_lock = PTHREAD_MUTEX_INITIALIZER;
  static struct wasm_mapping *mappings;
- 
-+/* Query only ranges represented by published mmap records. Wasm linear-memory
-+ * allocations can be larger than their active mappings, so allocation capacity
-+ * must not be treated as mapped or resident. Adjacent mapping records form one
-+ * continuous range for the kernel's mincore adapter. */
++
++extern uintptr_t __wasm_brk_layout_v1(void);
++
++/* The main module's linker data/BSS interval is resident even though it has no
++ * mmap record. Round it to Linux's 64 KiB page boundaries; do not include the
++ * heap or the rest of Wasm linear memory. */
++static int wasm_static_data_range(uintptr_t *begin, uintptr_t *end)
++{
++	uintptr_t layout_address = __wasm_brk_layout_v1();
++	const uintptr_t *layout = (const uintptr_t *)layout_address;
++	uintptr_t data_begin, data_end, rounded_end;
++	uintptr_t page_mask = (uintptr_t)PAGESIZE - 1;
++
++	if (!layout_address)
++		return -EINVAL;
++	data_begin = layout[1];
++	data_end = layout[2];
++	if (data_end < data_begin)
++		return -EINVAL;
++	if (data_begin == data_end) {
++		*begin = *end = data_end;
++		return 0;
++	}
++	*begin = data_begin & ~page_mask;
++	rounded_end = data_end & ~page_mask;
++	if (data_end & page_mask) {
++		if (rounded_end > UINTPTR_MAX - PAGESIZE)
++			return -EINVAL;
++		rounded_end += PAGESIZE;
++	}
++	if (rounded_end < *begin)
++		return -EINVAL;
++	*end = rounded_end;
++	return 0;
++}
++
++/* Return only the contiguous covered prefix. Published mmap records are
++ * unioned with the main module's static data/BSS interval, but allocator
++ * capacity, heap pages, and memory size are not proof of live mappings. */
 +__attribute__((export_name("__wasm_mmap_query_v1")))
 +long __wasm_mmap_query_v1(uintptr_t address, size_t pages)
 +{
-+	uintptr_t end, cursor;
++	uintptr_t end, cursor, static_begin, static_end;
 +	size_t bytes;
 +	struct wasm_mapping *current;
-+	int lock_error, unlock_error;
++	int error, lock_error, unlock_error;
 +
 +	if (!pages)
 +		return 0;
@@ -26,6 +61,9 @@
 +	if (bytes > UINTPTR_MAX - address)
 +		return -EINVAL;
 +	end = address + bytes;
++	error = wasm_static_data_range(&static_begin, &static_end);
++	if (error)
++		return error;
 +
 +	lock_error = pthread_mutex_lock(&mappings_lock);
 +	if (lock_error)
@@ -34,6 +72,8 @@
 +	cursor = address;
 +	while (cursor < end) {
 +		uintptr_t covered_end = cursor;
++		if (static_begin <= cursor && cursor < static_end)
++			covered_end = static_end;
 +
 +		for (current = mappings; current; current = current->next) {
 +			uintptr_t mapping_begin = (uintptr_t)current->address;
@@ -57,7 +97,6 @@
 +		return unlock_error > 0 ? -unlock_error : -EINVAL;
 +	return (long)((cursor - address) / PAGESIZE);
 +}
-+
+ 
  const uintptr_t __wasm_fork_memory_advice_v1[8] = {
  	1,
- 	sizeof(struct wasm_mapping),
