@@ -572,7 +572,7 @@ function workerDataState(
   return { hasStart, hasDefinedMutableGlobals, hasPassiveData, hasPassiveElements };
 }
 
-function validateReplayableModule(
+function analyzeReplayableModule(
   key: string,
   bytes: Uint8Array<ArrayBuffer>,
   address: "i32" | "i64",
@@ -651,6 +651,102 @@ function validateReplayableModule(
     WebAssembly.Module.exports(original!).map((entry) => [entry.name, entry.kind]),
   );
   return { metadata: metadata!, replayExports, originalExports, privateAliases: privateAliases! };
+}
+
+type ReplayableModuleAnalysis = ReturnType<typeof analyzeReplayableModule>;
+
+type ReplayableModuleAnalysisCacheEntry = {
+  bytes: Uint8Array<ArrayBuffer>;
+  analysis: ReplayableModuleAnalysis;
+};
+
+const replayableModuleAnalysisCache = new Map<string, ReplayableModuleAnalysisCacheEntry>();
+const replayableModuleAnalysisCacheMaxEntries = 128;
+const replayableModuleAnalysisCacheMaxBytes = 64 * 1024 * 1024;
+let replayableModuleAnalysisCacheBytes = 0;
+
+function sameModuleBytes(left: Uint8Array<ArrayBuffer>, right: Uint8Array<ArrayBuffer>) {
+  if (left.byteLength !== right.byteLength) return false;
+  for (let index = 0; index < left.byteLength; index++) {
+    if (left[index] !== right[index]) return false;
+  }
+  return true;
+}
+
+function removeReplayableModuleAnalysisCacheEntry(
+  key: string,
+  entry: ReplayableModuleAnalysisCacheEntry,
+) {
+  replayableModuleAnalysisCache.delete(key);
+  replayableModuleAnalysisCacheBytes -= entry.bytes.byteLength;
+}
+
+function cacheReplayableModuleAnalysis(
+  key: string,
+  bytes: Uint8Array<ArrayBuffer>,
+  analysis: ReplayableModuleAnalysis,
+) {
+  if (bytes.byteLength > replayableModuleAnalysisCacheMaxBytes) return;
+
+  let ownedBytes: Uint8Array<ArrayBuffer>;
+  try {
+    ownedBytes = new Uint8Array(bytes.byteLength);
+    ownedBytes.set(bytes);
+  } catch {
+    // Validation already succeeded. Cache allocation is only an optimization.
+    return;
+  }
+  if (ownedBytes.byteLength > replayableModuleAnalysisCacheMaxBytes) return;
+
+  try {
+    while (
+      replayableModuleAnalysisCache.size >= replayableModuleAnalysisCacheMaxEntries ||
+      replayableModuleAnalysisCacheBytes >
+        replayableModuleAnalysisCacheMaxBytes - ownedBytes.byteLength
+    ) {
+      const oldest = replayableModuleAnalysisCache.entries().next();
+      if (oldest.done) break;
+      removeReplayableModuleAnalysisCacheEntry(oldest.value[0], oldest.value[1]);
+    }
+
+    replayableModuleAnalysisCache.set(key, { bytes: ownedBytes, analysis });
+    replayableModuleAnalysisCacheBytes += ownedBytes.byteLength;
+  } catch {
+    // Cache bookkeeping must not change the result of successful validation.
+  }
+}
+
+function validateReplayableModule(
+  key: string,
+  bytes: Uint8Array<ArrayBuffer>,
+  address: "i32" | "i64",
+): ReplayableModuleAnalysis {
+  // Include both the module key and address ABI. Length-prefixing keeps keys
+  // unambiguous even when a caller-provided module key contains separators.
+  let cacheKey: string;
+  try {
+    cacheKey = `${address}:${key.length}:${key}`;
+  } catch {
+    return analyzeReplayableModule(key, bytes, address);
+  }
+  const cached = replayableModuleAnalysisCache.get(cacheKey);
+  if (cached) {
+    if (sameModuleBytes(bytes, cached.bytes)) {
+      if (replayableModuleAnalysisCache.delete(cacheKey)) {
+        try {
+          replayableModuleAnalysisCache.set(cacheKey, cached);
+        } catch {
+          replayableModuleAnalysisCacheBytes -= cached.bytes.byteLength;
+        }
+      }
+      return cached.analysis;
+    }
+    removeReplayableModuleAnalysisCacheEntry(cacheKey, cached);
+  }
+
+  const analysis = analyzeReplayableModule(key, bytes, address);
+  cacheReplayableModuleAnalysis(cacheKey, bytes, analysis);
+  return analysis;
 }
 
 /** Validate a freshly loaded module before its owner allocates or instantiates

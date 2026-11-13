@@ -3,6 +3,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import { prepare_dylink_worker_module } from "../src/dylink_worker_module.ts";
+import { validate_dylink_worker_replayable_module } from "../src/dylink_process_worker.ts";
 
 const header = [0, 0x61, 0x73, 0x6d, 1, 0, 0, 0];
 
@@ -116,7 +117,7 @@ function workerModule() {
   );
 }
 
-function activeElementModule(flags: 0 | 2 | 4 | 6) {
+function activeElementModule(flags: 0 | 2 | 4 | 6, target?: "wasm32" | "wasm64") {
   const element =
     flags === 0
       ? [1, 0, 0x23, 0, 0x0b, 1, 0]
@@ -136,6 +137,7 @@ function activeElementModule(flags: 0 | 2 | 4 | 6) {
         ...u32(0), // memory alignment
         ...u32(4), // reserved table elements
         ...u32(0), // table alignment
+        ...(target === undefined ? [] : [6, ...u32(name(target).length), ...name(target)]),
       ]),
       section(1, [1, 0x60, 0, 0]), // () -> ()
       section(2, [
@@ -163,6 +165,48 @@ function activeElementModule(flags: 0 | 2 | 4 | 6) {
       ]),
     ].flat(),
   );
+}
+
+function withModuleCompilationCount(run: (count: () => number) => void) {
+  const descriptor = Object.getOwnPropertyDescriptor(WebAssembly, "Module");
+  assert.ok(descriptor?.configurable, "WebAssembly.Module can be temporarily wrapped");
+  const original = WebAssembly.Module;
+  let compilations = 0;
+  const counted = new Proxy(original, {
+    get(target, property) {
+      const value = Reflect.get(target, property, target) as unknown;
+      return typeof value === "function" ? value.bind(target) : value;
+    },
+    construct(target, argumentsList) {
+      compilations++;
+      return Reflect.construct(target, argumentsList);
+    },
+  });
+  Object.defineProperty(WebAssembly, "Module", { ...descriptor, value: counted });
+  try {
+    run(() => compilations);
+  } finally {
+    Object.defineProperty(WebAssembly, "Module", descriptor);
+  }
+}
+
+function appendLargeCustomSection(source: Uint8Array<ArrayBuffer>, paddingBytes: number) {
+  const customName = Uint8Array.from(name("replay-cache-budget"));
+  const sectionBodyLength = customName.byteLength + paddingBytes;
+  const encodedSectionLength = Uint8Array.from(u32(sectionBodyLength));
+  const encodedNameLength = Uint8Array.from(u32(customName.byteLength));
+  const result = new Uint8Array(
+    source.byteLength + 1 + encodedSectionLength.byteLength + sectionBodyLength,
+  );
+  result.set(source);
+  let offset = source.byteLength;
+  result[offset++] = 0;
+  result.set(encodedSectionLength, offset);
+  offset += encodedSectionLength.byteLength;
+  result.set(encodedNameLength, offset);
+  offset += encodedNameLength.byteLength;
+  result.set(customName, offset);
+  return result;
 }
 
 function sectionPayload(source: Uint8Array<ArrayBuffer>, wanted: number) {
@@ -259,6 +303,98 @@ test("publication mode preserves expression element type and ref.func declaratio
       "the declarative ref.func segment remains dropped",
     );
   }
+});
+
+test("replayable analysis cache verifies bytes and separates address ABIs", () => {
+  const source = activeElementModule(0, "wasm32");
+  withModuleCompilationCount((compilationCount) => {
+    validate_dylink_worker_replayable_module("analysis-cache-content", source, "i32");
+    const afterFirstAnalysis = compilationCount();
+    assert.ok(afterFirstAnalysis > 0, "the first call analyzes the module");
+
+    validate_dylink_worker_replayable_module("analysis-cache-content", source, "i32");
+    assert.equal(compilationCount(), afterFirstAnalysis, "identical content reuses its analysis");
+
+    assert.throws(
+      () => validate_dylink_worker_replayable_module("analysis-cache-content", source, "i64"),
+      /wrong pointer width/,
+    );
+    const afterOtherABI = compilationCount();
+    assert.ok(afterOtherABI > afterFirstAnalysis, "the address ABI is part of the cache key");
+
+    validate_dylink_worker_replayable_module("analysis-cache-content", source, "i32");
+    assert.equal(compilationCount(), afterOtherABI, "the original ABI entry remains available");
+
+    const changed = source.slice();
+    changed[0] = 1;
+    assert.throws(
+      () => validate_dylink_worker_replayable_module("analysis-cache-content", changed, "i32"),
+      /invalid/,
+    );
+    const afterFirstInvalidBytes = compilationCount();
+    assert.ok(afterFirstInvalidBytes > afterOtherABI, "changed bytes are re-analyzed");
+    assert.throws(
+      () => validate_dylink_worker_replayable_module("analysis-cache-content", changed, "i32"),
+      /invalid/,
+    );
+    assert.ok(compilationCount() > afterFirstInvalidBytes, "failed analyses are not cached");
+  });
+});
+
+test("replayable analysis cache hit survives an LRU refresh allocation failure", () => {
+  const source = activeElementModule(0);
+  const key = "analysis-cache-refresh-failure";
+  withModuleCompilationCount((compilationCount) => {
+    validate_dylink_worker_replayable_module(key, source, "i32");
+    const afterInitialAnalysis = compilationCount();
+    const originalSet = Map.prototype.set;
+    let injected = false;
+    Map.prototype.set = function (mapKey, value) {
+      if (!injected) {
+        injected = true;
+        throw new Error("simulated LRU refresh allocation failure");
+      }
+      return originalSet.call(this, mapKey, value);
+    };
+    try {
+      validate_dylink_worker_replayable_module(key, source, "i32");
+    } finally {
+      Map.prototype.set = originalSet;
+    }
+
+    assert.ok(injected, "the cached hit attempted an LRU refresh");
+    assert.equal(
+      compilationCount(),
+      afterInitialAnalysis,
+      "the failed refresh still returns the hit",
+    );
+    validate_dylink_worker_replayable_module(key, source, "i32");
+    const afterReanalysis = compilationCount();
+    assert.ok(afterReanalysis > afterInitialAnalysis, "a failed refresh drops the cache entry");
+    validate_dylink_worker_replayable_module(key, source, "i32");
+    assert.equal(compilationCount(), afterReanalysis, "the entry can be cached again");
+  });
+});
+
+test("replayable analysis cache evicts bounded entries without rejecting valid modules", () => {
+  const source = activeElementModule(0);
+  withModuleCompilationCount((compilationCount) => {
+    for (let index = 0; index < 129; index++) {
+      validate_dylink_worker_replayable_module(`analysis-cache-entry-${index}`, source, "i32");
+    }
+    const afterFill = compilationCount();
+    validate_dylink_worker_replayable_module("analysis-cache-entry-128", source, "i32");
+    assert.equal(compilationCount(), afterFill, "the newest entry remains cached");
+    validate_dylink_worker_replayable_module("analysis-cache-entry-0", source, "i32");
+    assert.ok(compilationCount() > afterFill, "the least-recently-used entry was evicted");
+  });
+});
+
+test("valid modules larger than the analysis-cache byte budget remain accepted", () => {
+  const source = appendLargeCustomSection(activeElementModule(0), 64 * 1024 * 1024 + 1);
+  assert.doesNotThrow(() =>
+    validate_dylink_worker_replayable_module("analysis-cache-oversized", source, "i32"),
+  );
 });
 
 test("reconstructed Worker preserves data indexes and elements without resetting shared memory or rerunning start", async () => {
