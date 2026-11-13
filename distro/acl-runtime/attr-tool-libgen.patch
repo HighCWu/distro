@@ -1,0 +1,10 @@
+--- a/tools/attr.c
++++ b/tools/attr.c
+@@ -29,6 +29,7 @@
+ #include <string.h>
+ #include <locale.h>
+ 
++#include <libgen.h>
+ #include <attr/attributes.h>
+ 
+ #include "misc.h"

@@ -15,6 +15,7 @@ pkgs.stdenvNoCC.mkDerivation {
     "buildMaterials"
   ];
   dontFixup = true;
+  patches = [ ./attr-tool-libgen.patch ];
   nativeBuildInputs = [
     sdk
     sdk-fork-automatic-poll-libc
@@ -87,7 +88,8 @@ pkgs.stdenvNoCC.mkDerivation {
     install -Dm644 ${llvm-toolchain.licenseSource}/lld/LICENSE.TXT \
       "$notices/LLD-LICENSE.TXT"
 
-    cp ${./attr.nix} configure-arguments.nul config.log config.status Makefile \
+    cp ${./attr.nix} ${./attr-tool-libgen.patch} \
+      configure-arguments.nul config.log config.status Makefile \
       doc/COPYING doc/COPYING.LGPL "$materials/"
     if [ -f config.h ]; then cp config.h "$materials/"; fi
     if [ -f include/config.h ]; then cp include/config.h "$materials/include-config.h"; fi
