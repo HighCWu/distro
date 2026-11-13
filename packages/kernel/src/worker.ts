@@ -42,6 +42,7 @@ import { apply_fork_memory_advice } from "./fork-memory-advice.ts";
 import { user_brk_layout, user_brk_update } from "./user-brk.ts";
 import {
   call_user_poll,
+  call_user_maintenance,
   user_poll_thread,
   call_fork_child_return,
   fork_child_return_supported,
@@ -427,6 +428,7 @@ function user_imports({
         )
       : undefined;
     let created: WebAssembly.Instance;
+    let maintenanceReady = false;
     let dynamic: ProcessDylink | undefined;
     let dynamicOperationDepth = 0;
     let workerRuntime: DylinkWorkerRuntime | null = null;
@@ -439,6 +441,19 @@ function user_imports({
         Atomics.wait(wait, 0, Atomics.load(wait, 0), 1);
       } catch {
         // Some worker hosts disallow Atomics.wait; checkpoint retry remains bounded.
+      }
+      // A writer may spend many bounded pauses inside a loader operation, so
+      // compiler polling cannot provide kernel maintenance while JS waits.
+      // Do not touch `created` until construction and ABI validation finish.
+      if (!maintenanceReady || !context) return;
+      if (fork && !fork.userPollAllowed(signal_depth !== 0)) return;
+      const before = instance;
+      const invoke = () => call_user_maintenance(kernel_instance.exports, kernel_address);
+      if (fork) fork.kernelCall(invoke);
+      else invoke();
+      if (instance !== before) {
+        call_entry = call_start;
+        throw HALT_USER;
       }
     };
 
@@ -1044,6 +1059,7 @@ function user_imports({
       );
     }
     if (poll_thread) poll_threads.set(created, poll_thread);
+    maintenanceReady = true;
     return created;
   }
 

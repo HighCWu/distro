@@ -67,7 +67,8 @@ export function call_user_poll(
   blocked: boolean,
   inside_signal = false,
 ): number {
-  if (blocked || user_callback_active(kernel)) return 0;
+  if (blocked) return call_user_maintenance(kernel, address);
+  if (user_callback_active(kernel)) return 0;
   if (kernel_entry_active(kernel)) {
     const nested = kernel.user_poll_nested_v1;
     if (!inside_signal || typeof nested !== "function" || nested.length !== 0 || nested() !== 1)
@@ -79,5 +80,28 @@ export function call_user_poll(
   const result: unknown = call_kernel_entry(kernel, address, () => kernel.user_poll_v1!());
   if (typeof result !== "number" || !Number.isInteger(result) || result !== (result | 0))
     throw new Error("invalid user poll execution ABI result");
+  return result;
+}
+
+/** Private kernel maintenance for blocked loader operations and bounded waits.
+ * It never enters user code or inspects the user's signal stack. */
+export function call_user_maintenance(
+  kernel: Instance["exports"],
+  address: WasmAddressType,
+): number {
+  if (user_callback_active(kernel) || kernel_entry_active(kernel)) return 0;
+  const maintenance = (kernel as WebAssembly.Exports & { user_maintenance_v1?: unknown })
+    .user_maintenance_v1;
+  if (maintenance === undefined) return 0; // Older kernels keep deferring maintenance.
+  if (typeof maintenance !== "function" || maintenance.length !== 0)
+    throw new Error("invalid user maintenance execution ABI");
+  if (typeof kernel.user_context_v1 !== "function") return 0;
+  const in_user_context: unknown = kernel.user_context_v1(2);
+  if (in_user_context !== 0 && in_user_context !== 1)
+    throw new Error("invalid user context execution ABI");
+  if (in_user_context !== 1) return 0;
+  const result: unknown = call_kernel_entry(kernel, address, () => maintenance());
+  if (typeof result !== "number" || !Number.isInteger(result) || result !== (result | 0))
+    throw new Error("invalid user maintenance execution ABI result");
   return result;
 }

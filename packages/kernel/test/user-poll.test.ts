@@ -163,6 +163,58 @@ for (const address of ["i32", "i64"] as const) {
       /invalid user poll/,
     );
   });
+  test(`${address}: blocked checkpoints use maintenance without entering user polling`, () => {
+    const word = (n: number) => (address === "i64" ? BigInt(n) : n);
+    const memory = new WebAssembly.Memory({ initial: 1 });
+    const user = {
+      // Maintenance must not depend on or inspect the user stack pointer.
+      __stack_pointer: new WebAssembly.Global({ value: address, mutable: true }, word(65537)),
+    };
+    let phase = 1,
+      maintenanceCalls = 0,
+      pollCalls = 0;
+    const kernel = {
+      user_context_v1(mode: number) {
+        const old = phase;
+        if (mode !== 2) phase = mode;
+        return old;
+      },
+      user_maintenance_v1() {
+        maintenanceCalls++;
+        return -11;
+      },
+      user_poll_v1() {
+        pollCalls++;
+        return 0;
+      },
+    } as unknown as Instance["exports"];
+
+    assert.equal(call_user_poll(kernel, user, memory, address, true), -11);
+    assert.equal(maintenanceCalls, 1);
+    assert.equal(pollCalls, 0);
+    assert.equal(phase, 1, "maintenance restores the incoming execution context");
+
+    call_kernel_entry(kernel, address, () => {
+      assert.equal(call_user_poll(kernel, user, memory, address, true), 0);
+    });
+    assert.equal(maintenanceCalls, 1, "nested kernel entry is refused");
+    call_user_callback(kernel, address, () => {
+      assert.equal(call_user_poll(kernel, user, memory, address, true), 0);
+    });
+    assert.equal(maintenanceCalls, 1, "live user callback is refused");
+
+    phase = 0;
+    assert.equal(call_user_poll(kernel, user, memory, address, true), 0);
+    assert.equal(maintenanceCalls, 1, "kernel context is refused");
+
+    const oldKernel = {
+      ...kernel,
+      user_maintenance_v1: undefined,
+    } as unknown as Instance["exports"];
+    phase = 1;
+    assert.equal(call_user_poll(oldKernel, user, memory, address, true), 0);
+    assert.equal(maintenanceCalls, 1, "older kernels preserve the defer behavior");
+  });
   test(`${address}: handler nesting requires capability and never crosses an allocator callback`, () => {
     const memory = new WebAssembly.Memory({ initial: 1 });
     const user = {

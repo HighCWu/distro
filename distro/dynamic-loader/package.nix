@@ -115,6 +115,13 @@ pkgs.stdenvNoCC.mkDerivation (finalAttrs: {
       output = "libworker-publication-after.so";
       inputs = [ "worker-publication-after.o" ];
     }}
+    wasm-linux-dlopen-cc -O2 -Wall -Wextra -Werror -pthread -Wl,--export=loader_maintenance_ctor_entered -Wl,--export=loader_maintenance_is_released -Wl,--export=loader_maintenance_signal_seen ${./maintenance-runtime.c} -o maintenance-runtime.wasm
+    ${sideCC} -O2 -Wall -Wextra -Werror -fPIC -c ${./maintenance-library.c} -o maintenance-library.o
+    ${linkShared {
+      name = "libloader-maintenance.so";
+      output = "libloader-maintenance.so";
+      inputs = [ "maintenance-library.o" ];
+    }}
     ${sideCC} -O2 -Wall -Wextra -Werror -fPIC -c ${./poll-library.c} -o poll-library.o
     ${linkShared {
       name = "poll-library.so";
@@ -299,6 +306,8 @@ pkgs.stdenvNoCC.mkDerivation (finalAttrs: {
     install -Dm755 worker-publication-runtime.wasm $out/worker-publication-runtime.wasm
     install -Dm644 libworker-publication-constructor.so $out/lib/libworker-publication-constructor.so
     install -Dm644 libworker-publication-after.so $out/lib/libworker-publication-after.so
+    install -Dm755 maintenance-runtime.wasm $out/maintenance-runtime.wasm
+    install -Dm644 libloader-maintenance.so $out/lib/libloader-maintenance.so
     install -Dm644 poll-library.so $out/lib/poll-library.so
     install -Dm644 libplugin-a.so $out/lib/libplugin-a.so
     install -Dm644 libplugin-b.so $out/lib/libplugin-b.so
@@ -331,6 +340,7 @@ pkgs.stdenvNoCC.mkDerivation (finalAttrs: {
     cp ${./poll-runtime.c} ${./poll-library.c} $buildMaterials/share/dynamic-loader-materials/
     cp ${./thread-runtime.c} $buildMaterials/share/dynamic-loader-materials/
     cp ${./worker-publication-runtime.c} ${./worker-publication-library.c} $buildMaterials/share/dynamic-loader-materials/
+    cp ${./maintenance-runtime.c} ${./maintenance-library.c} $buildMaterials/share/dynamic-loader-materials/
     cp ${./path-library.c} $buildMaterials/share/dynamic-loader-materials/
     cp ${./reentrant-root.c} ${./reentrant-leaf.c} ${./reentrant-reject.c} $buildMaterials/share/dynamic-loader-materials/
     cp ${./next-front.c} ${./next-middle.c} ${./next-leaf.c} $buildMaterials/share/dynamic-loader-materials/
@@ -372,6 +382,13 @@ pkgs.stdenvNoCC.mkDerivation (finalAttrs: {
         "/plugins/libworker-publication-after.so" =
           "${finalAttrs.finalPackage}/lib/libworker-publication-after.so";
       };
+    };
+    maintenance-runtime = vm-test.rawInitramfsTest {
+      name = "dynamic-loader-maintenance-${platform.wasmArch}";
+      cpus = 1;
+      init = "${finalAttrs.finalPackage}/maintenance-runtime.wasm";
+      files."/plugins/libloader-maintenance.so" =
+        "${finalAttrs.finalPackage}/lib/libloader-maintenance.so";
     };
     poll-runtime = vm-test.rawInitramfsTest {
       name = "dynamic-side-poll-${platform.wasmArch}";
