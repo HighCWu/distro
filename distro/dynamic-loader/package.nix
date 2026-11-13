@@ -12,6 +12,22 @@
   extraChecks ? { },
 }:
 let
+  enableCooperativePoll = sdk-dynamic-loader.cooperativePoll or false;
+  cooperativePollCompilerFlags = lib.optional enableCooperativePoll "-fsanitize-coverage=trace-pc,no-prune,edge";
+  maintenanceSDK = sdk-dynamic-loader.override { enableCooperativePoll = true; };
+  maintenanceCC =
+    if sharedCompiler == null then
+      lib.escapeShellArg "${maintenanceSDK}/bin/wasm-linux-dlopen-cc"
+    else
+      lib.escapeShellArgs (
+        [
+          "${sharedCompiler}/bin/clang"
+          "--target=${platform.targetTriple}"
+          "--sysroot=${maintenanceSDK.sysroot}"
+        ]
+        ++ platform.compilerFlags
+        ++ [ "-fsanitize-coverage=trace-pc,no-prune,edge" ]
+      );
   sideCC =
     if sharedCompiler == null then
       "wasm-linux-dlopen-cc"
@@ -23,6 +39,7 @@ let
           "--sysroot=${sdk-dynamic-loader.sysroot}"
         ]
         ++ platform.compilerFlags
+        ++ cooperativePollCompilerFlags
       );
   linkShared =
     {
@@ -31,6 +48,7 @@ let
       inputs,
       runpath ? null,
       extraFlags ? [ ],
+      cc ? sideCC,
     }:
     let
       flags = [
@@ -48,7 +66,7 @@ let
     in
     # Both the SDK and the standalone compiler dispatch shared links through
     # Clang. Their Linux driver selects the shared object's runtime inputs.
-    sideCC
+    cc
     + " -shared "
     + lib.escapeShellArgs (
       (map (flag: "-Wl,${flag}") flags)
@@ -63,6 +81,12 @@ let
       executable = "wasm-linux-dlopen-cc";
       shared = sideCC;
       sharedMode = if sharedCompiler == null then "dynamic-sdk" else "standalone-linux-driver";
+      maintenance = {
+        sdk = "${maintenanceSDK}";
+        compiler = maintenanceCC;
+        coverage = "trace-pc,no-prune,edge";
+        scope = maintenanceSDK.cooperativePollScope;
+      };
     }
   );
 in
@@ -115,12 +139,13 @@ pkgs.stdenvNoCC.mkDerivation (finalAttrs: {
       output = "libworker-publication-after.so";
       inputs = [ "worker-publication-after.o" ];
     }}
-    wasm-linux-dlopen-cc -O2 -Wall -Wextra -Werror -pthread -Wl,--export=loader_maintenance_ctor_entered -Wl,--export=loader_maintenance_is_released -Wl,--export=loader_maintenance_signal_seen ${./maintenance-runtime.c} -o maintenance-runtime.wasm
-    ${sideCC} -O2 -Wall -Wextra -Werror -fPIC -c ${./maintenance-library.c} -o maintenance-library.o
+    ${maintenanceCC} -O2 -Wall -Wextra -Werror -pthread -Wl,--export=loader_maintenance_ctor_entered -Wl,--export=loader_maintenance_is_released -Wl,--export=loader_maintenance_signal_seen ${./maintenance-runtime.c} -o maintenance-runtime.wasm
+    ${maintenanceCC} -O2 -Wall -Wextra -Werror -fPIC -c ${./maintenance-library.c} -o maintenance-library.o
     ${linkShared {
       name = "libloader-maintenance.so";
       output = "libloader-maintenance.so";
       inputs = [ "maintenance-library.o" ];
+      cc = maintenanceCC;
     }}
     ${sideCC} -O2 -Wall -Wextra -Werror -fPIC -c ${./poll-library.c} -o poll-library.o
     ${linkShared {

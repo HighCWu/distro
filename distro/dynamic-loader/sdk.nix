@@ -10,6 +10,7 @@
   llvm-runtimes,
   sdk,
   sharedCompiler ? null,
+  enableCooperativePoll ? false,
 }:
 let
   dynamicRuntimes = llvm-runtimes.overrideAttrs (old: {
@@ -33,6 +34,18 @@ let
     llvm-runtimes = dynamicRuntimes;
     sysroot-base = dynamicBase;
   };
+  # Instrument only applications and shared objects. The dynamic libc,
+  # startup objects, and compiler runtimes remain outside this profile.
+  cooperativeExecution =
+    if enableCooperativePoll then
+      import ./cooperative-execution.nix {
+        inherit pkgs lib platform;
+        llvm-toolchain = compiler;
+        sysroot = dynamicRoot;
+      }
+    else
+      null;
+  cooperativePollCompilerFlags = lib.optional enableCooperativePoll "-fsanitize-coverage=trace-pc,no-prune,edge";
   linkerConfigArgs = [
     "--import-memory"
     "--max-memory=${toString platform.maximumMemoryBytes}"
@@ -45,11 +58,19 @@ let
   # Main modules require the stack pointer for the runtime signal ABI. Shared
   # modules may be stackless, so export it only when the linker defines it.
   # Export static bounds so main-module address metadata can cover interiors.
-  executableLinkerArgs = linkerConfigArgs ++ [
-    "--export=__stack_pointer"
-    "--export=__global_base"
-    "--export=__data_end"
-  ];
+  executableLinkerArgs =
+    linkerConfigArgs
+    ++ [
+      "--export=__stack_pointer"
+      "--export=__global_base"
+      "--export=__data_end"
+    ]
+    ++ lib.optionals enableCooperativePoll [
+      "--export=__sanitizer_cov_trace_pc"
+      "--export=__wasm_user_poll_abi"
+      "--export=__tls_base"
+      "${cooperativeExecution}/cooperative-execution.o"
+    ];
   sharedLinkerArgs = linkerConfigArgs ++ [ "--export-if-defined=__stack_pointer" ];
   linkRoot = import ../sdk/link-sysroot.nix {
     inherit pkgs lib;
@@ -162,11 +183,13 @@ let
     "--target=${platform.targetTriple}"
     "--sysroot=${startupRoot}"
   ]
-  ++ platform.compilerFlags;
-  config = pkgs.writeText "dynamic-${platform.wasmArch}.cfg" (
+  ++ platform.compilerFlags
+  ++ cooperativePollCompilerFlags;
+  profileSuffix = lib.optionalString enableCooperativePoll "-cooperative-poll";
+  config = pkgs.writeText "dynamic-${platform.wasmArch}${profileSuffix}.cfg" (
     lib.concatMapStringsSep "\n" lib.escapeShellArg configFlags + "\n"
   );
-  cxxConfig = pkgs.writeText "dynamic-cxx-${platform.wasmArch}.cfg" (
+  cxxConfig = pkgs.writeText "dynamic-cxx-${platform.wasmArch}${profileSuffix}.cfg" (
     lib.concatMapStringsSep "\n" lib.escapeShellArg (
       configFlags
       ++ [
@@ -237,7 +260,7 @@ let
   '';
 in
 pkgs.symlinkJoin {
-  name = "linux-wasm-dynamic-sdk-${platform.wasmArch}";
+  name = "linux-wasm-dynamic-sdk-${platform.wasmArch}${profileSuffix}";
   paths = [
     cc
     cxx
@@ -252,6 +275,12 @@ pkgs.symlinkJoin {
   passthru = {
     sysroot = startupRoot;
     buildMaterials = materials;
+    cooperativePoll = enableCooperativePoll;
+    cooperativePollScope =
+      if enableCooperativePoll then
+        "applications and shared objects; libc, startup objects and compiler runtimes are uninstrumented"
+      else
+        "disabled";
     inherit
       config
       configSite
