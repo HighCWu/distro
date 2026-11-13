@@ -2,6 +2,7 @@
 #define _GNU_SOURCE
 #include <errno.h>
 #include <linux/keyctl.h>
+#include <stddef.h>
 #include <stdint.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -21,6 +22,10 @@ struct dh_compute_params {
 	int32_t base;
 };
 _Static_assert(sizeof(struct dh_compute_params) == 12, "keyctl DH parameter ABI");
+_Static_assert(offsetof(struct keyctl_kdf_params, otherinfolen) ==
+	       2 * sizeof(uintptr_t), "keyctl KDF pointer field ABI");
+_Static_assert(sizeof(struct keyctl_kdf_params) ==
+	       (sizeof(uintptr_t) == 8 ? 56 : 44), "keyctl KDF parameter ABI");
 
 /* RFC 7919 ffdhe2048 prime, big-endian. */
 static const char prime_hex[] =
@@ -54,6 +59,12 @@ static const char expected_hex[] =
 	"ac1d75002829174292f39ee2d719b698856dbd85221b783849672b681ee708e4"
 	"f3bb741af1173e2ab33744386e4bb1aeee1f79ebe9453f1d76b42426dc67ef9"
 	"fcfb1f91b2e80e7c7e63bf2e4fb47b1ef59d34eb58c59f235a4278f52e575b5bca2";
+static char otherinfo[] = {
+	0x4b, 0x44, 0x46, 0x01, 0xa5, 0x00, 0x7e,
+};
+static const char expected_kdf_hex[] =
+	"c864cb716e1dc8fcb1a8b7942f22e9e9"
+	"c4756293e150e697ce90c4a92043f650";
 
 static int32_t ring_id;
 static int32_t key_ids[INPUTS];
@@ -153,14 +164,42 @@ static void expect_shared_secret(const unsigned char *expected)
 	CHECK(memcmp(output, expected, DH_BYTES) == 0, "FFDHE2048 shared secret bytes");
 }
 
+static void expect_sha256_kdf(const unsigned char *expected)
+{
+	unsigned char output[32];
+	struct dh_compute_params params = {
+		.private_key = key_ids[0],
+		.prime = key_ids[1],
+		.base = key_ids[2],
+	};
+	struct keyctl_kdf_params kdf = {0};
+	char hashname[] = "sha256";
+
+	kdf.hashname = hashname;
+	kdf.otherinfo = otherinfo;
+	kdf.otherinfolen = sizeof(otherinfo);
+	memset(output, 0xa5, sizeof(output));
+	long result = keyctl_call(KEYCTL_DH_COMPUTE,
+				  (unsigned long)(uintptr_t)&params,
+				  (unsigned long)(uintptr_t)output,
+				  sizeof(output),
+				  (unsigned long)(uintptr_t)&kdf);
+	if (result < 0)
+		fail("KEYCTL_DH_COMPUTE with SHA-256 KDF");
+	CHECK(result == sizeof(output), "SHA-256 KDF output length");
+	CHECK(memcmp(output, expected, sizeof(output)) == 0,
+	      "SP800-108 SHA-256 derived bytes");
+}
+
 int main(void)
 {
 	unsigned char prime[DH_BYTES], base[DH_BYTES], private_key[PRIVATE_BYTES];
-	unsigned char expected[DH_BYTES];
+	unsigned char expected[DH_BYTES], expected_kdf[32];
 	decode_hex(prime, prime_hex, sizeof(prime));
 	decode_hex(base, base_hex, sizeof(base));
 	decode_hex(private_key, private_hex, sizeof(private_key));
 	decode_hex(expected, expected_hex, sizeof(expected));
+	decode_hex(expected_kdf, expected_kdf_hex, sizeof(expected_kdf));
 
 	long ring = keyctl_call(KEYCTL_JOIN_SESSION_KEYRING, 0, 0, 0, 0);
 	if (ring <= 0 || ring > INT32_MAX)
@@ -171,9 +210,11 @@ int main(void)
 	key_ids[2] = add_user_key("dh-base", base, sizeof(base));
 
 	expect_shared_secret(expected);
+	expect_sha256_kdf(expected_kdf);
 	CHECK(!cleanup(), "revoke keys and clear anonymous session keyring");
 	memset(key_ids, 0, sizeof(key_ids));
 	ring_id = 0;
 	puts("KEY_DH_COMPUTE_OK");
+	puts("KEY_DH_KDF_SHA256_OK");
 	return 0;
 }
