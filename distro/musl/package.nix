@@ -88,6 +88,7 @@ pkgs.stdenvNoCC.mkDerivation (
   // {
     patches = [
       ./wasm-crt1.patch
+      ./wasm-mincore.patch
     ]
     ++ lib.optional enableForkContinuation ./fork-continuation.patch
     ++ lib.optional enableDynamicLoader ./dynamic-loader.patch

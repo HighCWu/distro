@@ -1,0 +1,35 @@
+# SPDX-License-Identifier: MIT
+# Restore the existing mincore API and syscall wrapper for Wasm targets.
+diff --git a/include/sys/mman.h b/include/sys/mman.h
+--- a/include/sys/mman.h
++++ b/include/sys/mman.h
+@@ -141,12 +141,12 @@
+ int mlock2 (const void *, size_t, unsigned);
+ #endif
+ 
+-#if defined(_GNU_SOURCE) || defined(_BSD_SOURCE)
+-int mincore (void *, size_t, unsigned char *);
+-#endif
+-
+ #endif
+ 
++#if defined(_GNU_SOURCE) || defined(_BSD_SOURCE)
++int mincore (void *, size_t, unsigned char *);
++#endif
++
+ #if defined(_LARGEFILE64_SOURCE)
+ #define mmap64 mmap
+ #define off64_t off_t
+diff --git a/src/mman/mincore.c b/src/mman/mincore.c
+--- a/src/mman/mincore.c
++++ b/src/mman/mincore.c
+@@ -2,9 +2,7 @@
+ #include <sys/mman.h>
+ #include "syscall.h"
+ 
+-#ifndef __wasm__
+ int mincore (void *addr, size_t len, unsigned char *vec)
+ {
+ 	return syscall(SYS_mincore, addr, len, vec);
+ }
+-#endif
