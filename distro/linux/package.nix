@@ -168,7 +168,7 @@ pkgs.stdenvNoCC.mkDerivation (finalAttrs: {
 
     # Verify the resolved Kconfig, not merely the input defconfig intent.
     grep -qx 'CONFIG_INOTIFY_USER=y' .config
-    for option in KEYS BINFMT_MISC FANOTIFY FANOTIFY_ACCESS_PERMISSIONS; do
+    for option in KEYS KEY_DH_OPERATIONS BINFMT_MISC FANOTIFY FANOTIFY_ACCESS_PERMISSIONS; do
       if ! grep -qx "CONFIG_$option=y" .config; then
         echo "Missing required kernel config: CONFIG_$option=y" >&2
         exit 1
