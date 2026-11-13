@@ -408,6 +408,17 @@ pkgs.stdenvNoCC.mkDerivation (finalAttrs: {
           "${finalAttrs.finalPackage}/lib/libworker-publication-after.so";
       };
     };
+    worker-publication-single-cpu-runtime = vm-test.rawInitramfsTest {
+      name = "dynamic-worker-publication-single-cpu-${platform.wasmArch}";
+      cpus = 1;
+      init = "${finalAttrs.finalPackage}/worker-publication-runtime.wasm";
+      files = {
+        "/plugins/libworker-publication-constructor.so" =
+          "${finalAttrs.finalPackage}/lib/libworker-publication-constructor.so";
+        "/plugins/libworker-publication-after.so" =
+          "${finalAttrs.finalPackage}/lib/libworker-publication-after.so";
+      };
+    };
     maintenance-runtime = vm-test.rawInitramfsTest {
       name = "dynamic-loader-maintenance-${platform.wasmArch}";
       cpus = 1;

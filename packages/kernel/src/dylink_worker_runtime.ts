@@ -10,7 +10,7 @@ import {
 import { DylinkWorkerReceiver } from "./dylink_worker_receiver.ts";
 import { DylinkWorkerWriter } from "./dylink_worker_writer.ts";
 import type { DylinkWorkerSnapshot } from "./dylink_process_worker.ts";
-import type { WasmAddress } from "./wasm.ts";
+import type { WasmAddress, WorkerCheckpointV2Status } from "./wasm.ts";
 
 const DEFAULT_TIMEOUT_MS = 30_000;
 
@@ -42,6 +42,8 @@ export class DylinkWorkerRuntime {
   readonly #receiver: DylinkWorkerReceiver;
   readonly #writer: DylinkWorkerWriter;
   #failed = false;
+  #kernelCheckpointTransaction: number | null = null;
+  #kernelCheckpointDeadline: number | null = null;
 
   constructor({
     shared,
@@ -99,7 +101,10 @@ export class DylinkWorkerRuntime {
    */
   checkpoint(): void {
     this.#assertHealthy();
-    if (this.#writer.active) return;
+    if (this.#writer.active) {
+      this.#clearKernelCheckpoint();
+      return;
+    }
 
     const deadline = now() + this.#timeoutMs;
     try {
@@ -107,7 +112,10 @@ export class DylinkWorkerRuntime {
         for (;;) {
           if (this.#writer.active) return;
           const step = this.#receiver.step();
-          if (step.kind === "idle" || step.kind === "building") return;
+          if (step.kind === "idle" || step.kind === "building") {
+            this.#clearKernelCheckpoint();
+            return;
+          }
           if (step.kind === "fatal")
             return this.#fatal(
               new Error(`Worker receiver failed in transaction ${step.transaction ?? "unknown"}`),
@@ -121,6 +129,84 @@ export class DylinkWorkerRuntime {
       if (this.#failed) throw error;
       this.#fatal(error);
     }
+  }
+
+  /**
+   * Service one kernel checkpoint without waiting. Retained receiver state
+   * remains parked until the writer finishes the publication barrier.
+   */
+  kernelCheckpointStep(): WorkerCheckpointV2Status {
+    this.#assertHealthy();
+    // The active owner cannot receive its own publication. Its transaction is
+    // still a source for the kernel, but it must continue its existing work.
+    if (this.#writer.active) {
+      this.#clearKernelCheckpoint();
+      return 1;
+    }
+
+    const stepStarted = now();
+    let step: ReturnType<DylinkWorkerReceiver["step"]>;
+    try {
+      step = this.#process.runAtWorkerCheckpoint(() => this.#receiver.step());
+    } catch (error) {
+      if (this.#failed) throw error;
+      this.#fatal(error);
+    }
+
+    if (step.kind === "fatal")
+      return this.#fatal(
+        new Error(`Worker receiver failed in transaction ${step.transaction ?? "unknown"}`),
+      );
+    if (step.kind === "idle") {
+      this.#clearKernelCheckpoint();
+      return 1;
+    }
+    if (step.kind === "building") {
+      this.#clearKernelCheckpoint();
+      return 1;
+    }
+    if (this.#receiver.hasPendingUserReturnBarrier) {
+      this.#trackKernelCheckpointTransaction(this.#receiver.pendingTransaction, stepStarted);
+      this.#checkKernelCheckpointDeadline();
+      return 2;
+    }
+    this.#clearKernelCheckpoint();
+    return 1;
+  }
+
+  /**
+   * Report source availability while a JS guard forbids receiver work. This
+   * observes only channel metadata and never acknowledges a phase.
+   */
+  kernelCheckpointDeferredStatus(): WorkerCheckpointV2Status {
+    this.#assertHealthy();
+    const observed = this.#channel.observe();
+    if (!observed.ok) {
+      if (this.#receiver.hasPendingUserReturnBarrier) {
+        this.#trackKernelCheckpointTransaction(this.#receiver.pendingTransaction);
+        this.#checkKernelCheckpointDeadline();
+        return 2;
+      }
+      this.#clearKernelCheckpoint();
+      // Defer channel errors until an unguarded receiver step can handle them.
+      return 1;
+    }
+    if (observed.value.state === "idle") {
+      this.#clearKernelCheckpoint();
+      return 1;
+    }
+    if (
+      this.#receiver.hasPendingUserReturnBarrier &&
+      this.#receiver.pendingTransaction === observed.value.transaction
+    ) {
+      this.#trackKernelCheckpointTransaction(this.#receiver.pendingTransaction);
+      this.#checkKernelCheckpointDeadline();
+      return 2;
+    }
+    // A new writer can start only after all participants finished the old
+    // barrier, so an idle or different transaction makes the old state terminal.
+    this.#clearKernelCheckpoint();
+    return 1;
   }
 
   /** Explicit producer entry for runtime integration; ordinary open routing remains unchanged. */
@@ -151,6 +237,23 @@ export class DylinkWorkerRuntime {
 
   #assertHealthy(): void {
     if (this.#failed) throw new Error("dynamic Worker runtime is already failed");
+  }
+
+  #clearKernelCheckpoint(): void {
+    this.#kernelCheckpointTransaction = null;
+    this.#kernelCheckpointDeadline = null;
+  }
+
+  #trackKernelCheckpointTransaction(transaction: number | null, startedAt = now()): void {
+    if (transaction === null) return;
+    if (this.#kernelCheckpointTransaction === transaction) return;
+    this.#kernelCheckpointTransaction = transaction;
+    this.#kernelCheckpointDeadline = startedAt + this.#timeoutMs;
+  }
+
+  #checkKernelCheckpointDeadline(): void {
+    if (this.#kernelCheckpointDeadline !== null && now() >= this.#kernelCheckpointDeadline)
+      this.#fatal(new Error("Worker receiver checkpoint deadline expired"));
   }
 
   #fatal(error: unknown): never {

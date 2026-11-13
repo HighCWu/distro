@@ -115,6 +115,16 @@ export class DylinkWorkerReceiver {
     this.#fatalCallback = fatal;
   }
 
+  /** @internal Whether this receiver retains transaction state that gates user return. */
+  get hasPendingUserReturnBarrier(): boolean {
+    return this.#local !== null;
+  }
+
+  /** @internal Transaction owning the retained receiver state, if any. */
+  get pendingTransaction(): number | null {
+    return this.#local?.transaction ?? null;
+  }
+
   step(): DylinkWorkerReceiverStep {
     const observed = this.#channel.observe();
     if (!observed.ok) {

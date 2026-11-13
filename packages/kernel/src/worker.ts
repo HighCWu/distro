@@ -135,6 +135,7 @@ import {
   user_module_imports_supported,
   type WasmAddress,
   type WasmAddressType,
+  type WorkerCheckpointV2Status,
   wasm_pointer_to_number,
   wasm_address_from_number,
   wasm_size_to_number,
@@ -210,6 +211,7 @@ let membership_retirement_wait: Int32Array<SharedArrayBuffer> | null = null;
 // Worker is leaving. It must only run protocol work and must never call guest code.
 let service_worker_membership: (() => void) | undefined;
 let service_worker_checkpoint: (() => number) | undefined;
+let service_worker_kernel_checkpoint_v2: (() => WorkerCheckpointV2Status) | undefined;
 
 function retry_busy_channel_operation<T>(
   operation: () => DylinkWorkerChannelResult<T>,
@@ -270,6 +272,7 @@ function cleanup_active_worker_membership(): number {
   if (!membership) {
     service_worker_membership = undefined;
     service_worker_checkpoint = undefined;
+    service_worker_kernel_checkpoint_v2 = undefined;
     return 0;
   }
   const error = retire_worker_membership(membership);
@@ -282,6 +285,7 @@ function cleanup_active_worker_membership(): number {
   if (active_worker_membership === membership) active_worker_membership = null;
   service_worker_membership = undefined;
   service_worker_checkpoint = undefined;
+  service_worker_kernel_checkpoint_v2 = undefined;
   return 0;
 }
 
@@ -298,6 +302,7 @@ function terminate_for_membership_retirement(error: number): void {
     active_worker_membership = null;
     service_worker_membership = undefined;
     service_worker_checkpoint = undefined;
+    service_worker_kernel_checkpoint_v2 = undefined;
   }
 }
 
@@ -332,6 +337,7 @@ function user_imports({
 }): {
   context: UserContext | null;
   workerCheckpoint(): number;
+  workerCheckpointV2(): WorkerCheckpointV2Status;
   prepare(): void;
   applyForkAdvice(): void;
   imports: Imports["user"];
@@ -525,9 +531,18 @@ function user_imports({
       return 1;
     };
 
+    const service_worker_kernel_checkpoint_v2_at_boundary = (): WorkerCheckpointV2Status => {
+      const runtime = current_worker_runtime();
+      if (!runtime) return 0;
+      if (signal_depth !== 0 || dynamicOperationDepth !== 0 || dynamic_vfork.blocked(context))
+        return runtime.kernelCheckpointDeferredStatus();
+      return runtime.kernelCheckpointStep();
+    };
+
     service_worker_checkpoint = service_worker_checkpoint_at_boundary;
+    service_worker_kernel_checkpoint_v2 = service_worker_kernel_checkpoint_v2_at_boundary;
     service_worker_membership = () => {
-      service_worker_checkpoint?.();
+      service_worker_kernel_checkpoint_v2?.();
     };
 
     const dynamic_operation = <T>(invoke: () => T): T => {
@@ -1082,6 +1097,7 @@ function user_imports({
       active_worker_membership = context.dynamic?.worker_membership ?? null;
       service_worker_membership = undefined;
       service_worker_checkpoint = undefined;
+      service_worker_kernel_checkpoint_v2 = undefined;
       call_entry = call_start;
       thread_entry = undefined;
     }
@@ -1156,6 +1172,9 @@ function user_imports({
     },
     workerCheckpoint() {
       return service_worker_checkpoint?.() ?? 0;
+    },
+    workerCheckpointV2() {
+      return service_worker_kernel_checkpoint_v2?.() ?? 0;
     },
     prepare() {
       if (parent) instantiate(false);
@@ -1756,6 +1775,7 @@ function start({
       is_worker: true,
       memory,
       worker_checkpoint: user.workerCheckpoint,
+      worker_checkpoint_v2: user.workerCheckpointV2,
       spawn_worker(fn, arg, name, user, copy_user_memory, shared_user_prepare): number {
         let channel: MessageChannel | undefined;
         let user_copy_status: UserCopyStatus | null;
@@ -1950,6 +1970,7 @@ function start({
         terminate_for_membership_retirement(cleanup_active_worker_membership());
         service_worker_membership = undefined;
         service_worker_checkpoint = undefined;
+        service_worker_kernel_checkpoint_v2 = undefined;
         postMessage({ type: "worker_exit" });
       },
     }),

@@ -366,6 +366,9 @@ export const MachineTerminationReason = {
 export type MachineTerminationReason =
   (typeof MachineTerminationReason)[keyof typeof MachineTerminationReason];
 
+/** Result from the kernel-only, single-step Worker publication checkpoint. */
+export type WorkerCheckpointV2Status = 0 | 1 | 2;
+
 export interface Imports {
   env: { memory: WebAssembly.Memory };
   remote_memory_v1: {
@@ -388,6 +391,8 @@ export interface Imports {
     get_now_nsec(): bigint;
     /** Kernel-only idle boundary. One requests a bounded recheck interval. */
     worker_checkpoint_v1(): number;
+    /** Kernel-only receiver step: no runtime, recheck/resume, or blocked barrier. */
+    worker_checkpoint_v2(): number;
     /** Writes a bounded C string, including a terminator when size is nonzero. */
     get_stacktrace(buf: WasmAddress, size: WasmAddress): void;
     spawn_worker(
@@ -520,6 +525,7 @@ export function kernel_imports({
   get_user_context,
   worker_exit,
   worker_checkpoint,
+  worker_checkpoint_v2,
 }: {
   address: WasmAddressType;
   is_worker: boolean;
@@ -541,6 +547,8 @@ export function kernel_imports({
   worker_exit: () => void;
   /** Runs only at the kernel's unlocked idle boundary. */
   worker_checkpoint?: () => number;
+  /** Runs one receiver step at a kernel-safe boundary without pausing. */
+  worker_checkpoint_v2?: () => WorkerCheckpointV2Status;
 }): Imports["kernel"] {
   // These are trusted kernel pointers, not application virtual addresses.
   // A malformed range remains a kernel/host failure, never a fake errno.
@@ -554,6 +562,12 @@ export function kernel_imports({
   };
   return {
     worker_checkpoint_v1: () => (worker_checkpoint?.() === 1 ? 1 : 0),
+    worker_checkpoint_v2: () => {
+      const status = worker_checkpoint_v2?.() ?? 0;
+      if (status !== 0 && status !== 1 && status !== 2)
+        throw new Error("invalid Worker checkpoint v2 execution ABI result");
+      return status;
+    },
     breakpoint: () => {
       debugger;
     },
