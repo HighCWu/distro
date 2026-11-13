@@ -10,7 +10,7 @@ import { ethernetDevice, ethernetNetwork } from "../src/virtio/net.ts";
 import { vsockDevice } from "../src/virtio/vsock.ts";
 import { VirtioController, close_virtio_device, virtio_imports } from "../src/virtio/core.ts";
 import { serveDevice, workerDevice } from "../src/virtio/remote.ts";
-import { read_wasm_memories, user_memory_import } from "../src/wasm_binary.ts";
+import { read_wasm_dylink, read_wasm_memories, user_memory_import } from "../src/wasm_binary.ts";
 import {
   allocate_shared_memory,
   memory_bytes,
@@ -386,6 +386,96 @@ test("userspace memory must match the kernel address width", () => {
   assert.equal(user_memory_import(read_wasm_memories(memory64), "i64")?.type.address, "i64");
   assert.equal(user_memory_import(read_wasm_memories(memory32), "i64"), null);
   assert.equal(user_memory_import(read_wasm_memories(memory64), "i32"), null);
+});
+
+test("u32 LEB decoding preserves wasm metadata values and error precedence", () => {
+  const encode_u32 = (value: number) => {
+    const encoded: number[] = [];
+    do {
+      let byte = value % 0x80;
+      value = Math.floor(value / 0x80);
+      if (value !== 0) byte |= 0x80;
+      encoded.push(byte);
+    } while (value !== 0);
+    return encoded;
+  };
+  const section = (id: number, payload: number[]) => [
+    id,
+    ...encode_u32(payload.length),
+    ...payload,
+  ];
+  const header = [0, 97, 115, 109, 1, 0, 0, 0];
+  const dylink_name = [...new TextEncoder().encode("dylink.0")];
+  const dylink_module = (memory_size: number[], include_other_fields = true) => {
+    const other_fields = include_other_fields ? [0, 0, 0] : [];
+    const memory_info = [
+      1,
+      ...encode_u32(memory_size.length + other_fields.length),
+      ...memory_size,
+      ...other_fields,
+    ];
+    return new WebAssembly.Module(
+      new Uint8Array([
+        ...header,
+        ...section(0, [...encode_u32(dylink_name.length), ...dylink_name, ...memory_info]),
+      ]),
+    );
+  };
+
+  for (const [value, encoding] of [
+    [0, [0]],
+    [127, [0x7f]],
+    [128, [0x80, 0x01]],
+    [0x8000_0000, [0x80, 0x80, 0x80, 0x80, 0x08]],
+    [0xffff_ffff, [0xff, 0xff, 0xff, 0xff, 0x0f]],
+    [0, [0x80, 0x80, 0x80, 0x80, 0x00]], // Legal five-byte non-short encoding.
+  ] as const) {
+    assert.equal(read_wasm_dylink(dylink_module([...encoding]))?.memorySize, value);
+  }
+
+  assert.throws(() => read_wasm_dylink(dylink_module([0x80], false)), {
+    name: "WasmParseError",
+    message: "unexpected end of module at byte 3",
+  });
+  assert.throws(() => read_wasm_dylink(dylink_module([0xff, 0xff, 0xff, 0xff, 0x10], false)), {
+    name: "WasmParseError",
+    message: "u32 LEB128 overflows at byte 7",
+  });
+  assert.throws(
+    () => read_wasm_dylink(dylink_module([0x80, 0x80, 0x80, 0x80, 0x80, 0x00], false)),
+    { name: "WasmParseError", message: "u32 LEB128 is too long at byte 7" },
+  );
+
+  const text = (value: string) => {
+    const bytes = [...new TextEncoder().encode(value)];
+    return [...encode_u32(bytes.length), ...bytes];
+  };
+  const memory_limit = 0x1_0000;
+  const valid_memory32 = new Uint8Array([
+    ...header,
+    ...section(2, [
+      1,
+      ...text("env"),
+      ...text("memory"),
+      2,
+      1,
+      ...encode_u32(memory_limit),
+      ...encode_u32(memory_limit),
+    ]),
+  ]);
+  assert.deepEqual(read_wasm_memories(valid_memory32).imports[0]?.type, {
+    address: "i32",
+    minimum: BigInt(memory_limit),
+    maximum: BigInt(memory_limit),
+    shared: false,
+  });
+
+  // A claimed four-gigabyte section is rejected by the existing span bounds;
+  // the parser does not allocate according to the u32 length.
+  assert.throws(
+    () => read_wasm_memories(new Uint8Array([...header, 2, 0xff, 0xff, 0xff, 0xff, 0x0f])),
+    { name: "WasmParseError", message: "span extends past its section at byte 14" },
+  );
 });
 
 test("closing an Ethernet network drops traffic from attached ports", async () => {

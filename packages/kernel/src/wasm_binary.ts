@@ -101,7 +101,18 @@ class Cursor {
   }
 
   u32() {
-    return Number(this.#unsigned(32));
+    let value = 0;
+
+    for (let index = 0; index < 5; index++) {
+      const byte = this.byte();
+      const payload = byte & 0x7f;
+      if (index === 4 && payload > 0x0f) this.fail("u32 LEB128 overflows");
+
+      value |= payload << (index * 7);
+      if (!(byte & 0x80)) return value >>> 0;
+    }
+
+    this.fail("u32 LEB128 is too long");
   }
 
   u64() {
