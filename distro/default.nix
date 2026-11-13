@@ -1681,6 +1681,13 @@ lib.makeScope (scope: lib.callPackageWith ({ inherit lib pkgs; } // scope)) (
       extraChecks = { };
     };
     grep = callPackage ./grep/package.nix { };
+    mincore-nommu = callPackage ./mincore-nommu/package.nix { };
+    mincore-nommu-wasm64 = self.mincore-nommu.override {
+      platform = self.platform-wasm64;
+      llvm-toolchain = self.llvm-toolchain-wasm64;
+      sysroot = self.sysroot-wasm64;
+      vm-test = vmTestWasm64;
+    };
     pcre2 = callPackage ./pcre2/package.nix { };
     pcre2-wasm64 = self.pcre2.override {
       platform = self.platform-wasm64;
