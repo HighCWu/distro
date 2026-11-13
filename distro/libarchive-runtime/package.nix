@@ -211,7 +211,6 @@ pkgs.stdenvNoCC.mkDerivation (finalAttrs: {
         init = ./runtime-test.sh;
         cpus = 2;
         disks = [ xattrDisk ];
-        snapshotFirstDisk = true;
         contents = [
           busybox
           acl-runtime
