@@ -42,6 +42,7 @@ import {
 } from "./wasm.ts";
 import {
   apply_dylink_worker_publication,
+  clone_trusted_dylink_worker_snapshot,
   prepare_dylink_worker_snapshot,
   validate_dylink_worker_snapshot,
   validate_dylink_worker_replayable_module,
@@ -946,7 +947,7 @@ export class ProcessDylink {
       return Object.freeze({
         processIdentity: state.processIdentity,
         generation: state.generation,
-        snapshot: prepare_dylink_worker_snapshot(state.snapshot),
+        snapshot: clone_trusted_dylink_worker_snapshot(state.snapshot),
       });
     } catch (error) {
       if (error instanceof DylinkWorkerSnapshotError) throw error;

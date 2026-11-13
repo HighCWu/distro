@@ -9,6 +9,7 @@ import { DylinkWorkerReceiver } from "../src/dylink_worker_receiver.ts";
 import { DylinkWorkerWriter } from "../src/dylink_worker_writer.ts";
 import {
   apply_dylink_worker_publication,
+  clone_trusted_dylink_worker_snapshot,
   DylinkWorkerSnapshotError,
   prepare_dylink_worker_publication,
   prepare_dylink_worker_snapshot,
@@ -775,6 +776,10 @@ test("loader adopts one worker publication baseline without rerunning constructo
   assert.ok(readOnlyState);
   assert.deepEqual(readOnlyState, baseline);
   assert.notEqual(readOnlyState.snapshot, baseline.snapshot);
+  assert.equal(readOnlyState.snapshot.main, baseline.snapshot.main);
+  assert.equal(readOnlyState.snapshot.groups, baseline.snapshot.groups);
+  assert.notEqual(readOnlyState.snapshot.files, baseline.snapshot.files);
+  assert.notEqual(readOnlyState.snapshot.files[0]?.bytes, baseline.snapshot.files[0]?.bytes);
   readOnlyState.snapshot.files[0]!.bytes[0] = 0;
   assert.deepEqual(process.process.getWorkerPublicationState(), baseline);
 
@@ -1474,6 +1479,38 @@ test("Worker snapshot admission parses an empty active table-zero element vector
     module.buffer,
     "snapshot preparation copies source bytes",
   );
+});
+
+test("trusted Worker snapshot clones reuse frozen metadata and detach module bytes", () => {
+  const sourceBytes = activeEmptyElementModule();
+  const prepared = prepare_dylink_worker_snapshot(snapshotWithModule(sourceBytes));
+  const clone = clone_trusted_dylink_worker_snapshot(prepared);
+
+  assert.notEqual(clone, prepared);
+  assert.notEqual(clone.files, prepared.files);
+  assert.notEqual(clone.files[0], prepared.files[0]);
+  assert.notEqual(clone.files[0]?.bytes, prepared.files[0]?.bytes);
+  assert.notEqual(clone.files[0]?.bytes.buffer, prepared.files[0]?.bytes.buffer);
+  assert.equal(clone.main, prepared.main);
+  assert.equal(clone.groups, prepared.groups);
+  assert.equal(clone.objectGroups, prepared.objectGroups);
+  assert.equal(clone.aliases, prepared.aliases);
+  assert.equal(clone.files[0]?.dependencies, prepared.files[0]?.dependencies);
+  assert.deepEqual(clone.files[0]?.bytes, prepared.files[0]?.bytes);
+
+  clone.files[0]!.bytes.fill(0);
+  assert.deepEqual(prepared.files[0]?.bytes, sourceBytes);
+  assert.deepEqual(
+    clone_trusted_dylink_worker_snapshot(clone).files[0]?.bytes,
+    new Uint8Array(sourceBytes.length),
+  );
+
+  const clonedInput = structuredClone(prepared);
+  assert.throws(
+    () => clone_trusted_dylink_worker_snapshot(clonedInput),
+    /privately prepared or applied Worker snapshot/,
+  );
+  assert.doesNotThrow(() => prepare_dylink_worker_snapshot(clonedInput));
 });
 
 test("Worker snapshot admission accepts only a zero-sized empty TLS compiler scaffold", () => {

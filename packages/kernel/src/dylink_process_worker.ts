@@ -1317,6 +1317,31 @@ export function prepare_dylink_worker_snapshot(input: unknown): DylinkWorkerSnap
   return retainValidatedSnapshot(sanitizeWorkerSnapshot(input, true));
 }
 
+/** @internal
+ * Clone an already validated process snapshot for a read-only caller. All
+ * metadata and tuples are deeply frozen, so only the graph containers and
+ * mutable Wasm bytes need fresh copies. Never use this for structured-clone
+ * input; those values must pass through the full sanitizer above.
+ */
+export function clone_trusted_dylink_worker_snapshot(
+  snapshot: DylinkWorkerSnapshot,
+): DylinkWorkerSnapshot {
+  requireValidatedSnapshot(snapshot, "Worker snapshot clone source");
+  try {
+    const files = snapshot.files.map((file) => ({
+      ...file,
+      bytes: new Uint8Array(file.bytes),
+    }));
+    return retainValidatedSnapshot({ ...snapshot, files });
+  } catch (error) {
+    if (error instanceof RangeError)
+      throw new DylinkWorkerSnapshotError("ENOMEM", "cannot copy trusted Worker snapshot", {
+        cause: error,
+      });
+    throw error;
+  }
+}
+
 /** Runtime counterpart for snapshots received through a structured-clone message. */
 export function validate_dylink_worker_snapshot(
   input: unknown,
