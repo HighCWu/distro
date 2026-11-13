@@ -70,9 +70,68 @@ static int read_certificate(const char *path, unsigned char *buffer, size_t capa
     return 0;
 }
 
+static int private_key_roundtrip(const char *path, long ring)
+{
+    unsigned char key_blob[CertificateCapacity];
+    size_t key_length = 0;
+    if (read_certificate(path, key_blob, sizeof(key_blob), &key_length) != 0) {
+        return fail("read test PKCS8 key");
+    }
+    const long key_id = syscall(SYS_add_key, (long)"asymmetric", (long)"private-key-roundtrip-test", (long)key_blob,
+                               (long)key_length, ring);
+    memset(key_blob, 0, sizeof(key_blob));
+    if (key_id < 0) {
+        return fail("add test PKCS8 private key");
+    }
+
+    struct keyctl_pkey_query query = {0};
+    if (keyctl(KEYCTL_PKEY_QUERY, key_id, 0, (long)"", (long)&query) != 0) {
+        return fail("query test private key");
+    }
+    const unsigned operations = KEYCTL_SUPPORTS_ENCRYPT | KEYCTL_SUPPORTS_DECRYPT;
+    if ((query.supported_ops & operations) != operations || query.key_size != 2048 || query.max_enc_size != 256 ||
+        query.max_dec_size != 256) {
+        errno = EPROTO;
+        return fail("private key capabilities");
+    }
+
+    unsigned char ciphertext[256] = {0};
+    unsigned char plaintext[256] = {0};
+    const unsigned char input = 2;
+    struct keyctl_pkey_params params = {0};
+    params.key_id = (int32_t)key_id;
+    params.in_len = sizeof(input);
+    params.out_len = sizeof(ciphertext);
+    const long encrypted = keyctl(KEYCTL_PKEY_ENCRYPT, (long)&params, (long)"", (long)&input, (long)ciphertext);
+    if (encrypted <= 0 || (unsigned long)encrypted > sizeof(ciphertext)) {
+        return fail("raw RSA encryption");
+    }
+    params.in_len = (uint32_t)encrypted;
+    params.out_len = sizeof(plaintext);
+    const long decrypted = keyctl(KEYCTL_PKEY_DECRYPT, (long)&params, (long)"", (long)ciphertext, (long)plaintext);
+    if (decrypted <= 0 || (unsigned long)decrypted > sizeof(plaintext)) {
+        return fail("raw RSA decryption");
+    }
+    for (long index = 0; index < decrypted - 1; ++index) {
+        if (plaintext[index] != 0) {
+            errno = EPROTO;
+            return fail("RSA roundtrip leading bytes");
+        }
+    }
+    if (plaintext[decrypted - 1] != input) {
+        errno = EPROTO;
+        return fail("RSA roundtrip value");
+    }
+    if (keyctl(KEYCTL_UNLINK, key_id, ring, 0, 0) != 0) {
+        return fail("unlink test private key");
+    }
+    puts("KEY_PKEY_PKCS8_ROUNDTRIP_OK");
+    return 0;
+}
+
 int main(int argc, char **argv)
 {
-    if (argc != 2) {
+    if (argc != 3) {
         errno = EINVAL;
         return fail("certificate argument");
     }
@@ -127,5 +186,5 @@ int main(int argc, char **argv)
     printf("PKEY_QUERY_RESULT ops=%u bits=%u data=%u sig=%u enc=%u dec=%u spare=zero\n", query.supported_ops, query.key_size,
            query.max_data_size, query.max_sig_size, query.max_enc_size, query.max_dec_size);
     puts("KEY_PKEY_QUERY_OK");
-    return 0;
+    return private_key_roundtrip(argv[2], ring);
 }

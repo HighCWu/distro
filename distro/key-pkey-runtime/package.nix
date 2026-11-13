@@ -14,9 +14,16 @@ stdenv.mkDerivation (finalAttrs: {
   version = "1";
   dontUnpack = true;
   meta.license = lib.licenses.mit;
-  nativeBuildInputs = [ pkgs.nodejs ];
+  nativeBuildInputs = [
+    pkgs.nodejs
+    pkgs.openssl
+  ];
   buildPhase = ''
     runHook preBuild
+    # Generate an ephemeral key solely for this runtime test.
+    openssl genpkey -algorithm RSA -pkeyopt rsa_keygen_bits:2048 -out test-private.pem 2>/dev/null
+    openssl pkcs8 -topk8 -nocrypt -in test-private.pem -outform DER -out test-private.der
+    rm test-private.pem
     $CC -O2 -Wall -Wextra -Werror ${./runtime.c} -o key-pkey-runtime
     node ${../busybox/check-binary.mjs} ${../../packages/kernel/src/wasm_binary.ts} \
       key-pkey-runtime ${toString platform.addressBits} ${toString platform.maximumMemoryBytes}
@@ -26,6 +33,7 @@ stdenv.mkDerivation (finalAttrs: {
     runHook preInstall
     install -Dm755 key-pkey-runtime $out/bin/key-pkey-runtime
     install -Dm644 ${./test-certificate.der} $out/share/key-pkey-runtime/test-certificate.der
+    install -Dm644 test-private.der $out/share/key-pkey-runtime/test-private.der
     notices=$out/share/licenses/key-pkey-runtime
     install -Dm644 ${../sdk/LICENSE.MIT} "$notices/LICENSE.MIT"
     install -Dm644 ${musl.src}/COPYRIGHT "$notices/musl-COPYRIGHT"
@@ -41,5 +49,6 @@ stdenv.mkDerivation (finalAttrs: {
     ];
     files."/test-certificate.der" =
       "${finalAttrs.finalPackage}/share/key-pkey-runtime/test-certificate.der";
+    files."/test-private.der" = "${finalAttrs.finalPackage}/share/key-pkey-runtime/test-private.der";
   };
 })

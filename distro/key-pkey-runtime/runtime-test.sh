@@ -2,7 +2,7 @@
 # SPDX-License-Identifier: MIT
 export PATH=/bin:/sbin:/usr/bin:/usr/sbin
 
-output=$(key-pkey-runtime /test-certificate.der 2>&1)
+output=$(key-pkey-runtime /test-certificate.der /test-private.der 2>&1)
 status=$?
 printf '%s\n' "$output"
 if [ "$status" -ne 0 ]; then
@@ -15,6 +15,10 @@ printf '%s\n' "$output" | grep -qx 'PKEY_QUERY_RESULT ops=1 bits=2048 data=256 s
 }
 printf '%s\n' "$output" | grep -qx 'KEY_PKEY_QUERY_OK' || {
   echo '::vm-test::fail: asymmetric key query success marker missing'
+  exit 1
+}
+printf '%s\n' "$output" | grep -qx 'KEY_PKEY_PKCS8_ROUNDTRIP_OK' || {
+  echo '::vm-test::fail: PKCS8 private key roundtrip marker missing'
   exit 1
 }
 echo '::vm-test::pass'
