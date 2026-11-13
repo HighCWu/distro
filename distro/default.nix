@@ -2037,6 +2037,17 @@ lib.makeScope (scope: lib.callPackageWith ({ inherit lib pkgs; } // scope)) (
       vm-test = vmTestWasm64;
       busybox = self.busybox-wasm64;
     };
+    libarchive-runtime = callPackage ./libarchive-runtime/package.nix { };
+    libarchive-runtime-wasm64 = self.libarchive-runtime.override {
+      platform = self.platform-wasm64;
+      sdk = self.sdk-wasm64;
+      sdk-fork-automatic-poll-libc = self.sdk-fork-automatic-poll-libc-wasm64;
+      llvm-toolchain = self.llvm-toolchain-wasm64;
+      zlib = self.zlib-wasm64;
+      acl-runtime = self.acl-runtime-wasm64;
+      busybox = self.busybox-wasm64;
+      vm-test = vmTestWasm64;
+    };
     quickjs = callPackage ./quickjs/package.nix { };
     quickjs-wasm64 = self.quickjs.override {
       stdenv = self.stdenv-wasm64;
