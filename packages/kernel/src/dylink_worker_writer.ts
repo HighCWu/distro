@@ -178,17 +178,22 @@ export class DylinkWorkerWriter {
       }
       return new Error(`${message} [${diagnostic}]`);
     };
+    // Preserve initial baseline errors before observing the channel, but do
+    // not repeatedly snapshot the full process graph while another writer or
+    // its receivers are making progress.
+    try {
+      baseline = this.#process.getWorkerPublicationState();
+    } catch (error) {
+      return this.#invalidBaselineResult("Worker publication baseline is unavailable", error);
+    }
+    if (!baseline) return this.#invalidBaselineResult("Worker publication baseline is unavailable");
+
+    let baselineFresh = true;
+    const yieldForAvailability = (): boolean => {
+      baselineFresh = false;
+      return this.#yieldForAvailability(deadline);
+    };
     for (;;) {
-      // A different publisher may finish while this open waits. Re-read the
-      // process snapshot before every reservation attempt so the lease can
-      // never be built against an older generation than the channel.
-      try {
-        baseline = this.#process.getWorkerPublicationState();
-      } catch (error) {
-        return this.#invalidBaselineResult("Worker publication baseline is unavailable", error);
-      }
-      if (!baseline)
-        return this.#invalidBaselineResult("Worker publication baseline is unavailable");
       if (now() >= deadline)
         return this.#recordFailure(
           availabilityTimeout("Worker publication timed out waiting for channel availability"),
@@ -198,7 +203,7 @@ export class DylinkWorkerWriter {
       if (!before.ok) {
         if (!this.#isTransient(before.errno))
           return this.#recordFailure(channelFailure(before.errno, "channel observation"));
-        if (!this.#yieldForAvailability(deadline))
+        if (!yieldForAvailability())
           return this.#recordFailure(
             availabilityTimeout("Worker publication timed out waiting for channel availability"),
           );
@@ -206,8 +211,35 @@ export class DylinkWorkerWriter {
       }
       if (before.value.state === "poison")
         return this.#recordFailure(channelFailure(-EIO, "channel poison check"));
-      if (before.value.state !== "idle" || before.value.generation !== baseline.generation) {
-        if (!this.#yieldForAvailability(deadline))
+      if (before.value.state !== "idle") {
+        if (!yieldForAvailability())
+          return this.#recordFailure(
+            availabilityTimeout(
+              "Worker publication timed out waiting for a matching channel generation",
+            ),
+          );
+        continue;
+      }
+
+      // Once an availability wait or failed reservation yields to peers, the
+      // owner's graph may advance. Refresh only at Idle, immediately before
+      // comparing generations and attempting a reservation.
+      if (!baselineFresh || before.value.generation !== baseline.generation) {
+        try {
+          baseline = this.#process.getWorkerPublicationState();
+        } catch (error) {
+          return this.#invalidBaselineResult("Worker publication baseline is unavailable", error);
+        }
+        if (!baseline)
+          return this.#invalidBaselineResult("Worker publication baseline is unavailable");
+        baselineFresh = true;
+        if (now() >= deadline)
+          return this.#recordFailure(
+            availabilityTimeout("Worker publication timed out waiting for channel availability"),
+          );
+      }
+      if (before.value.generation !== baseline.generation) {
+        if (!yieldForAvailability())
           return this.#recordFailure(
             availabilityTimeout(
               "Worker publication timed out waiting for a matching channel generation",
@@ -221,7 +253,7 @@ export class DylinkWorkerWriter {
         lastReserveFailureErrno = reserved.errno;
         if (!this.#isTransient(reserved.errno))
           return this.#recordFailure(channelFailure(reserved.errno, "channel reservation"));
-        if (!this.#yieldForAvailability(deadline))
+        if (!yieldForAvailability())
           return this.#recordFailure(
             availabilityTimeout("Worker publication timed out waiting for channel availability"),
           );
@@ -231,7 +263,7 @@ export class DylinkWorkerWriter {
       if (reservation.generation !== baseline.generation) {
         this.#cancelReservation(reservation);
         reservation = null;
-        if (!this.#yieldForAvailability(deadline))
+        if (!yieldForAvailability())
           return this.#recordFailure(
             availabilityTimeout(
               "Worker publication timed out waiting for a matching channel generation",
@@ -252,7 +284,7 @@ export class DylinkWorkerWriter {
         reservation = null;
         if (!this.#isTransient(after.errno))
           return this.#recordFailure(channelFailure(after.errno, "channel observation"));
-        if (!this.#yieldForAvailability(deadline))
+        if (!yieldForAvailability())
           return this.#recordFailure(
             availabilityTimeout("Worker publication timed out waiting for channel availability"),
           );

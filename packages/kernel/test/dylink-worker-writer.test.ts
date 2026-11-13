@@ -335,6 +335,19 @@ test("writer publishes a real ProcessDylink group before its constructor runs", 
     },
   });
   const baseline = owner.process.initializeWorkerPublication("writer-process");
+  let baselineReads = 0;
+  const writerProcess = new Proxy(owner.process, {
+    get(target, property) {
+      if (property === "getWorkerPublicationState") {
+        return () => {
+          baselineReads++;
+          return target.getWorkerPublicationState();
+        };
+      }
+      const value = Reflect.get(target, property, target) as unknown;
+      return typeof value === "function" ? value.bind(target) : value;
+    },
+  });
   receiverProcess = makeProcess(memory, files, {
     postThread: () => true,
     replay: baseline.snapshot,
@@ -354,7 +367,7 @@ test("writer publishes a real ProcessDylink group before its constructor runs", 
   writer = new DylinkWorkerWriter(
     channel,
     writerParticipant,
-    owner.process,
+    writerProcess,
     (error) => {
       throw error;
     },
@@ -367,6 +380,7 @@ test("writer publishes a real ProcessDylink group before its constructor runs", 
   const pathname = new TextEncoder().encode("/plugins/late.so\0");
   new Uint8Array(memory.buffer, owner.pathAddress, pathname.length).set(pathname);
   const handle = writer.open(owner.pathAddress, 2);
+  assert.equal(baselineReads, 1, "an uncontended Idle channel reuses the initial baseline");
 
   const errorAddress = 8192;
   owner.process.error(errorAddress, 256);
@@ -568,7 +582,7 @@ test("writer retries a reservation blocked by pending Worker admission", (t) => 
   assert.equal(owner.process.getWorkerPublicationState()?.generation, 1);
 });
 
-test("writer bounds retries while another publication owns the channel", (t) => {
+test("writer bounds busy channel retries without rebuilding the process snapshot", (t) => {
   let tick = 0;
   t.mock.method(performance, "now", () => tick++);
   const memory = new WebAssembly.Memory({ initial: 2, maximum: 4, shared: true });
@@ -579,17 +593,39 @@ test("writer bounds retries while another publication owns the channel", (t) => 
   const writerParticipant = unwrap(channel.register());
   const blockerParticipant = unwrap(channel.register());
   const blocker = unwrap(channel.reserve(blockerParticipant));
+  const observeChannel = channel.observe.bind(channel);
+  const busyStates = ["writing", "prepare", "prepare"] as const;
+  let busyStateIndex = 0;
+  t.mock.method(channel, "observe", () => {
+    const observed = observeChannel();
+    if (busyStateIndex >= busyStates.length || !observed.ok) return observed;
+    const state = busyStates[busyStateIndex++]!;
+    return { ok: true as const, value: { ...observed.value, state } };
+  });
+  let baselineReads = 0;
+  const writerProcess = new Proxy(owner.process, {
+    get(target, property) {
+      if (property === "getWorkerPublicationState") {
+        return () => {
+          baselineReads++;
+          return target.getWorkerPublicationState();
+        };
+      }
+      const value = Reflect.get(target, property, target) as unknown;
+      return typeof value === "function" ? value.bind(target) : value;
+    },
+  });
   let serviceCalls = 0;
   let pauseCalls = 0;
   const writer = new DylinkWorkerWriter(
     channel,
     writerParticipant,
-    owner.process,
+    writerProcess,
     (error) => {
       throw error;
     },
     () => pauseCalls++,
-    5,
+    20,
     undefined,
     () => serviceCalls++,
   );
@@ -597,11 +633,51 @@ test("writer bounds retries while another publication owns the channel", (t) => 
   new Uint8Array(memory.buffer, 256, pathname.length).set(pathname);
 
   assert.equal(writer.open(256, 2), 0);
-  assert.ok(serviceCalls > 0);
-  assert.ok(pauseCalls > 0);
+  assert.ok(serviceCalls >= 2);
+  assert.ok(pauseCalls >= 2);
+  assert.equal(busyStateIndex, busyStates.length, "Writing and Prepare states were both retried");
+  assert.equal(baselineReads, 1, "busy phases do not rebuild the process snapshot");
   assert.equal(unwrap(channel.observe()).transaction, blocker.transaction);
   assert.equal(owner.process.getWorkerPublicationState()?.generation, baseline.generation);
   unwrap(channel.cancelReservation(blocker));
+});
+
+test("writer keeps initial missing and thrown baselines ahead of channel observation", (t) => {
+  for (const baselineResult of ["missing", "throws"] as const) {
+    const memory = new WebAssembly.Memory({ initial: 2, maximum: 4, shared: true });
+    const owner = makeProcess(memory, new Map([["/plugins/late.so", dynamicModule()]]));
+    let baselineReads = 0;
+    t.mock.method(owner.process, "getWorkerPublicationState", () => {
+      baselineReads++;
+      if (baselineResult === "throws") throw new Error("snapshot read failed");
+      return null;
+    });
+    const channel = new DylinkWorkerChannel(1 << 20, 2);
+    const participant = unwrap(channel.register());
+    let observeCalls = 0;
+    const observe = channel.observe.bind(channel);
+    t.mock.method(channel, "observe", () => {
+      observeCalls++;
+      return observe();
+    });
+    const writer = new DylinkWorkerWriter(
+      channel,
+      participant,
+      owner.process,
+      (error) => {
+        throw error;
+      },
+      () => {},
+    );
+
+    assert.equal(writer.open(owner.pathAddress, 2), 0);
+    assert.match(
+      readDlerror(owner.process, memory, "i32"),
+      /Worker publication baseline is unavailable/,
+    );
+    assert.equal(baselineReads, 1);
+    assert.equal(observeCalls, 0);
+  }
 });
 
 test("writer timeout keeps maximum diagnostics within dlerror capacity", (t) => {
@@ -879,6 +955,20 @@ test("writer refreshes its publication baseline after another producer advances 
     },
   });
   const baseline = owner.process.initializeWorkerPublication("generation-retry-process");
+  const baselineGenerations: (number | null)[] = [];
+  const waitingProcess = new Proxy(owner.process, {
+    get(target, property) {
+      if (property === "getWorkerPublicationState") {
+        return () => {
+          const state = target.getWorkerPublicationState();
+          baselineGenerations.push(state?.generation ?? null);
+          return state;
+        };
+      }
+      const value = Reflect.get(target, property, target) as unknown;
+      return typeof value === "function" ? value.bind(target) : value;
+    },
+  });
   const channel = new DylinkWorkerChannel(1 << 20, 3);
   const waitingParticipant = unwrap(channel.register());
   const producerParticipant = unwrap(channel.register());
@@ -933,7 +1023,7 @@ test("writer refreshes its publication baseline after another producer advances 
   writer = new DylinkWorkerWriter(
     channel,
     waitingParticipant,
-    owner.process,
+    waitingProcess,
     (error) => {
       throw error;
     },
@@ -982,6 +1072,11 @@ test("writer refreshes its publication baseline after another producer advances 
 
   assert.notEqual(handle, 0);
   assert.equal(serviceCalls, 1);
+  assert.deepEqual(
+    baselineGenerations,
+    [baseline.generation, baseline.generation + 1],
+    "the writer refreshes once after the busy channel returns to Idle",
+  );
   assert.equal(unwrap(channel.observe()).generation, 2);
   const state = owner.process.getWorkerPublicationState();
   assert.equal(state?.generation, 2);
