@@ -181,7 +181,6 @@ pkgs.stdenvNoCC.mkDerivation (finalAttrs: {
         finalAttrs.finalPackage
       ];
       disks = [ ext4Disk ];
-      snapshotFirstDisk = true;
     };
   }
   // extraChecks;
