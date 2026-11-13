@@ -33,10 +33,11 @@ pkgs.stdenvNoCC.mkDerivation (finalAttrs: {
     cmake -S . -B build -G Ninja \
       -DCMAKE_SYSTEM_NAME=Linux \
       -DCMAKE_SYSTEM_PROCESSOR=${platform.wasmArch} \
-      -DCMAKE_C_COMPILER=${sdk}/bin/wasm-linux-cc \
-      -DCMAKE_AR=${llvm-toolchain}/bin/llvm-ar \
-      -DCMAKE_RANLIB=${llvm-toolchain}/bin/llvm-ranlib \
+      -DCMAKE_C_COMPILER:STRING=${sdk}/bin/wasm-linux-cc \
+      -DCMAKE_AR:FILEPATH=${llvm-toolchain}/bin/llvm-ar \
+      -DCMAKE_RANLIB:FILEPATH=${llvm-toolchain}/bin/llvm-ranlib \
       -DCMAKE_TRY_COMPILE_TARGET_TYPE=STATIC_LIBRARY \
+      -DCMAKE_SKIP_RPATH:BOOL=ON \
       -DCMAKE_BUILD_TYPE=Release \
       -DCMAKE_C_FLAGS=-O2 \
       -DCMAKE_INSTALL_PREFIX="$out" \
@@ -57,6 +58,7 @@ pkgs.stdenvNoCC.mkDerivation (finalAttrs: {
     grep -Fqx 'CMAKE_C_COMPILER:STRING=${sdk}/bin/wasm-linux-cc' build/CMakeCache.txt
     grep -Fqx 'CMAKE_AR:FILEPATH=${llvm-toolchain}/bin/llvm-ar' build/CMakeCache.txt
     grep -Fqx 'CMAKE_RANLIB:FILEPATH=${llvm-toolchain}/bin/llvm-ranlib' build/CMakeCache.txt
+    grep -qx 'CMAKE_SKIP_RPATH:BOOL=ON' build/CMakeCache.txt
     grep -qx 'EXPAT_SHARED_LIBS:BOOL=OFF' build/CMakeCache.txt
     grep -qx 'EXPAT_BUILD_TOOLS:BOOL=ON' build/CMakeCache.txt
     grep -qx 'EXPAT_BUILD_EXAMPLES:BOOL=OFF' build/CMakeCache.txt
