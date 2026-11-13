@@ -45,6 +45,18 @@ function channelFailure(errno: number, operation: string): DylinkWorkerChannelEr
   return new DylinkWorkerChannelError(Math.abs(errno), `Worker publication ${operation} failed`);
 }
 
+function publicationRollbackMessage(cause: unknown): string {
+  try {
+    if (cause instanceof Error) {
+      const message = cause.message;
+      if (typeof message === "string") return `Worker publication was rolled back: ${message}`;
+    }
+  } catch {
+    // Rollback has completed; diagnostic formatting must not replace its result.
+  }
+  return "Worker publication was rolled back";
+}
+
 function now(): number {
   return typeof performance !== "undefined" ? performance.now() : Date.now();
 }
@@ -361,7 +373,7 @@ export class DylinkWorkerWriter {
             ),
           );
         }
-        throw new DylinkWorkerPublicationAbort("Worker publication was rolled back", error);
+        throw new DylinkWorkerPublicationAbort(publicationRollbackMessage(error), error);
       }
       return this.#fatalActive(active, error);
     }

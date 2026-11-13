@@ -470,6 +470,15 @@ test("writer fatals if ProcessDylink leaks the branded abort instead of returnin
   const peer = unwrap(channel.register());
   let writer!: DylinkWorkerWriter;
   const rollbackOrder: string[] = [];
+  const rollbackCause = new Error("message getter is not safe to inspect");
+  Object.defineProperty(rollbackCause, "message", {
+    get() {
+      throw new Error("throwing message getter");
+    },
+  });
+  rollbackCause.toString = () => {
+    throw new Error("throwing toString");
+  };
   const token = {
     restore() {
       rollbackOrder.push("restore");
@@ -507,11 +516,18 @@ test("writer fatals if ProcessDylink leaks the branded abort instead of returnin
     30_000,
     () => {
       notifications++;
-      if (notifications === 1) throw new Error("Prepare notification failed");
+      if (notifications === 1) throw rollbackCause;
     },
   );
 
-  assert.throws(() => writer.open(0, 2), /Worker publication was rolled back/);
+  assert.throws(
+    () => writer.open(0, 2),
+    (error) => {
+      assert.equal((error as Error).message, "Worker publication was rolled back");
+      assert.equal((error as Error & { cause?: unknown }).cause, rollbackCause);
+      return true;
+    },
+  );
   assert.equal(fatalCalls, 1);
   assert.deepEqual(rollbackOrder, ["restore", "release"]);
   assert.equal(unwrap(channel.observe()).state, "idle");

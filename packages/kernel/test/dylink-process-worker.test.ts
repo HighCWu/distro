@@ -5,7 +5,7 @@ import test from "node:test";
 import { DylinkInitializationError } from "../src/dylink_linker.ts";
 import { ProcessDylink, type DylinkWorkerOwnerRollback } from "../src/dylink_process.ts";
 import { DylinkWorkerChannel } from "../src/dylink_worker_channel.ts";
-import { DylinkWorkerPublicationAbort } from "../src/dylink_worker_abort.ts";
+import { DylinkWorkerReceiver } from "../src/dylink_worker_receiver.ts";
 import { DylinkWorkerWriter } from "../src/dylink_worker_writer.ts";
 import {
   apply_dylink_worker_publication,
@@ -1066,51 +1066,71 @@ test("scoped Worker producer preflights and publishes one local group after thre
 test("scoped Worker abort restores the owner before returning a dlopen failure", () => {
   let fixture: ReturnType<typeof makeInitializationHookProcess>;
   let postThread = false;
-  let baseline: ReturnType<ProcessDylink["initializeWorkerPublication"]> | undefined;
-  let baselineGeneration = 0;
-  let abortNextPublication = false;
+  let writer: DylinkWorkerWriter | undefined;
   fixture = makeInitializationHookProcess(initializationHookDynamicModule(), {
     postThread: () => postThread,
     queryBlocked: () => false,
     beforeInitialize(snapshot, ownerRollback) {
       if (!postThread) return;
       assert.ok(ownerRollback, "the scoped publication hook receives an owner rollback token");
-      const advanced = fixture.process.advanceWorkerPublicationBeforeInitialize(
-        "rollback-process",
-        baselineGeneration,
-        snapshot,
-      );
-      assert.equal(advanced.generation, baselineGeneration + 1);
-      if (abortNextPublication) {
-        abortNextPublication = false;
-        ownerRollback.restore();
-        ownerRollback.release();
-        throw new DylinkWorkerPublicationAbort("receiver rejected the staged graph");
-      }
-      baselineGeneration = advanced.generation;
-      ownerRollback.commit();
+      assert.ok(writer, "the Worker writer is installed before post-thread opens");
+      writer.beforeInitialize(snapshot, ownerRollback);
     },
   });
 
   assert.notEqual(fixture.process.open(fixture.pathAddress, 2), 0);
-  baseline = fixture.process.initializeWorkerPublication("rollback-process");
-  baselineGeneration = baseline.generation;
+  const baseline = fixture.process.initializeWorkerPublication("rollback-process");
   const allocationCount = fixture.activeAllocationCount;
   const pinCount = fixture.activePinCount;
   postThread = true;
-  abortNextPublication = true;
+
+  const channel = new DylinkWorkerChannel(1 << 20, 2);
+  const writerParticipant = channel.register();
+  const receiverParticipant = channel.register();
+  assert.equal(writerParticipant.ok, true);
+  assert.equal(receiverParticipant.ok, true);
+  if (!writerParticipant.ok || !receiverParticipant.ok)
+    assert.fail("could not register the Worker cohort");
+  const receiverProcess = makeInitializationHookProcess(initializationHookDynamicModule(), {
+    memory: fixture.memory,
+    postThread: () => true,
+    workerPublicationState: baseline,
+  }).process;
+  const receiver = new DylinkWorkerReceiver(
+    channel,
+    receiverParticipant.value,
+    receiverProcess,
+    (error) => {
+      throw error;
+    },
+  );
+  let failNextNotification = true;
+  let writerFatalCalls = 0;
+  writer = new DylinkWorkerWriter(
+    channel,
+    writerParticipant.value,
+    fixture.process,
+    (error) => {
+      writerFatalCalls++;
+      throw error;
+    },
+    () => {
+      receiver.step();
+    },
+    30_000,
+    () => {
+      if (failNextNotification) {
+        failNextNotification = false;
+        throw new Error("Prepare notification failed");
+      }
+      receiver.step();
+    },
+  );
 
   const rejectedPath = new TextEncoder().encode("/plugins/rejected.so\0");
   new Uint8Array(fixture.memory.buffer, fixture.pathAddress, rejectedPath.length).set(rejectedPath);
-  assert.equal(
-    fixture.process.openWithWorkerPublication(
-      fixture.pathAddress,
-      2,
-      "rollback-process",
-      baseline.generation,
-    ),
-    0,
-  );
+  assert.equal(writer.open(fixture.pathAddress, 2), 0);
+  assert.equal(writerFatalCalls, 0);
   assert.deepEqual(fixture.process.getWorkerPublicationState(), baseline);
   assert.equal(
     new DataView(fixture.memory.buffer).getUint32(32, true),
@@ -1129,18 +1149,13 @@ test("scoped Worker abort restores the owner before returning a dlopen failure",
   const errorEnd = errorBytes.indexOf(0);
   assert.equal(
     new TextDecoder().decode(errorBytes.subarray(0, errorEnd)),
-    "receiver rejected the staged graph",
+    "Worker publication was rolled back: Prepare notification failed",
   );
 
   const retryPath = new TextEncoder().encode("/plugins/retry.so\0");
   new Uint8Array(fixture.memory.buffer, fixture.pathAddress, retryPath.length).set(retryPath);
   assert.notEqual(
-    fixture.process.openWithWorkerPublication(
-      fixture.pathAddress,
-      2,
-      "rollback-process",
-      baseline.generation,
-    ),
+    writer.open(fixture.pathAddress, 2),
     0,
     "a later publication can reuse the unchanged baseline after Abort returns to Idle",
   );
