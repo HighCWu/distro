@@ -9,7 +9,7 @@ fail() {
 
 export PATH=/bin:/sbin:/usr/bin:/usr/sbin
 
-output=$(/bin/libffi-runtime) || fail 'scalar/pointer ffi_call consumer failed'
+output=$(/bin/libffi-runtime) || fail 'ffi_call consumer failed'
 expected='LIBFFI_RUNTIME_MIXED_CALL_OK'
 [ "$output" = "$expected" ] || fail "unexpected consumer output: $output"
 
