@@ -109,8 +109,8 @@ export function call_user_maintenance(
     return result;
   }
 
-  // Older kernels have only the scheduling-capable entry. Never use it for a
-  // writer wait, where scheduling could resume a receiver in an unsafe phase.
+  // Older kernels have only the scheduling-capable maintenance entry. It does
+  // not enter user code, so it is also safe while a writer waits for receivers.
   if (!allowScheduling) return 0;
   const maintenance = kernel.user_maintenance_v1;
   if (maintenance === undefined) return 0; // Older kernels keep deferring maintenance.

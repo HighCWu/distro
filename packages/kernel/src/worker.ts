@@ -450,9 +450,7 @@ function user_imports({
       if (!maintenanceReady || !context) return;
       if (fork && !fork.userPollAllowed(signal_depth !== 0)) return;
       const before = instance;
-      const timerOnly = workerRuntime?.writerActive === true;
-      const invoke = () =>
-        call_user_maintenance(kernel_instance.exports, kernel_address, !timerOnly);
+      const invoke = () => call_user_maintenance(kernel_instance.exports, kernel_address, true);
       if (fork) fork.kernelCall(invoke);
       else invoke();
       if (instance !== before) {
