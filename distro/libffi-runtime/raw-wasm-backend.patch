@@ -1,0 +1,98 @@
+--- a/configure.host
++++ b/configure.host
+@@ -262,12 +262,12 @@
+ 
+   wasm32-*-*)
+ 	TARGET=wasm32; TARGETDIR=wasm
+-	SOURCES="ffi.c"
++	SOURCES="ffi.c ffi-module-builder.c module-transport.c"
+ 	;;
+ 
+   wasm64-*-*)
+ 	TARGET=wasm64; TARGETDIR=wasm
+-	SOURCES="ffi.c"
++	SOURCES="ffi.c ffi-module-builder.c module-transport.c"
+ 	;;
+ 
+   xtensa*-*)
+--- a/configure.ac
++++ b/configure.ac
+@@ -188,7 +188,9 @@
+     if test -z "$WASM64_MEMORY64"; then
+       WASM64_MEMORY64=1
+     fi
+-    CFLAGS="$CFLAGS -sMEMORY64=$WASM64_MEMORY64"
++    if test "x$host_os" = xemscripten; then
++      CFLAGS="$CFLAGS -sMEMORY64=$WASM64_MEMORY64"
++    fi
+     ;;
+ esac
+ 
+--- a/configure
++++ b/configure
+@@ -20827,7 +20827,9 @@
+     if test -z "$WASM64_MEMORY64"; then
+       WASM64_MEMORY64=1
+     fi
+-    CFLAGS="$CFLAGS -sMEMORY64=$WASM64_MEMORY64"
++    if test "x$host_os" = xemscripten; then
++      CFLAGS="$CFLAGS -sMEMORY64=$WASM64_MEMORY64"
++    fi
+     ;;
+ esac
+ 
+--- a/src/wasm/ffitarget.h
++++ b/src/wasm/ffitarget.h
+@@ -69,7 +69,7 @@
+ #endif
+ } ffi_abi;
+ 
+-#define FFI_CLOSURES 1
++#define FFI_CLOSURES 0
+ // #define FFI_GO_CLOSURES 0
+ #define FFI_TRAMPOLINE_SIZE 4
+ // #define FFI_NATIVE_RAW_API 0
+
+--- a/src/types.c
++++ b/src/types.c
+@@ -48,5 +48,9 @@ unsigned int ffi_get_default_abi (void)
+ 
+ size_t ffi_get_closure_size (void)
+ {
++#if FFI_CLOSURES
+   return sizeof(ffi_closure);
++#else
++  return 0;
++#endif
+ }
+--- a/Makefile.am
++++ b/Makefile.am
+@@ -98,8 +98,8 @@ EXTRA_libffi_la_SOURCES = src/aarch64/ffi.c src/aarch64/sysv.S		\
+ 	src/s390/sysv.S src/sh/ffi.c src/sh/sysv.S src/sh64/ffi.c	\
+ 	src/sh64/sysv.S src/sparc/ffi.c src/sparc/ffi64.c		\
+ 	src/sparc/v8.S src/sparc/v9.S src/tile/ffi.c src/tile/tile.S	\
+ 	src/vax/ffi.c src/vax/elfbsd.S src/x86/ffi.c src/x86/sysv.S	\
+-	src/wasm/ffi.c \
++	src/wasm/ffi.c src/wasm/ffi-module-builder.c src/wasm/module-transport.c \
+ 	src/x86/ffiw64.c src/x86/win64.S src/x86/ffi64.c		\
+ 	src/x86/unix64.S src/x86/sysv_intel.S src/x86/win64_intel.S	\
+ 	src/xtensa/ffi.c src/xtensa/sysv.S src/kvx/ffi.c		\
+--- a/Makefile.in
++++ b/Makefile.in
+@@ -608,8 +608,8 @@ EXTRA_libffi_la_SOURCES = src/aarch64/ffi.c src/aarch64/sysv.S		\
+ 	src/s390/sysv.S src/sh/ffi.c src/sh/sysv.S src/sh64/ffi.c	\
+ 	src/sh64/sysv.S src/sparc/ffi.c src/sparc/ffi64.c		\
+ 	src/sparc/v8.S src/sparc/v9.S src/tile/ffi.c src/tile/tile.S	\
+ 	src/vax/ffi.c src/vax/elfbsd.S src/x86/ffi.c src/x86/sysv.S	\
+-	src/wasm/ffi.c \
++	src/wasm/ffi.c src/wasm/ffi-module-builder.c src/wasm/module-transport.c \
+ 	src/x86/ffiw64.c src/x86/win64.S src/x86/ffi64.c		\
+ 	src/x86/unix64.S src/x86/sysv_intel.S src/x86/win64_intel.S	\
+ 	src/xtensa/ffi.c src/xtensa/sysv.S src/kvx/ffi.c		\
+@@ -1063,3 +1063,7 @@ src/wasm/ffi.lo: src/wasm/$(am__dirstamp) \
+ 	src/wasm/$(DEPDIR)/$(am__dirstamp)
++src/wasm/ffi-module-builder.lo: src/wasm/$(am__dirstamp) \
++	src/wasm/$(DEPDIR)/$(am__dirstamp)
++src/wasm/module-transport.lo: src/wasm/$(am__dirstamp) \
++	src/wasm/$(DEPDIR)/$(am__dirstamp)
+ src/x86/ffiw64.lo: src/x86/$(am__dirstamp) \

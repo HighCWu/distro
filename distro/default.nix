@@ -1681,6 +1681,14 @@ lib.makeScope (scope: lib.callPackageWith ({ inherit lib pkgs; } // scope)) (
       extraChecks = { };
     };
     grep = callPackage ./grep/package.nix { };
+    libffi-runtime = callPackage ./libffi-runtime/package.nix { };
+    libffi-runtime-wasm64 = self.libffi-runtime.override {
+      platform = self.platform-wasm64;
+      sdk-dynamic-loader = self.sdk-dynamic-loader-wasm64;
+      llvm-toolchain = self.llvm-toolchain-wasm64;
+      busybox = self.busybox-wasm64;
+      vm-test = vmTestWasm64;
+    };
     mincore-nommu = callPackage ./mincore-nommu/package.nix { };
     mincore-nommu-wasm64 = self.mincore-nommu.override {
       platform = self.platform-wasm64;
