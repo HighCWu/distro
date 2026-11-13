@@ -1,0 +1,63 @@
+# SPDX-License-Identifier: MIT
+# Query the existing Wasm allocator's published mapping records.
+--- a/src/mman/mmap.c
++++ b/src/mman/mmap.c
+@@ -48,6 +48,58 @@
+ static pthread_mutex_t mappings_lock = PTHREAD_MUTEX_INITIALIZER;
+ static struct wasm_mapping *mappings;
+ 
++/* Query only ranges represented by published mmap records. Wasm linear-memory
++ * allocations can be larger than their active mappings, so allocation capacity
++ * must not be treated as mapped or resident. Adjacent mapping records form one
++ * continuous range for the kernel's mincore adapter. */
++__attribute__((export_name("__wasm_mmap_query_v1")))
++long __wasm_mmap_query_v1(uintptr_t address, size_t pages)
++{
++	uintptr_t end, cursor;
++	size_t bytes;
++	struct wasm_mapping *current;
++	int lock_error, unlock_error;
++
++	if (!pages)
++		return 0;
++	if ((address & (PAGESIZE - 1)) || pages > SIZE_MAX / PAGESIZE)
++		return -EINVAL;
++	bytes = pages * PAGESIZE;
++	if (bytes > UINTPTR_MAX - address)
++		return -EINVAL;
++	end = address + bytes;
++
++	lock_error = pthread_mutex_lock(&mappings_lock);
++	if (lock_error)
++		return lock_error > 0 ? -lock_error : -EINVAL;
++
++	cursor = address;
++	while (cursor < end) {
++		uintptr_t covered_end = cursor;
++
++		for (current = mappings; current; current = current->next) {
++			uintptr_t mapping_begin = (uintptr_t)current->address;
++			uintptr_t mapping_end;
++
++			if (!current->length ||
++			    current->length > UINTPTR_MAX - mapping_begin)
++				continue;
++			mapping_end = mapping_begin + current->length;
++			if (mapping_begin <= cursor && cursor < mapping_end &&
++			    mapping_end > covered_end)
++				covered_end = mapping_end;
++		}
++		if (covered_end == cursor)
++			break;
++		cursor = covered_end < end ? covered_end : end;
++	}
++
++	unlock_error = pthread_mutex_unlock(&mappings_lock);
++	if (unlock_error)
++		return unlock_error > 0 ? -unlock_error : -EINVAL;
++	return (long)((cursor - address) / PAGESIZE);
++}
++
+ const uintptr_t __wasm_fork_memory_advice_v1[8] = {
+ 	1,
+ 	sizeof(struct wasm_mapping),

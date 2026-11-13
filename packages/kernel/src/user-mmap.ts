@@ -2,6 +2,18 @@
 
 import type { WasmAddress, WasmAddressType } from "./wasm.ts";
 
+/** Query published allocator mappings through the internal execution ABI. */
+export function user_mmap_query(
+  exports: WebAssembly.Exports,
+  addressType: WasmAddressType,
+  address: WasmAddress,
+  pages: WasmAddress,
+): WasmAddress {
+  const callback = exports.__wasm_mmap_query_v1;
+  if (typeof callback !== "function") return addressType === "i64" ? -95n : -95;
+  return callback(address, pages) as WasmAddress;
+}
+
 /** Old resize allocators cannot atomically replace a chosen destination. */
 export function user_mremap_fixed(
   exports: WebAssembly.Exports,

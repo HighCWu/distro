@@ -33,7 +33,7 @@ int main(void)
 	mapping[page_size] = 2;
 	mapping[2 * page_size] = 3;
 
-	unsigned char residency[3] = { 0xa5, 0xa5, 0xa5 };
+	unsigned char residency[3] = { 0xa4, 0xa4, 0xa4 };
 	require(mincore(mapping, length, residency) == 0,
 		"query one resident NOMMU VMA");
 	require((residency[0] & 1) && (residency[1] & 1) &&
@@ -42,7 +42,7 @@ int main(void)
 	/* An anonymous VMA can be split, leaving a real hole between two VMAs. */
 	require(munmap(mapping + page_size, page_size) == 0,
 		"remove middle page and create a mapping hole");
-	residency[0] = 0xa5;
+	residency[0] = 0xa4;
 	residency[1] = 0x5a;
 	residency[2] = 0xc3;
 	errno = 0;

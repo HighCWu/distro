@@ -432,6 +432,9 @@ export interface Imports {
     layout(destination: WasmAddress): number;
     update(requested: WasmAddress): WasmAddress;
   };
+  user_mmap_query_v1: {
+    span(address: WasmAddress, pages: WasmAddress): WasmAddress;
+  };
   user_signal_v1: {
     stack_pointer(to: WasmAddress): number;
     call_handler(

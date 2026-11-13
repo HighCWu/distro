@@ -5,6 +5,7 @@ import test from "node:test";
 import {
   user_mmap,
   user_mmap_fixed,
+  user_mmap_query,
   user_mremap,
   user_mremap_dontunmap,
   user_mremap_fixed,
@@ -16,6 +17,23 @@ const anonymous_private = 0x22;
 
 for (const address_type of ["i32", "i64"] as const) {
   const address = (value: number) => (address_type === "i64" ? BigInt(value) : value);
+
+  test(`${address_type}: mapping queries require the allocator export and preserve coverage results`, () => {
+    const pointer = address_type === "i64" ? 0x100010000n : -2147418112;
+    assert.equal(user_mmap_query({}, address_type, pointer, address(4)), address(-95));
+    for (const result of [2, 0, -12]) {
+      let calls = 0;
+      const exports = {
+        __wasm_mmap_query_v1: (...args: unknown[]) => {
+          assert.deepEqual(args, [pointer, address(4)]);
+          calls++;
+          return address(result);
+        },
+      };
+      assert.equal(user_mmap_query(exports, address_type, pointer, address(4)), address(result));
+      assert.equal(calls, 1);
+    }
+  });
 
   test(`${address_type}: fixed remap needs its own atomic export and retains all address registers`, () => {
     const pointer = address_type === "i64" ? 0x100010000n : -2147418112;

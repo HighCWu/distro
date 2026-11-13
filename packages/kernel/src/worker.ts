@@ -31,6 +31,7 @@ import {
 import {
   user_mmap,
   user_mmap_fixed,
+  user_mmap_query,
   user_mremap,
   user_mremap_dontunmap,
   user_mremap_fixed,
@@ -340,6 +341,7 @@ function user_imports({
   imports_mmap_stream_v1: Imports["user_mmap_stream_v1"];
   imports_fork_v1: Imports["user_fork_v1"];
   imports_brk_v1: Imports["user_brk_v1"];
+  imports_mmap_query_v1: Imports["user_mmap_query_v1"];
 } {
   const HALT_USER = create_wasm_halt();
 
@@ -1569,6 +1571,14 @@ function user_imports({
         );
       },
     },
+    imports_mmap_query_v1: {
+      span(address, pages) {
+        assert(instance);
+        return user_callback(() =>
+          user_mmap_query(instance!.exports, kernel_address, address, pages),
+        );
+      },
+    },
     imports_mmap_stream_v1: {
       capabilities() {
         assert(instance);
@@ -1738,6 +1748,7 @@ function start({
     user_context_v1: user_context_imports(),
     user_fork_v1: user.imports_fork_v1,
     user_brk_v1: user.imports_brk_v1,
+    user_mmap_query_v1: user.imports_mmap_query_v1,
     user_v2: user.imports_v2,
     user_signal_v1: user.imports_signal_v1,
     user_mmap_init_v1: user.imports_mmap_init_v1,
