@@ -684,6 +684,100 @@ test("writer failures replace dlerror and preserve later 32/64-bit opens", (t) =
   }
 });
 
+test("writer starts its barrier deadline after synchronous load and still rolls back timed-out barriers", (t) => {
+  let tick = 0;
+  t.mock.method(performance, "now", () => tick);
+
+  for (const address of ["i32", "i64"] as const) {
+    tick = 0;
+    const timeoutMs = 20;
+    const memory = testMemory(address);
+    const files = new Map([
+      ["/plugins/first.so", dynamicModule(false, false, address)],
+      ["/plugins/late.so", dynamicModule(false, false, address)],
+    ]);
+    let hasThread = false;
+    let delayBeforeHook = true;
+    let pauseBarrier = false;
+    let serviceReceiver = true;
+    let writer!: DylinkWorkerWriter;
+    let channel!: DylinkWorkerChannel;
+    let receiver!: DylinkWorkerReceiver;
+
+    const owner = makeProcess(memory, files, {
+      address,
+      postThread: () => hasThread,
+      beforeInitialize(snapshot, ownerRollback) {
+        if (delayBeforeHook) tick += timeoutMs * 5;
+        writer.beforeInitialize(snapshot, ownerRollback);
+      },
+    });
+    const baseline = owner.process.initializeWorkerPublication(`barrier-deadline-${address}`);
+    channel = new DylinkWorkerChannel(1 << 20, 2);
+    const writerParticipant = unwrap(channel.register());
+    const receiverParticipant = unwrap(channel.register());
+    const receiverProcess = makeProcess(memory, files, {
+      address,
+      postThread: () => true,
+      replay: baseline.snapshot,
+      publicationState: baseline,
+    }).process;
+    receiver = new DylinkWorkerReceiver(channel, receiverParticipant, receiverProcess, (error) => {
+      throw error;
+    });
+    writer = new DylinkWorkerWriter(
+      channel,
+      writerParticipant,
+      owner.process,
+      (error) => {
+        throw error;
+      },
+      () => {
+        const state = unwrap(channel.observe()).state;
+        tick += pauseBarrier && state !== "abort" ? timeoutMs + 1 : 1;
+        if (serviceReceiver || state === "abort") receiver.step();
+      },
+      timeoutMs,
+    );
+
+    hasThread = true;
+    const wasmWord = (value: number) => (address === "i64" ? BigInt(value) : value);
+    const firstPath = new TextEncoder().encode("/plugins/first.so\0");
+    new Uint8Array(memory.buffer, owner.pathAddress, firstPath.length).set(firstPath);
+    const first = writer.open(wasmWord(owner.pathAddress), 2);
+    assert.notEqual(
+      BigInt(first),
+      0n,
+      `${address} synchronous pre-hook load should not consume the barrier timeout`,
+    );
+    assert.equal(unwrap(channel.observe()).generation, baseline.generation + 1);
+
+    delayBeforeHook = false;
+    pauseBarrier = true;
+    serviceReceiver = false;
+    const latePath = new TextEncoder().encode("/plugins/late.so\0");
+    new Uint8Array(memory.buffer, owner.pathAddress, latePath.length).set(latePath);
+    const timedOut = writer.open(wasmWord(owner.pathAddress), 2);
+    assert.equal(BigInt(timedOut), 0n);
+    assert.match(
+      readDlerror(owner.process, memory, address),
+      /Worker publication deadline expired/,
+    );
+    assert.equal(unwrap(channel.observe()).state, "idle");
+    assert.equal(unwrap(channel.observe()).generation, baseline.generation + 1);
+    assert.equal(receiverProcess.getWorkerPublicationState()?.generation, baseline.generation + 1);
+
+    pauseBarrier = false;
+    serviceReceiver = true;
+    delayBeforeHook = true;
+    const retry = writer.open(wasmWord(owner.pathAddress), 2);
+    assert.notEqual(BigInt(retry), 0n, `${address} retry should succeed after rollback`);
+    assert.equal(unwrap(channel.observe()).state, "idle");
+    assert.equal(unwrap(channel.observe()).generation, baseline.generation + 2);
+    assert.equal(receiverProcess.getWorkerPublicationState()?.generation, baseline.generation + 2);
+  }
+});
+
 test("writer refreshes its publication baseline after another producer advances the generation", () => {
   const memory = new WebAssembly.Memory({ initial: 2, maximum: 4, shared: true });
   const files = new Map([

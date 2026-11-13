@@ -26,7 +26,7 @@ const EALREADY = 114;
 type ActivePublication = {
   readonly baseline: DylinkWorkerPublicationState;
   readonly reservation: DylinkWorkerReservation;
-  readonly deadline: number;
+  deadline: number;
   cleanupLease: DylinkWorkerReservation | null;
   hookEntered: boolean;
   completed: boolean;
@@ -301,6 +301,11 @@ export class DylinkWorkerWriter {
     active.hookEntered = true;
 
     try {
+      // Synchronous loading happens before this hook. Give the publication
+      // barrier its own budget, shared by every phase of this transaction.
+      active.deadline = now() + this.#timeoutMs;
+      if (!Number.isFinite(active.deadline))
+        throw new Error("Worker publication deadline is invalid");
       this.#assertDeadline(active);
       const publication = create_dylink_worker_publication_delta(
         active.baseline.snapshot,
