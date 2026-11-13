@@ -79,12 +79,15 @@ pkgs.stdenvNoCC.mkDerivation (finalAttrs: {
     install -Dm644 ${../sdk/LICENSE.MIT} "$notices/LOCAL-ADDITIONS.MIT"
     cp -r ${sdk-dynamic-loader.buildMaterials}/licenses "$notices/standard-sdk"
 
+    configureBuildDir="${platform.targetTriple}"
+    test -s "$configureBuildDir/config.log"
+    test -s "$configureBuildDir/Makefile"
     cp ${./package.nix} ${./raw-wasm-backend.patch} \
       ${./ffi-linux-wasm.c} ${./ffi-module-builder.c} ${./ffi-module-builder.h} \
       ${./module-transport.c} ${./module-transport.h} ${./runtime.c} \
       ${./runtime-test.sh} ${../busybox/check-binary.mjs} \
       ${../../packages/kernel/src/wasm_binary.ts} \
-      configure.host config.log Makefile "$materials/"
+      configure.host "$configureBuildDir/config.log" "$configureBuildDir/Makefile" "$materials/"
     ln -s "$src" "$materials/source"
     ln -s ${pkgs.libffi.src} "$materials/upstream-source"
     ln -s ${sdk-dynamic-loader.buildMaterials} "$materials/standard-sdk"
