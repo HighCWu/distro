@@ -102,6 +102,19 @@ pkgs.stdenvNoCC.mkDerivation (finalAttrs: {
     wasm-linux-dlopen-cc -O2 -Wall -Wextra -Werror ${./spawn.c} -o spawn.wasm
     wasm-linux-dlopen-cc -O2 -Wall -Wextra -Werror ${./poll-runtime.c} -o poll-runtime.wasm
     wasm-linux-dlopen-cc -O2 -Wall -Wextra -Werror -pthread ${./thread-runtime.c} -o thread-runtime.wasm
+    wasm-linux-dlopen-cc -O2 -Wall -Wextra -Werror -pthread -Wl,--export=worker_publication_release_and_join ${./worker-publication-runtime.c} -o worker-publication-runtime.wasm
+    ${sideCC} -O2 -Wall -Wextra -Werror -fPIC -c ${./worker-publication-library.c} -o worker-publication-constructor.o
+    ${linkShared {
+      name = "libworker-publication-constructor.so";
+      output = "libworker-publication-constructor.so";
+      inputs = [ "worker-publication-constructor.o" ];
+    }}
+    ${sideCC} -O2 -Wall -Wextra -Werror -fPIC -DWORKER_PUBLICATION_AFTER=1 -c ${./worker-publication-library.c} -o worker-publication-after.o
+    ${linkShared {
+      name = "libworker-publication-after.so";
+      output = "libworker-publication-after.so";
+      inputs = [ "worker-publication-after.o" ];
+    }}
     ${sideCC} -O2 -Wall -Wextra -Werror -fPIC -c ${./poll-library.c} -o poll-library.o
     ${linkShared {
       name = "poll-library.so";
@@ -283,6 +296,9 @@ pkgs.stdenvNoCC.mkDerivation (finalAttrs: {
     install -Dm755 spawn.wasm $out/spawn.wasm
     install -Dm755 poll-runtime.wasm $out/poll-runtime.wasm
     install -Dm755 thread-runtime.wasm $out/thread-runtime.wasm
+    install -Dm755 worker-publication-runtime.wasm $out/worker-publication-runtime.wasm
+    install -Dm644 libworker-publication-constructor.so $out/lib/libworker-publication-constructor.so
+    install -Dm644 libworker-publication-after.so $out/lib/libworker-publication-after.so
     install -Dm644 poll-library.so $out/lib/poll-library.so
     install -Dm644 libplugin-a.so $out/lib/libplugin-a.so
     install -Dm644 libplugin-b.so $out/lib/libplugin-b.so
@@ -314,6 +330,7 @@ pkgs.stdenvNoCC.mkDerivation (finalAttrs: {
     cp ${./spawn.c} $buildMaterials/share/dynamic-loader-materials/
     cp ${./poll-runtime.c} ${./poll-library.c} $buildMaterials/share/dynamic-loader-materials/
     cp ${./thread-runtime.c} $buildMaterials/share/dynamic-loader-materials/
+    cp ${./worker-publication-runtime.c} ${./worker-publication-library.c} $buildMaterials/share/dynamic-loader-materials/
     cp ${./path-library.c} $buildMaterials/share/dynamic-loader-materials/
     cp ${./reentrant-root.c} ${./reentrant-leaf.c} ${./reentrant-reject.c} $buildMaterials/share/dynamic-loader-materials/
     cp ${./next-front.c} ${./next-middle.c} ${./next-leaf.c} $buildMaterials/share/dynamic-loader-materials/
@@ -344,6 +361,17 @@ pkgs.stdenvNoCC.mkDerivation (finalAttrs: {
     thread-runtime = vm-test.rawInitramfsTest {
       name = "dynamic-pthread-${platform.wasmArch}";
       init = "${finalAttrs.finalPackage}/thread-runtime.wasm";
+    };
+    worker-publication-runtime = vm-test.rawInitramfsTest {
+      name = "dynamic-worker-publication-${platform.wasmArch}";
+      cpus = 2;
+      init = "${finalAttrs.finalPackage}/worker-publication-runtime.wasm";
+      files = {
+        "/plugins/libworker-publication-constructor.so" =
+          "${finalAttrs.finalPackage}/lib/libworker-publication-constructor.so";
+        "/plugins/libworker-publication-after.so" =
+          "${finalAttrs.finalPackage}/lib/libworker-publication-after.so";
+      };
     };
     poll-runtime = vm-test.rawInitramfsTest {
       name = "dynamic-side-poll-${platform.wasmArch}";

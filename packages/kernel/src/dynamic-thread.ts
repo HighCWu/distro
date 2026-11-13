@@ -1,21 +1,61 @@
 // SPDX-License-Identifier: MIT
 
 import type { CloneSyscallLayout } from "./fork-continuation.ts";
-import type { UserContext, WasmAddress, WasmAddressType } from "./wasm.ts";
+import {
+  wasm_address_from_number,
+  wasm_address_to_number,
+  wasm_table_get,
+  type UserContext,
+  type WasmAddress,
+  type WasmAddressType,
+} from "./wasm.ts";
 
 // One shared word arbitrates the loader against callback-thread creation.
-// -1 means the process loader has been claimed. Nonnegative values use bit 30
-// as the permanent "a thread succeeded" bit and the low 30 bits as concurrent
-// clone claims. A failed first clone therefore cannot erase a second clone's
-// in-flight or successful claim.
+// -1 means the process loader has been claimed. Bit 29 marks a published,
+// immutable replay snapshot; bit 30 means a thread has succeeded. The low 29
+// bits count concurrent clone claims. A failed replay-backed clone can return
+// the loader to -1 only after the last claim fails and no sibling succeeded.
 export const DYNAMIC_LOADER_CLAIMED = -1;
+export const DYNAMIC_REPLAY_READY = 0x20000000;
 export const DYNAMIC_THREAD_SUCCESS = 0x40000000;
-export const DYNAMIC_THREAD_COUNT_MASK = 0x3fffffff;
+export const DYNAMIC_THREAD_COUNT_MASK = 0x1fffffff;
 
 const CLONE_VM = 0x00000100n;
 const CLONE_THREAD = 0x00010000n;
 const EAGAIN = 11;
 const EOPNOTSUPP = 95;
+
+export interface DynamicTableSnapshot {
+  length: number;
+  slots: Array<CallableFunction | null>;
+}
+
+/** Snapshot a bounded JS-visible table using the index width of its ABI. */
+export function snapshot_dynamic_table(
+  table: WebAssembly.Table,
+  address: WasmAddressType,
+): DynamicTableSnapshot {
+  const length = wasm_address_to_number(table.length as unknown as WasmAddress, "table length");
+  const slots = new Array<CallableFunction | null>(length);
+  for (let index = 0; index < length; index++)
+    slots[index] = wasm_table_get(table, wasm_address_from_number(index, address));
+  return { length, slots };
+}
+
+/** Restore a table snapshot without narrowing a table64 index to Number. */
+export function restore_dynamic_table(
+  table: WebAssembly.Table,
+  address: WasmAddressType,
+  snapshot: DynamicTableSnapshot,
+): void {
+  const length = wasm_address_to_number(table.length as unknown as WasmAddress, "table length");
+  if (length < snapshot.length) throw new Error("dynamic loader constructor shrank the main table");
+  const set = table.set as unknown as (index: WasmAddress, value: CallableFunction | null) => void;
+  for (let index = snapshot.length; index < length; index++)
+    set.call(table, wasm_address_from_number(index, address), null);
+  for (let index = 0; index < snapshot.length; index++)
+    set.call(table, wasm_address_from_number(index, address), snapshot.slots[index] ?? null);
+}
 
 export function create_dynamic_process_state(): SharedArrayBuffer {
   return new SharedArrayBuffer(Int32Array.BYTES_PER_ELEMENT);
@@ -45,10 +85,41 @@ export function dynamic_process_is_threaded(state: SharedArrayBuffer | undefined
   return value !== null && value >= 0 && (value & DYNAMIC_THREAD_SUCCESS) !== 0;
 }
 
+export function dynamic_process_has_replay(state: SharedArrayBuffer | undefined): boolean {
+  const value = dynamic_process_value(state);
+  return value !== null && value >= 0 && (value & DYNAMIC_REPLAY_READY) !== 0;
+}
+
+/** Publish the immutable loader snapshot before admitting a replay-backed clone. */
+export function publish_dynamic_replay_ready(state: SharedArrayBuffer | undefined): boolean {
+  const word = state_word(state);
+  if (!word) return false;
+  for (;;) {
+    const current = Atomics.load(word, 0);
+    if (current >= 0 && (current & DYNAMIC_REPLAY_READY) !== 0) return true;
+    if (current !== DYNAMIC_LOADER_CLAIMED) return false;
+    if (
+      Atomics.compareExchange(word, 0, DYNAMIC_LOADER_CLAIMED, DYNAMIC_REPLAY_READY) ===
+      DYNAMIC_LOADER_CLAIMED
+    )
+      return true;
+  }
+}
+
 /** Claim loader ownership before constructing ProcessDylink or touching a table. */
 export function claim_dynamic_loader(state: SharedArrayBuffer | undefined): boolean {
   const word = state_word(state);
   return word !== null && Atomics.compareExchange(word, 0, 0, DYNAMIC_LOADER_CLAIMED) === 0;
+}
+
+/** Release only the loader claim held by the caller. The compare-exchange is
+ * important: another path may have published replay state after the claim. */
+export function release_dynamic_loader_claim(state: SharedArrayBuffer | undefined): boolean {
+  const word = state_word(state);
+  return (
+    word !== null &&
+    Atomics.compareExchange(word, 0, DYNAMIC_LOADER_CLAIMED, 0) === DYNAMIC_LOADER_CLAIMED
+  );
 }
 
 function claim_dynamic_thread(
@@ -69,7 +140,17 @@ function claim_dynamic_thread(
 
 function finish_dynamic_thread(word: Int32Array, succeededOrUnknown: boolean): void {
   if (succeededOrUnknown) Atomics.or(word, 0, DYNAMIC_THREAD_SUCCESS);
-  Atomics.sub(word, 0, 1);
+  const previous = Atomics.sub(word, 0, 1);
+  if (
+    !succeededOrUnknown &&
+    (previous & DYNAMIC_THREAD_SUCCESS) === 0 &&
+    (previous & DYNAMIC_REPLAY_READY) !== 0 &&
+    (previous & DYNAMIC_THREAD_COUNT_MASK) === 1
+  ) {
+    // Another clone may claim the published snapshot between the decrement and
+    // this CAS. In that case it owns the replay-ready state and must finish it.
+    Atomics.compareExchange(word, 0, DYNAMIC_REPLAY_READY, DYNAMIC_LOADER_CLAIMED);
+  }
 }
 
 /**

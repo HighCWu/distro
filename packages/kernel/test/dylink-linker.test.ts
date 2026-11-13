@@ -102,6 +102,30 @@ function setup(files = new Map([["root", binary()]])) {
   };
 }
 
+test("deferred Worker replay preserves the live table and pointer map", () => {
+  const options = setup();
+  const marker = new WebAssembly.Instance(new WebAssembly.Module(binary())).exports
+    .answer as CallableFunction;
+  options.table.set(3, marker);
+  const pointers = new Map<CallableFunction, bigint>([[marker, 7n]]);
+  const graph = link_dylink_graph({
+    ...options,
+    functionPointers: pointers,
+    replay: {
+      placements: new Map([["root", { base: 128n, tableBase: 3n }]]),
+      functionSlots: new Map([["root", new Map([["answer", 3n]])]]),
+      deferTableWrites: true,
+    },
+  });
+  const answer = graph.lookup("answer")!;
+  assert.equal(answer.address, 3n);
+  assert.equal((answer.value as CallableFunction)(), 42);
+  assert.equal(options.table.get(3), marker);
+  assert.deepEqual([...pointers], [[marker, 7n]]);
+  assert.equal(graph.replayTableWrites.find((write) => write.index === 3n)?.value, answer.value);
+  assert.equal(graph.replayFunctionPointers.get(answer.value as CallableFunction), 3n);
+});
+
 test("execution hooks retain original public scope, own-object lookup and canonical wrapped pointers", () => {
   const options = setup(
     new Map([

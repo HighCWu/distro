@@ -3,6 +3,11 @@
 import { platform } from "./platform.ts";
 import { HALT_KERNEL } from "./kernel-halt.ts";
 import type { ForkSnapshot } from "./fork-continuation.ts";
+import type {
+  DylinkWorkerChannelBuffers,
+  DylinkWorkerParticipant,
+} from "./dylink_worker_channel.ts";
+import type { DylinkWorkerSnapshot } from "./dylink_process_worker.ts";
 import type { WasmTableType } from "./wasm_binary.ts";
 
 export interface Instance extends WebAssembly.Instance {
@@ -72,6 +77,15 @@ export interface UserContext {
     privateExports: ReadonlySet<string>;
     /** Shared loader/thread arbitration word, created afresh for every dynamic exec. */
     process_state?: SharedArrayBuffer;
+    /** Immutable loaded graph, copied into callback Workers before their entry runs. */
+    worker_snapshot?: DylinkWorkerSnapshot;
+    /** Publication identity and generation belonging to worker_snapshot. */
+    worker_publication?: { processIdentity: string; generation: number };
+    /** Shared membership channel and this Worker’s participant token. */
+    worker_membership?: {
+      shared: DylinkWorkerChannelBuffers;
+      participant: DylinkWorkerParticipant;
+    };
     /** Private marker copied only to a callback-vfork child Worker. */
     vfork_child?: boolean;
   };
@@ -509,6 +523,7 @@ export function kernel_imports({
     name: string,
     user: UserContext | null,
     copy_user_memory: boolean,
+    shared_user_prepare: boolean,
   ) => number;
   boot_console_write: (message: ArrayBuffer) => void;
   boot_console_close: () => void;
@@ -590,6 +605,7 @@ export function kernel_imports({
       );
       let user: UserContext | null = null;
       let copy_user_memory = false;
+      let shared_user_prepare = false;
       if (user_memory !== WASM_USER_MEMORY_NONE) {
         const context = get_user_context();
         if (!context) return -22; // invalid argument
@@ -597,6 +613,7 @@ export function kernel_imports({
         switch (user_memory) {
           case WASM_USER_MEMORY_SHARE:
             user = context;
+            shared_user_prepare = context.dynamic?.worker_snapshot !== undefined;
             break;
           case WASM_USER_MEMORY_COPY:
             user = context;
@@ -606,7 +623,7 @@ export function kernel_imports({
             return -22; // invalid argument
         }
       }
-      return spawn_worker(fn, arg, name, user, copy_user_memory);
+      return spawn_worker(fn, arg, name, user, copy_user_memory, shared_user_prepare);
     },
 
     run_on_main,

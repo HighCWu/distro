@@ -13,6 +13,10 @@ import {
 import { wasm_table_get } from "./wasm.ts";
 import { create_dylink_forwarder } from "./dylink_forwarder.ts";
 import {
+  inspect_dylink_worker_empty_tls_scaffold,
+  prepare_dylink_worker_module,
+} from "./dylink_worker_module.ts";
+import {
   user_poll_function_imports_supported,
   user_poll_thread_pointer_supported,
 } from "./user-functions.ts";
@@ -59,6 +63,12 @@ export type DylinkModuleRecord = {
   initialization?: Initialization;
 };
 
+export type DylinkReplayTableWrite = Readonly<{
+  index: bigint;
+  value: CallableFunction | null;
+  tailValue?: CallableFunction | null;
+}>;
+
 /** Link an already fetched batch in caller-owned process arenas.
  * File lookup, allocator locking, main-module interposition, worker publication,
  * unload and fork snapshots belong to the process loader, not this component.
@@ -92,6 +102,17 @@ export function link_dylink_graph(options: {
   prepareTable?(minimum: bigint): void;
   reuse?: ReadonlyMap<string, DylinkModuleRecord>;
   functionPointers?: Map<CallableFunction, bigint>;
+  /**
+   * Recreate a caller-vetted fixed module graph in a Worker without replaying
+   * shared data or initialization. Callers must exclude modules whose original
+   * start/passive-data state needs separate restoration; TLS exports are rejected.
+   */
+  replay?: {
+    placements: ReadonlyMap<string, { base: bigint; tableBase: bigint }>;
+    functionSlots: ReadonlyMap<string, ReadonlyMap<string, bigint>>;
+    /** Stage publication into an existing Worker without changing its tables. */
+    deferTableWrites?: boolean;
+  };
   /** Only the process profile which refuses Worker creation may use LLD's
    * first-thread TLS image. No imported/public TLS binding is provided. */
   initialThreadLocalTls?: boolean;
@@ -144,8 +165,14 @@ export function link_dylink_graph(options: {
     if (modules.has(name)) continue;
     const source = options.files.get(name);
     if (!source) throw new Error(`missing dynamic dependency: ${name}`);
+    const resident = options.reuse?.get(name);
     const tail = prepare_wasm_dynamic_tail_calls(source);
-    const bytes = tail.bytes;
+    const bytes =
+      options.replay && !resident
+        ? prepare_dylink_worker_module(tail.bytes, memoryArena.address, {
+            deferTableWrites: options.replay.deferTableWrites,
+          })
+        : tail.bytes;
     if (tail.tailTableRequired && !options.tailTable)
       throw new Error("dynamic tail-call ABI table is unavailable");
     const originalModule = new WebAssembly.Module(bytes);
@@ -156,6 +183,14 @@ export function link_dylink_graph(options: {
     if (metadata.unknownSubsections.length) throw new Error("unsupported dylink extension");
     const exports = WebAssembly.Module.exports(originalModule);
     const localTls = metadata.exports.filter((symbol) => symbol.flags & 0x100);
+    if (
+      options.replay &&
+      (metadata.imports.some((symbol) => symbol.flags & 0x100) ||
+        metadata.exports.some((symbol) => symbol.flags & 0x100))
+    )
+      throw new Error("dynamic TLS is not supported during Worker replay");
+    if (options.replay)
+      inspect_dylink_worker_empty_tls_scaffold(bytes, memoryArena.address, originalModule);
     if (
       metadata.imports.some((symbol) => symbol.flags & ~0xff) ||
       metadata.exports.some((symbol) => symbol.flags & ~0x1ff) ||
@@ -182,7 +217,6 @@ export function link_dylink_graph(options: {
     }
     if (read_wasm_memories(bytes).definitions.length)
       throw new Error("dynamic module must not define private memory");
-    const resident = options.reuse?.get(name);
     modules.set(name, {
       name,
       module: resident
@@ -199,7 +233,9 @@ export function link_dylink_graph(options: {
         (dependency) => options.resolveDependency?.(dependency, name) ?? dependency,
       ),
       ...resident,
-      initialization: resident?.initialization ?? { state: resident ? "done" : "pending" },
+      initialization: options.replay
+        ? { state: "done" }
+        : (resident?.initialization ?? { state: resident ? "done" : "pending" }),
     });
     pending.push({ name, finish: true });
     for (const dependency of modules.get(name)!.dependencies.toReversed())
@@ -230,12 +266,20 @@ export function link_dylink_graph(options: {
   const externalSymbols = new Map(symbols);
   const ownSymbols = new Map<string, Symbol>();
   const functionPointers = options.functionPointers ?? new Map<CallableFunction, bigint>();
+  const stagedFunctionPointers = new Map<CallableFunction, bigint>();
+  const stagedTableWrites = new Map<bigint, DylinkReplayTableWrite>();
+  const pointerOf = (fn: CallableFunction) =>
+    stagedFunctionPointers.get(fn) ?? functionPointers.get(fn);
+  const rememberPointer = (fn: CallableFunction, address: bigint) => {
+    const target = options.replay?.deferTableWrites ? stagedFunctionPointers : functionPointers;
+    target.set(fn, address);
+  };
   const callable = (fn: CallableFunction) => {
     const wrapped = options.execution?.callable(fn) ?? fn;
-    const address = functionPointers.get(fn) ?? functionPointers.get(wrapped);
+    const address = pointerOf(fn) ?? pointerOf(wrapped);
     if (address !== undefined) {
-      functionPointers.set(fn, address);
-      functionPointers.set(wrapped, address);
+      rememberPointer(fn, address);
+      rememberPointer(wrapped, address);
     }
     return wrapped;
   };
@@ -564,36 +608,184 @@ export function link_dylink_graph(options: {
   if (
     memoryArena.cursor < 1n ||
     tableArena.cursor < 1n ||
+    memoryArena.limit < memoryArena.cursor ||
+    tableArena.limit < tableArena.cursor ||
+    memoryArena.limit > 1n << BigInt(memoryArena.address === "i32" ? 32 : 64) ||
+    tableArena.limit > 1n << BigInt(tableArena.address === "i32" ? 32 : 64) ||
     options.memoryMaximumPages * 65536n < BigInt(memory.buffer.byteLength) ||
     (options.tableMaximumElements !== undefined &&
       options.tableMaximumElements < BigInt(table.length)) ||
     memoryArena.limit > BigInt(memory.buffer.byteLength)
   )
     throw new RangeError("dynamic arenas must already belong to committed process resources");
-  const layout = plan_dylink_layout(
-    fresh.map((item) => item.metadata),
-    memoryArena,
-    tableArena,
-  );
+  const layout = options.replay
+    ? (() => {
+        const placementNames = new Set(records.map((record) => record.name));
+        for (const name of options.replay!.placements.keys())
+          if (!placementNames.has(name)) throw new Error(`unknown replay placement: ${name}`);
+
+        const ranges: {
+          memoryStart: bigint;
+          memoryEnd: bigint;
+          tableStart: bigint;
+          tableEnd: bigint;
+        }[] = [];
+        const placementByName = new Map<string, { base: bigint; tableBase: bigint }>();
+        let memoryEnd = memoryArena.cursor;
+        let tableEnd = tableArena.cursor;
+        const validateMetadata = (record: Record) => {
+          const memoryBits = memoryArena.address === "i32" ? 32 : 64;
+          const tableBits = tableArena.address === "i32" ? 32 : 64;
+          if (
+            record.metadata.target !== undefined &&
+            record.metadata.target !== `wasm${memoryBits}`
+          )
+            throw new RangeError("dylink target does not match process memory");
+          for (const [size, alignment, bits, description] of [
+            [record.metadata.memorySize, record.metadata.memoryAlignment, memoryBits, "memory"],
+            [record.metadata.tableSize, record.metadata.tableAlignment, tableBits, "table"],
+          ] as const)
+            if (
+              !Number.isInteger(size) ||
+              size < 0 ||
+              size > 0xffff_ffff ||
+              !Number.isInteger(alignment) ||
+              alignment < 0 ||
+              alignment >= bits
+            )
+              throw new RangeError(`invalid dynamic ${description} placement metadata`);
+        };
+        const inArena = (
+          base: bigint,
+          size: number,
+          alignment: number,
+          arena: Readonly<DylinkArena>,
+          name: string,
+          description: string,
+          requireArena: boolean,
+        ) => {
+          const width = 1n << BigInt(arena.address === "i32" ? 32 : 64);
+          const end = base + BigInt(size);
+          if (
+            base < 0n ||
+            base >= width ||
+            end > width ||
+            base % (1n << BigInt(alignment)) !== 0n ||
+            (requireArena && (base < arena.cursor || end > arena.limit))
+          )
+            throw new RangeError(`invalid replay ${description} placement: ${name}`);
+          return end;
+        };
+
+        for (const record of records) {
+          validateMetadata(record);
+          const supplied = options.replay.placements.get(record.name);
+          if (!record.instance && !supplied)
+            throw new Error(`missing replay placement: ${record.name}`);
+          const placement = supplied ?? { base: record.base, tableBase: record.tableBase };
+          if (
+            typeof placement.base !== "bigint" ||
+            typeof placement.tableBase !== "bigint" ||
+            (record.instance &&
+              (placement.base !== record.base || placement.tableBase !== record.tableBase))
+          )
+            throw new Error(`inconsistent replay placement: ${record.name}`);
+          placementByName.set(record.name, placement);
+
+          const requireArena = !record.instance;
+          const recordMemoryEnd = inArena(
+            placement.base,
+            record.metadata.memorySize,
+            record.metadata.memoryAlignment,
+            memoryArena,
+            record.name,
+            "memory",
+            requireArena,
+          );
+          const recordTableEnd = inArena(
+            placement.tableBase,
+            record.metadata.tableSize,
+            record.metadata.tableAlignment,
+            tableArena,
+            record.name,
+            "table",
+            requireArena,
+          );
+          if (
+            recordMemoryEnd > BigInt(memory.buffer.byteLength) ||
+            recordTableEnd > BigInt(table.length)
+          )
+            throw new RangeError(`replay placement exceeds process capacity: ${record.name}`);
+          for (const previous of ranges) {
+            if (
+              (placement.base < previous.memoryEnd && previous.memoryStart < recordMemoryEnd) ||
+              (placement.tableBase < previous.tableEnd && previous.tableStart < recordTableEnd)
+            )
+              throw new RangeError(`overlapping replay placement: ${record.name}`);
+          }
+          ranges.push({
+            memoryStart: placement.base,
+            memoryEnd: recordMemoryEnd,
+            tableStart: placement.tableBase,
+            tableEnd: recordTableEnd,
+          });
+          if (requireArena) {
+            if (recordMemoryEnd > memoryEnd) memoryEnd = recordMemoryEnd;
+            if (recordTableEnd > tableEnd) tableEnd = recordTableEnd;
+          }
+        }
+
+        for (const [moduleName, slots] of options.replay.functionSlots) {
+          const record = modules.get(moduleName);
+          if (!record) throw new Error(`unknown replay function module: ${moduleName}`);
+          for (const [name, index] of slots) {
+            const entry = record.exports.find((item) => item.name === name);
+            if (!entry || entry.kind !== "function")
+              throw new Error(`replay function export is unavailable: ${moduleName}.${name}`);
+            if (typeof index !== "bigint" || index < 0n || index >= BigInt(table.length))
+              throw new RangeError(`invalid replay function slot: ${moduleName}.${name}`);
+            if (!record.instance && (index < tableArena.cursor || index >= tableArena.limit))
+              throw new RangeError(
+                `replay function slot is outside its table arena: ${moduleName}.${name}`,
+              );
+          }
+        }
+
+        const items = fresh.map((record) => placementByName.get(record.name)!);
+        return { items, memoryEnd, tableEnd };
+      })()
+    : plan_dylink_layout(
+        fresh.map((item) => item.metadata),
+        memoryArena,
+        tableArena,
+      );
   // Reserve a worst-case extra canonical slot for each requested function. Some
   // exports already occupy their producer's element segment; reuse those slots.
-  const extra = plan_dylink_layout(
-    [
-      {
-        ...records[0]!.metadata,
-        memorySize: 0,
-        memoryAlignment: 0,
-        tableSize: functionGOT.size + objectFunctionCount,
-        tableAlignment: 0,
-      },
-    ],
-    { ...memoryArena, cursor: layout.memoryEnd },
-    { ...tableArena, cursor: layout.tableEnd },
-  );
+  const extra = options.replay
+    ? {
+        memoryEnd: layout.memoryEnd,
+        tableEnd: [...options.replay.functionSlots.values()].reduce((end, slots) => {
+          for (const slot of slots.values()) if (slot + 1n > end) end = slot + 1n;
+          return end;
+        }, layout.tableEnd),
+      }
+    : plan_dylink_layout(
+        [
+          {
+            ...records[0]!.metadata,
+            memorySize: 0,
+            memoryAlignment: 0,
+            tableSize: functionGOT.size + objectFunctionCount,
+            tableAlignment: 0,
+          },
+        ],
+        { ...memoryArena, cursor: layout.memoryEnd },
+        { ...tableArena, cursor: layout.tableEnd },
+      );
   options.validateSymbols?.(symbolTypesFrom(options.root));
   const requiredTableCapacity =
     extra.tableEnd > requiredTableMinimum ? extra.tableEnd : requiredTableMinimum;
-  options.prepareTable?.(requiredTableCapacity);
+  if (!options.replay) options.prepareTable?.(requiredTableCapacity);
   if (requiredTableMinimum > BigInt(table.length))
     throw new Error("incompatible dynamic table import");
   if (options.tailTable && BigInt(options.tailTable.length) !== BigInt(table.length))
@@ -608,10 +800,60 @@ export function link_dylink_graph(options: {
   const lazyFunctions: DylinkLazyFunction[] = [];
   const forwards = new Map<Record, { providerName: string; target: WebAssembly.Global }[]>();
   let nextSlot = layout.tableEnd;
+  const replayFunctionsBySlot = new Map<bigint, CallableFunction>();
+  const replaySlotsByFunction = new Map<CallableFunction, bigint>();
+  function installReplayFunction(record: Record, name: string, fn: CallableFunction): bigint {
+    const index = options.replay?.functionSlots.get(record.name)?.get(name);
+    if (index === undefined)
+      throw new Error(`missing replay function slot: ${record.name}.${name}`);
+    const wrapped = callable(fn);
+    const old = replayFunctionsBySlot.get(index);
+    const oldIndex = replaySlotsByFunction.get(wrapped);
+    const knownIndex = pointerOf(fn) ?? pointerOf(wrapped);
+    if (
+      (old !== undefined && old !== wrapped) ||
+      (oldIndex !== undefined && oldIndex !== index) ||
+      (knownIndex !== undefined && knownIndex !== index)
+    )
+      throw new Error(`conflicting replay function slot: ${record.name}.${name}`);
+    const tail = options.tailTable ? (options.execution?.tailCallable?.(fn) ?? wrapped) : undefined;
+    if (options.replay?.deferTableWrites) {
+      stagedTableWrites.set(index, Object.freeze({ index, value: wrapped, tailValue: tail }));
+    } else {
+      const address = word(index, tableArena.address);
+      const set = table.set as unknown as (index: number | bigint, value: CallableFunction) => void;
+      set.call(table, address, wrapped);
+      if (options.tailTable) {
+        const tailSet = options.tailTable.set as unknown as (
+          index: number | bigint,
+          value: CallableFunction,
+        ) => void;
+        tailSet.call(options.tailTable, address, tail!);
+      }
+    }
+    replayFunctionsBySlot.set(index, wrapped);
+    replaySlotsByFunction.set(wrapped, index);
+    rememberPointer(fn, index);
+    rememberPointer(wrapped, index);
+    return index;
+  }
   function functionPointer(fn: CallableFunction): bigint {
     const wrapped = callable(fn);
-    const old = functionPointers.get(wrapped);
+    const old = pointerOf(wrapped);
     if (old !== undefined) return old;
+    if (options.replay) {
+      for (const record of records) {
+        if (!record.instance) continue;
+        for (const entry of record.exports) {
+          if (entry.kind !== "function") continue;
+          if (!options.replay.functionSlots.get(record.name)?.has(entry.name)) continue;
+          const exported = record.instance.exports[entry.name];
+          if (typeof exported === "function" && (exported === fn || callable(exported) === wrapped))
+            return installReplayFunction(record, entry.name, exported);
+        }
+      }
+      throw new Error("function is missing from the Worker replay snapshot");
+    }
     for (const record of records)
       for (
         let index = record.tableBase;
@@ -655,13 +897,37 @@ export function link_dylink_graph(options: {
     const tailSet = options.tailTable?.set as
       | ((index: number | bigint, value: null) => void)
       | undefined;
-    for (let index = tableArena.cursor; index < extra.tableEnd; index++) {
+    const clearTableIndex = (index: bigint) => {
+      if (options.replay?.deferTableWrites) {
+        stagedTableWrites.set(
+          index,
+          Object.freeze({ index, value: null, tailValue: options.tailTable ? null : undefined }),
+        );
+        return;
+      }
       const address = word(index, tableArena.address);
       set.call(table, address, null);
       tailSet?.call(options.tailTable!, address, null);
+    };
+    if (options.replay) {
+      for (const record of fresh)
+        for (
+          let index = record.tableBase;
+          index < record.tableBase + BigInt(record.metadata.tableSize);
+          index++
+        )
+          clearTableIndex(index);
+      for (const [moduleName, slots] of options.replay.functionSlots) {
+        const record = modules.get(moduleName)!;
+        if (record.instance) continue;
+        for (const index of slots.values()) clearTableIndex(index);
+      }
+    } else {
+      for (let index = tableArena.cursor; index < extra.tableEnd; index++) clearTableIndex(index);
     }
     for (const record of fresh) {
-      new Uint8Array(memory.buffer, Number(record.base), record.metadata.memorySize).fill(0);
+      if (!options.replay)
+        new Uint8Array(memory.buffer, Number(record.base), record.metadata.memorySize).fill(0);
       const imports: WebAssembly.Imports = Object.create(null);
       for (const entry of record.imports) {
         const group = (imports[entry.module] ??= Object.create(null));
@@ -741,7 +1007,7 @@ export function link_dylink_graph(options: {
         ? options.execution.instantiate(record.name, instantiate)
         : instantiate();
       options.execution?.register(record.name, record.instance);
-      options.execution?.settleTable();
+      if (!options.replay?.deferTableWrites) options.execution?.settleTable();
       // Publish each provider immediately, as the previous late JS lookup did.
       // A later start section can call an earlier module through this edge.
       for (const { providerName, target } of forwards.get(record) ?? []) {
@@ -752,6 +1018,20 @@ export function link_dylink_graph(options: {
       forwards.delete(record);
     }
     if (forwards.size) throw new Error("unavailable dynamic function provider");
+    if (options.replay) {
+      for (const [moduleName, slots] of options.replay.functionSlots) {
+        const record = modules.get(moduleName)!;
+        for (const [name, index] of slots) {
+          const entry = record.exports.find((item) => item.name === name);
+          const fn = record.instance?.exports[name];
+          if (!entry || entry.kind !== "function" || typeof fn !== "function")
+            throw new Error(`replay function export is unavailable: ${moduleName}.${name}`);
+          if (index !== options.replay.functionSlots.get(moduleName)?.get(name))
+            throw new Error(`invalid replay function slot: ${moduleName}.${name}`);
+          installReplayFunction(record, name, fn);
+        }
+      }
+    }
     for (const { entry, global } of got) {
       const symbol = symbols.get(entry.name);
       if (!symbol) continue; // Weak undefined GOT retains null.
@@ -795,15 +1075,17 @@ export function link_dylink_graph(options: {
       )
         throw new Error("initial TLS image is outside its module data");
     }
-    for (const record of fresh) {
-      const relocations = ["__wasm_apply_data_relocs"];
-      if (options.initialThreadLocalTls)
-        relocations.push("__wasm_apply_tls_relocs", "__wasm_apply_global_tls_relocs");
-      for (const name of relocations) {
-        const relocate = record.instance!.exports[name];
-        if (typeof relocate === "function") {
-          callable(relocate)();
-          options.execution?.settleTable();
+    if (!options.replay) {
+      for (const record of fresh) {
+        const relocations = ["__wasm_apply_data_relocs"];
+        if (options.initialThreadLocalTls)
+          relocations.push("__wasm_apply_tls_relocs", "__wasm_apply_global_tls_relocs");
+        for (const name of relocations) {
+          const relocate = record.instance!.exports[name];
+          if (typeof relocate === "function") {
+            callable(relocate)();
+            options.execution?.settleTable();
+          }
         }
       }
     }
@@ -877,6 +1159,12 @@ export function link_dylink_graph(options: {
   };
   return {
     order,
+    get replayTableWrites(): ReadonlyArray<DylinkReplayTableWrite> {
+      return Object.freeze([...stagedTableWrites.values()]);
+    },
+    get replayFunctionPointers(): ReadonlyMap<CallableFunction, bigint> {
+      return new Map(stagedFunctionPointers);
+    },
     layout: { ...layout, tableEnd: extra.tableEnd },
     instances: new Map(order.map((name) => [name, modules.get(name)!.instance!])),
     records: new Map(

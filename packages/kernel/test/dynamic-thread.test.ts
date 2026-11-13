@@ -11,10 +11,21 @@ import {
   dynamic_process_value,
   dynamic_thread_clone_allowed,
   run_dynamic_thread_clone,
+  release_dynamic_loader_claim,
+  restore_dynamic_table,
+  snapshot_dynamic_table,
 } from "../src/dynamic-thread.ts";
 import type { UserContext, WasmAddress } from "../src/wasm.ts";
 
 const module = new WebAssembly.Module(new Uint8Array([0, 97, 115, 109, 1, 0, 0, 0]));
+const tableFixture = new WebAssembly.Instance(
+  new WebAssembly.Module(
+    new Uint8Array([
+      0, 97, 115, 109, 1, 0, 0, 0, 1, 5, 1, 0x60, 0, 1, 0x7f, 3, 3, 2, 0, 0, 7, 9, 2, 1, 0x66, 0, 0,
+      1, 0x67, 0, 1, 10, 11, 2, 4, 0, 0x41, 1, 0x0b, 4, 0, 0x41, 2, 0x0b,
+    ]),
+  ),
+).exports as { f: CallableFunction; g: CallableFunction };
 const CLONE_VM = 0x100;
 const CLONE_THREAD = 0x10000;
 
@@ -161,6 +172,79 @@ test("loader and first thread claims are mutually exclusive in either order", ()
   );
   assert.equal(claim_dynamic_loader(threadFirst), false);
   assert.equal(dynamic_process_is_threaded(threadFirst), true);
+});
+
+test("a rejected pristine replay bootstrap releases only its loader claim to the legacy clone path", () => {
+  const state = create_dynamic_process_state();
+  assert.equal(dynamic_process_is_pristine(state), true);
+
+  assert.equal(
+    claim_dynamic_loader(state),
+    true,
+    "first clone temporarily claims loader ownership",
+  );
+  assert.equal(dynamic_process_value(state), -1);
+  assert.equal(
+    release_dynamic_loader_claim(state),
+    true,
+    "unsupported replay releases its own claim",
+  );
+  assert.equal(dynamic_process_value(state), 0);
+
+  assert.equal(
+    run_dynamic_thread_clone(state, "i32", () => 0),
+    0,
+  );
+  assert.equal(dynamic_process_is_threaded(state), true);
+  assert.equal(
+    release_dynamic_loader_claim(state),
+    false,
+    "a published thread state is never reset",
+  );
+});
+
+test("a failed legacy clone after replay fallback leaves the loader retryable", () => {
+  const state = create_dynamic_process_state();
+  assert.equal(claim_dynamic_loader(state), true);
+  assert.equal(release_dynamic_loader_claim(state), true);
+
+  assert.equal(
+    run_dynamic_thread_clone(state, "i64", () => -11n),
+    -11n,
+  );
+  assert.equal(dynamic_process_value(state), 0);
+  assert.equal(claim_dynamic_loader(state), true, "a later dlopen can reclaim the idle loader");
+});
+
+test("loader rollback snapshots and restores table32 and table64 indices at their ABI width", () => {
+  for (const address of ["i32", "i64"] as const) {
+    const table = new WebAssembly.Table({
+      element: "anyfunc",
+      initial: address === "i64" ? 2n : 2,
+      address,
+    } as unknown as WebAssembly.TableDescriptor);
+    const first = tableFixture.f;
+    const replacement = tableFixture.g;
+    const added = tableFixture.g;
+    const index = (value: number) => (address === "i64" ? BigInt(value) : value);
+    const set = table.set as unknown as (
+      slot: number | bigint,
+      fn: CallableFunction | null,
+    ) => void;
+    const get = table.get as unknown as (slot: number | bigint) => CallableFunction | null;
+
+    set.call(table, index(0), first);
+    const snapshot = snapshot_dynamic_table(table, address);
+    set.call(table, index(0), replacement);
+    const grow = table.grow as unknown as (delta: number | bigint) => number | bigint;
+    grow.call(table, address === "i64" ? 1n : 1);
+    set.call(table, index(2), added);
+
+    restore_dynamic_table(table, address, snapshot);
+    assert.equal(get.call(table, index(0)), first);
+    assert.equal(get.call(table, index(1)), null);
+    assert.equal(get.call(table, index(2)), null);
+  }
 });
 
 test("missing process state fails with the existing unsupported-operation errno", () => {

@@ -89,14 +89,33 @@ import {
   type WasmGlobalImport,
 } from "./wasm_binary.ts";
 import { ProcessDylink } from "./dylink_process.ts";
+import { DylinkWorkerRuntime } from "./dylink_worker_runtime.ts";
+import {
+  DylinkWorkerChannel,
+  DylinkWorkerChannelError,
+  type DylinkWorkerAdmissionToken,
+  type DylinkWorkerChannelResult,
+} from "./dylink_worker_channel.ts";
+import {
+  DylinkWorkerSnapshotError,
+  prepare_dylink_worker_snapshot,
+  validate_dylink_worker_snapshot,
+  type DylinkWorkerSnapshot,
+} from "./dylink_process_worker.ts";
 import { prepare_dylink_call_metadata } from "./dylink_call_metadata.ts";
 import { DynamicVforkState, dynamic_vfork_allowed } from "./dynamic-vfork.ts";
 import {
+  DYNAMIC_LOADER_CLAIMED,
   claim_dynamic_loader,
   create_dynamic_process_state,
+  dynamic_process_has_replay,
   dynamic_process_value,
   dynamic_thread_clone_allowed,
+  publish_dynamic_replay_ready,
+  release_dynamic_loader_claim,
+  restore_dynamic_table,
   run_dynamic_thread_clone,
+  snapshot_dynamic_table,
 } from "./dynamic-thread.ts";
 import { encode_linux_string } from "./linux-string.ts";
 import { user_function_imports_supported } from "./user-functions.ts";
@@ -129,8 +148,10 @@ export interface InitMessage {
   memory: WebAssembly.Memory;
   kernel_address: WasmAddressType;
   user: UserContext | null;
-  /** One-shot user-memory copy result: 0 pending, 1 complete, negative errno. */
+  /** One-shot COPY or shared-Worker preparation result: 0 pending, 1 complete, negative errno. */
   user_copy_status: UserCopyStatus | null;
+  /** Wait until a shared-memory callback Worker has reconstructed dynamic state. */
+  shared_user_prepare?: boolean;
   copy_fault?: CopyFault;
   fork_profile?: ForkProfileRequest;
 }
@@ -138,8 +159,12 @@ export interface ForwardedInitMessage {
   type: "forwarded_init";
   port: MessagePort;
   user_copy_status: UserCopyStatus | null;
+  shared_user_prepare?: boolean;
   copy_fault?: CopyFault;
   fork_profile?: ForkProfileRequest;
+}
+interface AbortWorkerInitMessage {
+  type: "abort_init";
 }
 export type WorkerMessage =
   | RemoteMemoryMessage
@@ -148,6 +173,7 @@ export type WorkerMessage =
       name: string;
       port: MessagePort;
       user_copy_status: UserCopyStatus | null;
+      shared_user_prepare?: boolean;
       fork_profile?: ForkProfileRequest;
     }
   | { type: "boot_console_write"; message: ArrayBuffer }
@@ -170,6 +196,125 @@ const postMessage = (message: WorkerMessage, transfer?: Transferable[]) =>
   post_endpoint(endpoint, message, transfer);
 const profile_output = (line: string) => postMessage({ type: "fork_profile_record", line });
 
+type WorkerMembership = NonNullable<NonNullable<UserContext["dynamic"]>["worker_membership"]>;
+
+const WORKER_CHANNEL_CAPACITY = 64 * 1024 * 1024;
+const WORKER_CHANNEL_MAX_PARTICIPANTS = 4096;
+const MEMBERSHIP_RETIRE_TIMEOUT_MS = 30_000;
+const ESTALE = -116;
+const EBUSY = -16;
+let membership_retirement_wait: Int32Array<SharedArrayBuffer> | null = null;
+// A future receiver/coordinator service can finish a publication while this
+// Worker is leaving. It must only run protocol work and must never call guest code.
+let service_worker_membership: (() => void) | undefined;
+let service_worker_checkpoint: (() => number) | undefined;
+
+function retry_busy_channel_operation<T>(
+  operation: () => DylinkWorkerChannelResult<T>,
+  waitStatus: UserCopyStatus,
+): DylinkWorkerChannelResult<T> {
+  let result = operation();
+  for (let attempt = 0; !result.ok && result.errno === EBUSY && attempt < 100; attempt++) {
+    // Membership operations hold the shared spin lock only for a few atomic
+    // stores. Yield briefly so another Worker can finish its operation.
+    try {
+      Atomics.wait(waitStatus, 0, Atomics.load(waitStatus, 0), 1);
+    } catch {
+      // The retry remains bounded in runtimes which disallow Atomics.wait.
+    }
+    result = operation();
+  }
+  return result;
+}
+
+let active_worker_membership: WorkerMembership | null = null;
+
+function retire_worker_membership(membership: WorkerMembership): number {
+  try {
+    const channel = DylinkWorkerChannel.attach(membership.shared);
+    const deadline = performance.now() + MEMBERSHIP_RETIRE_TIMEOUT_MS;
+    for (;;) {
+      const cancelled = channel.cancelAdmission(membership.participant);
+      if (cancelled.ok) return 0;
+      if (cancelled.errno !== ESTALE && cancelled.errno !== EBUSY) return cancelled.errno;
+
+      // A stale admission token may already be live. unregister() also permits
+      // non-cohort peers to exit during the owner's resumable cleanup lease.
+      if (cancelled.errno === ESTALE) {
+        const removed = channel.unregister(membership.participant);
+        if (removed.ok || removed.errno === ESTALE) return 0;
+        if (removed.errno !== EBUSY) return removed.errno;
+      }
+      if (performance.now() >= deadline) return EBUSY;
+
+      // The service drives receiver/protocol phases without resuming user code.
+      // Once the publication finishes, a later iteration can unregister safely.
+      service_worker_membership?.();
+      try {
+        membership_retirement_wait ??= new Int32Array(new SharedArrayBuffer(4));
+        Atomics.wait(membership_retirement_wait, 0, 0, 1);
+      } catch {
+        // Keep the retirement deadline bounded if synchronous waiting is absent.
+      }
+    }
+  } catch (error) {
+    console.error("could not retire dynamic Worker membership:", error);
+    return -5;
+  }
+}
+
+function cleanup_active_worker_membership(): number {
+  const membership = active_worker_membership;
+  if (!membership) {
+    service_worker_membership = undefined;
+    service_worker_checkpoint = undefined;
+    return 0;
+  }
+  const error = retire_worker_membership(membership);
+  if (error) {
+    console.error(
+      `dynamic Worker membership could not be retired while its channel is busy (${error})`,
+    );
+    return error;
+  }
+  if (active_worker_membership === membership) active_worker_membership = null;
+  service_worker_membership = undefined;
+  service_worker_checkpoint = undefined;
+  return 0;
+}
+
+function terminate_for_membership_retirement(error: number): void {
+  if (!error) return;
+  console.error("terminating the machine to avoid a stale dynamic Worker cohort");
+  try {
+    postMessage({ type: "terminate_machine", reason: MachineTerminationReason.Panic });
+  } catch (postError) {
+    console.error("could not report dynamic Worker retirement failure:", postError);
+  } finally {
+    // The process is terminating; do not retry this token from a later halt or
+    // HALT_KERNEL unwind after reporting the same fatal condition.
+    active_worker_membership = null;
+    service_worker_membership = undefined;
+    service_worker_checkpoint = undefined;
+  }
+}
+
+function without_worker_membership(user: UserContext | null): UserContext | null {
+  if (!user?.dynamic?.worker_membership) return user;
+  const { worker_membership: _membership, ...dynamic } = user.dynamic;
+  return { ...user, dynamic };
+}
+
+const stop_worker = () => {
+  try {
+    terminate_for_membership_retirement(cleanup_active_worker_membership());
+    service_worker_membership = undefined;
+    postMessage({ type: "worker_exit" });
+  } finally {
+    platform.quit();
+  }
+};
+
 function user_imports({
   kernel_memory,
   kernel_address,
@@ -184,6 +329,7 @@ function user_imports({
   profile?: ForkProfile;
 }): {
   context: UserContext | null;
+  workerCheckpoint(): number;
   prepare(): void;
   applyForkAdvice(): void;
   imports: Imports["user"];
@@ -283,7 +429,92 @@ function user_imports({
     let created: WebAssembly.Instance;
     let dynamic: ProcessDylink | undefined;
     let dynamicOperationDepth = 0;
+    let workerRuntime: DylinkWorkerRuntime | null = null;
+    let workerRuntimeProcess: ProcessDylink | null = null;
+    let workerRuntimeMembership: WorkerMembership | null = null;
+    const workerPause = () => {
+      try {
+        membership_retirement_wait ??= new Int32Array(new SharedArrayBuffer(4));
+        const wait = membership_retirement_wait;
+        Atomics.wait(wait, 0, Atomics.load(wait, 0), 1);
+      } catch {
+        // Some worker hosts disallow Atomics.wait; checkpoint retry remains bounded.
+      }
+    };
+
+    const same_worker_membership = (
+      left: WorkerMembership | null,
+      right: WorkerMembership,
+    ): boolean =>
+      left?.shared === right.shared &&
+      left.participant.slot === right.participant.slot &&
+      left.participant.epoch === right.participant.epoch;
+
+    const current_worker_runtime = (
+      process: ProcessDylink | undefined = dynamic,
+    ): DylinkWorkerRuntime | null => {
+      const dynamicContext = context.dynamic;
+      const membership = dynamicContext?.worker_membership;
+      const notify = kernel_instance.exports.worker_execution_notify_v1;
+      if (
+        !process ||
+        process !== dynamic ||
+        !dynamicContext ||
+        !membership ||
+        !dynamic_process_has_replay(dynamicContext.process_state) ||
+        typeof notify !== "function"
+      ) {
+        return null;
+      }
+
+      if (
+        workerRuntime &&
+        workerRuntimeProcess === process &&
+        workerRuntimeMembership &&
+        same_worker_membership(workerRuntimeMembership, membership)
+      )
+        return workerRuntime;
+
+      const runtime = new DylinkWorkerRuntime({
+        shared: membership.shared,
+        participant: membership.participant,
+        process,
+        fatal(error) {
+          console.error("dynamic Worker checkpoint failed:", error);
+          try {
+            postMessage({ type: "terminate_machine", reason: MachineTerminationReason.Panic });
+          } finally {
+            throw HALT_KERNEL;
+          }
+        },
+        notify: () => notify(),
+        pause: workerPause,
+      });
+      workerRuntime = runtime;
+      workerRuntimeProcess = process;
+      workerRuntimeMembership = membership;
+      active_worker_membership = membership;
+      return runtime;
+    };
+
+    const service_worker_checkpoint_at_boundary = (): number => {
+      const runtime = current_worker_runtime();
+      if (!runtime) return 0;
+      if (signal_depth !== 0 || dynamicOperationDepth !== 0 || dynamic_vfork.blocked(context))
+        return 1;
+      runtime.checkpoint();
+      // Advertise the source, not only observed work: a publication can race
+      // this callback before the kernel enters its bounded wait.
+      return 1;
+    };
+
+    service_worker_checkpoint = service_worker_checkpoint_at_boundary;
+    service_worker_membership = () => {
+      service_worker_checkpoint?.();
+    };
+
     const dynamic_operation = <T>(invoke: () => T): T => {
+      service_worker_checkpoint_at_boundary();
       dynamicOperationDepth++;
       try {
         return invoke();
@@ -347,42 +578,222 @@ function user_imports({
       );
       throw new Error("dynamic process exit returned");
     };
+    const create_dynamic_process = (replay?: DylinkWorkerSnapshot) => {
+      if (!context?.dynamic || !created) throw new Error("dynamic main is not ready");
+      const blocked = () => {
+        const state = dynamic_process_value(context?.dynamic?.process_state);
+        return dynamic_vfork.blocked(context) || (state !== null && state >= 0 && state !== 0);
+      };
+      let process!: ProcessDylink;
+      process = new ProcessDylink({
+        main: created,
+        memory: context.memory,
+        address: context.address,
+        maximumPages: context.maximum_pages,
+        tableType: context.dynamic.table,
+        signatures: context.dynamic.signatures,
+        functionMetadata: context.dynamic.functionMetadata,
+        tagSignatures: context.dynamic.tagSignatures,
+        privateExports: context.dynamic.privateExports,
+        userPoll:
+          poll2 && poll_thread ? { checkpoint, threadPointer: poll_thread.global } : undefined,
+        ...(replay ? { replay } : {}),
+        ...(replay && context.dynamic.worker_publication
+          ? { workerPublicationState: { ...context.dynamic.worker_publication, snapshot: replay } }
+          : {}),
+        blocked,
+        queryBlocked: () => dynamic_vfork.blocked(context),
+        beforeInitializeActive: () => current_worker_runtime(process) !== null,
+        beforeInitialize: (snapshot, ownerRollback) => {
+          current_worker_runtime(process)?.beforeInitialize(snapshot, ownerRollback);
+        },
+        postThread: () => {
+          const state = dynamic_process_value(context?.dynamic?.process_state);
+          return state !== null && state >= 0 && state !== 0;
+        },
+        isControlFlow: control,
+        pinFile: (fd, device, inode) =>
+          file_kernel(() => kernel_instance.exports.dynamic_file_pin_v1!(fd, device, inode)),
+        unpinFile: (id) => file_kernel(() => kernel_instance.exports.dynamic_file_unpin_v1!(id)),
+        fatal,
+      });
+      return process;
+    };
     const loader = () => {
       try {
         if (!context.dynamic || !created) throw new Error("dynamic main is not ready");
-        if (dynamic) return dynamic;
+        if (dynamic) {
+          // A replay-unsupported first-thread attempt can retain this valid
+          // ProcessDylink while releasing its temporary claim so the legacy
+          // clone path remains available. Reclaim before a later dlopen so a
+          // clone cannot race a graph mutation.
+          if (
+            dynamic_process_value(context.dynamic.process_state) === 0 &&
+            !claim_dynamic_loader(context.dynamic.process_state)
+          ) {
+            dynamicError = "dynamic loader initialization is already in progress";
+            return null;
+          }
+          return dynamic;
+        }
         if (dynamicBlocked() || !claim_dynamic_loader(context.dynamic.process_state)) {
           if (dynamicError === "Dynamic loader failure")
             dynamicError = "dynamic loader initialization is already in progress";
           return null;
         }
-        dynamic = new ProcessDylink({
-          main: created,
-          memory: context.memory,
-          address: context.address,
-          maximumPages: context.maximum_pages,
-          tableType: context.dynamic.table,
-          signatures: context.dynamic.signatures,
-          functionMetadata: context.dynamic.functionMetadata,
-          tagSignatures: context.dynamic.tagSignatures,
-          privateExports: context.dynamic.privateExports,
-          userPoll:
-            poll2 && poll_thread ? { checkpoint, threadPointer: poll_thread.global } : undefined,
-          blocked: () => {
-            const state = dynamic_process_value(context?.dynamic?.process_state);
-            return dynamic_vfork.blocked(context) || (state !== null && state >= 0 && state !== 0);
-          },
-          isControlFlow: control,
-          pinFile: (fd, device, inode) =>
-            file_kernel(() => kernel_instance.exports.dynamic_file_pin_v1!(fd, device, inode)),
-          unpinFile: (id) => file_kernel(() => kernel_instance.exports.dynamic_file_unpin_v1!(id)),
-          fatal,
-        });
+        dynamic = create_dynamic_process();
         return dynamic;
       } catch (error) {
         if (control(error)) throw error;
         return fatal(error);
       }
+    };
+    const snapshot_error_errno = (error: unknown): number => {
+      if (error instanceof DylinkWorkerSnapshotError) {
+        if (error.code === "ENOMEM") return 12;
+        if (error.code === "EINVAL") return 22;
+        return 95;
+      }
+      if (error instanceof DylinkWorkerChannelError) return Math.abs(error.errno);
+      console.error("dynamic Worker graph snapshot failed:", error);
+      return 5; // EIO: preserve an actionable diagnostic without admitting a child.
+    };
+    const prepare_dynamic_thread_snapshot = (): number => {
+      let state = dynamic_process_value(context?.dynamic?.process_state);
+      if (!context?.dynamic || state === null) return 95;
+
+      let ownsInitialLoaderClaim = false;
+      if (state === 0 && typeof kernel_instance.exports.worker_execution_notify_v1 === "function") {
+        if (claim_dynamic_loader(context.dynamic.process_state)) {
+          ownsInitialLoaderClaim = true;
+          if (!dynamic) {
+            const table = created.exports.__indirect_function_table;
+            if (!(table instanceof WebAssembly.Table)) {
+              if (!release_dynamic_loader_claim(context.dynamic.process_state)) return 95;
+              return 0;
+            }
+
+            // ProcessDylink's constructor settles wrappers into the main
+            // function table but does not grow a table or write guest memory.
+            // Keep the original slots so a constructor failure can restore
+            // the pristine no-loader thread path.
+            let originalTableSnapshot: ReturnType<typeof snapshot_dynamic_table>;
+            try {
+              originalTableSnapshot = snapshot_dynamic_table(table, context.dynamic.table.address);
+            } catch (error) {
+              const released = release_dynamic_loader_claim(context.dynamic.process_state);
+              if (control(error)) throw error;
+              return released ? 0 : 95;
+            }
+
+            const restoreInitialTable = () =>
+              restore_dynamic_table(table, context.dynamic!.table.address, originalTableSnapshot);
+
+            dynamicOperationDepth++;
+            try {
+              dynamic = create_dynamic_process();
+            } catch (error) {
+              try {
+                restoreInitialTable();
+              } catch (restoreError) {
+                return fatal(
+                  new Error("could not restore the main table after loader initialization", {
+                    cause: restoreError,
+                  }),
+                );
+              } finally {
+                dynamicOperationDepth--;
+              }
+              const released = release_dynamic_loader_claim(context.dynamic.process_state);
+              if (control(error)) throw error;
+              return released ? 0 : 95;
+            }
+            dynamicOperationDepth--;
+          }
+          state = DYNAMIC_LOADER_CLAIMED;
+        } else {
+          // If another operation completed or rolled back while this request
+          // was reaching the claim, preserve the normal no-replay clone path.
+          state = dynamic_process_value(context.dynamic.process_state);
+          if (state === null) return 95;
+          if (state >= 0) return 0;
+          return 95;
+        }
+      }
+
+      if (state === DYNAMIC_LOADER_CLAIMED) {
+        // A claimed loader with no ProcessDylink object is still initializing.
+        // The clone gate must not publish a partially constructed graph.
+        if (!dynamic) return 95;
+        dynamicOperationDepth++;
+        try {
+          dynamic.discardWorkerPublicationBeforeThreads();
+          const publication = dynamic.initializeWorkerPublication(crypto.randomUUID());
+
+          const previousMembership = context.dynamic.worker_membership;
+          if (previousMembership) {
+            const retireError = retire_worker_membership(previousMembership);
+            if (retireError) return -retireError;
+            if (active_worker_membership === previousMembership) active_worker_membership = null;
+          }
+
+          const channel = new DylinkWorkerChannel(
+            WORKER_CHANNEL_CAPACITY,
+            WORKER_CHANNEL_MAX_PARTICIPANTS,
+          );
+          const registered = channel.register();
+          if (!registered.ok) return -registered.errno;
+          const membership: WorkerMembership = {
+            shared: channel.shared,
+            participant: registered.value,
+          };
+
+          context.dynamic.worker_snapshot = publication.snapshot;
+          context.dynamic.worker_publication = {
+            processIdentity: publication.processIdentity,
+            generation: publication.generation,
+          };
+          context.dynamic.worker_membership = membership;
+          active_worker_membership = membership;
+        } catch (error) {
+          if (
+            ownsInitialLoaderClaim &&
+            error instanceof DylinkWorkerSnapshotError &&
+            error.code === "EOPNOTSUPP"
+          ) {
+            try {
+              dynamic.discardWorkerPublicationBeforeThreads();
+            } catch (discardError) {
+              return snapshot_error_errno(discardError);
+            }
+            return release_dynamic_loader_claim(context.dynamic.process_state) ? 0 : 95;
+          }
+          return snapshot_error_errno(error);
+        } finally {
+          dynamicOperationDepth--;
+        }
+        return publish_dynamic_replay_ready(context.dynamic.process_state) ? 0 : 95;
+      }
+
+      if (dynamic_process_has_replay(context.dynamic.process_state)) {
+        if (
+          context.dynamic.worker_snapshot === undefined ||
+          context.dynamic.worker_membership === undefined
+        )
+          return 95;
+        try {
+          validate_dylink_worker_snapshot(context.dynamic.worker_snapshot);
+        } catch (error) {
+          return snapshot_error_errno(error);
+        }
+        return 0;
+      }
+
+      // Any nonnegative state without REPLAY_READY means the loader never
+      // claimed a graph. This includes a sibling's in-flight first clone, so
+      // nested callback creation does not race its success-bit publication.
+      if (state >= 0) return 0;
+      return 95;
     };
     const syscall =
       (layout: CloneSyscallLayout) =>
@@ -395,6 +806,7 @@ function user_imports({
         arg4: WasmAddress,
         arg5: WasmAddress,
       ) => {
+        service_worker_checkpoint_at_boundary();
         const strict = kernel_instance.exports.seccomp_strict_v1?.() === 1;
         const clone = nr === 220 || nr === 220n;
         const clone3 = nr === 435 || nr === 435n;
@@ -431,6 +843,10 @@ function user_imports({
               typeof SharedArrayBuffer !== "undefined" &&
               context.memory.buffer instanceof SharedArrayBuffer,
           });
+        if (dynamicThread) {
+          const error = prepare_dynamic_thread_snapshot();
+          if (error) return kernel_address === "i64" ? -BigInt(error) : -error;
+        }
         // Strict seccomp always reaches the actual kernel entry first. Outside
         // strict mode, dynamic images admit only the selected callback vfork
         // and shared pthread clone shapes.
@@ -468,11 +884,13 @@ function user_imports({
         // Other startup syscalls may still see the old exec image's TP.
         // Always read the kernel value, never a possibly rejected argument.
         if (nr === 244 || nr === 244n || nr === 178 || nr === 178n) poll_thread?.refresh();
+        service_worker_checkpoint_at_boundary();
         return ret;
       };
     const checkpoint = () => {
       if (!created) return -95;
       if (fork && !fork.userPollAllowed(signal_depth !== 0)) return 0;
+      service_worker_checkpoint_at_boundary();
       const before = instance;
       const invoke = () =>
         call_user_poll(
@@ -499,9 +917,12 @@ function user_imports({
         abi: () => 1,
         link_map_abi: () => 1,
         open: (path: WasmAddress, flags: number) =>
-          dynamic_operation(
-            () => loader()?.open(path, flags) ?? wasm_address_from_number(0, kernel_address),
-          ),
+          dynamic_operation(() => {
+            const runtime = current_worker_runtime();
+            if (runtime && signal_depth === 0 && !dynamic_vfork.blocked(context))
+              return runtime.open(path, flags);
+            return loader()?.open(path, flags) ?? wasm_address_from_number(0, kernel_address);
+          }),
         symbol: (handle: WasmAddress, name: WasmAddress) =>
           dynamic_operation(
             () => loader()?.symbol(handle, name) ?? wasm_address_from_number(0, kernel_address),
@@ -602,6 +1023,15 @@ function user_imports({
       },
       linux_signal_cancel_v1: { abi: () => 1 },
     });
+    if (context.dynamic?.worker_snapshot !== undefined) {
+      // A shared callback Worker gets a new module instance, table, and loader
+      // object. Reconstruct the published graph before the kernel makes its
+      // callback runnable; the snapshot is clone-safe and contains no shared
+      // data writes, constructors, or relocations to replay.
+      const replay = prepare_dylink_worker_snapshot(context.dynamic.worker_snapshot);
+      context.dynamic.worker_snapshot = replay;
+      dynamic = create_dynamic_process(replay);
+    }
     if (
       WebAssembly.Module.imports(context.module).some(
         (entry) => entry.module === "linux_user_poll_v1" || entry.module === "linux_user_poll_v2",
@@ -620,8 +1050,16 @@ function user_imports({
   function instantiate(fresh_memory: boolean): void {
     if (fresh_memory) {
       assert(pending);
+      const retirementError = cleanup_active_worker_membership();
+      if (retirementError) {
+        terminate_for_membership_retirement(retirementError);
+        throw HALT_KERNEL;
+      }
       context = pending;
       pending = null;
+      active_worker_membership = context.dynamic?.worker_membership ?? null;
+      service_worker_membership = undefined;
+      service_worker_checkpoint = undefined;
       call_entry = call_start;
       thread_entry = undefined;
     }
@@ -693,6 +1131,9 @@ function user_imports({
     },
     get context() {
       return dynamic_vfork.context(context);
+    },
+    workerCheckpoint() {
+      return service_worker_checkpoint?.() ?? 0;
     },
     prepare() {
       if (parent) instantiate(false);
@@ -1171,19 +1612,34 @@ function start({
   kernel_address,
   user: initial_user_context,
   user_copy_status,
+  shared_user_prepare = false,
   copy_fault,
   fork_profile,
 }: InitMessage) {
   const profile = create_fork_profile(fork_profile, profile_output);
   if (profile) postMessage({ type: "fork_profile_started" });
+  let user_context = shared_user_prepare
+    ? initial_user_context
+    : without_worker_membership(initial_user_context);
+  active_worker_membership = shared_user_prepare
+    ? (user_context?.dynamic?.worker_membership ?? null)
+    : null;
   const cancelled = () => {
     if (!user_copy_failed(user_copy_status)) return false;
-    postMessage({ type: "worker_exit" });
-    platform.quit();
+    stop_worker();
     return true;
   };
   if (cancelled()) return;
-  if (user_copy_status) inject_copy_fault(copy_fault, "initialize");
+  if (
+    shared_user_prepare &&
+    (!user_copy_status ||
+      !user_context?.dynamic?.worker_snapshot ||
+      !user_context.dynamic.worker_membership)
+  )
+    throw new Error(
+      "shared dynamic Worker preparation has no replay snapshot, membership, or acknowledgement",
+    );
+  if (user_copy_status && !shared_user_prepare) inject_copy_fault(copy_fault, "initialize");
   // Refresh every WebAssembly.Memory received across a worker boundary
   // immediately, including any future additions to InitMessage. Chromium can
   // retain the fixed-length buffer wrapper captured before another isolate
@@ -1193,8 +1649,7 @@ function start({
     refresh_memory(initial_user_context.memory, initial_user_context.address);
   }
 
-  let user_context = initial_user_context;
-  if (user_copy_status) {
+  if (user_copy_status && !shared_user_prepare) {
     assert(user_context);
     // fork.c permits COPY only for a single-user mm. The caller blocks until
     // publication or timeout; a timed-out copy must never be published. Allocate here so the
@@ -1215,8 +1670,7 @@ function start({
       user_context = { ...user_context, ...copied };
     } catch {
       settle_user_copy(user_copy_status, USER_COPY_NO_MEMORY);
-      postMessage({ type: "worker_exit" });
-      platform.quit();
+      stop_worker();
       return;
     }
   }
@@ -1270,35 +1724,135 @@ function start({
       address: kernel_address,
       is_worker: true,
       memory,
-      spawn_worker(fn, arg, name, user, copy_user_memory): number {
-        const direct = new MessageChannel();
-        const user_copy_status = copy_user_memory
-          ? new Int32Array(new SharedArrayBuffer(4 * copy_status_words()))
-          : null;
+      worker_checkpoint: user.workerCheckpoint,
+      spawn_worker(fn, arg, name, user, copy_user_memory, shared_user_prepare): number {
+        let channel: MessageChannel | undefined;
+        let user_copy_status: UserCopyStatus | null;
+        try {
+          channel = new MessageChannel();
+          user_copy_status =
+            copy_user_memory || shared_user_prepare
+              ? new Int32Array(new SharedArrayBuffer(4 * copy_status_words()))
+              : null;
+        } catch (error) {
+          console.error("could not allocate callback Worker handoff:", error);
+          channel?.port1.close();
+          channel?.port2.close();
+          return -12;
+        }
+        if (!channel) return -12;
+        const direct = channel;
+        let admissionChannel: DylinkWorkerChannel | null = null;
+        let admissionToken: DylinkWorkerAdmissionToken | null = null;
+        let admissionPending = false;
+        let childUser = shared_user_prepare ? user : without_worker_membership(user);
+        const cancelAdmission = (error: number) => {
+          // Publish failure before withdrawing the token so a late child cannot
+          // enter its guest callback after timeout or handoff failure.
+          if (user_copy_status) settle_user_copy(user_copy_status, error);
+          if (!admissionPending || !admissionChannel || !admissionToken) return;
+          const cancelled = retry_busy_channel_operation(
+            () => admissionChannel!.cancelAdmission(admissionToken!),
+            user_copy_status!,
+          );
+          if (!cancelled.ok && cancelled.errno !== ESTALE) {
+            console.error("could not cancel dynamic Worker admission:", cancelled.errno);
+          }
+          admissionPending = false;
+        };
+
+        if (shared_user_prepare) {
+          const dynamic = user?.dynamic;
+          const membership = dynamic?.worker_membership;
+          if (!user || !dynamic || !membership || !user_copy_status) {
+            cancelAdmission(-95);
+            direct.port1.close();
+            direct.port2.close();
+            return -95;
+          }
+          try {
+            admissionChannel = DylinkWorkerChannel.attach(membership.shared);
+            const admission = admissionChannel.beginAdmission();
+            if (!admission.ok) {
+              settle_user_copy(user_copy_status, admission.errno);
+              direct.port1.close();
+              direct.port2.close();
+              return admission.errno;
+            }
+            admissionToken = admission.value;
+            admissionPending = true;
+            childUser = {
+              ...user,
+              dynamic: {
+                ...dynamic,
+                worker_membership: {
+                  shared: membership.shared,
+                  participant: admissionToken,
+                },
+              },
+            };
+          } catch (error) {
+            const errno = error instanceof DylinkWorkerChannelError ? -Math.abs(error.errno) : -5;
+            settle_user_copy(user_copy_status, errno);
+            direct.port1.close();
+            direct.port2.close();
+            return errno;
+          }
+        }
+
         const fork_profile = copy_user_memory ? new_fork_profile_request() : undefined;
         const parent_profile = create_fork_profile(fork_profile, profile_output);
-        postMessage(
-          {
-            type: "spawn_worker",
-            name,
-            port: direct.port1,
+        try {
+          postMessage(
+            {
+              type: "spawn_worker",
+              name,
+              port: direct.port1,
+              user_copy_status,
+              shared_user_prepare,
+              ...(fork_profile ? { fork_profile } : {}),
+            },
+            [direct.port1],
+          );
+        } catch (error) {
+          console.error("could not publish callback Worker:", error);
+          cancelAdmission(-11);
+          direct.port1.close();
+          direct.port2.close();
+          return -11;
+        }
+        try {
+          direct.port2.postMessage({
+            type: "init",
+            fn,
+            arg,
+            vmlinux,
+            memory,
+            kernel_address,
+            user: childUser,
             user_copy_status,
+            shared_user_prepare,
             ...(fork_profile ? { fork_profile } : {}),
-          },
-          [direct.port1],
-        );
-        direct.port2.postMessage({
-          type: "init",
-          fn,
-          arg,
-          vmlinux,
-          memory,
-          kernel_address,
-          user,
-          user_copy_status,
-          ...(fork_profile ? { fork_profile } : {}),
-        } satisfies InitMessage);
-        if (!user_copy_status) return 0;
+          } satisfies InitMessage);
+        } catch (error) {
+          console.error("could not send callback Worker initialization:", error);
+          cancelAdmission(-11);
+          try {
+            direct.port2.postMessage({ type: "abort_init" } satisfies AbortWorkerInitMessage);
+          } catch {
+            direct.port2.close();
+          }
+          return -11;
+        }
+        if (!user_copy_status) {
+          if (admissionPending) {
+            // A shared replay always needs an acknowledgement. Keep a malformed
+            // caller from leaving a pending slot that blocks every writer.
+            cancelAdmission(-5);
+            return -5;
+          }
+          return 0;
+        }
         const schedule = instance.exports.copy_worker_wait;
         let scheduling_points = 0;
         const cooperate =
@@ -1314,11 +1868,35 @@ function start({
                     () => Atomics.load(user_copy_status, 0) === USER_COPY_COMPLETE,
                   )
               : schedule;
-        const result = parent_profile
-          ? parent_profile.wait(() => wait_user_copy(user_copy_status, 30_000, cooperate))
-          : wait_user_copy(user_copy_status, 30_000, cooperate);
-        require_copy_wait_progress(user_copy_status, scheduling_points);
-        join_copy_timeout(user_copy_status);
+        let result: number;
+        try {
+          result = parent_profile
+            ? parent_profile.wait(() => wait_user_copy(user_copy_status, 30_000, cooperate))
+            : wait_user_copy(user_copy_status, 30_000, cooperate);
+          require_copy_wait_progress(user_copy_status, scheduling_points);
+          join_copy_timeout(user_copy_status);
+        } catch (error) {
+          cancelAdmission(-11);
+          throw error;
+        }
+
+        if (admissionPending && admissionChannel && admissionToken) {
+          if (result === USER_COPY_COMPLETE) {
+            const completed = retry_busy_channel_operation(
+              () => admissionChannel!.completeAdmission(admissionToken!),
+              user_copy_status,
+            );
+            admissionPending = false;
+            if (!completed.ok && completed.errno !== ESTALE) {
+              // Replay already succeeded and the child may be running. Losing
+              // its cohort membership now is an internal consistency failure.
+              console.error("could not complete dynamic Worker admission:", completed.errno);
+              postMessage({ type: "terminate_machine", reason: MachineTerminationReason.Panic });
+            }
+          } else {
+            cancelAdmission(result < 0 ? result : -11);
+          }
+        }
         if (result === USER_COPY_COMPLETE) parent_profile?.parentReady();
         return result === USER_COPY_COMPLETE ? 0 : result;
       },
@@ -1338,6 +1916,9 @@ function start({
         return user.context;
       },
       worker_exit() {
+        terminate_for_membership_retirement(cleanup_active_worker_membership());
+        service_worker_membership = undefined;
+        service_worker_checkpoint = undefined;
         postMessage({ type: "worker_exit" });
       },
     }),
@@ -1355,23 +1936,34 @@ function start({
   const instance = profile
     ? profile.measure("kernel_instance_ns", instantiate_kernel)
     : instantiate_kernel();
-  if (profile) profile.measure("user_instance_ns", () => user.prepare());
-  else user.prepare();
-  if (user_copy_status) {
+  try {
+    if (profile) profile.measure("user_instance_ns", () => user.prepare());
+    else user.prepare();
+  } catch (error) {
+    if (!shared_user_prepare || !user_copy_status) throw error;
+    let errno = 5; // EIO for an unexpected replay implementation failure.
+    if (error instanceof DylinkWorkerSnapshotError) {
+      errno = error.code === "ENOMEM" ? 12 : error.code === "EINVAL" ? 22 : 95;
+    } else {
+      console.error("dynamic Worker graph replay failed:", error);
+    }
+    settle_user_copy(user_copy_status, -errno);
+    stop_worker();
+    return;
+  }
+  if (user_copy_status && !shared_user_prepare) {
     try {
       user.applyForkAdvice();
     } catch {
       settle_user_copy(user_copy_status, USER_COPY_NO_MEMORY);
-      postMessage({ type: "worker_exit" });
-      platform.quit();
+      stop_worker();
       return;
     }
     pause_copy_publication(copy_fault, user_copy_status);
   }
   if (user_copy_status && !settle_user_copy(user_copy_status, USER_COPY_COMPLETE)) {
     acknowledge_copy_timeout(copy_fault, user_copy_status);
-    postMessage({ type: "worker_exit" });
-    platform.quit();
+    stop_worker();
     return;
   }
   profile?.childReady();
@@ -1380,6 +1972,26 @@ function start({
   } catch (error) {
     if (error === HALT_KERNEL) return;
     throw error;
+  }
+}
+
+function start_with_shared_ack(init: InitMessage): void {
+  try {
+    start(init);
+  } catch (error) {
+    if (!init.shared_user_prepare || !init.user_copy_status) throw error;
+    const status = Atomics.load(init.user_copy_status, 0);
+    if (status === USER_COPY_COMPLETE) {
+      // The replay acknowledgement was already published; this is now an
+      // unexpected failure in the admitted child, so retire its live token and
+      // preserve the original failure for the Worker host.
+      terminate_for_membership_retirement(cleanup_active_worker_membership());
+      service_worker_membership = undefined;
+      throw error;
+    }
+    console.error("shared dynamic Worker preparation failed:", error);
+    if (status === 0) settle_user_copy(init.user_copy_status, -5); // EIO: never publish an unprepared child.
+    stop_worker();
   }
 }
 
@@ -1393,12 +2005,26 @@ listen_endpoint(endpoint, {
     if (message.type === "forwarded_init") {
       message.port.onmessage = ({ data }) => {
         message.port.close();
-        start({ ...(data as InitMessage), copy_fault: message.copy_fault });
+        if (
+          data !== null &&
+          typeof data === "object" &&
+          (data as AbortWorkerInitMessage).type === "abort_init"
+        ) {
+          if (message.user_copy_status) settle_user_copy(message.user_copy_status, -11);
+          stop_worker();
+          return;
+        }
+        const init = data as InitMessage;
+        start_with_shared_ack({
+          ...init,
+          shared_user_prepare: message.shared_user_prepare ?? init.shared_user_prepare,
+          copy_fault: message.copy_fault,
+        });
       };
       message.port.start();
       return;
     }
 
-    start(message);
+    start_with_shared_ack(message);
   },
 });

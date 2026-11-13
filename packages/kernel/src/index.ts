@@ -353,6 +353,7 @@ export async function bootMachine(options: BootMachineOptions): Promise<Machine>
                   type: "forwarded_init",
                   port: message.port,
                   user_copy_status: message.user_copy_status,
+                  shared_user_prepare: message.shared_user_prepare,
                   ...(message.fork_profile ? { fork_profile: message.fork_profile } : {}),
                 });
               } catch (error) {
@@ -423,8 +424,10 @@ export async function bootMachine(options: BootMachineOptions): Promise<Machine>
       });
       spawn_profile?.workerConstructed();
       try {
-        const copy_fault = init.user_copy_status ? next_copy_fault() : null;
-        if (init.user_copy_status) mark_copy_timeout(init.user_copy_status, copy_fault);
+        const copy_fault =
+          init.user_copy_status && !init.shared_user_prepare ? next_copy_fault() : null;
+        if (init.user_copy_status && !init.shared_user_prepare)
+          mark_copy_timeout(init.user_copy_status, copy_fault);
         post_worker_init(
           workers,
           worker,
@@ -443,10 +446,12 @@ export async function bootMachine(options: BootMachineOptions): Promise<Machine>
       name: string,
       user: UserContext | null,
       copy_user_memory: boolean,
+      shared_user_prepare: boolean,
     ) => {
       // COPY originates only from userspace clone in a worker; never block the
       // browser's main agent waiting for a memory snapshot.
       assert(!copy_user_memory);
+      assert(!shared_user_prepare, "main-thread kernel cannot prepare a shared dynamic Worker");
       start_worker(name, {
         type: "init",
         fn,
@@ -456,6 +461,7 @@ export async function bootMachine(options: BootMachineOptions): Promise<Machine>
         kernel_address: memory_type.address,
         user,
         user_copy_status: null,
+        shared_user_prepare: false,
       });
       return 0;
     };
