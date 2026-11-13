@@ -48,7 +48,7 @@ pkgs.stdenvNoCC.mkDerivation (finalAttrs: {
       -DCMAKE_C_COMPILER:STRING=${sdk-fork-automatic-poll-libc}/bin/wasm-linux-fork-cc \
       -DCMAKE_AR:FILEPATH=${llvm-toolchain}/bin/llvm-ar \
       -DCMAKE_RANLIB:FILEPATH=${llvm-toolchain}/bin/llvm-ranlib \
-      -DCMAKE_TRY_COMPILE_TARGET_TYPE:STRING=STATIC_LIBRARY \
+      -DCMAKE_TRY_COMPILE_TARGET_TYPE:STRING=EXECUTABLE \
       -DCMAKE_C_FLAGS:STRING="-O2 -I${acl-runtime}/opt/acl-runtime/include -I${acl-runtime}/opt/attr-runtime/include" \
       -DCMAKE_EXE_LINKER_FLAGS:STRING="-L${acl-runtime}/opt/acl-runtime/lib -L${acl-runtime}/opt/attr-runtime/lib" \
       -DCMAKE_LIBRARY_PATH:STRING="${acl-runtime}/opt/acl-runtime/lib;${acl-runtime}/opt/attr-runtime/lib" \
@@ -96,7 +96,7 @@ pkgs.stdenvNoCC.mkDerivation (finalAttrs: {
     grep -Fqx 'CMAKE_C_COMPILER:STRING=${sdk-fork-automatic-poll-libc}/bin/wasm-linux-fork-cc' build/CMakeCache.txt
     grep -Fqx 'CMAKE_AR:FILEPATH=${llvm-toolchain}/bin/llvm-ar' build/CMakeCache.txt
     grep -Fqx 'CMAKE_RANLIB:FILEPATH=${llvm-toolchain}/bin/llvm-ranlib' build/CMakeCache.txt
-    grep -qx 'CMAKE_TRY_COMPILE_TARGET_TYPE:STRING=STATIC_LIBRARY' build/CMakeCache.txt
+    grep -qx 'CMAKE_TRY_COMPILE_TARGET_TYPE:STRING=EXECUTABLE' build/CMakeCache.txt
     grep -Fqx 'CMAKE_C_FLAGS:STRING=-O2 -I${acl-runtime}/opt/acl-runtime/include -I${acl-runtime}/opt/attr-runtime/include' build/CMakeCache.txt
     grep -Fqx 'CMAKE_EXE_LINKER_FLAGS:STRING=-L${acl-runtime}/opt/acl-runtime/lib -L${acl-runtime}/opt/attr-runtime/lib' build/CMakeCache.txt
     grep -Fqx 'CMAKE_LIBRARY_PATH:STRING=${acl-runtime}/opt/acl-runtime/lib;${acl-runtime}/opt/attr-runtime/lib' build/CMakeCache.txt
