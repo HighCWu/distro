@@ -355,6 +355,18 @@ export class ProcessDylink {
   #workerPublicationOpenScope: WorkerPublicationOpenScope | null = null;
 
   constructor(options: Options) {
+    const inputReplay = options.replay;
+    if (inputReplay) {
+      const ownedReplay = prepare_dylink_worker_snapshot(inputReplay);
+      const inputPublicationState = options.workerPublicationState;
+      options = {
+        ...options,
+        replay: ownedReplay,
+        ...(inputPublicationState?.snapshot === inputReplay
+          ? { workerPublicationState: { ...inputPublicationState, snapshot: ownedReplay } }
+          : {}),
+      };
+    }
     this.#options = options;
     const table = options.main.exports.__indirect_function_table;
     const stack = options.main.exports.__stack_pointer;
@@ -423,7 +435,6 @@ export class ProcessDylink {
           "EINVAL",
           "dynamic Worker publication state does not match its validated replay snapshot",
         );
-      validate_dylink_worker_snapshot(state.snapshot);
       this.#workerPublicationState = Object.freeze({ ...state });
       this.#workerPublicationRevision = this.#workerGraphRevision;
     }

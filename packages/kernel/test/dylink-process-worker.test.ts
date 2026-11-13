@@ -838,6 +838,33 @@ test("loader adopts one worker publication baseline without rerunning constructo
   assert.equal(blocked.process.getWorkerPublicationState(), null);
 });
 
+test("receiver prepares a structured-cloned worker publication baseline", () => {
+  const dynamicBytes = initializationHookDynamicModule();
+  const owner = makeInitializationHookProcess(dynamicBytes);
+  assert.notEqual(owner.process.open(owner.pathAddress, 2), 0);
+  const baseline = owner.process.initializeWorkerPublication("process-identity");
+  const transferredSnapshot = structuredClone(baseline.snapshot);
+
+  const receiver = makeInitializationHookProcess(dynamicBytes, {
+    workerPublicationState: { ...baseline, snapshot: transferredSnapshot },
+  });
+  const exposed = receiver.process.getWorkerPublicationState();
+  assert.ok(exposed);
+  assert.deepEqual(exposed, baseline);
+  assert.notEqual(exposed.snapshot, transferredSnapshot);
+  assert.notEqual(exposed.snapshot.files, transferredSnapshot.files);
+  assert.notEqual(exposed.snapshot.files[0]?.bytes, transferredSnapshot.files[0]?.bytes);
+
+  transferredSnapshot.files[0]!.bytes.fill(0);
+  assert.deepEqual(
+    receiver.process.exportWorkerSnapshot().files[0]?.bytes,
+    baseline.snapshot.files[0]?.bytes,
+    "the live replay graph must not retain caller-owned transferred bytes",
+  );
+  exposed.snapshot.files[0]!.bytes.fill(0);
+  assert.deepEqual(receiver.process.getWorkerPublicationState(), baseline);
+});
+
 test("owner advances its Worker baseline only for the current pre-constructor publication", () => {
   const dynamicBytes = initializationHookDynamicModule();
   let fixture: ReturnType<typeof makeInitializationHookProcess>;
