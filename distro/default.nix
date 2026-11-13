@@ -2047,6 +2047,24 @@ lib.makeScope (scope: lib.callPackageWith ({ inherit lib pkgs; } // scope)) (
     };
     rust-smoke = callPackage ./rust-smoke/package.nix { };
     sed = callPackage ./sed/package.nix { };
+    sjlj-lto = callPackage ./sjlj-lto/package.nix { };
+    sjlj-lto-wasm64 = self.sjlj-lto.override {
+      platform = self.platform-wasm64;
+      sdk = self.sdk-wasm64;
+      vm-test = vmTestWasm64;
+    };
+    sjlj-lto-dynamic = self.sjlj-lto.override {
+      sdk = self.sdk-dynamic-loader;
+      cc = "${self.sdk-dynamic-loader}/bin/wasm-linux-dlopen-cc";
+      cxx = "${self.sdk-dynamic-loader}/bin/wasm-linux-dlopen-c++";
+    };
+    sjlj-lto-dynamic-wasm64 = self.sjlj-lto.override {
+      platform = self.platform-wasm64;
+      sdk = self.sdk-dynamic-loader-wasm64;
+      cc = "${self.sdk-dynamic-loader-wasm64}/bin/wasm-linux-dlopen-cc";
+      cxx = "${self.sdk-dynamic-loader-wasm64}/bin/wasm-linux-dlopen-c++";
+      vm-test = vmTestWasm64;
+    };
     sqlite3 = callPackage ./sqlite3/package.nix { };
     sqlite3-wasm64 = callPackage ./sqlite3/native-wasm64.nix {
       vm-test = vmTestWasm64;

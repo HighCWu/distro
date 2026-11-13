@@ -52,6 +52,8 @@ rec {
     "--import-memory"
     "--max-memory=${toString maximumMemoryBytes}"
     "--shared-memory"
+    # ThinLTO postpones the setjmp/longjmp rewrite until the final link.
+    "--mllvm=-wasm-enable-sjlj"
     "--export-table"
     # Versioned signal execution ABI needs the mutable C linear-stack global.
     "--export=__stack_pointer"

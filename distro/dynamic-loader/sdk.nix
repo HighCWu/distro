@@ -50,6 +50,8 @@ let
     "--import-memory"
     "--max-memory=${toString platform.maximumMemoryBytes}"
     "--shared-memory"
+    # ThinLTO postpones the setjmp/longjmp rewrite until the final link.
+    "--mllvm=-wasm-enable-sjlj"
     "--growable-table"
     "--export-all"
     "-z"
