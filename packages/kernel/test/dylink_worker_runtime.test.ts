@@ -110,6 +110,7 @@ test("runtime does not service its receiver from its active producer", () => {
       return action();
     },
     openWithWorkerPublication(path: number | bigint) {
+      assert.equal(runtime.writerActive, true, "the getter reflects the producer wait");
       runtime.checkpoint();
       return typeof path === "bigint" ? 0n : 0;
     },
@@ -125,7 +126,9 @@ test("runtime does not service its receiver from its active producer", () => {
     pause() {},
   });
 
+  assert.equal(runtime.writerActive, false);
   assert.equal(runtime.open(64, 2), 0);
+  assert.equal(runtime.writerActive, false, "completed producer releases its active state");
   assert.equal(checkpointCalls, 0, "active owner must not enter receiver checkpoint bookkeeping");
   assert.equal(unwrap(channel.observe()).state, "idle");
 });

@@ -22,6 +22,10 @@ export interface Instance extends WebAssembly.Instance {
     user_context_v1?(mode: number): number;
     /** Private interrupt-return checkpoint; fixed i32 result for both widths. */
     user_poll_v1?(): number;
+    /** Private kernel maintenance; the legacy entry permits scheduling. */
+    user_maintenance_v1?(): number;
+    /** Private maintenance selector: bit 0 permits scheduling. */
+    user_maintenance_v2?(flags: number): number;
     /** Reviewed pending-return work from a handler without live allocator callbacks. */
     user_poll_nested_v1?(): number;
     __indirect_function_table: WebAssembly.Table;

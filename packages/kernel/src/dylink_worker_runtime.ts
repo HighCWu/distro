@@ -88,6 +88,11 @@ export class DylinkWorkerRuntime {
     );
   }
 
+  /** Whether this participant is in an active producer transaction. */
+  get writerActive(): boolean {
+    return this.#writer.active;
+  }
+
   /**
    * Process receiver phases at a stopped user checkpoint until this Worker
    * may safely resume. The callback runs trusted bookkeeping only.

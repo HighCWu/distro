@@ -448,7 +448,9 @@ function user_imports({
       if (!maintenanceReady || !context) return;
       if (fork && !fork.userPollAllowed(signal_depth !== 0)) return;
       const before = instance;
-      const invoke = () => call_user_maintenance(kernel_instance.exports, kernel_address);
+      const timerOnly = workerRuntime?.writerActive === true;
+      const invoke = () =>
+        call_user_maintenance(kernel_instance.exports, kernel_address, !timerOnly);
       if (fork) fork.kernelCall(invoke);
       else invoke();
       if (instance !== before) {
@@ -531,11 +533,15 @@ function user_imports({
     const dynamic_operation = <T>(invoke: () => T): T => {
       service_worker_checkpoint_at_boundary();
       dynamicOperationDepth++;
+      let result: T;
       try {
-        return invoke();
+        result = invoke();
       } finally {
         dynamicOperationDepth--;
       }
+      if (dynamicOperationDepth === 0 && maintenanceReady && signal_depth === 0 && created)
+        checkpoint();
+      return result;
     };
     const control = (error: unknown) => error === HALT_KERNEL || error === HALT_USER;
     let dynamicError = "Dynamic loader failure";

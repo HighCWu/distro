@@ -88,18 +88,34 @@ export function call_user_poll(
 export function call_user_maintenance(
   kernel: Instance["exports"],
   address: WasmAddressType,
+  allowScheduling = true,
 ): number {
   if (user_callback_active(kernel) || kernel_entry_active(kernel)) return 0;
-  const maintenance = (kernel as WebAssembly.Exports & { user_maintenance_v1?: unknown })
-    .user_maintenance_v1;
-  if (maintenance === undefined) return 0; // Older kernels keep deferring maintenance.
-  if (typeof maintenance !== "function" || maintenance.length !== 0)
-    throw new Error("invalid user maintenance execution ABI");
   if (typeof kernel.user_context_v1 !== "function") return 0;
   const in_user_context: unknown = kernel.user_context_v1(2);
   if (in_user_context !== 0 && in_user_context !== 1)
     throw new Error("invalid user context execution ABI");
   if (in_user_context !== 1) return 0;
+
+  const maintenanceV2 = kernel.user_maintenance_v2;
+  if (maintenanceV2 !== undefined) {
+    if (typeof maintenanceV2 !== "function" || maintenanceV2.length !== 1)
+      throw new Error("invalid user maintenance v2 execution ABI");
+    const result: unknown = call_kernel_entry(kernel, address, () =>
+      maintenanceV2(allowScheduling ? 1 : 0),
+    );
+    if (typeof result !== "number" || !Number.isInteger(result) || result !== (result | 0))
+      throw new Error("invalid user maintenance execution ABI result");
+    return result;
+  }
+
+  // Older kernels have only the scheduling-capable entry. Never use it for a
+  // writer wait, where scheduling could resume a receiver in an unsafe phase.
+  if (!allowScheduling) return 0;
+  const maintenance = kernel.user_maintenance_v1;
+  if (maintenance === undefined) return 0; // Older kernels keep deferring maintenance.
+  if (typeof maintenance !== "function" || maintenance.length !== 0)
+    throw new Error("invalid user maintenance v1 execution ABI");
   const result: unknown = call_kernel_entry(kernel, address, () => maintenance());
   if (typeof result !== "number" || !Number.isInteger(result) || result !== (result | 0))
     throw new Error("invalid user maintenance execution ABI result");

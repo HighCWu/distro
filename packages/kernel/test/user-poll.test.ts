@@ -3,6 +3,7 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import {
   call_user_poll,
+  call_user_maintenance,
   user_poll_thread,
   call_fork_child_return,
   fork_child_return_supported,
@@ -214,6 +215,52 @@ for (const address of ["i32", "i64"] as const) {
     phase = 1;
     assert.equal(call_user_poll(oldKernel, user, memory, address, true), 0);
     assert.equal(maintenanceCalls, 1, "older kernels preserve the defer behavior");
+  });
+  test(`${address}: maintenance v2 selects timer-only work without v1 fallback`, () => {
+    let phase = 1;
+    let v1Calls = 0;
+    const v2Calls: number[] = [];
+    const kernel = {
+      user_context_v1(mode: number) {
+        const old = phase;
+        if (mode !== 2) phase = mode;
+        return old;
+      },
+      user_maintenance_v1() {
+        v1Calls++;
+        return 7;
+      },
+      user_maintenance_v2(flags: number) {
+        v2Calls.push(flags);
+        return flags === 0 ? -11 : 0;
+      },
+    } as unknown as Instance["exports"];
+
+    assert.equal(call_user_maintenance(kernel, address, false), -11);
+    assert.equal(call_user_maintenance(kernel, address), 0);
+    assert.deepEqual(v2Calls, [0, 1]);
+    assert.equal(v1Calls, 0, "v2 is preferred when both entries are present");
+    assert.equal(phase, 1, "maintenance restores the incoming execution context");
+
+    const legacy = {
+      user_context_v1: kernel.user_context_v1,
+      user_maintenance_v1: kernel.user_maintenance_v1,
+      user_maintenance_v2: undefined,
+    } as unknown as Instance["exports"];
+    assert.equal(call_user_maintenance(legacy, address, false), 0);
+    assert.equal(v1Calls, 0, "legacy kernels must not schedule during timer-only waits");
+    assert.equal(call_user_maintenance(legacy, address), 7);
+    assert.equal(v1Calls, 1, "legacy kernels retain full maintenance when allowed");
+
+    assert.throws(
+      () =>
+        call_user_maintenance(
+          { ...kernel, user_maintenance_v2: () => 0 } as unknown as Instance["exports"],
+          address,
+          false,
+        ),
+      /maintenance v2 execution ABI/,
+    );
   });
   test(`${address}: handler nesting requires capability and never crosses an allocator callback`, () => {
     const memory = new WebAssembly.Memory({ initial: 1 });
