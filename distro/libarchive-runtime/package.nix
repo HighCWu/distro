@@ -51,7 +51,6 @@ pkgs.stdenvNoCC.mkDerivation (finalAttrs: {
       -DCMAKE_TRY_COMPILE_TARGET_TYPE:STRING=STATIC_LIBRARY \
       -DCMAKE_C_FLAGS:STRING="-O2 -I${acl-runtime}/opt/acl-runtime/include -I${acl-runtime}/opt/attr-runtime/include" \
       -DCMAKE_EXE_LINKER_FLAGS:STRING="-L${acl-runtime}/opt/acl-runtime/lib -L${acl-runtime}/opt/attr-runtime/lib" \
-      -DCMAKE_REQUIRED_LINK_OPTIONS:STRING="-L${acl-runtime}/opt/acl-runtime/lib;-L${acl-runtime}/opt/attr-runtime/lib" \
       -DCMAKE_LIBRARY_PATH:STRING="${acl-runtime}/opt/acl-runtime/lib;${acl-runtime}/opt/attr-runtime/lib" \
       -DCMAKE_FIND_LIBRARY_SUFFIXES:STRING=.a \
       -DACL_LIBRARY:FILEPATH=${acl-runtime}/opt/acl-runtime/lib/libacl.a \
@@ -100,7 +99,6 @@ pkgs.stdenvNoCC.mkDerivation (finalAttrs: {
     grep -qx 'CMAKE_TRY_COMPILE_TARGET_TYPE:STRING=STATIC_LIBRARY' build/CMakeCache.txt
     grep -Fqx 'CMAKE_C_FLAGS:STRING=-O2 -I${acl-runtime}/opt/acl-runtime/include -I${acl-runtime}/opt/attr-runtime/include' build/CMakeCache.txt
     grep -Fqx 'CMAKE_EXE_LINKER_FLAGS:STRING=-L${acl-runtime}/opt/acl-runtime/lib -L${acl-runtime}/opt/attr-runtime/lib' build/CMakeCache.txt
-    grep -Fqx 'CMAKE_REQUIRED_LINK_OPTIONS:STRING=-L${acl-runtime}/opt/acl-runtime/lib;-L${acl-runtime}/opt/attr-runtime/lib' build/CMakeCache.txt
     grep -Fqx 'CMAKE_LIBRARY_PATH:STRING=${acl-runtime}/opt/acl-runtime/lib;${acl-runtime}/opt/attr-runtime/lib' build/CMakeCache.txt
     grep -Fqx "CMAKE_INSTALL_PREFIX:PATH=$out" build/CMakeCache.txt
     grep -qx 'CMAKE_INSTALL_LIBDIR:STRING=lib' build/CMakeCache.txt
@@ -120,6 +118,7 @@ pkgs.stdenvNoCC.mkDerivation (finalAttrs: {
     grep -qx 'HAVE_LIBATTR:INTERNAL=1' build/CMakeCache.txt
     grep -qx 'HAVE_ACL_LIBACL_H:INTERNAL=1' build/CMakeCache.txt
     grep -qx 'HAVE_ACL_GET_PERM:INTERNAL=1' build/CMakeCache.txt
+    grep -Fqx '#define HAVE_STDIO_H 1' build/config.h
     grep -Fqx '#define ARCHIVE_ACL_LIBACL 1' build/config.h
 
     cmake --build build --target archive_static bsdtar --parallel "$NIX_BUILD_CORES"
