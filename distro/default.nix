@@ -670,6 +670,15 @@ lib.makeScope (scope: lib.callPackageWith ({ inherit lib pkgs; } // scope)) (
       busybox = self.busybox-wasm64;
       vm-test = vmTestWasm64;
     };
+    key-watch-runtime = callPackage ./key-watch-runtime/package.nix { };
+    key-watch-runtime-wasm64 = self.key-watch-runtime.override {
+      stdenv = self.stdenv-wasm64;
+      platform = self.platform-wasm64;
+      musl = self.musl-wasm64;
+      llvm-runtimes = self.llvm-runtimes-wasm64;
+      busybox = self.busybox-wasm64;
+      vm-test = vmTestWasm64;
+    };
     alg-hash = callPackage ./alg-hash/package.nix { };
     iproute2-ss = callPackage ./iproute2-ss/package.nix { };
     iproute2-ss-wasm64 = callPackage ./iproute2-ss/package.nix {

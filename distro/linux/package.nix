@@ -21,8 +21,8 @@
     inherit pkgs;
     owner = "HighCWu";
     repo = "linux";
-    rev = "6f8a38dcb73fb35c83722161b846640859537d5d";
-    hash = "sha256-+xQ2rhfSXOdgShqqazPFTbLqxk5zB4xvur2LJrUyMZQ=";
+    rev = "2778fa37b31f9b109dc4b2d93d40a7512a40e811";
+    hash = "sha256-DuqeDMptYmOBkGSZSykNt1WJfx+LN9X3gU2Oh8nNhds=";
   },
 }:
 
@@ -168,7 +168,7 @@ pkgs.stdenvNoCC.mkDerivation (finalAttrs: {
 
     # Verify the resolved Kconfig, not merely the input defconfig intent.
     grep -qx 'CONFIG_INOTIFY_USER=y' .config
-    for option in KEYS KEY_DH_OPERATIONS ASYMMETRIC_KEY_TYPE ASYMMETRIC_PUBLIC_KEY_SUBTYPE X509_CERTIFICATE_PARSER CRYPTO_RSA BINFMT_MISC FANOTIFY FANOTIFY_ACCESS_PERMISSIONS; do
+    for option in KEYS KEY_DH_OPERATIONS WATCH_QUEUE KEY_NOTIFICATIONS ASYMMETRIC_KEY_TYPE ASYMMETRIC_PUBLIC_KEY_SUBTYPE X509_CERTIFICATE_PARSER CRYPTO_RSA BINFMT_MISC FANOTIFY FANOTIFY_ACCESS_PERMISSIONS; do
       if ! grep -qx "CONFIG_$option=y" .config; then
         echo "Missing required kernel config: CONFIG_$option=y" >&2
         exit 1
