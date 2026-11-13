@@ -26,8 +26,11 @@ pkgs.stdenvNoCC.mkDerivation (finalAttrs: {
 
   postPatch = ''
     cp ${./ffi-linux-wasm.c} src/wasm/ffi.c
-    cp ${./ffi-module-builder.c} ${./ffi-module-builder.h} src/wasm/
-    cp ${./module-transport.c} ${./module-transport.h} src/wasm/
+    # Nix source paths have hash-prefixed basenames; configure.host expects these names.
+    cp ${./ffi-module-builder.c} src/wasm/ffi-module-builder.c
+    cp ${./ffi-module-builder.h} src/wasm/ffi-module-builder.h
+    cp ${./module-transport.c} src/wasm/module-transport.c
+    cp ${./module-transport.h} src/wasm/module-transport.h
   '';
 
   buildPhase = ''
