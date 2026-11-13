@@ -54,9 +54,9 @@ pkgs.stdenvNoCC.mkDerivation (finalAttrs: {
       -DZLIB_USE_STATIC_LIBS=ON \
       -DZLIB_INCLUDE_DIR=${zlib}/include \
       -DZLIB_LIBRARY=${zlib}/lib/libz.a \
-      -DZLIB_LIBRARY_RELEASE=${zlib}/lib/libz.a
+      -DZLIB_LIBRARY_RELEASE:FILEPATH=${zlib}/lib/libz.a
 
-    grep -Fqx 'CMAKE_C_COMPILER:FILEPATH=${sdk}/bin/wasm-linux-cc' build/CMakeCache.txt
+    grep -Fqx 'CMAKE_C_COMPILER:STRING=${sdk}/bin/wasm-linux-cc' build/CMakeCache.txt
     grep -Fqx 'CMAKE_AR:FILEPATH=${llvm-toolchain}/bin/llvm-ar' build/CMakeCache.txt
     grep -Fqx 'ZLIB_INCLUDE_DIR:PATH=${zlib}/include' build/CMakeCache.txt
     grep -Fqx 'ZLIB_LIBRARY_RELEASE:FILEPATH=${zlib}/lib/libz.a' build/CMakeCache.txt
