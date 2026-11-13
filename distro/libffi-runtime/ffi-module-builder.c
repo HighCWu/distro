@@ -163,6 +163,26 @@ static int pointer_value_type(unsigned address_bits) {
   return address_bits == 64 ? 0x7e : 0x7f;
 }
 
+static int supported_variadic_tail_type(const ffi_type *type,
+                                       const WasmType *description) {
+  if (type == NULL || description == NULL ||
+      description->kind != FFI_WASM_TYPE_SCALAR) {
+    return 0;
+  }
+  switch (type->type) {
+  case FFI_TYPE_INT:
+  case FFI_TYPE_SINT32:
+  case FFI_TYPE_UINT32:
+  case FFI_TYPE_SINT64:
+  case FFI_TYPE_UINT64:
+  case FFI_TYPE_DOUBLE:
+  case FFI_TYPE_POINTER:
+    return 1;
+  default:
+    return 0;
+  }
+}
+
 static int is_power_of_two(size_t value) {
   return value != 0 && (value & (value - 1)) == 0;
 }
@@ -415,10 +435,12 @@ static int emit_result_store(ByteBuffer *body, unsigned address_bits,
 }
 
 static int emit_type_section(ByteBuffer *module, unsigned address_bits, unsigned nargs,
+                             unsigned nfixedargs, int is_variadic,
                              const WasmType *return_type, const WasmType *argument_types) {
   ByteBuffer section = {0};
   unsigned has_sret = return_type->kind == FFI_WASM_TYPE_INDIRECT_STRUCT;
-  unsigned call_nargs = nargs + has_sret;
+  unsigned typed_nargs = is_variadic ? nfixedargs : nargs;
+  unsigned call_nargs = typed_nargs + (unsigned)is_variadic + has_sret;
   unsigned has_scalar_result = return_type->kind == FFI_WASM_TYPE_SCALAR ||
     return_type->kind == FFI_WASM_TYPE_COERCED_STRUCT;
   int result = buffer_u32(&section, 2); /* call type and exported wrapper type */
@@ -427,11 +449,14 @@ static int emit_type_section(ByteBuffer *module, unsigned address_bits, unsigned
   if (result == 0 && has_sret) {
     result = buffer_byte(&section, (unsigned char)pointer_value_type(address_bits));
   }
-  for (unsigned i = 0; result == 0 && i < nargs; ++i) {
+  for (unsigned i = 0; result == 0 && i < typed_nargs; ++i) {
     unsigned char wasm_type = argument_types[i].kind == FFI_WASM_TYPE_INDIRECT_STRUCT
       ? (unsigned char)pointer_value_type(address_bits)
       : argument_types[i].value_type;
     result = buffer_byte(&section, wasm_type);
+  }
+  if (result == 0 && is_variadic) {
+    result = buffer_byte(&section, (unsigned char)pointer_value_type(address_bits));
   }
   if (result == 0) result = buffer_u32(&section, has_scalar_result ? 1 : 0);
   if (result == 0 && has_scalar_result) {
@@ -492,6 +517,7 @@ static int emit_export_section(ByteBuffer *module) {
 }
 
 static int emit_code_section(ByteBuffer *module, unsigned address_bits, unsigned nargs,
+                             unsigned nfixedargs, int is_variadic,
                              const WasmType *return_type, const WasmType *argument_types) {
   ByteBuffer body = {0};
   ByteBuffer section = {0};
@@ -512,7 +538,8 @@ static int emit_code_section(ByteBuffer *module, unsigned address_bits, unsigned
   }
 
   const uint64_t pointer_size = address_bits / 8;
-  for (unsigned i = 0; result == 0 && i < nargs; ++i) {
+  unsigned typed_nargs = is_variadic ? nfixedargs : nargs;
+  for (unsigned i = 0; result == 0 && i < typed_nargs; ++i) {
     result = emit_pointer_local_and_offset(&body, address_bits, 2,
                                            (uint64_t)i * pointer_size);
     if (result == 0) result = emit_load(&body, &(WasmType){
@@ -522,6 +549,15 @@ static int emit_code_section(ByteBuffer *module, unsigned address_bits, unsigned
     if (result == 0 && argument_types[i].kind != FFI_WASM_TYPE_INDIRECT_STRUCT) {
       result = emit_load(&body, &argument_types[i]);
     }
+  }
+  if (result == 0 && is_variadic) {
+    WasmType tail_pointer = {
+      .load_opcode = address_bits == 64 ? 0x29 : 0x28,
+      .alignment_exponent = address_bits == 64 ? 3 : 2,
+    };
+    result = emit_pointer_local_and_offset(&body, address_bits, 2,
+                                           (uint64_t)nargs * pointer_size);
+    if (result == 0) result = emit_load(&body, &tail_pointer);
   }
   if (result == 0) result = buffer_byte(&body, 0x20); /* function table index */
   if (result == 0) result = buffer_u32(&body, 0);
@@ -576,7 +612,8 @@ static int emit_dylink_section(ByteBuffer *module, unsigned address_bits) {
 }
 
 int ffi_wasm_build_call_module(unsigned address_bits, uint64_t maximum_memory_bytes,
-                               unsigned nargs, const ffi_type *return_type,
+                               unsigned nargs, unsigned nfixedargs, int is_variadic,
+                               const ffi_type *return_type,
                                ffi_type *const *argument_types,
                                unsigned char **bytes_out, size_t *length_out) {
   if (bytes_out == NULL || length_out == NULL) {
@@ -585,6 +622,9 @@ int ffi_wasm_build_call_module(unsigned address_bits, uint64_t maximum_memory_by
   *bytes_out = NULL;
   *length_out = 0;
   if ((address_bits != 32 && address_bits != 64) || nargs > FFI_WASM_MAX_ARGS ||
+      (is_variadic != 0 && is_variadic != 1) ||
+      (is_variadic && (nfixedargs == 0 || nfixedargs > nargs)) ||
+      (!is_variadic && nfixedargs != nargs) ||
       (nargs != 0 && argument_types == NULL) || return_type == NULL) {
     return -EINVAL;
   }
@@ -618,19 +658,24 @@ int ffi_wasm_build_call_module(unsigned address_bits, uint64_t maximum_memory_by
       free(wasm_arguments);
       return result;
     }
+    if (is_variadic && i >= nfixedargs &&
+        !supported_variadic_tail_type(argument_types[i], &wasm_arguments[i])) {
+      free(wasm_arguments);
+      return -ENOTSUP;
+    }
   }
 
   ByteBuffer module = {0};
   static const unsigned char header[] = {0, 0x61, 0x73, 0x6d, 1, 0, 0, 0};
   result = buffer_append(&module, header, sizeof(header));
   if (result == 0) result = emit_dylink_section(&module, address_bits);
-  if (result == 0) result = emit_type_section(&module, address_bits, nargs, &wasm_return,
-                                               wasm_arguments);
+  if (result == 0) result = emit_type_section(&module, address_bits, nargs, nfixedargs,
+                                               is_variadic, &wasm_return, wasm_arguments);
   if (result == 0) result = emit_import_section(&module, address_bits, maximum_memory_bytes);
   if (result == 0) result = emit_function_section(&module);
   if (result == 0) result = emit_export_section(&module);
-  if (result == 0) result = emit_code_section(&module, address_bits, nargs, &wasm_return,
-                                               wasm_arguments);
+  if (result == 0) result = emit_code_section(&module, address_bits, nargs, nfixedargs,
+                                               is_variadic, &wasm_return, wasm_arguments);
   free(wasm_arguments);
   if (result < 0) {
     free(module.bytes);

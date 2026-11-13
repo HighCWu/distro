@@ -17,7 +17,7 @@
 
 #define FFI_WASM_MAX_ARGS 1000U
 #define FFI_WASM_VARARGS_FLAG 1U
-#define FFI_WASM_SIGNATURE_VERSION 1U
+#define FFI_WASM_SIGNATURE_VERSION 2U
 
 typedef struct ByteBuffer {
   unsigned char *bytes;
@@ -133,13 +133,22 @@ static int signature_encode_type(SignatureSink *sink, const ffi_type *type,
 static int signature_encode_cif(SignatureSink *sink, const ffi_cif *cif) {
   if (sink == NULL || cif == NULL || cif->rtype == NULL ||
       cif->nargs > FFI_WASM_MAX_ARGS ||
-      (cif->nargs != 0 && cif->arg_types == NULL)) {
+      (cif->nargs != 0 && cif->arg_types == NULL) ||
+      (cif->flags & ~FFI_WASM_VARARGS_FLAG) != 0) {
+    return -EINVAL;
+  }
+  int is_variadic = (cif->flags & FFI_WASM_VARARGS_FLAG) != 0;
+  unsigned nfixedargs = is_variadic ? cif->nfixedargs : cif->nargs;
+  if ((is_variadic && (nfixedargs == 0 || nfixedargs > cif->nargs)) ||
+      (!is_variadic && nfixedargs != cif->nargs)) {
     return -EINVAL;
   }
   unsigned address_bits = sizeof(void *) * 8;
   int result = signature_sink_u32(sink, FFI_WASM_SIGNATURE_VERSION);
   if (result == 0) result = signature_sink_u32(sink, cif->abi);
   if (result == 0) result = signature_sink_u32(sink, address_bits);
+  if (result == 0) result = signature_sink_u32(sink, (uint32_t)is_variadic);
+  if (result == 0) result = signature_sink_u32(sink, nfixedargs);
   if (result == 0) result = signature_sink_u32(sink, cif->nargs);
   if (result == 0) {
     result = signature_encode_type(sink, cif->rtype, address_bits, 1, 0);
@@ -178,14 +187,18 @@ static int checked_align_up(size_t value, size_t alignment, size_t *result) {
   return 1;
 }
 
-ffi_status FFI_HIDDEN ffi_prep_cif_machdep(ffi_cif *cif) {
-  if (cif == NULL || cif->rtype == NULL || cif->abi != FFI_DEFAULT_ABI) {
-    return FFI_BAD_ABI;
+static int variadic_slot_layout(const FfiWasmTypeInfo *type, size_t word_size,
+                                size_t *alignment, size_t *slot_size) {
+  if (type == NULL || alignment == NULL || slot_size == NULL ||
+      word_size == 0 || (word_size & (word_size - 1)) != 0) {
+    return 0;
   }
-  if (cif->flags & FFI_WASM_VARARGS_FLAG) {
-    return FFI_BAD_TYPEDEF;
-  }
+  *alignment = type->alignment > word_size ? type->alignment : word_size;
+  return checked_align_up(type->size, word_size, slot_size);
+}
 
+static ffi_status prepare_cif_module(ffi_cif *cif, int is_variadic,
+                                     unsigned nfixedargs) {
   ByteBuffer signature = {0};
   SignatureSink sink = {.buffer = &signature};
   int result = signature_encode_cif(&sink, cif);
@@ -218,7 +231,8 @@ ffi_status FFI_HIDDEN ffi_prep_cif_machdep(ffi_cif *cif) {
   unsigned char *module_bytes = NULL;
   size_t module_length = 0;
   result = ffi_wasm_build_call_module(sizeof(void *) * 8, FFI_WASM_MAX_MEMORY_BYTES,
-                                     cif->nargs, cif->rtype, cif->arg_types,
+                                     cif->nargs, nfixedargs, is_variadic,
+                                     cif->rtype, cif->arg_types,
                                      &module_bytes, &module_length);
   if (result == 0) {
     result = ffi_wasm_module_open(module_bytes, module_length, &candidate->module);
@@ -246,12 +260,62 @@ ffi_status FFI_HIDDEN ffi_prep_cif_machdep(ffi_cif *cif) {
   return FFI_OK;
 }
 
+ffi_status FFI_HIDDEN ffi_prep_cif_machdep(ffi_cif *cif) {
+  if (cif == NULL || cif->rtype == NULL || cif->abi != FFI_DEFAULT_ABI) {
+    return FFI_BAD_ABI;
+  }
+  cif->flags = 0;
+  cif->nfixedargs = cif->nargs;
+  return prepare_cif_module(cif, 0, cif->nargs);
+}
+
 ffi_status FFI_HIDDEN ffi_prep_cif_machdep_var(ffi_cif *cif, unsigned int nfixedargs,
                                                unsigned int ntotalargs) {
-  (void)cif;
-  (void)nfixedargs;
-  (void)ntotalargs;
-  return FFI_BAD_TYPEDEF;
+  if (cif == NULL || cif->rtype == NULL || cif->abi != FFI_DEFAULT_ABI) {
+    return FFI_BAD_ABI;
+  }
+  if (ntotalargs != cif->nargs || nfixedargs == 0 || nfixedargs > ntotalargs ||
+      ntotalargs > FFI_WASM_MAX_ARGS ||
+      (ntotalargs != 0 && cif->arg_types == NULL)) {
+    return FFI_BAD_TYPEDEF;
+  }
+
+  /* Match the generic promotion checks before publishing any cache entry. */
+  for (unsigned int i = nfixedargs; i < ntotalargs; ++i) {
+    ffi_type *type = cif->arg_types[i];
+    if (type == NULL) return FFI_BAD_TYPEDEF;
+    if (type == &ffi_type_float ||
+        ((type->type != FFI_TYPE_STRUCT && type->type != FFI_TYPE_COMPLEX) &&
+         type->size < ffi_type_sint.size)) {
+      return FFI_BAD_ARGTYPE;
+    }
+    FfiWasmTypeInfo description;
+    if (ffi_wasm_describe_type(type, sizeof(void *) * 8, 0, &description) < 0) {
+      return FFI_BAD_TYPEDEF;
+    }
+    switch (type->type) {
+    case FFI_TYPE_INT:
+    case FFI_TYPE_SINT32:
+    case FFI_TYPE_UINT32:
+    case FFI_TYPE_SINT64:
+    case FFI_TYPE_UINT64:
+    case FFI_TYPE_DOUBLE:
+    case FFI_TYPE_POINTER:
+      if (description.kind != FFI_WASM_TYPE_SCALAR) return FFI_BAD_TYPEDEF;
+      break;
+    default:
+      return FFI_BAD_TYPEDEF;
+    }
+  }
+
+  cif->nfixedargs = nfixedargs;
+  cif->flags = FFI_WASM_VARARGS_FLAG;
+  ffi_status status = prepare_cif_module(cif, 1, nfixedargs);
+  if (status != FFI_OK) {
+    cif->nfixedargs = cif->nargs;
+    cif->flags = 0;
+  }
+  return status;
 }
 
 void ffi_call(ffi_cif *cif, void (*function)(void), void *result, void **arguments) {
@@ -267,6 +331,14 @@ void ffi_call(ffi_cif *cif, void (*function)(void), void *result, void **argumen
       (cif->nargs != 0 && (cif->arg_types == NULL || arguments == NULL))) {
     abort();
   }
+
+  int is_variadic = (cif->flags & FFI_WASM_VARARGS_FLAG) != 0;
+  if ((cif->flags & ~FFI_WASM_VARARGS_FLAG) != 0 ||
+      (is_variadic && (cif->nfixedargs == 0 || cif->nfixedargs > cif->nargs)) ||
+      (!is_variadic && cif->nfixedargs != cif->nargs)) {
+    abort();
+  }
+  unsigned nfixedargs = is_variadic ? cif->nfixedargs : cif->nargs;
 
   unsigned address_bits = sizeof(void *) * 8;
   FfiWasmTypeInfo return_type;
@@ -288,13 +360,34 @@ void ffi_call(ffi_cif *cif, void (*function)(void), void *result, void **argumen
 
   int has_byval_argument = 0;
   size_t maximum_alignment = sizeof(void *);
-  for (unsigned int i = 0; i < cif->nargs; ++i) {
+  for (unsigned int i = 0; i < nfixedargs; ++i) {
     if (argument_types[i].kind == FFI_WASM_TYPE_INDIRECT_STRUCT) {
       has_byval_argument = 1;
       if (argument_types[i].alignment > maximum_alignment) {
         maximum_alignment = argument_types[i].alignment;
       }
     }
+  }
+
+  size_t word_size = address_bits / 8;
+  size_t vararg_bytes = 0;
+  size_t vararg_alignment = word_size;
+  if (is_variadic) {
+    for (unsigned int i = nfixedargs; i < cif->nargs; ++i) {
+      size_t slot_alignment;
+      size_t slot_size;
+      if (!variadic_slot_layout(&argument_types[i], word_size,
+                                &slot_alignment, &slot_size) ||
+          !checked_align_up(vararg_bytes, slot_alignment, &vararg_bytes) ||
+          slot_size > SIZE_MAX - vararg_bytes) {
+        abort();
+      }
+      vararg_bytes += slot_size;
+      if (slot_alignment > vararg_alignment) vararg_alignment = slot_alignment;
+    }
+    /* The ABI always receives a tail pointer, including an empty tail. */
+    if (vararg_bytes == 0) vararg_bytes = 1;
+    if (vararg_alignment > maximum_alignment) maximum_alignment = vararg_alignment;
   }
 
   int needs_struct_result_scratch = result == NULL && cif->rtype->type == FFI_TYPE_STRUCT;
@@ -308,19 +401,32 @@ void ffi_call(ffi_cif *cif, void (*function)(void), void *result, void **argumen
   if (needs_struct_result_scratch && return_type.alignment > maximum_alignment) {
     maximum_alignment = return_type.alignment;
   }
-  int needs_stack_area = has_byval_argument || needs_struct_result_scratch;
+  int needs_stack_area = has_byval_argument || needs_struct_result_scratch || is_variadic;
 
   if (needs_stack_area) {
+    size_t call_argument_count;
+    if (__builtin_add_overflow((size_t)cif->nargs, (size_t)is_variadic,
+                               &call_argument_count)) {
+      abort();
+    }
     size_t pointer_bytes;
-    if (__builtin_mul_overflow((size_t)cif->nargs, sizeof(void *), &pointer_bytes)) abort();
+    if (__builtin_mul_overflow(call_argument_count, sizeof(void *), &pointer_bytes)) abort();
     size_t total_bytes = pointer_bytes;
-    for (unsigned int i = 0; i < cif->nargs; ++i) {
+    for (unsigned int i = 0; i < nfixedargs; ++i) {
       if (argument_types[i].kind != FFI_WASM_TYPE_INDIRECT_STRUCT) continue;
       if (!checked_align_up(total_bytes, argument_types[i].alignment, &total_bytes) ||
           argument_types[i].size > SIZE_MAX - total_bytes) {
         abort();
       }
       total_bytes += argument_types[i].size;
+    }
+    size_t tail_offset = 0;
+    if (is_variadic) {
+      if (!checked_align_up(total_bytes, vararg_alignment, &tail_offset) ||
+          vararg_bytes > SIZE_MAX - tail_offset) {
+        abort();
+      }
+      total_bytes = tail_offset + vararg_bytes;
     }
     if (needs_struct_result_scratch) {
       if (!checked_align_up(total_bytes, return_type.alignment, &total_bytes) ||
@@ -340,7 +446,8 @@ void ffi_call(ffi_cif *cif, void (*function)(void), void *result, void **argumen
     call_arguments = (void **)storage;
     size_t offset = pointer_bytes;
     for (unsigned int i = 0; i < cif->nargs; ++i) {
-      if (argument_types[i].kind == FFI_WASM_TYPE_INDIRECT_STRUCT) {
+      if (i < nfixedargs &&
+          argument_types[i].kind == FFI_WASM_TYPE_INDIRECT_STRUCT) {
         if (!checked_align_up(offset, argument_types[i].alignment, &offset) ||
             argument_types[i].size > SIZE_MAX - offset) {
           abort();
@@ -352,6 +459,25 @@ void ffi_call(ffi_cif *cif, void (*function)(void), void *result, void **argumen
       } else {
         call_arguments[i] = arguments[i];
       }
+    }
+    if (is_variadic) {
+      unsigned char *tail_storage = storage + tail_offset;
+      memset(tail_storage, 0, vararg_bytes);
+      size_t tail_cursor = 0;
+      for (unsigned int i = nfixedargs; i < cif->nargs; ++i) {
+        size_t slot_alignment;
+        size_t slot_size;
+        if (!variadic_slot_layout(&argument_types[i], word_size,
+                                  &slot_alignment, &slot_size) ||
+            !checked_align_up(tail_cursor, slot_alignment, &tail_cursor) ||
+            slot_size > SIZE_MAX - tail_cursor) {
+          abort();
+        }
+        memcpy(tail_storage + tail_cursor, arguments[i], argument_types[i].size);
+        tail_cursor += slot_size;
+      }
+      call_arguments[cif->nargs] = tail_storage;
+      offset = tail_offset + vararg_bytes;
     }
     if (needs_struct_result_scratch) {
       if (!checked_align_up(offset, return_type.alignment, &offset)) abort();

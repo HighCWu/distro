@@ -31,7 +31,8 @@ int ffi_wasm_describe_type(const ffi_type *type, unsigned address_bits,
                            int allow_void, FfiWasmTypeInfo *result);
 
 int ffi_wasm_build_call_module(unsigned address_bits, uint64_t maximum_memory_bytes,
-                               unsigned nargs, const ffi_type *return_type,
+                               unsigned nargs, unsigned nfixedargs, int is_variadic,
+                               const ffi_type *return_type,
                                ffi_type *const *argument_types,
                                unsigned char **bytes_out, size_t *length_out);
 

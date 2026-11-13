@@ -5,7 +5,9 @@
 
 #include <errno.h>
 #include <stdint.h>
+#include <stdarg.h>
 #include <stdio.h>
+#include <string.h>
 #include <sys/mount.h>
 #include <sys/stat.h>
 #include <unistd.h>
@@ -17,6 +19,7 @@ static unsigned float_struct_calls;
 static unsigned pointer_struct_calls;
 static unsigned pair_struct_calls;
 static unsigned mixed_struct_calls;
+static unsigned mixed_vararg_calls;
 
 struct OneChar {
   signed char value;
@@ -111,6 +114,54 @@ static struct MixedStruct mixed_struct_target(struct MixedStruct value) {
   ++mixed_struct_calls;
   value.left += 5;
   value.right += 1.25;
+  return value;
+}
+
+static long long mixed_varargs_target(int fixed, ...) {
+  va_list args;
+  va_start(args, fixed);
+  int narrow = va_arg(args, int);
+  void *pointer = va_arg(args, void *);
+  long long wide = va_arg(args, long long);
+  double real = va_arg(args, double);
+  va_end(args);
+  ++mixed_vararg_calls;
+  return (long long)fixed + narrow + (long long)(uintptr_t)pointer + wide +
+    (long long)real;
+}
+
+static int fixed_cache_target(int fixed) {
+  return fixed + 1;
+}
+
+static int no_tail_varargs_target(int fixed, ...) {
+  return fixed + 1;
+}
+
+static int one_fixed_varargs_target(int first, ...) {
+  va_list args;
+  va_start(args, first);
+  int second = va_arg(args, int);
+  int third = va_arg(args, int);
+  va_end(args);
+  return first + second + third;
+}
+
+static int two_fixed_varargs_target(int first, int second, ...) {
+  va_list args;
+  va_start(args, second);
+  int third = va_arg(args, int);
+  va_end(args);
+  return first + second + third;
+}
+
+static struct PairInt pair_varargs_target(struct PairInt value, int fixed, ...) {
+  va_list args;
+  va_start(args, fixed);
+  int tail = va_arg(args, int);
+  va_end(args);
+  value.left += fixed + tail;
+  value.right -= tail;
   return value;
 }
 
@@ -213,6 +264,164 @@ static int exercise_aggregate_calls(void) {
     return -1;
   }
 
+  ffi_type *pair_varargs[] = {&pair_type, &ffi_type_sint32, &ffi_type_sint32};
+  if (ffi_prep_cif_var(&cif, FFI_DEFAULT_ABI, 2, 3, &pair_type,
+                       pair_varargs) != FFI_OK) {
+    fputs("libffi runtime: aggregate variadic prep failed\n", stderr);
+    return -1;
+  }
+  struct PairInt pair_vararg_input = {5, 20};
+  struct PairInt pair_vararg_result = {0, 0};
+  int pair_vararg_fixed = 3;
+  int pair_vararg_tail = 4;
+  void *pair_vararg_values[] = {
+    &pair_vararg_input, &pair_vararg_fixed, &pair_vararg_tail,
+  };
+  ffi_call(&cif, FFI_FN(pair_varargs_target), &pair_vararg_result,
+           pair_vararg_values);
+  if (pair_vararg_input.left != 5 || pair_vararg_input.right != 20 ||
+      pair_vararg_result.left != 12 || pair_vararg_result.right != 16) {
+    fputs("libffi runtime: aggregate variadic sret/byval mismatch\n", stderr);
+    return -1;
+  }
+  ffi_call(&cif, FFI_FN(pair_varargs_target), NULL, pair_vararg_values);
+  if (pair_vararg_input.left != 5 || pair_vararg_input.right != 20) {
+    fputs("libffi runtime: ignored aggregate variadic result mismatch\n", stderr);
+    return -1;
+  }
+
+  return 0;
+}
+
+static int exercise_variadic_calls(void) {
+  ffi_cif cif;
+  ffi_type *mixed_types[] = {
+    &ffi_type_sint32, &ffi_type_sint32, &ffi_type_pointer,
+    &ffi_type_sint64, &ffi_type_double,
+  };
+  if (ffi_prep_cif_var(&cif, FFI_DEFAULT_ABI, 1, 5, &ffi_type_sint64,
+                       mixed_types) != FFI_OK) {
+    fputs("libffi runtime: mixed variadic prep failed\n", stderr);
+    return -1;
+  }
+  int fixed = 7;
+  int narrow = -5;
+  int marker = 0;
+  void *pointer = &marker;
+  long long wide = 1234567890123LL;
+  double real = 2.75;
+  void *mixed_values[] = {&fixed, &narrow, &pointer, &wide, &real};
+  long long result = 0;
+  ffi_call(&cif, FFI_FN(mixed_varargs_target), &result, mixed_values);
+  long long expected = (long long)fixed + narrow + (long long)(uintptr_t)pointer +
+    wide + (long long)real;
+  if (result != expected || mixed_vararg_calls != 1) {
+    fprintf(stderr,
+            "libffi runtime: mixed variadic tail slot mismatch result=%lld expected=%lld calls=%u\n",
+            result, expected, mixed_vararg_calls);
+    return -1;
+  }
+
+  ffi_type *same_types[] = {&ffi_type_sint32};
+  if (ffi_prep_cif(&cif, FFI_DEFAULT_ABI, 1, &ffi_type_sint32,
+                   same_types) != FFI_OK) {
+    fputs("libffi runtime: nonvariadic cache-key prep failed\n", stderr);
+    return -1;
+  }
+  int single = 10;
+  void *single_values[] = {&single};
+  ffi_arg int_result = 0;
+  ffi_call(&cif, FFI_FN(fixed_cache_target), &int_result, single_values);
+  if ((int)int_result != 11) {
+    fputs("libffi runtime: nonvariadic cache-key mismatch\n", stderr);
+    return -1;
+  }
+  if (ffi_prep_cif_var(&cif, FFI_DEFAULT_ABI, 1, 1, &ffi_type_sint32,
+                       same_types) != FFI_OK) {
+    fputs("libffi runtime: empty variadic prep failed\n", stderr);
+    return -1;
+  }
+  ffi_call(&cif, FFI_FN(no_tail_varargs_target), &int_result, single_values);
+  if ((int)int_result != 11) {
+    fputs("libffi runtime: empty variadic tail pointer mismatch\n", stderr);
+    return -1;
+  }
+
+  ffi_type *same_shape_types[] = {
+    &ffi_type_sint32, &ffi_type_sint32, &ffi_type_sint32,
+  };
+  if (ffi_prep_cif_var(&cif, FFI_DEFAULT_ABI, 1, 3, &ffi_type_sint32,
+                       same_shape_types) != FFI_OK) {
+    fputs("libffi runtime: one-fixed cache-key prep failed\n", stderr);
+    return -1;
+  }
+  int first = 2;
+  int second = 3;
+  int third = 5;
+  void *same_shape_values[] = {&first, &second, &third};
+  ffi_call(&cif, FFI_FN(one_fixed_varargs_target), &int_result,
+           same_shape_values);
+  if ((int)int_result != 10) {
+    fputs("libffi runtime: one-fixed variadic cache-key mismatch\n", stderr);
+    return -1;
+  }
+  if (ffi_prep_cif_var(&cif, FFI_DEFAULT_ABI, 2, 3, &ffi_type_sint32,
+                       same_shape_types) != FFI_OK) {
+    fputs("libffi runtime: two-fixed cache-key prep failed\n", stderr);
+    return -1;
+  }
+  ffi_call(&cif, FFI_FN(two_fixed_varargs_target), &int_result,
+           same_shape_values);
+  if ((int)int_result != 10) {
+    fputs("libffi runtime: two-fixed variadic cache-key mismatch\n", stderr);
+    return -1;
+  }
+
+  char formatted[64] = {0};
+  size_t formatted_size = sizeof(formatted);
+  const char *format = "n=%d f=%.2f s=%s";
+  int format_number = -5;
+  double format_real = 2.5;
+  const char *format_text = "ok";
+  char *formatted_pointer = formatted;
+#if __SIZEOF_POINTER__ == 8
+  ffi_type *size_type = &ffi_type_uint64;
+#else
+  ffi_type *size_type = &ffi_type_uint32;
+#endif
+  ffi_type *snprintf_types[] = {
+    &ffi_type_pointer, size_type, &ffi_type_pointer, &ffi_type_sint32,
+    &ffi_type_double, &ffi_type_pointer,
+  };
+  if (ffi_prep_cif_var(&cif, FFI_DEFAULT_ABI, 3, 6, &ffi_type_sint32,
+                       snprintf_types) != FFI_OK) {
+    fputs("libffi runtime: snprintf variadic prep failed\n", stderr);
+    return -1;
+  }
+  void *snprintf_values[] = {
+    &formatted_pointer, &formatted_size, &format, &format_number, &format_real,
+    &format_text,
+  };
+  ffi_call(&cif, FFI_FN(snprintf), &int_result, snprintf_values);
+  if ((int)int_result != 16 || strcmp(formatted, "n=-5 f=2.50 s=ok") != 0) {
+    fprintf(stderr, "libffi runtime: snprintf result=%d text=%s\n", (int)int_result,
+            formatted);
+    return -1;
+  }
+
+  ffi_type *bad_tail[] = {&ffi_type_sint32, &ffi_type_float};
+  if (ffi_prep_cif_var(&cif, FFI_DEFAULT_ABI, 1, 2, &ffi_type_sint32,
+                       bad_tail) != FFI_BAD_ARGTYPE) {
+    fputs("libffi runtime: unpromoted float tail accepted\n", stderr);
+    return -1;
+  }
+  ffi_type *bad_small_tail[] = {&ffi_type_sint32, &ffi_type_sint8};
+  if (ffi_prep_cif_var(&cif, FFI_DEFAULT_ABI, 1, 2, &ffi_type_sint32,
+                       bad_small_tail) != FFI_BAD_ARGTYPE) {
+    fputs("libffi runtime: unpromoted small integer tail accepted\n", stderr);
+    return -1;
+  }
+
   return 0;
 }
 
@@ -282,6 +491,7 @@ int main(void) {
   }
 
   if (exercise_aggregate_calls() != 0) return 1;
+  if (exercise_variadic_calls() != 0) return 1;
 
   puts("LIBFFI_RUNTIME_MIXED_CALL_OK");
   return 0;
