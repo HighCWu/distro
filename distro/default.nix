@@ -2012,6 +2012,14 @@ lib.makeScope (scope: lib.callPackageWith ({ inherit lib pkgs; } // scope)) (
       vm-test = vmTestWasm64;
       busybox = self.busybox-wasm64;
     };
+    libjpeg-runtime = callPackage ./libjpeg-runtime/package.nix { };
+    libjpeg-runtime-wasm64 = self.libjpeg-runtime.override {
+      platform = self.platform-wasm64;
+      sdk = self.sdk-wasm64;
+      llvm-toolchain = self.llvm-toolchain-wasm64;
+      vm-test = vmTestWasm64;
+      busybox = self.busybox-wasm64;
+    };
     libpng-runtime = callPackage ./libpng-runtime/package.nix { };
     libpng-runtime-wasm64 = self.libpng-runtime.override {
       platform = self.platform-wasm64;
