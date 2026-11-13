@@ -22,6 +22,9 @@ const EAGAIN = 11;
 const EBUSY = 16;
 const EIO = 5;
 const EALREADY = 114;
+const MAX_AVAILABILITY_TIMEOUT_MESSAGE =
+  "Worker publication timed out waiting for a matching channel generation";
+const ROLLBACK_ERROR_PREFIX = "Worker publication was rolled back: ";
 
 type ActivePublication = {
   readonly baseline: DylinkWorkerPublicationState;
@@ -49,7 +52,7 @@ function publicationRollbackMessage(cause: unknown): string {
   try {
     if (cause instanceof Error) {
       const message = cause.message;
-      if (typeof message === "string") return `Worker publication was rolled back: ${message}`;
+      if (typeof message === "string") return `${ROLLBACK_ERROR_PREFIX}${message}`;
     }
   } catch {
     // Rollback has completed; diagnostic formatting must not replace its result.
@@ -113,6 +116,68 @@ export class DylinkWorkerWriter {
 
     let baseline: DylinkWorkerPublicationState | null = null;
     let reservation: DylinkWorkerReservation | null = null;
+    let lastSuccessfulObservation: Pick<
+      DylinkWorkerChannelObservation,
+      "state" | "transaction" | "generation" | "cohortSize"
+    > | null = null;
+    let lastObserveFailureErrno: number | null = null;
+    let lastReserveFailureErrno: number | null = null;
+    const formatU32 = (value: number | null): string =>
+      value !== null && Number.isInteger(value) && value >= 0 && value <= 0xffff_ffff
+        ? String(value)
+        : "none";
+    const formatErrno = (value: number | null): string =>
+      value !== null && Number.isInteger(value) && Math.abs(value) <= 0xffff_ffff
+        ? String(value)
+        : "none";
+    const observeChannel = (): ReturnType<DylinkWorkerChannel["observe"]> => {
+      const observed = this.#channel.observe();
+      if (observed.ok) {
+        const value = observed.value;
+        lastSuccessfulObservation = {
+          state: value.state,
+          transaction: value.transaction,
+          generation: value.generation,
+          cohortSize: value.cohortSize,
+        };
+      } else {
+        lastObserveFailureErrno = observed.errno;
+      }
+      return observed;
+    };
+    const availabilityTimeout = (message: string): Error => {
+      let diagnostic = "diagnostics unavailable";
+      try {
+        const observation = lastSuccessfulObservation;
+        const last = observation
+          ? `${observation.state},tx=${formatU32(observation.transaction)},gen=${formatU32(observation.generation)},cohort=${formatU32(observation.cohortSize)}`
+          : "none";
+        const fields = {
+          baseline: formatU32(baseline?.generation ?? null),
+          participant: `${formatU32(this.#participant.slot)}/${formatU32(this.#participant.epoch)}`,
+          last,
+          observeErrno: formatErrno(lastObserveFailureErrno),
+          reserveErrno: formatErrno(lastReserveFailureErrno),
+        };
+        const detailed =
+          `base=${fields.baseline} participant=${fields.participant} last=${fields.last}` +
+          ` oerr=${fields.observeErrno} rerr=${fields.reserveErrno}`;
+        // Keep room for the longest timeout text, an optional rollback prefix,
+        // brackets, and the NUL byte in the existing 256-byte dlerror buffer.
+        const diagnosticBudget =
+          255 -
+          ROLLBACK_ERROR_PREFIX.length -
+          Math.max(message.length, MAX_AVAILABILITY_TIMEOUT_MESSAGE.length) -
+          3;
+        diagnostic =
+          detailed.length <= diagnosticBudget
+            ? detailed
+            : `b=${fields.baseline};p=${fields.participant};o=${fields.last};oe=${fields.observeErrno};re=${fields.reserveErrno}`;
+      } catch {
+        // Preserve the timeout even if diagnostics cannot be formatted.
+      }
+      return new Error(`${message} [${diagnostic}]`);
+    };
     for (;;) {
       // A different publisher may finish while this open waits. Re-read the
       // process snapshot before every reservation attempt so the lease can
@@ -126,16 +191,16 @@ export class DylinkWorkerWriter {
         return this.#invalidBaselineResult("Worker publication baseline is unavailable");
       if (now() >= deadline)
         return this.#recordFailure(
-          new Error("Worker publication timed out waiting for channel availability"),
+          availabilityTimeout("Worker publication timed out waiting for channel availability"),
         );
 
-      const before = this.#channel.observe();
+      const before = observeChannel();
       if (!before.ok) {
         if (!this.#isTransient(before.errno))
           return this.#recordFailure(channelFailure(before.errno, "channel observation"));
         if (!this.#yieldForAvailability(deadline))
           return this.#recordFailure(
-            new Error("Worker publication timed out waiting for channel availability"),
+            availabilityTimeout("Worker publication timed out waiting for channel availability"),
           );
         continue;
       }
@@ -144,18 +209,21 @@ export class DylinkWorkerWriter {
       if (before.value.state !== "idle" || before.value.generation !== baseline.generation) {
         if (!this.#yieldForAvailability(deadline))
           return this.#recordFailure(
-            new Error("Worker publication timed out waiting for a matching channel generation"),
+            availabilityTimeout(
+              "Worker publication timed out waiting for a matching channel generation",
+            ),
           );
         continue;
       }
 
       const reserved = this.#channel.reserve(this.#participant);
       if (!reserved.ok) {
+        lastReserveFailureErrno = reserved.errno;
         if (!this.#isTransient(reserved.errno))
           return this.#recordFailure(channelFailure(reserved.errno, "channel reservation"));
         if (!this.#yieldForAvailability(deadline))
           return this.#recordFailure(
-            new Error("Worker publication timed out waiting for channel availability"),
+            availabilityTimeout("Worker publication timed out waiting for channel availability"),
           );
         continue;
       }
@@ -165,18 +233,20 @@ export class DylinkWorkerWriter {
         reservation = null;
         if (!this.#yieldForAvailability(deadline))
           return this.#recordFailure(
-            new Error("Worker publication timed out waiting for a matching channel generation"),
+            availabilityTimeout(
+              "Worker publication timed out waiting for a matching channel generation",
+            ),
           );
         continue;
       }
       if (now() >= deadline) {
         this.#cancelReservation(reservation);
         return this.#recordFailure(
-          new Error("Worker publication timed out after reserving the channel"),
+          availabilityTimeout("Worker publication timed out after reserving the channel"),
         );
       }
 
-      const after = this.#channel.observe();
+      const after = observeChannel();
       if (!after.ok) {
         this.#cancelReservation(reservation);
         reservation = null;
@@ -184,7 +254,7 @@ export class DylinkWorkerWriter {
           return this.#recordFailure(channelFailure(after.errno, "channel observation"));
         if (!this.#yieldForAvailability(deadline))
           return this.#recordFailure(
-            new Error("Worker publication timed out waiting for channel availability"),
+            availabilityTimeout("Worker publication timed out waiting for channel availability"),
           );
         continue;
       }

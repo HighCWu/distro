@@ -604,6 +604,91 @@ test("writer bounds retries while another publication owns the channel", (t) => 
   unwrap(channel.cancelReservation(blocker));
 });
 
+test("writer timeout keeps maximum diagnostics within dlerror capacity", (t) => {
+  let tick = 0;
+  t.mock.method(performance, "now", () => tick);
+  const memory = new WebAssembly.Memory({ initial: 2, maximum: 4, shared: true });
+  const owner = makeProcess(memory, new Map([["/plugins/late.so", dynamicModule()]]));
+  const baseline = owner.process.initializeWorkerPublication("availability-diagnostic-process");
+  const maxU32 = 0xffff_ffff;
+  const maxBaseline = { ...baseline, generation: maxU32 };
+  t.mock.method(owner.process, "getWorkerPublicationState", () => maxBaseline);
+  const channel = new DylinkWorkerChannel(1 << 20, 2);
+  const writerParticipant = { slot: maxU32, epoch: maxU32 };
+  let observeCalls = 0;
+  t.mock.method(channel, "observe", () => {
+    observeCalls++;
+    if (observeCalls === 1) return { ok: false as const, errno: -11 };
+    return {
+      ok: true as const,
+      value:
+        observeCalls === 2
+          ? {
+              state: "idle" as const,
+              transaction: null,
+              generation: maxU32,
+              packetLength: 0,
+              cohortSize: 0,
+              failure: null,
+            }
+          : {
+              state: "writing" as const,
+              transaction: maxU32,
+              generation: maxU32,
+              packetLength: 0,
+              cohortSize: maxU32,
+              failure: null,
+            },
+    };
+  });
+  let reserveCalls = 0;
+  t.mock.method(channel, "reserve", () => {
+    reserveCalls++;
+    return { ok: false as const, errno: -16 };
+  });
+
+  let pauseCalls = 0;
+  const writer = new DylinkWorkerWriter(
+    channel,
+    writerParticipant,
+    owner.process,
+    (error) => {
+      throw error;
+    },
+    () => {
+      pauseCalls++;
+      tick = pauseCalls === 3 ? 10 : tick + 1;
+    },
+    10,
+  );
+  const pathname = new TextEncoder().encode("/plugins/late.so\0");
+  new Uint8Array(memory.buffer, owner.pathAddress, pathname.length).set(pathname);
+
+  assert.equal(writer.open(owner.pathAddress, 2), 0);
+  const error = readDlerror(owner.process, memory, "i32");
+  assert.match(error, /^Worker publication timed out waiting for a matching channel generation /);
+  assert.match(error, /base=4294967295/);
+  assert.match(error, /participant=4294967295\/4294967295/);
+  assert.match(error, /(?:last=|o=)writing,tx=4294967295,gen=4294967295,cohort=4294967295/);
+  assert.match(error, /(?:oerr|oe)=-11/);
+  assert.match(error, /(?:rerr|re)=-16/);
+  assert.ok(
+    new TextEncoder().encode(error).length <= 255,
+    "complete dlerror text leaves room for its NUL byte",
+  );
+  const rollbackError = `Worker publication was rolled back: ${error}`;
+  assert.ok(
+    new TextEncoder().encode(rollbackError).length <= 255,
+    "diagnostics also fit with the rollback prefix",
+  );
+  assert.equal(owner.process.recordWorkerPublicationFailure(new Error(rollbackError)), 0);
+  assert.equal(readDlerror(owner.process, memory, "i32"), rollbackError);
+  assert.ok(!error.includes("/plugins/late.so"), "diagnostics do not expose the requested path");
+  assert.equal(baseline.generation, 0);
+  assert.equal(reserveCalls, 1);
+  assert.equal(observeCalls, 3);
+});
+
 test("writer failures replace dlerror and preserve later 32/64-bit opens", (t) => {
   let tick = 0;
   t.mock.method(performance, "now", () => tick++);
