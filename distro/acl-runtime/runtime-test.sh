@@ -12,6 +12,45 @@ native_reference=${NATIVE_REFERENCE:-0}
 mountpoint=/mnt/acl-runtime-test
 workdir=
 mounted=0
+umount_attempted=0
+umount_status=0
+umount_error=
+
+unmount_acl_test_disk() {
+  [ "$mounted" = 1 ] || return 0
+  [ "$umount_attempted" = 0 ] || return 1
+
+  # LC_ALL=C fixes BusyBox's transient-busy diagnostic for this bounded retry.
+  attempt=1
+  while [ "$attempt" -le 5 ]; do
+    output=$(umount "$mountpoint" 2>&1)
+    status=$?
+    if [ "$status" -eq 0 ]; then
+      mounted=0
+      umount_attempted=1
+      umount_status=0
+      umount_error=
+      return 0
+    fi
+
+    umount_status=$status
+    umount_error=$output
+    if [ "$output" != "umount: can't unmount $mountpoint: Resource busy" ]; then
+      umount_attempted=1
+      return "$status"
+    fi
+
+    if [ "$attempt" -eq 5 ]; then
+      umount_attempted=1
+      return "$status"
+    fi
+    sleep 1
+    attempt=$((attempt + 1))
+  done
+
+  umount_attempted=1
+  return 1
+}
 
 cleanup() {
   if [ -n "$workdir" ] && [ -d "$workdir" ]; then
@@ -19,8 +58,12 @@ cleanup() {
   fi
   workdir=
   if [ "$mounted" = 1 ]; then
-    umount "$mountpoint" >/dev/null 2>&1 || true
-    mounted=0
+    if [ "$umount_attempted" = 0 ]; then
+      if ! unmount_acl_test_disk; then
+        printf 'acl runtime cleanup failure: %s\n' \
+          "${umount_error:-umount failed with status $umount_status}" >&2
+      fi
+    fi
   fi
 }
 
@@ -86,8 +129,8 @@ cat "$workdir/runtime.stdout"
 if [ "$mounted" = 1 ]; then
   rm -rf "$workdir"
   workdir=
-  umount "$mountpoint" || fail 'unmounting the ACL test disk'
-  mounted=0
+  unmount_acl_test_disk ||
+    fail "unmounting the ACL test disk: ${umount_error:-umount failed with status $umount_status}"
 fi
 cleanup
 trap - EXIT
