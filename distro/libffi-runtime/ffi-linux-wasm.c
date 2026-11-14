@@ -187,14 +187,16 @@ static int checked_align_up(size_t value, size_t alignment, size_t *result) {
   return 1;
 }
 
-static int variadic_slot_layout(const FfiWasmTypeInfo *type, size_t word_size,
-                                size_t *alignment, size_t *slot_size) {
-  if (type == NULL || alignment == NULL || slot_size == NULL ||
-      word_size == 0 || (word_size & (word_size - 1)) != 0) {
+static int variadic_slot_layout(const FfiWasmTypeInfo *type, size_t *alignment,
+                                size_t *slot_size) {
+  if (type == NULL || alignment == NULL || slot_size == NULL) {
     return 0;
   }
-  *alignment = type->alignment > word_size ? type->alignment : word_size;
-  return checked_align_up(type->size, word_size, slot_size);
+  /* The wasm varargs area follows the promoted type's natural ABI layout.
+   * In particular, wasm64 int arguments occupy 4-byte slots, not 8-byte
+   * machine words; va_arg(int) advances by sizeof(int). */
+  *alignment = type->alignment;
+  return checked_align_up(type->size, type->alignment, slot_size);
 }
 
 static ffi_status prepare_cif_module(ffi_cif *cif, int is_variadic,
@@ -376,8 +378,8 @@ void ffi_call(ffi_cif *cif, void (*function)(void), void *result, void **argumen
     for (unsigned int i = nfixedargs; i < cif->nargs; ++i) {
       size_t slot_alignment;
       size_t slot_size;
-      if (!variadic_slot_layout(&argument_types[i], word_size,
-                                &slot_alignment, &slot_size) ||
+      if (!variadic_slot_layout(&argument_types[i], &slot_alignment,
+                                &slot_size) ||
           !checked_align_up(vararg_bytes, slot_alignment, &vararg_bytes) ||
           slot_size > SIZE_MAX - vararg_bytes) {
         abort();
@@ -467,8 +469,8 @@ void ffi_call(ffi_cif *cif, void (*function)(void), void *result, void **argumen
       for (unsigned int i = nfixedargs; i < cif->nargs; ++i) {
         size_t slot_alignment;
         size_t slot_size;
-        if (!variadic_slot_layout(&argument_types[i], word_size,
-                                  &slot_alignment, &slot_size) ||
+        if (!variadic_slot_layout(&argument_types[i], &slot_alignment,
+                                  &slot_size) ||
             !checked_align_up(tail_cursor, slot_alignment, &tail_cursor) ||
             slot_size > SIZE_MAX - tail_cursor) {
           abort();
