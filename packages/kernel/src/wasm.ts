@@ -57,6 +57,7 @@ export interface Instance extends WebAssembly.Instance {
     current_remote_memory_id?(): number;
     remote_memory_ready?(id: number): number;
     dynamic_file_pin_abi_v1?(): number;
+    dynamic_file_copy_abi_v1?(): number;
     dynamic_file_pin_v1?(fd: number, device: bigint, inode: bigint): number;
     dynamic_file_unpin_v1?(id: number): number;
     /** Release the quiescent file copy before rethrowing a user callback exception. */

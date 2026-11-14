@@ -107,6 +107,10 @@ import {
 import { prepare_dylink_call_metadata } from "./dylink_call_metadata.ts";
 import { DynamicVforkState, dynamic_vfork_allowed } from "./dynamic-vfork.ts";
 import {
+  create_dynamic_process_copy_context,
+  dynamic_process_copy_allowed,
+} from "./dynamic-copy.ts";
+import {
   DYNAMIC_LOADER_CLAIMED,
   claim_dynamic_loader,
   create_dynamic_process_state,
@@ -359,6 +363,7 @@ function user_imports({
   let fork: ForkContinuation | null = null;
   let signal_depth = 0;
   const dynamic_vfork = new DynamicVforkState();
+  let process_copy_context: UserContext | null = null;
   // One slot per nested SA_SIGINFO callback; null means its trampoline has
   // not requested the active signal payload yet.
   const siginfo_copy_results: (number | null)[] = [];
@@ -879,14 +884,61 @@ function user_imports({
               typeof SharedArrayBuffer !== "undefined" &&
               context.memory.buffer instanceof SharedArrayBuffer,
           });
+        const dynamicCopy =
+          !strict &&
+          !dynamicVfork &&
+          !dynamicThread &&
+          dynamic_process_copy_allowed({
+            context,
+            layout,
+            number: nr,
+            args: [arg0, arg1, arg2, arg3, arg4, arg5],
+            signalDepth: signal_depth,
+            callEntryIsNormal: call_entry === call_start || call_entry === thread_entry,
+            dynamicOperationDepth,
+            vforkPending: dynamic_vfork.pending,
+          });
+        let copyContext: UserContext | null = null;
+        if (dynamicCopy) {
+          try {
+            let snapshot: DylinkWorkerSnapshot | undefined;
+            if (dynamic) {
+              snapshot = dynamic.runAtWorkerCheckpoint(() => {
+                const publication = dynamic!.getWorkerPublicationState();
+                return publication?.snapshot ?? dynamic!.exportWorkerSnapshot();
+              });
+              // A copied loader retains the same opaque pin IDs in a distinct
+              // mm. Older kernels reset that reference table on private clone.
+              if (
+                snapshot.files.length !== 0 &&
+                kernel_instance.exports.dynamic_file_copy_abi_v1?.() !== 1
+              )
+                return kernel_address === "i64" ? -95n : -95;
+            } else if (dynamic_process_value(context.dynamic?.process_state) !== 0) {
+              return kernel_address === "i64" ? -95n : -95;
+            }
+            copyContext = create_dynamic_process_copy_context(context, snapshot);
+          } catch (error) {
+            if (control(error)) throw error;
+            const errno = snapshot_error_errno(error);
+            return kernel_address === "i64" ? -BigInt(errno) : -errno;
+          }
+        }
         if (dynamicThread) {
           const error = prepare_dynamic_thread_snapshot();
           if (error) return kernel_address === "i64" ? -BigInt(error) : -error;
         }
         // Strict seccomp always reaches the actual kernel entry first. Outside
-        // strict mode, dynamic images admit only the selected callback vfork
-        // and shared pthread clone shapes.
-        if (context.dynamic && !strict && (clone || clone3) && !dynamicVfork && !dynamicThread)
+        // strict mode, dynamic images select callback vfork, shared pthread,
+        // or a private process copy. Linux validates the remaining clone ABI.
+        if (
+          context.dynamic &&
+          !strict &&
+          (clone || clone3) &&
+          !dynamicVfork &&
+          !dynamicThread &&
+          !dynamicCopy
+        )
           return kernel_address === "i64" ? -95n : -95;
         const original_instance = instance;
         const kernelInvoke = () =>
@@ -894,6 +946,14 @@ function user_imports({
             kernel_instance.exports.syscall(nr, arg0, arg1, arg2, arg3, arg4, arg5),
           );
         const invoke = () => {
+          if (copyContext) {
+            process_copy_context = copyContext;
+            try {
+              return kernelInvoke();
+            } finally {
+              process_copy_context = null;
+            }
+          }
           if (dynamicVfork) return dynamic_vfork.run(kernelInvoke);
           if (dynamicThread)
             return run_dynamic_thread_clone(
@@ -1168,7 +1228,7 @@ function user_imports({
       },
     },
     get context() {
-      return dynamic_vfork.context(context);
+      return process_copy_context ?? dynamic_vfork.context(context);
     },
     workerCheckpoint() {
       return service_worker_checkpoint?.() ?? 0;

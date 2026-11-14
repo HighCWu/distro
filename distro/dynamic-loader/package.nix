@@ -126,6 +126,19 @@ pkgs.stdenvNoCC.mkDerivation (finalAttrs: {
     wasm-linux-dlopen-cc -O2 -Wall -Wextra -Werror ${./spawn.c} -o spawn.wasm
     wasm-linux-dlopen-cc -O2 -Wall -Wextra -Werror ${./poll-runtime.c} -o poll-runtime.wasm
     wasm-linux-dlopen-cc -O2 -Wall -Wextra -Werror -pthread ${./thread-runtime.c} -o thread-runtime.wasm
+    wasm-linux-dlopen-cc -O2 -Wall -Wextra -Werror ${./process-copy-runtime.c} -o process-copy-runtime.wasm
+    ${sideCC} -O2 -Wall -Wextra -Werror -fPIC -c ${./process-copy-library.c} -o process-copy-library.o
+    ${linkShared {
+      name = "libprocess-copy-library.so";
+      output = "libprocess-copy-library.so";
+      inputs = [ "process-copy-library.o" ];
+    }}
+    ${sideCC} -O2 -Wall -Wextra -Werror -fPIC -c ${./process-copy-after.c} -o process-copy-after.o
+    ${linkShared {
+      name = "libprocess-copy-after.so";
+      output = "libprocess-copy-after.so";
+      inputs = [ "process-copy-after.o" ];
+    }}
     wasm-linux-dlopen-cc -O2 -Wall -Wextra -Werror -pthread -Wl,--export=worker_publication_release_and_join ${./worker-publication-runtime.c} -o worker-publication-runtime.wasm
     ${sideCC} -O2 -Wall -Wextra -Werror -fPIC -c ${./worker-publication-library.c} -o worker-publication-constructor.o
     ${linkShared {
@@ -328,6 +341,9 @@ pkgs.stdenvNoCC.mkDerivation (finalAttrs: {
     install -Dm755 spawn.wasm $out/spawn.wasm
     install -Dm755 poll-runtime.wasm $out/poll-runtime.wasm
     install -Dm755 thread-runtime.wasm $out/thread-runtime.wasm
+    install -Dm755 process-copy-runtime.wasm $out/process-copy-runtime.wasm
+    install -Dm644 libprocess-copy-library.so $out/lib/libprocess-copy-library.so
+    install -Dm644 libprocess-copy-after.so $out/lib/libprocess-copy-after.so
     install -Dm755 worker-publication-runtime.wasm $out/worker-publication-runtime.wasm
     install -Dm644 libworker-publication-constructor.so $out/lib/libworker-publication-constructor.so
     install -Dm644 libworker-publication-after.so $out/lib/libworker-publication-after.so
@@ -365,6 +381,7 @@ pkgs.stdenvNoCC.mkDerivation (finalAttrs: {
     cp ${./poll-runtime.c} ${./poll-library.c} $buildMaterials/share/dynamic-loader-materials/
     cp ${./thread-runtime.c} $buildMaterials/share/dynamic-loader-materials/
     cp ${./worker-publication-runtime.c} ${./worker-publication-library.c} $buildMaterials/share/dynamic-loader-materials/
+    cp ${./process-copy-runtime.c} ${./process-copy-library.c} ${./process-copy-after.c} $buildMaterials/share/dynamic-loader-materials/
     cp ${./maintenance-runtime.c} ${./maintenance-library.c} $buildMaterials/share/dynamic-loader-materials/
     cp ${./path-library.c} $buildMaterials/share/dynamic-loader-materials/
     cp ${./reentrant-root.c} ${./reentrant-leaf.c} ${./reentrant-reject.c} $buildMaterials/share/dynamic-loader-materials/
@@ -382,6 +399,14 @@ pkgs.stdenvNoCC.mkDerivation (finalAttrs: {
   '';
   meta.license = lib.licenses.mit;
   passthru.checks = {
+    process-copy-runtime = vm-test.rawInitramfsTest {
+      name = "dynamic-process-copy-${platform.wasmArch}";
+      init = "${finalAttrs.finalPackage}/process-copy-runtime.wasm";
+      files = {
+        "/plugins/libprocess-copy-library.so" = "${finalAttrs.finalPackage}/lib/libprocess-copy-library.so";
+        "/plugins/libprocess-copy-after.so" = "${finalAttrs.finalPackage}/lib/libprocess-copy-after.so";
+      };
+    };
     scope-memory-runtime = vm-test.rawInitramfsTest {
       name = "dynamic-scope-memory-${platform.wasmArch}";
       init = "${finalAttrs.finalPackage}/scope-memory-runtime.wasm";
