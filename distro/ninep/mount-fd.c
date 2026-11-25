@@ -1,6 +1,7 @@
 /* SPDX-License-Identifier: MIT */
 #define _GNU_SOURCE
 #include <errno.h>
+#include <fcntl.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -17,8 +18,53 @@ static void fail(const char *stage)
 	exit(1);
 }
 
+static int verify_file(const char *path)
+{
+	static const unsigned char expected[] = "linux-wasm 9p transport\n";
+	const size_t expected_length = sizeof(expected) - 1;
+	unsigned char buffer[sizeof(expected)];
+	size_t offset = 0;
+	int fd = open(path, O_RDONLY | O_CLOEXEC);
+	if (fd < 0)
+		fail("open remote file");
+
+	for (;;) {
+		ssize_t count = read(fd, buffer, sizeof(buffer));
+		if (count < 0) {
+			if (errno == EINTR)
+				continue;
+			fail("read remote file");
+		}
+		if (count == 0)
+			break;
+		for (size_t i = 0; i < (size_t)count; i++, offset++) {
+			if (offset == expected_length) {
+				fprintf(stderr, "9p mount-fd: unexpected byte at offset %zu (0x%02x)\n",
+					offset, (unsigned int)buffer[i]);
+				return 1;
+			}
+			if (buffer[i] != expected[offset]) {
+				fprintf(stderr, "9p mount-fd: byte mismatch at offset %zu (got 0x%02x, expected 0x%02x)\n",
+					offset, (unsigned int)buffer[i], (unsigned int)expected[offset]);
+				return 1;
+			}
+		}
+	}
+	if (close(fd) < 0)
+		fail("close remote file");
+	if (offset != expected_length) {
+		fprintf(stderr, "9p mount-fd: EOF after %zu bytes (expected %zu)\n",
+			offset, expected_length);
+		return 1;
+	}
+	return 0;
+}
+
 int main(int argc, char **argv)
 {
+	if (argc == 3 && strcmp(argv[1], "--verify") == 0)
+		return verify_file(argv[2]);
+
 	if (argc != 2 || argv[1][0] != '/' || strpbrk(argv[1], ",\r\n")) {
 		errno = EINVAL;
 		fail("expected one absolute 9P export name");

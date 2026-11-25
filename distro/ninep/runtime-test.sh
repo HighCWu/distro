@@ -17,8 +17,7 @@ listing=$(busybox timeout -s KILL 20 busybox ls -1 /mnt/9p) || fail "list remote
 printf '%s\n' "$listing" | busybox grep -Fxq message.txt || fail "find message.txt in directory listing"
 echo '9p transport: listed remote directory'
 
-printf '%s\n' 'linux-wasm 9p transport' |
-  busybox timeout -s KILL 20 busybox cmp -s - /mnt/9p/message.txt || fail "verify remote file bytes"
+busybox timeout -s KILL 20 /mount-fd --verify /mnt/9p/message.txt || fail "verify remote file bytes"
 echo '9p transport: read exact remote file bytes'
 
 busybox timeout -s KILL 20 busybox umount /mnt/9p || fail "unmount remote filesystem"
