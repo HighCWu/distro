@@ -200,6 +200,7 @@ static int variadic_slot_layout(const FfiWasmTypeInfo *type, size_t *alignment,
     return 1;
   }
   *alignment = type->alignment;
+  /* Binary128 has a natural 16-byte slot in both default and Linux64 ABIs. */
 #if defined(__wasm_linux64__)
   /* Linux64 allocates at least one eight-byte word for each variadic
    * argument. The zeroed tail supplies padding above the low value bytes. */
@@ -322,6 +323,9 @@ ffi_status FFI_HIDDEN ffi_prep_cif_machdep_var(ffi_cif *cif, unsigned int nfixed
     case FFI_TYPE_POINTER:
       if (description.kind != FFI_WASM_TYPE_SCALAR) return FFI_BAD_TYPEDEF;
       break;
+    case FFI_TYPE_LONGDOUBLE:
+      if (description.kind != FFI_WASM_TYPE_BINARY128) return FFI_BAD_TYPEDEF;
+      break;
     case FFI_TYPE_STRUCT:
       if (description.kind != FFI_WASM_TYPE_COERCED_STRUCT &&
           description.kind != FFI_WASM_TYPE_INDIRECT_STRUCT) return FFI_BAD_TYPEDEF;
@@ -343,6 +347,7 @@ ffi_status FFI_HIDDEN ffi_prep_cif_machdep_var(ffi_cif *cif, unsigned int nfixed
 
 void ffi_call(ffi_cif *cif, void (*function)(void), void *result, void **arguments) {
   union FfiWasmResultScratch {
+    long double binary128;
     ffi_arg unsigned_arg;
     ffi_sarg signed_arg;
     uint64_t unsigned_64;

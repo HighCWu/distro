@@ -177,6 +177,8 @@ static int supported_variadic_tail_type(const ffi_type *type,
   case FFI_TYPE_DOUBLE:
   case FFI_TYPE_POINTER:
     return description->kind == FFI_WASM_TYPE_SCALAR;
+  case FFI_TYPE_LONGDOUBLE:
+    return description->kind == FFI_WASM_TYPE_BINARY128;
   case FFI_TYPE_STRUCT:
     return description->kind == FFI_WASM_TYPE_COERCED_STRUCT ||
            description->kind == FFI_WASM_TYPE_INDIRECT_STRUCT;
@@ -228,7 +230,8 @@ static int describe_type_recursive(const ffi_type *type, unsigned address_bits,
       FfiWasmTypeInfo field_info;
       int status = describe_type_recursive(*field, address_bits, 0, depth + 1,
                                            &field_info);
-      if (status < 0 || field_info.kind == FFI_WASM_TYPE_VOID) {
+      if (status < 0 || field_info.kind == FFI_WASM_TYPE_VOID ||
+          field_info.kind == FFI_WASM_TYPE_BINARY128) {
         return status < 0 ? status : -EINVAL;
       }
       status = align_up_size(field_end, field_info.alignment, &field_end);
@@ -348,6 +351,16 @@ static int describe_type_recursive(const ffi_type *type, unsigned address_bits,
     result->alignment_exponent = 3;
     result->value_size = 8;
     return 0;
+  case FFI_TYPE_LONGDOUBLE:
+    /* Both Wasm pointer widths, including Linux64, pass binary128 as two
+       little-endian i64 values and return it through a hidden first pointer. */
+    if (type->size != 16 || type->alignment != 16) return -ENOTSUP;
+    result->kind = FFI_WASM_TYPE_BINARY128;
+    result->value_type = 0x7e;
+    result->load_opcode = 0x29;
+    result->alignment_exponent = 3;
+    result->value_size = 8;
+    return 0;
   case FFI_TYPE_POINTER:
     if (type->size != address_bits / 8 ||
         type->alignment != ffi_type_pointer.alignment) return -EINVAL;
@@ -358,7 +371,7 @@ static int describe_type_recursive(const ffi_type *type, unsigned address_bits,
     result->value_size = (unsigned char)(address_bits / 8);
     return 0;
   default:
-    /* Complex, long double, and unsupported scalar types use other ABI rules. */
+    /* Complex and unsupported scalar types use other ABI rules. */
     return -ENOTSUP;
   }
 }
@@ -440,9 +453,13 @@ static int emit_type_section(ByteBuffer *module, unsigned address_bits, unsigned
                              unsigned nfixedargs, int is_variadic,
                              const WasmType *return_type, const WasmType *argument_types) {
   ByteBuffer section = {0};
-  unsigned has_sret = return_type->kind == FFI_WASM_TYPE_INDIRECT_STRUCT;
+  unsigned has_sret = return_type->kind == FFI_WASM_TYPE_INDIRECT_STRUCT ||
+    return_type->kind == FFI_WASM_TYPE_BINARY128;
   unsigned typed_nargs = is_variadic ? nfixedargs : nargs;
   unsigned call_nargs = typed_nargs + (unsigned)is_variadic + has_sret;
+  for (unsigned i = 0; i < typed_nargs; ++i) {
+    if (argument_types[i].kind == FFI_WASM_TYPE_BINARY128) ++call_nargs;
+  }
   unsigned has_scalar_result = return_type->kind == FFI_WASM_TYPE_SCALAR ||
     return_type->kind == FFI_WASM_TYPE_COERCED_STRUCT;
   int result = buffer_u32(&section, 2); /* call type and exported wrapper type */
@@ -456,6 +473,9 @@ static int emit_type_section(ByteBuffer *module, unsigned address_bits, unsigned
       ? (unsigned char)pointer_value_type(address_bits)
       : argument_types[i].value_type;
     result = buffer_byte(&section, wasm_type);
+    if (result == 0 && argument_types[i].kind == FFI_WASM_TYPE_BINARY128) {
+      result = buffer_byte(&section, 0x7e);
+    }
   }
   if (result == 0 && is_variadic) {
     result = buffer_byte(&section, (unsigned char)pointer_value_type(address_bits));
@@ -525,7 +545,8 @@ static int emit_code_section(ByteBuffer *module, unsigned address_bits, unsigned
   ByteBuffer section = {0};
   int result = buffer_u32(&body, 0); /* no locals */
 
-  unsigned has_sret = return_type->kind == FFI_WASM_TYPE_INDIRECT_STRUCT;
+  unsigned has_sret = return_type->kind == FFI_WASM_TYPE_INDIRECT_STRUCT ||
+    return_type->kind == FFI_WASM_TYPE_BINARY128;
   unsigned has_scalar_result = return_type->kind == FFI_WASM_TYPE_SCALAR ||
     return_type->kind == FFI_WASM_TYPE_COERCED_STRUCT;
 
@@ -542,14 +563,22 @@ static int emit_code_section(ByteBuffer *module, unsigned address_bits, unsigned
   const uint64_t pointer_size = address_bits / 8;
   unsigned typed_nargs = is_variadic ? nfixedargs : nargs;
   for (unsigned i = 0; result == 0 && i < typed_nargs; ++i) {
-    result = emit_pointer_local_and_offset(&body, address_bits, 2,
-                                           (uint64_t)i * pointer_size);
-    if (result == 0) result = emit_load(&body, &(WasmType){
-      .load_opcode = address_bits == 64 ? 0x29 : 0x28,
-      .alignment_exponent = address_bits == 64 ? 3 : 2,
-    });
-    if (result == 0 && argument_types[i].kind != FFI_WASM_TYPE_INDIRECT_STRUCT) {
-      result = emit_load(&body, &argument_types[i]);
+    unsigned words = argument_types[i].kind == FFI_WASM_TYPE_BINARY128 ? 2 : 1;
+    for (unsigned word = 0; result == 0 && word < words; ++word) {
+      result = emit_pointer_local_and_offset(&body, address_bits, 2,
+                                             (uint64_t)i * pointer_size);
+      if (result == 0) result = emit_load(&body, &(WasmType){
+        .load_opcode = address_bits == 64 ? 0x29 : 0x28,
+        .alignment_exponent = address_bits == 64 ? 3 : 2,
+      });
+      if (result == 0 && word != 0) {
+        result = buffer_byte(&body, address_bits == 64 ? 0x42 : 0x41);
+        if (result == 0) result = buffer_u32(&body, 8);
+        if (result == 0) result = buffer_byte(&body, address_bits == 64 ? 0x7c : 0x6a);
+      }
+      if (result == 0 && argument_types[i].kind != FFI_WASM_TYPE_INDIRECT_STRUCT) {
+        result = emit_load(&body, &argument_types[i]);
+      }
     }
   }
   if (result == 0 && is_variadic) {

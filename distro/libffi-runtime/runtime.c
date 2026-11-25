@@ -20,6 +20,80 @@ static unsigned pointer_struct_calls;
 static unsigned pair_struct_calls;
 static unsigned mixed_struct_calls;
 static unsigned mixed_vararg_calls;
+static unsigned long_double_calls;
+
+static long double long_double_target(long double left, int marker,
+                                      long double right, double fraction) {
+  ++long_double_calls;
+  return left + right + (long double)marker + (long double)fraction;
+}
+
+static long double long_double_vararg_target(int marker, ...) {
+  ++long_double_calls;
+  va_list ap;
+  va_start(ap, marker);
+  double fraction = va_arg(ap, double);
+  long double left = va_arg(ap, long double);
+  int adjust = va_arg(ap, int);
+  long double right = va_arg(ap, long double);
+  va_end(ap);
+  return left + right + (long double)(marker + adjust) + (long double)fraction;
+}
+
+static int exercise_long_double_calls(void) {
+#if defined(__wasm__)
+  _Static_assert(__LDBL_MANT_DIG__ == 113 && sizeof(long double) == 16 &&
+                 _Alignof(long double) == 16, "Wasm long double must be binary128");
+#endif
+  long double left = 0x1.0000000000000000000000000001p0L;
+  long double right = -1.0L;
+  int marker = 0;
+  double fraction = 0;
+  ffi_type *types[] = {&ffi_type_longdouble, &ffi_type_sint,
+                       &ffi_type_longdouble, &ffi_type_double};
+  void *values[] = {&left, &marker, &right, &fraction};
+  ffi_cif cif;
+  if (ffi_prep_cif(&cif, FFI_DEFAULT_ABI, 4, &ffi_type_longdouble, types) != FFI_OK) {
+    fputs("libffi runtime: long double prep failed\n", stderr);
+    return 1;
+  }
+  long double expected = long_double_target(left, marker, right, fraction);
+  long_double_calls = 0;
+  long double result = 0;
+  ffi_call(&cif, FFI_FN(long_double_target), &result, values);
+  if (result != expected || long_double_calls != 1) {
+    fputs("libffi runtime: binary128 split argument or sret mismatch\n", stderr);
+    return 1;
+  }
+  ffi_call(&cif, FFI_FN(long_double_target), NULL, values);
+  if (long_double_calls != 2) return 1;
+
+  int adjust = 0;
+  ffi_type *var_types[] = {&ffi_type_sint, &ffi_type_double, &ffi_type_longdouble,
+                           &ffi_type_sint, &ffi_type_longdouble};
+  void *var_values[] = {&marker, &fraction, &left, &adjust, &right};
+  if (ffi_prep_cif_var(&cif, FFI_DEFAULT_ABI, 1, 5,
+                       &ffi_type_longdouble, var_types) != FFI_OK) {
+    fputs("libffi runtime: long double variadic prep failed\n", stderr);
+    return 1;
+  }
+  expected = long_double_vararg_target(marker, fraction, left, adjust, right);
+  long_double_calls = 0;
+  ffi_call(&cif, FFI_FN(long_double_vararg_target), &result, var_values);
+  if (result != expected || long_double_calls != 1) {
+    fputs("libffi runtime: binary128 aligned variadic slots mismatch\n", stderr);
+    return 1;
+  }
+#if defined(__wasm__)
+  ffi_type *fields[] = {&ffi_type_longdouble, NULL};
+  ffi_type aggregate = {0, 0, FFI_TYPE_STRUCT, fields};
+  if (ffi_prep_cif(&cif, FFI_DEFAULT_ABI, 0, &aggregate, NULL) != FFI_BAD_TYPEDEF) {
+    fputs("libffi runtime: unsupported long double aggregate admitted\n", stderr);
+    return 1;
+  }
+#endif
+  return 0;
+}
 
 struct OneChar {
   signed char value;
@@ -557,7 +631,9 @@ int main(void) {
 
   if (exercise_aggregate_calls() != 0) return 1;
   if (exercise_variadic_calls() != 0) return 1;
+  if (exercise_long_double_calls() != 0) return 1;
 
+  puts("LIBFFI_RUNTIME_LONG_DOUBLE_OK");
   puts("LIBFFI_RUNTIME_MIXED_CALL_OK");
   return 0;
 }

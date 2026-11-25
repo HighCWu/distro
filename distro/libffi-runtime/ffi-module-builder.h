@@ -12,6 +12,7 @@ enum FfiWasmTypeKind {
   FFI_WASM_TYPE_SCALAR,
   FFI_WASM_TYPE_COERCED_STRUCT,
   FFI_WASM_TYPE_INDIRECT_STRUCT,
+  FFI_WASM_TYPE_BINARY128,
 };
 
 typedef struct FfiWasmTypeInfo {

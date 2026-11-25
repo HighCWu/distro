@@ -10,9 +10,11 @@ fail() {
 export PATH=/bin:/sbin:/usr/bin:/usr/sbin
 
 output=$(/bin/libffi-runtime) || fail 'ffi_call consumer failed'
-expected='LIBFFI_RUNTIME_MIXED_CALL_OK'
+expected='LIBFFI_RUNTIME_LONG_DOUBLE_OK
+LIBFFI_RUNTIME_MIXED_CALL_OK'
 [ "$output" = "$expected" ] || fail "unexpected consumer output: $output"
 
 echo 'libffi runtime: mixed calls and by-value variadic aggregates verified'
+echo 'libffi runtime: binary128 fixed arguments, sret and aligned variadic slots verified'
 echo '::vm-test::pass'
 while :; do sleep 1; done
