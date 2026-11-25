@@ -365,7 +365,11 @@ test("replayable analysis cache verifies bytes and separates address ABIs", () =
   withModuleCompilationCount((compilationCount) => {
     validate_dylink_worker_replayable_module("analysis-cache-content", source, "i32");
     const afterFirstAnalysis = compilationCount();
-    assert.ok(afterFirstAnalysis > 0, "the first call analyzes the module");
+    assert.equal(
+      afterFirstAnalysis,
+      1,
+      "unchanged replay bytes reuse the original engine validation",
+    );
 
     validate_dylink_worker_replayable_module("analysis-cache-content", source, "i32");
     assert.equal(compilationCount(), afterFirstAnalysis, "identical content reuses its analysis");
@@ -393,6 +397,21 @@ test("replayable analysis cache verifies bytes and separates address ABIs", () =
       /invalid/,
     );
     assert.ok(compilationCount() > afterFirstInvalidBytes, "failed analyses are not cached");
+  });
+});
+
+test("replayable analysis compiles changed replay bytes after removing start", () => {
+  const source = new Uint8Array([
+    ...emptyReplayModule(),
+    ...section(1, [1, 0x60, 0, 0]),
+    ...section(3, [1, 0]),
+    ...section(8, [0]),
+    ...section(10, [1, ...body([0, 0x0b])]),
+  ]);
+  assert.notDeepEqual(prepare_dylink_worker_module(source, "i32"), source);
+  withModuleCompilationCount((compilationCount) => {
+    validate_dylink_worker_replayable_module("analysis-compile-rewritten-start", source, "i32");
+    assert.equal(compilationCount(), 2, "changed replay bytes receive their own engine validation");
   });
 });
 

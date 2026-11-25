@@ -624,7 +624,9 @@ function analyzeReplayableModule(
 
     const tail = prepare_wasm_dynamic_tail_calls(bytes);
     replayBytes = prepare_dylink_worker_module(tail.bytes, address);
-    replayModule = new WebAssembly.Module(replayBytes);
+    replayModule = sameModuleBytes(bytes, replayBytes)
+      ? original
+      : new WebAssembly.Module(replayBytes);
     privateAliases = prepare_dylink_call_metadata(replayBytes).functions;
   } catch (error) {
     if (error instanceof DylinkWorkerSnapshotError) throw error;
