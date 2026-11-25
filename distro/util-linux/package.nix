@@ -270,5 +270,21 @@ stdenv.mkDerivation (finalAttrs: {
       pty = check "pty" ./pty-test.sh;
       programs = check "programs" ./programs-test.sh;
       ipc = check "ipc" ./ipc-test.sh;
+      loop = vm-test.installedTest {
+        name = "util-linux-loop-${platform.wasmArch}";
+        init = ./loop-test.sh;
+        contents = [
+          busybox
+          file
+          ncurses
+          finalAttrs.finalPackage
+        ];
+        files."/fixture.ext4" = pkgs.runCommand "loop-fixture.ext4" {
+          nativeBuildInputs = [ pkgs.e2fsprogs ];
+        } ''
+          truncate -s 8M "$out"
+          mkfs.ext4 -q -F "$out"
+        '';
+      };
     };
 })

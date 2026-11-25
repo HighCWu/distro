@@ -129,6 +129,8 @@ pkgs.stdenvNoCC.mkDerivation (finalAttrs: {
       scripts/config --enable CHECKPOINT_RESTORE
     ''}
     scripts/config --enable MEMFD_CREATE
+    # Allocate loop devices on demand through /dev/loop-control.
+    scripts/config --enable BLK_DEV_LOOP --set-val BLK_DEV_LOOP_MIN_COUNT 0
     make olddefconfig
     ${
       if fileMmapCandidate || fileMmapStreamCandidate then
@@ -181,6 +183,8 @@ pkgs.stdenvNoCC.mkDerivation (finalAttrs: {
     grep -qx 'CONFIG_SYSVIPC=y' .config
     grep -qx 'CONFIG_FUSE_PASSTHROUGH=y' .config
     grep -qx 'CONFIG_MEMFD_CREATE=y' .config
+    grep -qx 'CONFIG_BLK_DEV_LOOP=y' .config
+    grep -qx 'CONFIG_BLK_DEV_LOOP_MIN_COUNT=0' .config
     grep -qx 'CONFIG_FS_STACK=y' .config
     grep -qx 'CONFIG_VM_EVENT_COUNTERS=y' .config
     grep -qx 'CONFIG_PACKET=y' .config
