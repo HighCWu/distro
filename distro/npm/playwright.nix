@@ -47,7 +47,15 @@ in
       suite,
       expectedTests ? [ ],
       script ? null,
+      recordRuntimeLog ? false,
     }:
+    let
+      runCheck =
+        if script == null then
+          "node node_modules/@playwright/test/cli.js test --project=${project} --forbid-only --reporter=line,json"
+        else
+          "node ${lib.escapeShellArg script} ${lib.escapeShellArg project}";
+    in
     assert lib.assertMsg (
       script == null || expectedTests == [ ]
     ) "standalone browser checks must assert their own results";
@@ -76,15 +84,21 @@ in
         cd ${suite}
         export PLAYWRIGHT_JSON_OUTPUT_NAME="$TMPDIR/browser-report.json"
         ${
-          if script == null then
-            "node node_modules/@playwright/test/cli.js test --project=${project} --forbid-only --reporter=line,json"
+          if recordRuntimeLog then
+            ''
+              mkdir "$out"
+              (
+                set -o pipefail
+                ${runCheck} 2>&1 | tee "$out/runtime.log"
+              )
+            ''
           else
-            "node ${lib.escapeShellArg script} ${lib.escapeShellArg project}"
+            runCheck
         }
         ${lib.optionalString (expectedTests != [ ]) ''
           node ${./browser-report-check.mjs} "$TMPDIR/browser-report.json" \
             ${pkgs.writeText "expected-browser-tests.json" (builtins.toJSON expectedTests)}
         ''}
-        touch $out
+        ${lib.optionalString (!recordRuntimeLog) "touch $out"}
       '';
 }

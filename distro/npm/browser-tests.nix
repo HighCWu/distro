@@ -623,6 +623,7 @@ let
       project = "chromium";
       inherit suite;
       script = "ninep-browser-check.mjs";
+      recordRuntimeLog = true;
     };
 
   processSuite =
