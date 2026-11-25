@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: MIT
 import assert from "node:assert/strict";
-import { mkdtempSync, writeFileSync, readFileSync, unlinkSync, rmdirSync } from "node:fs";
+import fs, { mkdtempSync, writeFileSync, readFileSync, unlinkSync, rmdirSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
@@ -69,6 +69,7 @@ test("disk storage releases its descriptor when stat or installation fails", () 
           () => {
             throw reason;
           },
+          false,
           operations,
         ),
       (error) => error === reason,
@@ -93,6 +94,7 @@ test("disk initialization preserves the primary failure if close also fails", ()
         () => {
           throw reason;
         },
+        false,
         operations,
       ),
     (error) => error === reason,
@@ -108,6 +110,7 @@ test("disk storage completes short host I/O and stops at zero progress", () => {
     (value) => {
       storage = value;
     },
+    false,
     operations,
   );
   assert.equal(storage.read(100, new Uint8Array(5)), 5);
@@ -135,6 +138,7 @@ test("disk zeroing completes partial writes and rejects short completion", () =>
     (value) => {
       storage = value;
     },
+    false,
     operations,
   );
   assert.equal(storage.writeZeroes!(100, 5), undefined);
@@ -162,9 +166,61 @@ test("read-only disk fallback omits write, zeroing and flush and closes without 
       assert.equal(storage.flush, undefined);
       storage.close!();
     },
+    false,
     operations,
   );
   assert.deepEqual(calls, ["r+", "r", ["close", 7]]);
+});
+
+test("explicit read-only opens a writable file without write access", async (t) => {
+  const directory = mkdtempSync(join(tmpdir(), "linux-wasm-disk-ro-"));
+  t.after(() => fs.rmSync(directory, { recursive: true, force: true }));
+  const path = join(directory, "writable.img");
+  const original = new Uint8Array(512).fill(0x5a);
+  writeFileSync(path, original);
+  const writable = fs.openSync(path, "r+");
+  fs.closeSync(writable);
+
+  const opens: string[] = [];
+  let descriptor!: number;
+  let closes = 0;
+  let storage!: BlockDeviceStorage;
+  installDiskStorage(
+    path,
+    (value) => {
+      storage = value;
+    },
+    true,
+    {
+      ...fs,
+      openSync(path, flags) {
+        opens.push(flags);
+        descriptor = fs.openSync(path, flags);
+        return descriptor;
+      },
+      fsyncSync() {
+        assert.fail("read-only disk must not sync");
+      },
+      closeSync(file) {
+        closes++;
+        fs.closeSync(file);
+      },
+    },
+  );
+  try {
+    assert.deepEqual(opens, ["r"]);
+    const bytes = new Uint8Array(512);
+    assert.equal(await storage.read(0, bytes), bytes.length);
+    assert.deepEqual(bytes, original);
+    assert.equal(storage.write, undefined);
+    assert.equal(storage.writeZeroes, undefined);
+    assert.equal(storage.flush, undefined);
+    assert.throws(() => fs.writeSync(descriptor, Uint8Array.of(0), 0, 1, 0), { code: "EBADF" });
+  } finally {
+    await storage.close!();
+  }
+  assert.equal(closes, 1);
+  assert.deepEqual(new Uint8Array(readFileSync(path)), original);
 });
 
 test("disk close always releases the descriptor and preserves a failed fsync", () => {
@@ -185,6 +241,7 @@ test("disk close always releases the descriptor and preserves a failed fsync", (
     (value) => {
       storage = value;
     },
+    false,
     operations,
   );
   assert.throws(

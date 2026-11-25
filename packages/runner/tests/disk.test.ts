@@ -15,8 +15,8 @@ function required_environment(name: string): string {
 const runner = required_environment("LINUX_RUNNER_TEST_RUNNER");
 const root = required_environment("LINUX_RUNNER_TEST_ROOT_DISK");
 
-async function run_disk(disk: string, command: string) {
-  const child = spawn(runner, ["--cpus", "1", "--disk", root, "--disk", disk], {
+async function run_disks(disks: string[], command: string) {
+  const child = spawn(runner, ["--cpus", "1", "--disk", root, ...disks], {
     stdio: ["pipe", "pipe", "pipe"],
   });
   let output = "";
@@ -45,6 +45,8 @@ async function run_disk(disk: string, command: string) {
   assert.deepEqual(result, { code: 0, signal: null }, output);
   return output;
 }
+
+const run_disk = (disk: string, command: string) => run_disks(["--disk", disk], command);
 
 test("runner persists a virtio disk served by a filesystem worker", async (t) => {
   const temporary = await mkdtemp(path.join(tmpdir(), "linux-runner-disk-"));
@@ -113,4 +115,33 @@ test("runner reads a remote virtio disk and powers off", async (t) => {
   assert.match(output, new RegExp(marker));
   assert.deepEqual(requests[0], { offset: 0, end: 511, validator: undefined });
   assert(requests.some(({ offset, end }) => offset <= markerOffset && end >= markerOffset));
+});
+
+test("runner attaches a host-writable image as a read-only disk in argument order", async (t) => {
+  const temporary = await mkdtemp(path.join(tmpdir(), "linux-runner-disk-ro-"));
+  t.after(() => rm(temporary, { recursive: true, force: true }));
+  const readOnly = path.join(temporary, "read-only.img");
+  const writable = path.join(temporary, "writable.img");
+  const original = Buffer.alloc(1024 * 1024, 0xa5);
+  original.write("read-only-image\n");
+  await writeFile(readOnly, original);
+  await writeFile(writable, new Uint8Array(original.length));
+
+  const output = await run_disks(
+    [`--disk-ro=${readOnly}`, "--disk", writable],
+    [
+      "until [ -b /dev/vdb ] && [ -b /dev/vdc ]; do sleep 0.1; done",
+      '[ "$(cat /sys/block/vdb/ro)" = 1 ] && [ "$(cat /sys/block/vdc/ro)" = 0 ]',
+      '[ "$(dd if=/dev/vdb bs=15 count=1 2>/dev/null)" = read-only-image ]',
+      "! (printf x | dd of=/dev/vdb bs=1 conv=notrunc 2>/dev/null)",
+      "printf read-write-image | dd of=/dev/vdc bs=512 conv=fsync 2>/dev/null",
+      "printf '%s%s\\n' disk-ro- contract-passed",
+    ].join(" && "),
+  );
+  assert.match(output, /(?:^|\n)disk-ro-contract-passed\r?(?:\n|$)/);
+  assert.deepEqual(await readFile(readOnly), original);
+  assert.equal((await readFile(writable)).subarray(0, 16).toString(), "read-write-image");
+  t.diagnostic(
+    "Linux verified disk order, read-only status and write rejection; runner closed and backing bytes checked",
+  );
 });

@@ -74,7 +74,7 @@ let
     has_disk=0
     for arg in "$@"; do
       case "$arg" in
-        --disk | --disk=*) has_disk=1 ;;
+        --disk | --disk=* | --disk-ro | --disk-ro=*) has_disk=1 ;;
       esac
     done
 

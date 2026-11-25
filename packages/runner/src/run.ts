@@ -50,7 +50,10 @@ const parsed = parseArgs({
     },
     disk: {
       type: "string",
-      default: [],
+      multiple: true,
+    },
+    "disk-ro": {
+      type: "string",
       multiple: true,
     },
     share: {
@@ -75,6 +78,8 @@ options:
       --no-entropy        Don't attach an entropy device
       --disk <string>     Local disk image path or read-only HTTP(S) Range URL (repeatable)
                           HTTP images require a strong ETag and byte-range support
+      --disk-ro <string>  Open a local disk image or HTTP(S) Range URL read-only (repeatable)
+                          Disks are attached in command-line order
       --share HOST:GUEST  Mount a host directory read-write (can be specified multiple times)
       --share-ro HOST:GUEST
                           Mount a host directory read-only (can be specified multiple times)
@@ -148,9 +153,11 @@ const openDisks = new Set<VirtioDevice>();
 const diskTerminations: Promise<void>[] = [];
 let machine: Machine;
 try {
-  for (const disk of args.disk) {
+  for (const token of parsed.tokens) {
+    if (token.kind !== "option" || (token.name !== "disk" && token.name !== "disk-ro")) continue;
+    assert(token.value !== undefined, `--${token.name} requires a disk image`);
     const worker = new Worker(new URL("./disk-worker.ts", import.meta.url), {
-      workerData: { path: disk },
+      workerData: { path: token.value, readOnly: token.name === "disk-ro" },
     });
     let device: VirtioDevice;
     try {

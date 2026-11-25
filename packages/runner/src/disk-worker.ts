@@ -13,5 +13,5 @@ const install = (storage: BlockDeviceStorage) => serveDevice(endpoint, blockDevi
 if (/^https?:\/\//i.test(path)) {
   await installHttpDiskStorage(path, install);
 } else {
-  installDiskStorage(path, install);
+  installDiskStorage(path, install, workerData.readOnly);
 }

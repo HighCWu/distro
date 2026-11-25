@@ -29,15 +29,19 @@ interface DiskFileOperations {
 export function installDiskStorage(
   path: string,
   install: (storage: BlockDeviceStorage) => void,
+  readOnly = false,
   operations: DiskFileOperations = fs,
 ) {
-  let readonly = false;
   let file: number;
-  try {
-    file = operations.openSync(path, "r+");
-  } catch {
-    readonly = true;
+  if (readOnly) {
     file = operations.openSync(path, "r");
+  } else {
+    try {
+      file = operations.openSync(path, "r+");
+    } catch {
+      readOnly = true;
+      file = operations.openSync(path, "r");
+    }
   }
   try {
     const { size: capacity } = operations.fstatSync(file);
@@ -68,8 +72,8 @@ export function installDiskStorage(
         }
         return read;
       },
-      write: readonly ? undefined : (offset, data) => write(offset, data),
-      writeZeroes: readonly
+      write: readOnly ? undefined : (offset, data) => write(offset, data),
+      writeZeroes: readOnly
         ? undefined
         : (offset, length) => {
             if (
@@ -89,12 +93,12 @@ export function installDiskStorage(
               length -= chunkLength;
             }
           },
-      flush: readonly ? undefined : () => operations.fsyncSync(file),
+      flush: readOnly ? undefined : () => operations.fsyncSync(file),
       close() {
         let failure: unknown;
         let failed = false;
         try {
-          if (!readonly) operations.fsyncSync(file);
+          if (!readOnly) operations.fsyncSync(file);
         } catch (error) {
           failed = true;
           failure = error;
