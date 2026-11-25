@@ -133,6 +133,7 @@ pkgs.stdenvNoCC.mkDerivation (finalAttrs: {
     scripts/config --enable BLK_DEV_LOOP --set-val BLK_DEV_LOOP_MIN_COUNT 0
     scripts/config --enable TUN --enable VETH --enable DUMMY \
       --enable IP_ADVANCED_ROUTER --enable IP_MULTIPLE_TABLES
+    scripts/config --enable AUTOFS_FS
     make olddefconfig
     ${
       if fileMmapCandidate || fileMmapStreamCandidate then
@@ -180,6 +181,7 @@ pkgs.stdenvNoCC.mkDerivation (finalAttrs: {
     done
     grep -qx 'CONFIG_FSNOTIFY=y' .config
     grep -qx 'CONFIG_EXT4_FS_POSIX_ACL=y' .config
+    grep -qx 'CONFIG_AUTOFS_FS=y' .config
     grep -qx 'CONFIG_FS_POSIX_ACL=y' .config
     grep -qx 'CONFIG_IPV6=y' .config
     grep -qx 'CONFIG_SYSVIPC=y' .config
