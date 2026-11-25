@@ -1310,7 +1310,7 @@ class Session {
       }
       case Treadlink: {
         const f = this.#fid(r.u32());
-        return new Writer().str(await this.#need("readlink", "EINVAL")(f.path));
+        return new Writer().str(await this.#need("readlink", "EINVAL")(f.path, f.identity));
       }
       case Tgetattr: {
         const f = this.#fid(r.u32());

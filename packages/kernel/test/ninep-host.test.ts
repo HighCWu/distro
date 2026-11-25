@@ -1252,3 +1252,43 @@ test(
     await c.close();
   },
 );
+
+test(
+  "readlink checks its saved symlink identity and follows valid fid renames",
+  { timeout: 3000 },
+  async () => {
+    const fs = new MemoryFs();
+    fs.symlink("/link", "original-target");
+    const c = await client(fs);
+    const walk = (fid: number, name: string) =>
+      c.query(110, [u32(1), u32(fid), u16(1), string(name)]);
+    const read = async (fid: number) => {
+      const reply = await c.query(22, [u32(fid)]);
+      assert.equal(reply.readUInt16LE(), reply.length - 2);
+      return reply.subarray(2).toString();
+    };
+    await walk(2, "link");
+    assert.equal(await read(2), "original-target");
+    fs.move("/link", "/host-moved");
+    fs.symlink("/link", "replacement-target");
+    assert.equal((await c.query(22, [u32(2)], 7)).readUInt32LE(), 116);
+    assert.equal(fs.readlink("/link"), "replacement-target");
+    assert.equal(fs.readlink("/host-moved"), "original-target");
+    await walk(3, "link");
+    await c.query(20, [u32(3), u32(1), string("renamed-link")]);
+    assert.equal(
+      await read(3),
+      "replacement-target",
+      "protocol rename updates a surviving fid's path",
+    );
+    fs.rm("/renamed-link");
+    assert.equal(
+      (await c.query(22, [u32(3)], 7)).readUInt32LE(),
+      116,
+      "a missing stable symlink is stale rather than rebound",
+    );
+    fs.symlink("/plain", "plain-target");
+    assert.equal(fs.readlink("/plain"), "plain-target", "legacy path-only calls remain compatible");
+    await c.close();
+  },
+);

@@ -427,8 +427,8 @@ export class MemoryFs implements Fs {
     return [...n.children].map(([name, c]) => ({ name, type: c.type, ino: c.ino }));
   }
 
-  readlink(path: string): string {
-    const n = this.#lookup(path);
+  readlink(path: string, expected?: FsIdentity): string {
+    const n = this.#checkedNode(path, expected);
     if (n.type !== "symlink") throw new FsError("EINVAL", path);
     return n.target!;
   }

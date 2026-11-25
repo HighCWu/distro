@@ -220,7 +220,8 @@ export interface Fs {
   create?(path: string, mode: number, expectedDirectory?: FsIdentity): MaybePromise<FsFile>;
   mkdir?(path: string, mode: number, expectedDirectory?: FsIdentity): MaybePromise<void>;
   symlink?(path: string, target: string, expectedDirectory?: FsIdentity): MaybePromise<void>;
-  readlink?(path: string): MaybePromise<string>;
+  /** Verify a supplied captured identity atomically before reading the target. */
+  readlink?(path: string, expected?: FsIdentity): MaybePromise<string>;
   /** `dir`: rmdir (ENOTEMPTY unless empty), else unlink. Supplied inode/parent
    * identities must be checked atomically before mutation, or fail ESTALE. */
   remove?(
