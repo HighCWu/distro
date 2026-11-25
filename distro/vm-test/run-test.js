@@ -8,6 +8,7 @@ import { closeTestResources } from "./shutdown.js";
 let cpus = 1;
 let snapshotFirstDisk = false;
 let readOnlyDisks = false;
+let vsockRoundtrip = false;
 const positional = [];
 const args = process.argv.slice(2);
 for (let index = 0; index < args.length; index++) {
@@ -17,16 +18,26 @@ for (let index = 0; index < args.length; index++) {
     snapshotFirstDisk = true;
   } else if (args[index] === "--readonly-disks") {
     readOnlyDisks = true;
+  } else if (args[index] === "--vsock-roundtrip") {
+    vsockRoundtrip = true;
   } else {
     positional.push(args[index]);
   }
 }
 const [linuxPath, initramfsPath, ...diskPaths] = positional;
-if (!linuxPath || !initramfsPath || !Number.isSafeInteger(cpus) || cpus < 1) {
-  throw new Error("usage: run-test.js [--cpus <count>] <linux-module> <initramfs> [disk ...]");
+if (
+  !linuxPath ||
+  !initramfsPath ||
+  !Number.isSafeInteger(cpus) ||
+  cpus < 1 ||
+  (vsockRoundtrip && diskPaths.length !== 0)
+) {
+  throw new Error(
+    "usage: run-test.js [--cpus <count>] [--vsock-roundtrip] <linux-module> <initramfs> [disk ...]",
+  );
 }
 
-const { blockDevice, bootMachine, consoleDevice, entropyDevice } = await import(
+const { blockDevice, bootMachine, consoleDevice, entropyDevice, vsockDevice } = await import(
   pathToFileURL(linuxPath).href
 );
 // Fail before acquiring disk handles or constructing devices for a missing image.
@@ -44,6 +55,12 @@ let initialMemoryBytes;
 let observingMemoryGrowth = false;
 let memoryGrowthStage = 0;
 let previousMemoryBytes;
+let vsock;
+let vsockListener;
+let vsockTask;
+let vsockTimer;
+let vsockHostPassed = false;
+let vsockUserPassed = false;
 
 const KERNEL_MEMORY_MAXIMUM_BYTES = 0xffff * 0x10000;
 const MAXIMUM_EXPECTED_INITIAL_MEMORY_BYTES = 16 * 0x100000;
@@ -53,8 +70,63 @@ function finish(value) {
   // subsequently observed while the device and console queues are draining.
   if (!value.passed) runtimeFailure ??= value;
   if (settled) return;
+  if (value.passed && vsockRoundtrip) {
+    vsockUserPassed = true;
+    if (!vsockHostPassed) return;
+  }
   settled = true;
   resolveResult(value);
+}
+
+const VSOCK_FIXTURE_PORT = 4050;
+const VSOCK_FIXTURE_TIMEOUT_MS = 60_000;
+const VSOCK_REQUESTS = [
+  [0x41, 0, 0x18, 0xff, 0x5a, 0x10, 0x80, 0x33],
+  [0x42, 0x01, 0, 0xd2, 0x80, 0x7f, 0x29, 0xfe],
+];
+const VSOCK_REPLIES = [
+  [0x61, 0x55, 0, 0x80, 0x31, 0xee, 0x05, 0x9a],
+  [0x62, 0, 0x44, 0xda, 0x02, 0x77, 0xa9, 0x01],
+];
+
+async function readVsockFixtureBytes(stream, expected, stage) {
+  const actual = await stream.readExactly(expected.length);
+  if (actual.length !== expected.length || expected.some((value, index) => actual[index] !== value))
+    throw new Error(`vsock roundtrip: unexpected bytes for ${stage}`);
+}
+
+async function exerciseVsock(listener) {
+  const streams = [];
+  try {
+    for (let index = 0; index < 2; index++) {
+      const stream = await listener.accept();
+      if (!stream) throw new Error("vsock roundtrip: listener closed before both accepts");
+      streams.push(stream);
+    }
+    await Promise.all(
+      streams.map((stream, index) =>
+        readVsockFixtureBytes(stream, VSOCK_REQUESTS[index], `stream ${index + 1} request`),
+      ),
+    );
+    console.log("vsock host: accepted two streams and verified distinct requests");
+
+    // Reverse the response order to expose any mixing between accepted streams.
+    await streams[1].write(Uint8Array.from(VSOCK_REPLIES[1]));
+    await streams[0].write(Uint8Array.from(VSOCK_REPLIES[0]));
+    await Promise.all(
+      streams.map((stream, index) =>
+        readVsockFixtureBytes(
+          stream,
+          [index === 0 ? 0xa1 : 0xb2],
+          `stream ${index + 1} acknowledgment`,
+        ),
+      ),
+    );
+    console.log("vsock host: both replies acknowledged on their original streams");
+  } finally {
+    listener.close();
+    for (const stream of streams) stream.close();
+  }
 }
 
 function consumeLine(line, acceptTestResult = true) {
@@ -155,6 +227,11 @@ const devices = [
 const disks = [];
 let startupFailed = false;
 try {
+  if (vsockRoundtrip) {
+    vsock = vsockDevice();
+    vsockListener = vsock.listen(VSOCK_FIXTURE_PORT);
+    devices.push(vsock);
+  }
   for (const [diskIndex, diskPath] of diskPaths.entries()) {
     if (snapshotFirstDisk && diskIndex === 0) {
       const { snapshot_block_device } = await import(
@@ -205,6 +282,20 @@ try {
 
 if (machine) initialMemoryBytes = machine.memory.buffer.byteLength;
 
+if (machine && vsockListener) {
+  vsockTimer = setTimeout(() => {
+    finish({ passed: false, reason: "vsock roundtrip: fixture timed out after 60 seconds" });
+  }, VSOCK_FIXTURE_TIMEOUT_MS);
+  vsockTask = exerciseVsock(vsockListener)
+    .then(() => {
+      vsockHostPassed = true;
+      if (vsockUserPassed) finish({ passed: true });
+    })
+    .catch((error) => {
+      finish({ passed: false, reason: String(error) });
+    });
+}
+
 void machine?.bootConsole
   .pipeTo(consoleOutput({ failWhenClosed: false, acceptTestResult: false }))
   .catch((error) => {
@@ -216,6 +307,7 @@ void machine?.closed.catch((error) => {
 });
 
 const outcome = await result;
+clearTimeout(vsockTimer);
 let cleanupFailed = false;
 shuttingDown = true;
 try {
@@ -224,7 +316,19 @@ try {
   console.error(`::vm-test::fail: runner cleanup failed: ${error}`);
   cleanupFailed = true;
 }
+if (vsock) {
+  try {
+    vsock.close();
+    await vsock.closed;
+    await vsockTask;
+  } catch (error) {
+    console.error(`::vm-test::fail: vsock fixture cleanup failed: ${error}`);
+    cleanupFailed = true;
+  }
+}
 
 const finalOutcome = runtimeFailure ?? outcome;
 if (!finalOutcome.passed) console.error(`vm test failed: ${finalOutcome.reason}`);
-process.exitCode = finalOutcome.passed && !startupFailed && !cleanupFailed ? 0 : 1;
+const passed = finalOutcome.passed && !startupFailed && !cleanupFailed;
+if (passed && vsockRoundtrip) console.log("vsock runtime: machine and device shutdown complete");
+process.exitCode = passed ? 0 : 1;

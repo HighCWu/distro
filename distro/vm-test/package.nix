@@ -50,6 +50,7 @@ let
       snapshotFirstDisk ? false,
       readOnlyDisks ? false,
       nodeArguments ? [ ],
+      vsockRoundtrip ? false,
     }:
     let
       allDisks = lib.optional (disk != null) disk ++ disks;
@@ -79,6 +80,7 @@ let
           --cpus ${toString cpus} \
           ${lib.optionalString snapshotFirstDisk "--snapshot-first-disk"} \
           ${lib.optionalString readOnlyDisks "--readonly-disks"} \
+          ${lib.optionalString vsockRoundtrip "--vsock-roundtrip"} \
           ${kernel}/dist/index.js \
           ${initramfs} \
           ${lib.concatMapStringsSep " " (diskCopy: diskCopy.name) diskCopies} \
@@ -183,6 +185,7 @@ let
       snapshotFirstDisk ? false,
       readOnlyDisks ? false,
       nodeArguments ? [ ],
+      vsockRoundtrip ? false,
     }:
     bootInstalledSystem {
       inherit
@@ -193,6 +196,7 @@ let
         snapshotFirstDisk
         readOnlyDisks
         nodeArguments
+        vsockRoundtrip
         ;
       initramfs = image.mkInitramfs {
         name = "${lib.replaceStrings [ "_" ] [ "-" ] name}-initramfs";
