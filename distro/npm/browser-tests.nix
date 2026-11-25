@@ -558,6 +558,7 @@ let
         service-worker = serviceWorkerCheck;
         ninep-wasm32-chromium = ninepCheck 32;
         ninep-wasm64-chromium = ninepCheck 64;
+        indexeddb-block-wasm64-chromium = indexedDbBlockCheck;
       }
     );
   };
@@ -623,6 +624,45 @@ let
       project = "chromium";
       inherit suite;
       script = "ninep-browser-check.mjs";
+      recordRuntimeLog = true;
+    };
+
+  indexedDbBlockCheck =
+    let
+      initramfs =
+        pkgs.runCommand "indexeddb-block-discard-initramfs"
+          {
+            nativeBuildInputs = [
+              sdk-wasm64
+              pkgs.cpio
+            ];
+          }
+          ''
+            mkdir -p root/dev root/sys
+            wasm-linux-cc -O2 -Wall -Wextra -Werror ${source}/block-discard-runtime.c -o root/init
+            (cd root; printf '%s\n' . dev sys init | cpio -o -H newc) > "$out"
+          '';
+      indexedDbSuite = pkgs.runCommand "indexeddb-block-wasm64-browser-tests" { } ''
+        mkdir -p $out/tests $out/node_modules/@lowland/bytes $out/node_modules/@lowland/kernel
+        ${playwright.linkRuntime "$out"}
+        cp ${source}/memory64-index.html $out/index.html
+        touch $out/app.js
+        cp ${source}/playwright.config.js ${source}/server.js ${source}/runtime-smoke.js $out/
+        cp ${../vm-test/protocol.js} $out/protocol.js
+        cp ${source}/tests/indexeddb-block-storage.spec.js ${source}/tests/block-discard-linux.spec.js $out/tests/
+        cp ${initramfs} $out/block-discard.cpio
+        cp -r ${bytes}/. $out/node_modules/@lowland/bytes/
+        cp -r ${kernel-wasm64}/. $out/node_modules/@lowland/kernel/
+      '';
+    in
+    playwright.mkCheck {
+      name = "browser-tests-indexeddb-block-wasm64-chromium";
+      project = "chromium";
+      suite = indexedDbSuite;
+      expectedTests = [
+        "discards persistent HTTP sectors without revealing the base image"
+        "Linux discards and reopens a persistent HTTP disk"
+      ];
       recordRuntimeLog = true;
     };
 

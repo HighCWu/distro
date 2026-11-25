@@ -7,6 +7,7 @@ import { VirtioController, type VirtioDevice, type Virtqueue } from "./core.ts";
 const BlockDeviceFeatures = {
   RO: 1n << 5n,
   FLUSH: 1n << 9n,
+  DISCARD: 1n << 13n,
   WRITE_ZEROES: 1n << 14n,
 } as const;
 
@@ -18,20 +19,26 @@ class BlockDeviceRequest extends Struct({
   sector: U64LE,
 }) {}
 
-class BlockDeviceWriteZeroes extends Struct({
+class BlockDeviceRange extends Struct({
   sector: U64LE,
   numSectors: U32LE,
   flags: U32LE,
 }) {}
 
 // One request consumes at most 1 MiB of backend work, with no payload-sized
-// allocation. Linux splits larger zeroout operations using this queue limit.
-const maxWriteZeroesSectors = 2048;
+// allocation. Linux splits larger discard/zeroout operations using this limit.
+const maxRangeSectors = 2048;
 const writeZeroesUnmapFlag = 1;
 const writeZeroesConfig = {
   size: 60,
   maxSectorsOffset: 48,
   maxSegmentsOffset: 52,
+} as const;
+const discardConfig = {
+  size: 48,
+  maxSectorsOffset: 36,
+  maxSegmentsOffset: 40,
+  alignmentOffset: 44,
 } as const;
 
 const BlockDeviceRequestType = {
@@ -39,6 +46,7 @@ const BlockDeviceRequestType = {
   OUT: 1,
   FLUSH: 4,
   GET_ID: 8,
+  DISCARD: 11,
   WRITE_ZEROES: 13,
 } as const;
 
@@ -51,7 +59,7 @@ const BlockDeviceStatus = {
 type MaybePromise<T> = T | Promise<T>;
 
 /**
- * The storage behind a block device. Read, write, zero and flush exceptions/rejections
+ * The storage behind a block device. Read, write, zero, discard and flush exceptions/rejections
  * complete the affected request with IOERR; already performed I/O is not undone.
  * Close failures still propagate to the machine's shutdown result.
  */
@@ -65,6 +73,12 @@ export interface BlockDeviceStorage {
    * entire range. Exceptions/rejections report IOERR; partial I/O is not undone.
    */
   writeZeroes?(offset: number, length: number): MaybePromise<void>;
+  /** Discards exactly `length` existing bytes at `offset`, retaining capacity.
+   * Requires write capability. Subsequent contents are unspecified; storage
+   * must still support reads and writes of the discarded range. Exceptions or
+   * rejections report IOERR; partial I/O is not undone.
+   */
+  discard?(offset: number, length: number): MaybePromise<void>;
   /** Flushes completed writes. Its presence advertises the flush feature. */
   flush?(): MaybePromise<void>;
   /** Releases storage resources when the device closes. */
@@ -115,7 +129,10 @@ export function blockDevice(storage: BlockDeviceStorage): VirtioDevice {
     identity.set(new TextEncoder().encode(serial));
   }
   const writeZeroes = storage.write ? storage.writeZeroes?.bind(storage) : undefined;
-  const config = new Uint8Array(writeZeroes ? writeZeroesConfig.size : BlockDeviceConfig.size);
+  const discard = storage.write ? storage.discard?.bind(storage) : undefined;
+  const config = new Uint8Array(
+    writeZeroes ? writeZeroesConfig.size : discard ? discardConfig.size : BlockDeviceConfig.size,
+  );
   new BlockDeviceConfig(config).capacity = BigInt(capacity / 512);
   let features = 0n;
   if (storage.flush) features |= BlockDeviceFeatures.FLUSH;
@@ -123,10 +140,17 @@ export function blockDevice(storage: BlockDeviceStorage): VirtioDevice {
   if (writeZeroes) {
     features |= BlockDeviceFeatures.WRITE_ZEROES;
     // virtio_blk_config keeps its standard packed layout even when preceding
-    // optional features are absent. DISCARD and may_unmap remain clear.
+    // optional features are absent. may_unmap remains clear.
     const view = new DataView(config.buffer);
-    view.setUint32(writeZeroesConfig.maxSectorsOffset, maxWriteZeroesSectors, true);
+    view.setUint32(writeZeroesConfig.maxSectorsOffset, maxRangeSectors, true);
     view.setUint32(writeZeroesConfig.maxSegmentsOffset, 1, true);
+  }
+  if (discard) {
+    features |= BlockDeviceFeatures.DISCARD;
+    const view = new DataView(config.buffer);
+    view.setUint32(discardConfig.maxSectorsOffset, maxRangeSectors, true);
+    view.setUint32(discardConfig.maxSegmentsOffset, 1, true);
+    view.setUint32(discardConfig.alignmentOffset, 1, true);
   }
   let stopping = false;
 
@@ -229,41 +253,42 @@ export function blockDevice(storage: BlockDeviceStorage): VirtioDevice {
           }
           break;
         }
+        case BlockDeviceRequestType.DISCARD:
         case BlockDeviceRequestType.WRITE_ZEROES: {
-          if (!writeZeroes) {
+          const operation = request.type === BlockDeviceRequestType.DISCARD ? discard : writeZeroes;
+          if (!operation) {
             set_status(storage.write ? BlockDeviceStatus.UNSUPP : BlockDeviceStatus.IOERR);
             break;
           }
           const length = data.reduce((sum, desc) => sum + BigInt(desc.array.byteLength), 0n);
-          if (
-            length !== BigInt(BlockDeviceWriteZeroes.size) ||
-            data.some((desc) => desc.writable)
-          ) {
+          if (length !== BigInt(BlockDeviceRange.size) || data.some((desc) => desc.writable)) {
             set_status(BlockDeviceStatus.IOERR);
             break;
           }
-          const bytes = new Uint8Array(BlockDeviceWriteZeroes.size);
+          const bytes = new Uint8Array(BlockDeviceRange.size);
           let position = 0;
           for (const desc of data) {
             bytes.set(desc.array, position);
             position += desc.array.byteLength;
           }
-          const range = new BlockDeviceWriteZeroes(bytes);
-          // UNMAP permits deallocation but does not require it. The storage
-          // contract always writes zeroes, regardless of this known hint.
-          if (range.flags & ~writeZeroesUnmapFlag) {
+          const range = new BlockDeviceRange(bytes);
+          // DISCARD reserves every flag. WRITE_ZEROES accepts the UNMAP hint
+          // but its storage operation still guarantees zero-filled reads.
+          const allowedFlags =
+            request.type === BlockDeviceRequestType.DISCARD ? 0 : writeZeroesUnmapFlag;
+          if (range.flags & ~allowedFlags) {
             set_status(BlockDeviceStatus.UNSUPP);
             break;
           }
           const start = range.sector * 512n;
           const size = BigInt(range.numSectors) * 512n;
-          if (range.numSectors > maxWriteZeroesSectors || start + size > BigInt(capacity)) {
+          if (range.numSectors > maxRangeSectors || start + size > BigInt(capacity)) {
             set_status(BlockDeviceStatus.IOERR);
             break;
           }
           let ok = true;
           try {
-            if (size) await writeZeroes(Number(start), Number(size));
+            if (size) await operation(Number(start), Number(size));
           } catch {
             ok = false;
           }

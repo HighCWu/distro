@@ -3,7 +3,13 @@ import type { BlockDeviceStorage } from "./block.ts";
 import { openPinnedHttpBlockStorage } from "./http-block-storage.ts";
 
 const SECTOR_BYTES = 512;
+const MAX_DISCARD_BYTES = 1024 * 1024;
 const IDENTITY_KEY = "image";
+const DATABASE_VERSION = 2;
+// A missing record still reads from the pinned HTTP image. An explicit
+// marker masks that sector without retaining its former 512-byte payload.
+const ZERO_SECTOR = 0;
+type SectorValue = Uint8Array | typeof ZERO_SECTOR;
 
 function committed(transaction: IDBTransaction): Promise<void> {
   return new Promise((resolve, reject) => {
@@ -15,11 +21,19 @@ function committed(transaction: IDBTransaction): Promise<void> {
 
 function openDatabase(name: string): Promise<IDBDatabase> {
   return new Promise((resolve, reject) => {
-    const request = indexedDB.open(name, 1);
+    const request = indexedDB.open(name, DATABASE_VERSION);
     let abandoned = false;
-    request.onupgradeneeded = () => {
-      request.result.createObjectStore("metadata");
-      request.result.createObjectStore("sectors");
+    request.onupgradeneeded = ({ oldVersion }) => {
+      if (abandoned) {
+        request.transaction?.abort();
+        return;
+      }
+      // Version 2 adds a sector value and keeps all version 1 records.
+      // Runtimes requesting version 1 cannot open a database with markers.
+      if (oldVersion === 0) {
+        request.result.createObjectStore("metadata");
+        request.result.createObjectStore("sectors");
+      }
     };
     request.onerror = () => reject(request.error);
     request.onblocked = () => {
@@ -132,7 +146,7 @@ export async function openIndexedDbHttpBlockStorage(
     const writeSectors = async (
       start: number,
       end: number,
-      sector: (position: number) => Uint8Array,
+      sector: (position: number) => SectorValue,
     ) => {
       assertOpen();
       const transaction = db.transaction("sectors", "readwrite", { durability: "strict" });
@@ -154,18 +168,22 @@ export async function openIndexedDbHttpBlockStorage(
       if (length === 0) return result;
       const first = Math.floor(offset / SECTOR_BYTES);
       const last = Math.floor((offset + length - 1) / SECTOR_BYTES);
-      const sectors = new Map<number, Uint8Array>();
+      const sectors = new Map<number, SectorValue>();
       const transaction = db.transaction("sectors", "readonly");
       const done = committed(transaction);
       const request = transaction.objectStore("sectors").openCursor(IDBKeyRange.bound(first, last));
       request.onsuccess = () => {
         const cursor = request.result;
         if (!cursor) return;
-        if (!(cursor.value instanceof Uint8Array) || cursor.value.byteLength !== SECTOR_BYTES) {
+        const value = cursor.value;
+        if (
+          value !== ZERO_SECTOR &&
+          (!(value instanceof Uint8Array) || value.byteLength !== SECTOR_BYTES)
+        ) {
           transaction.abort();
           return;
         }
-        sectors.set(Number(cursor.key), cursor.value);
+        sectors.set(Number(cursor.key), value);
         cursor.continue();
       };
       await done;
@@ -175,11 +193,13 @@ export async function openIndexedDbHttpBlockStorage(
         const sector = Math.floor(position / SECTOR_BYTES);
         const stored = sectors.get(sector);
         let next = Math.min(end, (sector + 1) * SECTOR_BYTES);
-        if (stored) {
-          result.set(
-            stored.subarray(position % SECTOR_BYTES, (position % SECTOR_BYTES) + next - position),
-            position - offset,
-          );
+        if (stored !== undefined) {
+          if (stored !== ZERO_SECTOR) {
+            result.set(
+              stored.subarray(position % SECTOR_BYTES, (position % SECTOR_BYTES) + next - position),
+              position - offset,
+            );
+          }
         } else {
           while (next < end && !sectors.has(Math.floor(next / SECTOR_BYTES)))
             next = Math.min(end, next + SECTOR_BYTES);
@@ -274,6 +294,17 @@ export async function openIndexedDbHttpBlockStorage(
             if (position === end - SECTOR_BYTES && last) return last;
             return zero;
           });
+        });
+      },
+      discard(offset, length) {
+        assertOpen();
+        validate(offset, length);
+        if (offset % SECTOR_BYTES || length % SECTOR_BYTES || length > MAX_DISCARD_BYTES)
+          throw new RangeError(
+            "persistent HTTP disk discard requires a sector-aligned range up to 1 MiB",
+          );
+        return enqueue(async () => {
+          if (length) await writeSectors(offset, offset + length, () => ZERO_SECTOR);
         });
       },
       flush() {
