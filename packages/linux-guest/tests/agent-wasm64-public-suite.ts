@@ -285,6 +285,10 @@ export async function runPublicAgentWasm64Suite(
     }
     if (options.wispUrl) {
       await check("native wget resolves a name and receives exact bytes over Wisp", async () => {
+        assert.equal(
+          await agent.fs.readTextFile("/etc/resolv.conf"),
+          `nameserver ${network!.gateway}\n`,
+        );
         const result = await agent.run([
           "/bin/busybox",
           "wget",
@@ -293,7 +297,12 @@ export async function runPublicAgentWasm64Suite(
           "-qO-",
           "http://wisp-test.example:18081/body",
         ]);
-        assert.equal(result.status.success, true);
+        if (!result.status.success) {
+          const diagnostic = new TextDecoder().decode(result.stderr).trim();
+          throw new Error(
+            `wget over Wisp failed (${result.status.code}): ${diagnostic || "no stderr"}`,
+          );
+        }
         assert.equal(new TextDecoder().decode(result.stdout), "Linux on Wasm Wisp test\n");
         assert.equal(result.stderr.byteLength, 0);
       });

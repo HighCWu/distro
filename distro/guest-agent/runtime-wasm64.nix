@@ -56,7 +56,10 @@ let
       arch = platform-wasm64.apkArch;
       repositories = [ childRepository ];
       packages = [ childPackage ] ++ builtins.attrValues extraRootPackages;
-      files."/etc/agent-runtime-root" = pkgs.writeText "agent-runtime-root-marker" "native-wasm64-root\n";
+      files = {
+        "/etc/agent-runtime-root" = pkgs.writeText "agent-runtime-root-marker" "native-wasm64-root\n";
+        "/etc/resolv.conf" = pkgs.writeText "resolv.conf" "nameserver 192.0.2.1\n";
+      };
     };
   };
   initramfs =
