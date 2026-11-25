@@ -117,3 +117,85 @@ test("discards persistent HTTP sectors without revealing the base image", async 
   });
   expect(ranges).toEqual(["bytes=0-511", "bytes=0-511", "bytes=1536-2047"]);
 });
+
+test("reopens a zero-backed persistent disk without changing its capacity", async ({ page }) => {
+  await page.route("**/indexeddb-local-test.html", (route) =>
+    route.fulfill({ contentType: "text/html", body: "<!doctype html>" }),
+  );
+  await page.goto("/indexeddb-local-test.html");
+  const result = await page.evaluate(async () => {
+    const { openIndexedDbBlockStorage } =
+      await import("/node_modules/@lowland/kernel/dist/virtio/indexeddb-block-storage.js");
+    const name = `local-${crypto.randomUUID()}`;
+    const capacity = 4096;
+    const databaseName = `linux-wasm-local-block:${name}`;
+    const requestResult = (request) =>
+      new Promise((resolve, reject) => {
+        request.onsuccess = () => resolve(request.result);
+        request.onerror = () => reject(request.error);
+      });
+    const refused = async (bytes) => {
+      let unexpected;
+      try {
+        unexpected = await openIndexedDbBlockStorage(name, bytes);
+        return null;
+      } catch (error) {
+        return error.message;
+      } finally {
+        await unexpected?.close();
+      }
+    };
+    const read = async (storage) => {
+      const bytes = new Uint8Array(capacity).fill(0xff);
+      if ((await storage.read(0, bytes)) !== capacity) throw new Error("short local disk read");
+      return bytes;
+    };
+
+    let storage;
+    try {
+      const invalidCapacity = await refused(513);
+      storage = await openIndexedDbBlockStorage(name, capacity);
+      const startsZero = (await read(storage)).every((byte) => byte === 0);
+      const locked = await refused(capacity);
+      await storage.write(511, Uint8Array.of(0x31, 0x32, 0x33, 0x34));
+      await storage.write(513, Uint8Array.of(0x35, 0x36));
+      await storage.writeZeroes(512, 2);
+      await storage.write(1024, Uint8Array.of(0x41));
+      await storage.discard(1024, 512);
+      await storage.write(1536, Uint8Array.of(0x42));
+      await storage.writeZeroes(1536, 512);
+      await storage.flush();
+      await storage.close();
+
+      const mismatch = await refused(capacity + 512);
+      storage = await openIndexedDbBlockStorage(name, capacity);
+      const reopened = (await read(storage)).every(
+        (byte, index) => byte === (index === 511 ? 0x31 : index === 514 ? 0x36 : 0),
+      );
+      const count = storage.capacity;
+      await storage.close();
+
+      const db = await requestResult(indexedDB.open(databaseName));
+      try {
+        const sectors = db.transaction("sectors", "readonly").objectStore("sectors");
+        const allocated = await requestResult(sectors.getAllKeys());
+        return { count, startsZero, invalidCapacity, locked, mismatch, reopened, allocated };
+      } finally {
+        db.close();
+      }
+    } finally {
+      await storage?.close();
+      await requestResult(indexedDB.deleteDatabase(databaseName));
+    }
+  });
+
+  expect(result).toEqual({
+    count: 4096,
+    startsZero: true,
+    invalidCapacity: "persistent IndexedDB disk capacity must be a positive sector multiple",
+    locked: "persistent IndexedDB disk is already open",
+    mismatch: "persistent IndexedDB disk capacity mismatch",
+    reopened: true,
+    allocated: [0, 1],
+  });
+});

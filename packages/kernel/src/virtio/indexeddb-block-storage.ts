@@ -1,10 +1,11 @@
 // SPDX-License-Identifier: MIT
 import type { BlockDeviceStorage } from "./block.ts";
-import { openPinnedHttpBlockStorage } from "./http-block-storage.ts";
+import { type HttpImage, openPinnedHttpBlockStorage } from "./http-block-storage.ts";
 
 const SECTOR_BYTES = 512;
 const MAX_DISCARD_BYTES = 1024 * 1024;
 const IDENTITY_KEY = "image";
+const CAPACITY_KEY = "capacity";
 const DATABASE_VERSION = 2;
 // A missing record still reads from the pinned HTTP image. An explicit
 // marker masks that sector without retaining its former 512-byte payload.
@@ -19,7 +20,7 @@ function committed(transaction: IDBTransaction): Promise<void> {
   });
 }
 
-function openDatabase(name: string): Promise<IDBDatabase> {
+function openDatabase(name: string, description: string): Promise<IDBDatabase> {
   return new Promise((resolve, reject) => {
     const request = indexedDB.open(name, DATABASE_VERSION);
     let abandoned = false;
@@ -38,7 +39,7 @@ function openDatabase(name: string): Promise<IDBDatabase> {
     request.onerror = () => reject(request.error);
     request.onblocked = () => {
       abandoned = true;
-      reject(new Error("persistent HTTP disk database is blocked"));
+      reject(new Error(`${description} database is blocked`));
     };
     request.onsuccess = () => {
       if (abandoned) request.result.close();
@@ -58,12 +59,43 @@ export async function openIndexedDbHttpBlockStorage(
   url: string | URL,
   name: string,
 ): Promise<BlockDeviceStorage> {
-  if (typeof name !== "string" || name.length === 0)
-    throw new TypeError("persistent HTTP disk name must be nonempty");
-  if (typeof indexedDB === "undefined" || !globalThis.navigator?.locks)
-    throw new Error("persistent HTTP disk requires IndexedDB and Web Locks");
+  return openPersistentBlockStorage(name, "linux-wasm-http-block", "persistent HTTP disk", () =>
+    openPinnedHttpBlockStorage(url),
+  );
+}
 
-  const databaseName = `linux-wasm-http-block:${name}`;
+/**
+ * Opens an origin-local writable disk whose unallocated sectors read as zeroes.
+ * A name retains its original capacity across opens. Writes await strict
+ * IndexedDB transaction commit and remain subject to browser quota and eviction.
+ * Close releases the exclusive Web Lock.
+ */
+export async function openIndexedDbBlockStorage(
+  name: string,
+  capacity: number,
+): Promise<BlockDeviceStorage> {
+  if (!Number.isSafeInteger(capacity) || capacity <= 0 || capacity % SECTOR_BYTES !== 0)
+    throw new RangeError("persistent IndexedDB disk capacity must be a positive sector multiple");
+  return openPersistentBlockStorage(
+    name,
+    "linux-wasm-local-block",
+    "persistent IndexedDB disk",
+    () => ({ capacity }),
+  );
+}
+
+async function openPersistentBlockStorage(
+  name: string,
+  prefix: string,
+  description: string,
+  prepare: () => { capacity: number } | Promise<{ image: HttpImage; storage: BlockDeviceStorage }>,
+): Promise<BlockDeviceStorage> {
+  if (typeof name !== "string" || name.length === 0)
+    throw new TypeError(`${description} name must be nonempty`);
+  if (typeof indexedDB === "undefined" || !globalThis.navigator?.locks)
+    throw new Error(`${description} requires IndexedDB and Web Locks`);
+
+  const databaseName = `${prefix}:${name}`;
   let release!: () => void;
   let acquired!: () => void;
   let failed!: (error: unknown) => void;
@@ -72,7 +104,7 @@ export async function openIndexedDbHttpBlockStorage(
     failed = reject;
   });
   const lease = navigator.locks.request(databaseName, { ifAvailable: true }, async (lock) => {
-    if (!lock) throw new Error("persistent HTTP disk is already open");
+    if (!lock) throw new Error(`${description} is already open`);
     await new Promise<void>((resolve) => {
       release = resolve;
       acquired();
@@ -84,24 +116,28 @@ export async function openIndexedDbHttpBlockStorage(
   let database: IDBDatabase | undefined;
   let base: BlockDeviceStorage | undefined;
   try {
-    const pinned = await openPinnedHttpBlockStorage(url);
-    const readableBase = pinned.storage;
+    const backing = await prepare();
+    const readableBase = "storage" in backing ? backing.storage : undefined;
     base = readableBase;
-    const { image } = pinned;
-    database = await openDatabase(databaseName);
+    const image = "image" in backing ? backing.image : undefined;
+    const capacity = "image" in backing ? backing.image.capacity : backing.capacity;
+    const identityKey = image ? IDENTITY_KEY : CAPACITY_KEY;
+    database = await openDatabase(databaseName, description);
     const db = database;
     const identityTransaction = db.transaction("metadata", "readwrite", { durability: "strict" });
     const identityDone = committed(identityTransaction);
     let identityMismatch = false;
     const metadata = identityTransaction.objectStore("metadata");
-    const identityRequest = metadata.get(IDENTITY_KEY);
+    const identityRequest = metadata.get(identityKey);
     identityRequest.onsuccess = () => {
       const stored = identityRequest.result;
-      if (stored === undefined) metadata.put(image, IDENTITY_KEY);
+      if (stored === undefined) metadata.put(image ?? capacity, identityKey);
       else if (
-        stored?.url !== image.url ||
-        stored?.etag !== image.etag ||
-        stored?.capacity !== image.capacity
+        image
+          ? stored?.url !== image.url ||
+            stored?.etag !== image.etag ||
+            stored?.capacity !== capacity
+          : stored !== capacity
       ) {
         identityMismatch = true;
         identityTransaction.abort();
@@ -110,7 +146,8 @@ export async function openIndexedDbHttpBlockStorage(
     try {
       await identityDone;
     } catch (error) {
-      if (identityMismatch) throw new Error("persistent HTTP disk image identity mismatch");
+      if (identityMismatch)
+        throw new Error(`${description} ${image ? "image identity" : "capacity"} mismatch`);
       throw error;
     }
 
@@ -118,7 +155,7 @@ export async function openIndexedDbHttpBlockStorage(
     let pending = Promise.resolve();
     let closing: Promise<void> | undefined;
     const assertOpen = () => {
-      if (stopped) throw new Error("persistent HTTP disk is stopped");
+      if (stopped) throw new Error(`${description} is stopped`);
     };
     const validate = (offset: number, length: number) => {
       if (
@@ -126,12 +163,12 @@ export async function openIndexedDbHttpBlockStorage(
         offset < 0 ||
         !Number.isSafeInteger(length) ||
         length < 0 ||
-        length > image.capacity - offset
+        length > capacity - offset
       )
-        throw new RangeError("persistent HTTP disk I/O lies outside the image");
+        throw new RangeError(`${description} I/O lies outside the ${image ? "image" : "disk"}`);
     };
     const enqueue = <T>(operation: () => Promise<T>): Promise<T> => {
-      if (stopped) return Promise.reject(new Error("persistent HTTP disk is stopped"));
+      if (stopped) return Promise.reject(new Error(`${description} is stopped`));
       const result = pending.then(() => {
         assertOpen();
         return operation();
@@ -146,15 +183,19 @@ export async function openIndexedDbHttpBlockStorage(
     const writeSectors = async (
       start: number,
       end: number,
-      sector: (position: number) => SectorValue,
+      sector: (position: number) => SectorValue | undefined,
     ) => {
       assertOpen();
       const transaction = db.transaction("sectors", "readwrite", { durability: "strict" });
       const done = committed(transaction);
       try {
         const store = transaction.objectStore("sectors");
-        for (let position = start; position < end; position += SECTOR_BYTES)
-          store.put(sector(position), position / SECTOR_BYTES);
+        for (let position = start; position < end; position += SECTOR_BYTES) {
+          const value = sector(position);
+          const key = position / SECTOR_BYTES;
+          if (value === undefined) store.delete(key);
+          else store.put(value, key);
+        }
       } catch (error) {
         transaction.abort();
         await done.catch(() => {});
@@ -203,7 +244,8 @@ export async function openIndexedDbHttpBlockStorage(
         } else {
           while (next < end && !sectors.has(Math.floor(next / SECTOR_BYTES)))
             next = Math.min(end, next + SECTOR_BYTES);
-          await readableBase.read(position, result.subarray(position - offset, next - offset));
+          if (readableBase)
+            await readableBase.read(position, result.subarray(position - offset, next - offset));
         }
         position = next;
       }
@@ -213,7 +255,7 @@ export async function openIndexedDbHttpBlockStorage(
     const stop = () => {
       if (stopped) return;
       stopped = true;
-      readableBase.stop?.();
+      readableBase?.stop?.();
     };
     const close = () => {
       if (!closing) {
@@ -232,7 +274,7 @@ export async function openIndexedDbHttpBlockStorage(
       void close();
     };
     return {
-      capacity: image.capacity,
+      capacity,
       read(offset, target) {
         return enqueue(async () => {
           validate(offset, target.byteLength);
@@ -288,7 +330,7 @@ export async function openIndexedDbHttpBlockStorage(
               zeroEnd - (end - SECTOR_BYTES),
             );
           }
-          const zero = new Uint8Array(SECTOR_BYTES);
+          const zero = image ? new Uint8Array(SECTOR_BYTES) : undefined;
           await writeSectors(start, end, (position) => {
             if (position === start && first) return first;
             if (position === end - SECTOR_BYTES && last) return last;
@@ -301,10 +343,11 @@ export async function openIndexedDbHttpBlockStorage(
         validate(offset, length);
         if (offset % SECTOR_BYTES || length % SECTOR_BYTES || length > MAX_DISCARD_BYTES)
           throw new RangeError(
-            "persistent HTTP disk discard requires a sector-aligned range up to 1 MiB",
+            `${description} discard requires a sector-aligned range up to 1 MiB`,
           );
         return enqueue(async () => {
-          if (length) await writeSectors(offset, offset + length, () => ZERO_SECTOR);
+          if (length)
+            await writeSectors(offset, offset + length, () => (image ? ZERO_SECTOR : undefined));
         });
       },
       flush() {

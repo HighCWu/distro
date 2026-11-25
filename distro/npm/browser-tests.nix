@@ -662,7 +662,9 @@ let
       suite = indexedDbSuite;
       expectedTests = [
         "discards persistent HTTP sectors without revealing the base image"
+        "reopens a zero-backed persistent disk without changing its capacity"
         "Linux discards and reopens a persistent HTTP disk"
+        "Linux discards and reopens a zero-backed persistent disk"
       ];
       recordRuntimeLog = true;
     };
