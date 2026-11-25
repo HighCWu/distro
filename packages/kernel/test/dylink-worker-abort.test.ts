@@ -12,6 +12,7 @@ import {
 } from "../src/dylink_worker_abort_coordinator.ts";
 import { DylinkWorkerWriter } from "../src/dylink_worker_writer.ts";
 import type { DylinkWorkerSnapshot } from "../src/dylink_process_worker.ts";
+import { create_dylink_worker_publication_delta } from "../src/dylink_worker_publication.ts";
 
 function u32(value: number): number[] {
   const bytes: number[] = [];
@@ -372,7 +373,22 @@ test("writer restores and releases owner state only after the receiver abort bar
   };
   let consumedAbort = false;
   const processStub = {
-    getWorkerPublicationState: () => ownerState,
+    getWorkerPublicationIdentity: () => ({
+      processIdentity: ownerState.processIdentity,
+      generation: ownerState.generation,
+    }),
+    createWorkerPublicationBeforeInitialize(
+      processIdentity: string,
+      generation: number,
+      snapshot: DylinkWorkerSnapshot,
+    ) {
+      return create_dylink_worker_publication_delta(
+        ownerState.snapshot,
+        snapshot,
+        processIdentity,
+        generation,
+      );
+    },
     advanceWorkerPublicationBeforeInitialize(
       processIdentity: string,
       generation: number,
@@ -491,7 +507,22 @@ test("writer fatals if ProcessDylink leaks the branded abort instead of returnin
     },
   };
   const processStub = {
-    getWorkerPublicationState: () => baseline,
+    getWorkerPublicationIdentity: () => ({
+      processIdentity: baseline.processIdentity,
+      generation: baseline.generation,
+    }),
+    createWorkerPublicationBeforeInitialize(
+      processIdentity: string,
+      generation: number,
+      snapshot: DylinkWorkerSnapshot,
+    ) {
+      return create_dylink_worker_publication_delta(
+        baseline.snapshot,
+        snapshot,
+        processIdentity,
+        generation,
+      );
+    },
     openWithWorkerPublication: () => {
       writer.beforeInitialize(baseline.snapshot, token);
       return 0;

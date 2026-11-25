@@ -10,7 +10,6 @@ import type {
   DylinkWorkerReservation,
 } from "./dylink_worker_channel.ts";
 import type { ProcessDylink, DylinkWorkerPublicationState } from "./dylink_process.ts";
-import { create_dylink_worker_publication_delta } from "./dylink_worker_publication.ts";
 import { encode_dylink_worker_publication } from "./dylink_worker_transport.ts";
 import {
   coordinateDylinkWorkerAbort,
@@ -27,7 +26,7 @@ const MAX_AVAILABILITY_TIMEOUT_MESSAGE =
 const ROLLBACK_ERROR_PREFIX = "Worker publication was rolled back: ";
 
 type ActivePublication = {
-  readonly baseline: DylinkWorkerPublicationState;
+  readonly baseline: Pick<DylinkWorkerPublicationState, "processIdentity" | "generation">;
   readonly reservation: DylinkWorkerReservation;
   deadline: number;
   cleanupLease: DylinkWorkerReservation | null;
@@ -114,7 +113,7 @@ export class DylinkWorkerWriter {
     if (!Number.isFinite(deadline))
       return this.#invalidBaselineResult("Worker publication deadline is invalid");
 
-    let baseline: DylinkWorkerPublicationState | null = null;
+    let baseline: ActivePublication["baseline"] | null = null;
     let reservation: DylinkWorkerReservation | null = null;
     let lastSuccessfulObservation: Pick<
       DylinkWorkerChannelObservation,
@@ -182,7 +181,7 @@ export class DylinkWorkerWriter {
     // not repeatedly snapshot the full process graph while another writer or
     // its receivers are making progress.
     try {
-      baseline = this.#process.getWorkerPublicationState();
+      baseline = this.#process.getWorkerPublicationIdentity();
     } catch (error) {
       return this.#invalidBaselineResult("Worker publication baseline is unavailable", error);
     }
@@ -226,7 +225,7 @@ export class DylinkWorkerWriter {
       // comparing generations and attempting a reservation.
       if (!baselineFresh || before.value.generation !== baseline.generation) {
         try {
-          baseline = this.#process.getWorkerPublicationState();
+          baseline = this.#process.getWorkerPublicationIdentity();
         } catch (error) {
           return this.#invalidBaselineResult("Worker publication baseline is unavailable", error);
         }
@@ -409,11 +408,10 @@ export class DylinkWorkerWriter {
       if (!Number.isFinite(active.deadline))
         throw new Error("Worker publication deadline is invalid");
       this.#assertDeadline(active);
-      const publication = create_dylink_worker_publication_delta(
-        active.baseline.snapshot,
-        snapshot,
+      const publication = this.#process.createWorkerPublicationBeforeInitialize(
         active.baseline.processIdentity,
         active.baseline.generation,
+        snapshot,
       );
       const packet = encode_dylink_worker_publication(publication);
       this.#publish(active, packet);

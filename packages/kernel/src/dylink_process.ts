@@ -53,6 +53,7 @@ import {
   type DylinkWorkerTableSlot,
 } from "./dylink_process_worker.ts";
 import { DylinkWorkerPublicationAbort } from "./dylink_worker_abort.ts";
+import { create_dylink_worker_publication_delta } from "./dylink_worker_publication.ts";
 
 type Group = ReturnType<typeof link_dylink_graph>;
 type ObjectHandle = { group: Group; root: string; handle: bigint };
@@ -784,6 +785,20 @@ export class ProcessDylink {
     this.#workerPublicationRevision = 0;
   }
   getWorkerPublicationState(): DylinkWorkerPublicationState | null {
+    const state = this.#checkedWorkerPublicationState();
+    return state ? this.#copyWorkerPublicationState(state) : null;
+  }
+  /** @internal Read the publication identity without copying module bytes. */
+  getWorkerPublicationIdentity(): Pick<
+    DylinkWorkerPublicationState,
+    "processIdentity" | "generation"
+  > | null {
+    const state = this.#checkedWorkerPublicationState();
+    return state
+      ? Object.freeze({ processIdentity: state.processIdentity, generation: state.generation })
+      : null;
+  }
+  #checkedWorkerPublicationState(): WorkerPublicationState | null {
     const state = this.#workerPublicationState;
     if (!state) return null;
     if (this.#workerGraphRevision !== this.#workerPublicationRevision)
@@ -791,7 +806,7 @@ export class ProcessDylink {
         "EINVAL",
         `Worker publication baseline is stale after a process graph change (${this.#workerPublicationRevision}/${this.#workerGraphRevision})`,
       );
-    return this.#copyWorkerPublicationState(state);
+    return state;
   }
   /** Run trusted runtime bookkeeping while guest Wasm is stopped at a
    * cooperative checkpoint. The callback must not invoke guest code or the
@@ -820,6 +835,24 @@ export class ProcessDylink {
       this.#caller.value = previousCaller;
     }
   }
+  /** @internal Build the current hook's detached delta from the retained baseline. */
+  createWorkerPublicationBeforeInitialize(
+    processIdentity: string,
+    baseGeneration: number,
+    snapshot: DylinkWorkerSnapshot,
+  ): DylinkWorkerPublication {
+    const { baseState, targetSnapshot } = this.#workerPublicationBeforeInitialize(
+      processIdentity,
+      baseGeneration,
+      snapshot,
+    );
+    return create_dylink_worker_publication_delta(
+      baseState.snapshot,
+      targetSnapshot,
+      processIdentity,
+      baseGeneration,
+    );
+  }
   /** Advance the owner after every Worker accepted the graph published by the
    * current beforeInitialize hook. This updates only the publication baseline;
    * the live loader graph, instances and tables are already committed locally. */
@@ -828,6 +861,29 @@ export class ProcessDylink {
     baseGeneration: number,
     snapshot: DylinkWorkerSnapshot,
   ): void {
+    const { context, baseState, openScope, targetSnapshot } =
+      this.#workerPublicationBeforeInitialize(processIdentity, baseGeneration, snapshot);
+    if (!sameWorkerSnapshotValue(snapshot, targetSnapshot))
+      throw new DylinkWorkerSnapshotError(
+        "EINVAL",
+        "Worker publication snapshot was changed after the linked graph was captured",
+      );
+    const nextState: WorkerPublicationState = Object.freeze({
+      processIdentity,
+      generation: baseGeneration + 1,
+      snapshot: targetSnapshot,
+    });
+    this.#validateAppendOnlyWorkerSlots(baseState.snapshot, targetSnapshot);
+    this.#workerPublicationState = nextState;
+    this.#workerPublicationRevision = context.snapshotRevision;
+    context.advanced = true;
+    if (openScope) openScope.advanced = true;
+  }
+  #workerPublicationBeforeInitialize(
+    processIdentity: string,
+    baseGeneration: number,
+    snapshot: DylinkWorkerSnapshot,
+  ) {
     const context = this.#workerPublicationAdvanceContext;
     if (!context || context.advanced || context.snapshot !== snapshot)
       throw new DylinkWorkerSnapshotError(
@@ -874,22 +930,7 @@ export class ProcessDylink {
         "EINVAL",
         "Worker publication graph changed or has no captured target snapshot",
       );
-    if (!sameWorkerSnapshotValue(snapshot, targetSnapshot))
-      throw new DylinkWorkerSnapshotError(
-        "EINVAL",
-        "Worker publication snapshot was changed after the linked graph was captured",
-      );
-
-    const nextState: WorkerPublicationState = Object.freeze({
-      processIdentity,
-      generation: baseGeneration + 1,
-      snapshot: targetSnapshot,
-    });
-    this.#validateAppendOnlyWorkerSlots(baseState.snapshot, targetSnapshot);
-    this.#workerPublicationState = nextState;
-    this.#workerPublicationRevision = context.snapshotRevision;
-    context.advanced = true;
-    if (openScope) openScope.advanced = true;
+    return { context, baseState, openScope, targetSnapshot };
   }
   #validateAppendOnlyWorkerSlots(base: DylinkWorkerSnapshot, target: DylinkWorkerSnapshot): void {
     if (

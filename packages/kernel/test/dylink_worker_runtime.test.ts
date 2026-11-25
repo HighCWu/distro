@@ -20,7 +20,7 @@ function makeProcess(overrides: Record<string, unknown> = {}): ProcessDylink {
     recordWorkerPublicationFailure(_error: unknown, _message?: string) {
       return 0;
     },
-    getWorkerPublicationState: () => null,
+    getWorkerPublicationIdentity: () => null,
     openWithWorkerPublication: (path: number | bigint) => (typeof path === "bigint" ? 0n : 0),
     ...overrides,
   } as unknown as ProcessDylink;
@@ -104,10 +104,9 @@ test("runtime does not service its receiver from its active producer", () => {
   let runtime!: DylinkWorkerRuntime;
   let checkpointCalls = 0;
   const process = makeProcess({
-    getWorkerPublicationState: () => ({
+    getWorkerPublicationIdentity: () => ({
       processIdentity: "process",
       generation: 0,
-      snapshot: { address: "i32" },
     }),
     runAtWorkerCheckpoint<T>(action: () => T) {
       checkpointCalls++;

@@ -6,7 +6,10 @@ import { ProcessDylink } from "../src/dylink_process.ts";
 import { DylinkWorkerChannel } from "../src/dylink_worker_channel.ts";
 import { DylinkWorkerReceiver } from "../src/dylink_worker_receiver.ts";
 import { DylinkWorkerWriter } from "../src/dylink_worker_writer.ts";
-import type { DylinkWorkerSnapshot } from "../src/dylink_process_worker.ts";
+import {
+  DylinkWorkerSnapshotError,
+  type DylinkWorkerSnapshot,
+} from "../src/dylink_process_worker.ts";
 
 type TestOwnerRollback = { restore(): void; release(): void; commit(): void };
 
@@ -290,6 +293,88 @@ function unwrap<T>(result: { ok: true; value: T } | { ok: false; errno: number }
   return result.value;
 }
 
+test("publication identity stays scalar and hook-owned deltas retain target byte isolation", () => {
+  const memory = new WebAssembly.Memory({ initial: 2, maximum: 4, shared: true });
+  const bytes = dynamicModule();
+  let owner!: ReturnType<typeof makeProcess>;
+  let hookSnapshot: DylinkWorkerSnapshot | undefined;
+  owner = makeProcess(memory, new Map([["/plugins/late.so", bytes]]), {
+    beforeInitialize(snapshot) {
+      hookSnapshot = snapshot;
+      assert.throws(() => owner.process.getWorkerPublicationIdentity(), DylinkWorkerSnapshotError);
+      assert.throws(() => owner.process.getWorkerPublicationState(), DylinkWorkerSnapshotError);
+      assert.throws(
+        () => owner.process.createWorkerPublicationBeforeInitialize("wrong", 0, snapshot),
+        DylinkWorkerSnapshotError,
+      );
+      assert.throws(
+        () => owner.process.createWorkerPublicationBeforeInitialize("delta-owner", 1, snapshot),
+        DylinkWorkerSnapshotError,
+      );
+      assert.throws(
+        () =>
+          owner.process.createWorkerPublicationBeforeInitialize(
+            "delta-owner",
+            0,
+            structuredClone(snapshot),
+          ),
+        DylinkWorkerSnapshotError,
+      );
+      const targetBytes = snapshot.files[0]!.bytes;
+      const answerOffset = targetBytes.length - 2;
+      const originalAnswer = targetBytes[answerOffset]!;
+      targetBytes[answerOffset] = originalAnswer + 1;
+      assert.doesNotThrow(() => new WebAssembly.Module(targetBytes));
+      const publication = owner.process.createWorkerPublicationBeforeInitialize(
+        "delta-owner",
+        0,
+        snapshot,
+      );
+      assert.equal(publication.files.length, 1);
+      assert.notEqual(publication.files[0]!.bytes, targetBytes);
+      assert.deepEqual(
+        publication.files[0]!.bytes,
+        bytes,
+        "delta uses the protected captured target",
+      );
+      assert.throws(
+        () => owner.process.advanceWorkerPublicationBeforeInitialize("delta-owner", 0, snapshot),
+        (error) =>
+          error instanceof DylinkWorkerSnapshotError && /snapshot was changed/.test(error.message),
+      );
+      targetBytes[answerOffset] = originalAnswer;
+      publication.files[0]!.bytes.fill(0);
+      assert.deepEqual(targetBytes, bytes);
+      owner.process.advanceWorkerPublicationBeforeInitialize("delta-owner", 0, snapshot);
+      assert.throws(
+        () => owner.process.createWorkerPublicationBeforeInitialize("delta-owner", 0, snapshot),
+        DylinkWorkerSnapshotError,
+      );
+    },
+  });
+  owner.process.initializeWorkerPublication("delta-owner");
+  const identity = owner.process.getWorkerPublicationIdentity();
+  assert.deepEqual(identity, { processIdentity: "delta-owner", generation: 0 });
+  assert.equal(Object.isFrozen(identity), true);
+  assert.deepEqual(Object.keys(identity!), ["processIdentity", "generation"]);
+  const pathname = new TextEncoder().encode("/plugins/late.so\0");
+  new Uint8Array(memory.buffer, owner.pathAddress, pathname.length).set(pathname);
+  assert.notEqual(
+    owner.process.open(owner.pathAddress, 2),
+    0,
+    readDlerror(owner.process, memory, "i32"),
+  );
+  assert.deepEqual(owner.process.getWorkerPublicationIdentity(), {
+    processIdentity: "delta-owner",
+    generation: 1,
+  });
+  assert.deepEqual(owner.process.getWorkerPublicationState()?.snapshot.files[0]?.bytes, bytes);
+  assert.throws(
+    () => owner.process.createWorkerPublicationBeforeInitialize("delta-owner", 1, hookSnapshot!),
+    DylinkWorkerSnapshotError,
+  );
+});
+
 test("writer publishes a real ProcessDylink group before its constructor runs", () => {
   const memory = new WebAssembly.Memory({ initial: 2, maximum: 4, shared: true });
   const module = dynamicModule(false, true);
@@ -338,12 +423,14 @@ test("writer publishes a real ProcessDylink group before its constructor runs", 
   let baselineReads = 0;
   const writerProcess = new Proxy(owner.process, {
     get(target, property) {
-      if (property === "getWorkerPublicationState") {
+      if (property === "getWorkerPublicationIdentity") {
         return () => {
           baselineReads++;
-          return target.getWorkerPublicationState();
+          return target.getWorkerPublicationIdentity();
         };
       }
+      if (property === "getWorkerPublicationState")
+        return () => assert.fail("writer must not detach the full baseline snapshot");
       const value = Reflect.get(target, property, target) as unknown;
       return typeof value === "function" ? value.bind(target) : value;
     },
@@ -605,10 +692,10 @@ test("writer bounds busy channel retries without rebuilding the process snapshot
   let baselineReads = 0;
   const writerProcess = new Proxy(owner.process, {
     get(target, property) {
-      if (property === "getWorkerPublicationState") {
+      if (property === "getWorkerPublicationIdentity") {
         return () => {
           baselineReads++;
-          return target.getWorkerPublicationState();
+          return target.getWorkerPublicationIdentity();
         };
       }
       const value = Reflect.get(target, property, target) as unknown;
@@ -647,7 +734,7 @@ test("writer keeps initial missing and thrown baselines ahead of channel observa
     const memory = new WebAssembly.Memory({ initial: 2, maximum: 4, shared: true });
     const owner = makeProcess(memory, new Map([["/plugins/late.so", dynamicModule()]]));
     let baselineReads = 0;
-    t.mock.method(owner.process, "getWorkerPublicationState", () => {
+    t.mock.method(owner.process, "getWorkerPublicationIdentity", () => {
       baselineReads++;
       if (baselineResult === "throws") throw new Error("snapshot read failed");
       return null;
@@ -688,7 +775,7 @@ test("writer timeout keeps maximum diagnostics within dlerror capacity", (t) => 
   const baseline = owner.process.initializeWorkerPublication("availability-diagnostic-process");
   const maxU32 = 0xffff_ffff;
   const maxBaseline = { ...baseline, generation: maxU32 };
-  t.mock.method(owner.process, "getWorkerPublicationState", () => maxBaseline);
+  t.mock.method(owner.process, "getWorkerPublicationIdentity", () => maxBaseline);
   const channel = new DylinkWorkerChannel(1 << 20, 2);
   const writerParticipant = { slot: maxU32, epoch: maxU32 };
   let observeCalls = 0;
@@ -958,9 +1045,9 @@ test("writer refreshes its publication baseline after another producer advances 
   const baselineGenerations: (number | null)[] = [];
   const waitingProcess = new Proxy(owner.process, {
     get(target, property) {
-      if (property === "getWorkerPublicationState") {
+      if (property === "getWorkerPublicationIdentity") {
         return () => {
-          const state = target.getWorkerPublicationState();
+          const state = target.getWorkerPublicationIdentity();
           baselineGenerations.push(state?.generation ?? null);
           return state;
         };
