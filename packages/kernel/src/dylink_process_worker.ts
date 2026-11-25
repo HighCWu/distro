@@ -661,7 +661,10 @@ type ReplayableModuleAnalysisCacheEntry = {
 };
 
 const replayableModuleAnalysisCache = new Map<string, ReplayableModuleAnalysisCacheEntry>();
-const replayableModuleAnalysisCacheMaxEntries = 128;
+// Repeated full-graph validation visits modules in load order. Allow larger
+// graphs of small modules to keep their analyses across those passes while
+// retaining the existing byte budget for the cached module copies.
+const replayableModuleAnalysisCacheMaxEntries = 1024;
 const replayableModuleAnalysisCacheMaxBytes = 64 * 1024 * 1024;
 let replayableModuleAnalysisCacheBytes = 0;
 
@@ -1232,13 +1235,13 @@ function sanitizeWorkerSnapshot(value: unknown, copy: boolean): DylinkWorkerSnap
 
   const owners: [string, number][] = [];
   const ownerIds = new Set<number>();
-  const ownerKeys = new Set<string>();
+  const ownersByName = new Map<string, number>();
   for (const [index, entry] of arrayValue(top.owners, "snapshot.owners").entries()) {
     const [nameValue, ownerValue] = tuple(entry, 2, `snapshot.owners[${index}]`);
     const name = text(nameValue, `snapshot.owners[${index}][0]`);
     const owner = integer(ownerValue, `snapshot.owners[${index}][1]`, 1, 0xffff_ffff);
-    if (ownerKeys.has(name) || ownerIds.has(owner)) fail("snapshot owner mapping conflicts");
-    ownerKeys.add(name);
+    if (ownersByName.has(name) || ownerIds.has(owner)) fail("snapshot owner mapping conflicts");
+    ownersByName.set(name, owner);
     ownerIds.add(owner);
     owners.push([name, owner]);
   }
@@ -1248,10 +1251,7 @@ function sanitizeWorkerSnapshot(value: unknown, copy: boolean): DylinkWorkerSnap
     const [ownerValue, nameValue] = tuple(entry, 2, `snapshot.ownerNames[${index}]`);
     const owner = integer(ownerValue, `snapshot.ownerNames[${index}][0]`, 1, 0xffff_ffff);
     const name = text(nameValue, `snapshot.ownerNames[${index}][1]`);
-    if (
-      reverseIds.has(owner) ||
-      owners.find(([key, value]) => key === name && value === owner) === undefined
-    )
+    if (reverseIds.has(owner) || ownersByName.get(name) !== owner)
       fail("snapshot owner reverse mapping conflicts");
     reverseIds.add(owner);
     ownerNames.push([owner, name]);
@@ -1271,19 +1271,27 @@ function sanitizeWorkerSnapshot(value: unknown, copy: boolean): DylinkWorkerSnap
     ...value,
     metadata: fileMetadata.get(key)!.metadata,
   }));
-  for (let left = 0; left < placements.length; left++) {
-    const a = placements[left]!;
-    const aMemoryEnd = a.base + BigInt(a.metadata.memorySize);
-    const aTableEnd = a.tableBase + BigInt(a.metadata.tableSize);
-    for (let right = left + 1; right < placements.length; right++) {
-      const b = placements[right]!;
-      const bMemoryEnd = b.base + BigInt(b.metadata.memorySize);
-      const bTableEnd = b.tableBase + BigInt(b.metadata.tableSize);
-      if (
-        (a.base < bMemoryEnd && b.base < aMemoryEnd) ||
-        (a.tableBase < bTableEnd && b.tableBase < aTableEnd)
-      )
-        fail(`snapshot dynamic placements overlap: ${a.key} and ${b.key}`);
+  for (const space of ["memory", "table"] as const) {
+    const ranges = placements.map((placement, index) => {
+      const start = space === "memory" ? placement.base : placement.tableBase;
+      const size =
+        space === "memory" ? placement.metadata.memorySize : placement.metadata.tableSize;
+      return { key: placement.key, index, start, end: start + BigInt(size) };
+    });
+    ranges.sort((left, right) => {
+      if (left.start !== right.start) return left.start < right.start ? -1 : 1;
+      // Empty ranges at an interval's start do not overlap it. Process those
+      // points first so a same-start interval cannot hide an earlier overlap.
+      if (left.end !== right.end) return left.end < right.end ? -1 : 1;
+      return left.index - right.index;
+    });
+    let furthest: (typeof ranges)[number] | undefined;
+    for (const range of ranges) {
+      if (furthest && range.start < furthest.end && furthest.start < range.end) {
+        const [left, right] = furthest.index < range.index ? [furthest, range] : [range, furthest];
+        fail(`snapshot dynamic placements overlap: ${left.key} and ${right.key}`);
+      }
+      if (!furthest || range.end > furthest.end) furthest = range;
     }
   }
 

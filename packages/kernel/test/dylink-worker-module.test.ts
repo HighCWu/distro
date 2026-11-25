@@ -378,12 +378,13 @@ test("replayable analysis cache hit survives an LRU refresh allocation failure",
 
 test("replayable analysis cache evicts bounded entries without rejecting valid modules", () => {
   const source = activeElementModule(0);
+  const lastIndex = 1024;
   withModuleCompilationCount((compilationCount) => {
-    for (let index = 0; index < 129; index++) {
+    for (let index = 0; index <= lastIndex; index++) {
       validate_dylink_worker_replayable_module(`analysis-cache-entry-${index}`, source, "i32");
     }
     const afterFill = compilationCount();
-    validate_dylink_worker_replayable_module("analysis-cache-entry-128", source, "i32");
+    validate_dylink_worker_replayable_module(`analysis-cache-entry-${lastIndex}`, source, "i32");
     assert.equal(compilationCount(), afterFill, "the newest entry remains cached");
     validate_dylink_worker_replayable_module("analysis-cache-entry-0", source, "i32");
     assert.ok(compilationCount() > afterFill, "the least-recently-used entry was evicted");
