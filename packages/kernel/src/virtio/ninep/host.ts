@@ -774,6 +774,7 @@ interface Fid {
   };
   /** The open file (Tlopen/Tlcreate of a regular file). */
   file?: FsFile;
+  access?: { read: boolean; write: boolean };
   /** Directory listing taken at readdir offset 0 (with . and ..). */
   dir?: FsDirEntry[];
   /** Writes, truncation, fsync and clunk through this fid run in order. */
@@ -873,6 +874,7 @@ class Session {
     this.#discardXattr(f);
     const file = f.file;
     f.file = undefined;
+    f.access = undefined;
     if (file?.close)
       void this.#ordered(f, () => file.close!()).catch((e) => this.#failed("close", e));
   }
@@ -976,14 +978,20 @@ class Session {
   }
 
   /** Open a regular file for a fid; one opened after the request died is closed again. */
-  async #open(f: Fid, state: Pending, file: MaybePromise<FsFile>, write: boolean): Promise<FsFile> {
+  async #open(
+    f: Fid,
+    state: Pending,
+    file: MaybePromise<FsFile>,
+    access: { read: boolean; write: boolean },
+  ): Promise<FsFile> {
     const opened = await file;
-    if (state.dead || (write && !opened.write)) {
+    if (state.dead || (access.write && !opened.write)) {
       await opened.close?.();
       if (!state.dead) throw new FsError("EACCES", `${f.path}: not writable`);
     } else {
       if (f.file) this.#closeFile(f);
       f.file = opened;
+      f.access = { ...access };
     }
     return opened;
   }
@@ -1128,6 +1136,7 @@ class Session {
         }
         const file = f.file;
         f.file = undefined;
+        f.access = undefined;
         await this.#ordered(f, () => file?.close?.());
         if (type === Tremove) {
           if (f.path === "/") throw new FsError("EBUSY");
@@ -1152,19 +1161,19 @@ class Session {
       case Tlopen: {
         const f = this.#fid(r.u32());
         const flags = r.u32();
-        const write = (flags & O_ACCMODE) !== 0;
+        const mode = flags & O_ACCMODE;
+        const access = { read: mode === 0 || mode === 2, write: mode === 1 || mode === 2 };
         let a = await fs.getattr(f.path);
         if (f.identity && !matchesIdentity(a, f.identity)) throw new FsError("ESTALE", f.path);
         f.type = a.type;
         if (a.type === "file") {
           const truncate = (flags & O_TRUNC) !== 0;
-          const read = (flags & O_ACCMODE) !== 1,
-            append = (flags & O_APPEND) !== 0;
+          const append = (flags & O_APPEND) !== 0;
           const file = await this.#open(
             f,
             state,
-            fs.open(f.path, { read, write, truncate, append, expected: f.identity }),
-            write,
+            fs.open(f.path, { ...access, truncate, append, expected: f.identity }),
+            access,
           );
           a = (await file.getattr?.()) ?? (await fs.getattr(f.path));
           if (f.identity && !matchesIdentity(a, f.identity)) {
@@ -1182,22 +1191,30 @@ class Session {
           mode = r.u32();
         checkName(name);
         const path = join(f.path, name);
+        const accessMode = flags & O_ACCMODE;
+        const access = {
+          read: accessMode === 0 || accessMode === 2,
+          write: accessMode === 1 || accessMode === 2,
+        };
         let file: FsFile;
-        let how = { read: true, write: true, append: false };
         try {
-          file = await this.#open(f, state, this.#need("create")(path, mode & 0o7777), false);
+          file = await this.#open(f, state, this.#need("create")(path, mode & 0o7777), access);
         } catch (e) {
           // The guest sends Tlcreate for a name it believes missing; if it exists now (the host made
           // it meanwhile), open(O_CREAT) without O_EXCL opens it, as on a local file system.
           if (flags & O_EXCL || (e as { code?: unknown } | null)?.code !== "EEXIST") throw e;
           const a = await fs.getattr(path);
           if (a.type !== "file") throw new FsError(a.type === "dir" ? "EISDIR" : "EEXIST");
-          how = { read: (flags & O_ACCMODE) !== 1, write: true, append: (flags & O_APPEND) !== 0 };
           file = await this.#open(
             f,
             state,
-            fs.open(path, { ...how, truncate: (flags & O_TRUNC) !== 0 }),
-            true,
+            fs.open(path, {
+              ...access,
+              append: (flags & O_APPEND) !== 0,
+              truncate: (flags & O_TRUNC) !== 0,
+              expected: identityOf(a),
+            }),
+            access,
           );
         }
         const a = (await file.getattr?.()) ?? (await fs.getattr(path));
@@ -1379,7 +1396,7 @@ class Session {
           return new Writer(HDR + 4 + bytes.length).u32(bytes.length).bytes(bytes);
         }
         const file = fileOf(f);
-        if (!file) throw new FsError(f.type === "dir" ? "EISDIR" : "EBADF");
+        if (!file || !f.access?.read) throw new FsError(f.type === "dir" ? "EISDIR" : "EBADF");
         const data = await file.read(offset, count);
         const n = Math.min(data.length, count);
         // The reply buffer is the one copy of the data on this side.
@@ -1408,7 +1425,8 @@ class Session {
           return new Writer(HDR + 4).u32(count);
         }
         const file = fileOf(f);
-        if (!file?.write) throw new FsError(f.type === "dir" ? "EISDIR" : "EBADF");
+        if (!file?.write || !f.access?.write)
+          throw new FsError(f.type === "dir" ? "EISDIR" : "EBADF");
         this.exp.stats.bytesWritten += count;
         return new Writer(HDR + 4).u32(await this.#ordered(f, () => file.write!(offset, data)));
       }

@@ -1031,3 +1031,104 @@ test(
     await c.close();
   },
 );
+
+test(
+  "lcreate honors Linux access modes without reopening a fresh inode",
+  { timeout: 3000 },
+  async () => {
+    const fs = new MemoryFs();
+    const originalOpen = fs.open.bind(fs);
+    const calls: Array<{ read: boolean; write: boolean; truncate: boolean }> = [];
+    let replaceOnOpen = false;
+    fs.open = (path, flags) => {
+      calls.push({ read: flags.read, write: flags.write, truncate: flags.truncate });
+      if (replaceOnOpen) {
+        replaceOnOpen = false;
+        fs.move(path, "/before-open-race");
+        fs.writeFile(path, "replacement intact");
+      }
+      const file = originalOpen(path, flags);
+      return flags.write ? file : { ...file, write: undefined };
+    };
+    const c = await client(fs);
+    const clone = (fid: number) => c.query(110, [u32(1), u32(fid), u16(0)]);
+    const create = (fid: number, name: string, flags: number, expected = 15) =>
+      c.query(14, [u32(fid), string(name), u32(flags), u32(0o644), u32(0)], expected);
+    const read = (fid: number, expected = 117) =>
+      c.query(116, [u32(fid), u64(0), u32(64)], expected);
+    const write = (fid: number, expected = 119) =>
+      c.query(118, [u32(fid), u64(0), u32(1), Buffer.from("x")], expected);
+    for (let mode = 0; mode < 4; mode++) {
+      const readable = mode === 0 || mode === 2,
+        writable = mode === 1 || mode === 2;
+      const fid = 20 + mode,
+        name = "fresh-" + mode;
+      await clone(fid);
+      const before = calls.length;
+      await create(fid, name, mode);
+      assert.equal(calls.length, before, "a fresh create retains its returned inode handle");
+      const got = await read(fid, readable ? 117 : 7);
+      assert.equal(got.readUInt32LE(), readable ? 0 : 9);
+      const written = await write(fid, writable ? 119 : 7);
+      assert.equal(written.readUInt32LE(), writable ? 1 : 9);
+      // Metadata operations are not data-I/O rights: chmod through a read-only or
+      // mode-3 fid is permitted when the export itself is writable.
+      await c.query(26, [
+        u32(fid),
+        u32(1),
+        u32(0o600),
+        u32(0),
+        u32(0),
+        u64(0),
+        u64(0),
+        u64(0),
+        u64(0),
+        u64(0),
+      ]);
+      assert.equal(fs.getattr("/" + name).mode, 0o600);
+      await c.query(120, [u32(fid)]);
+      const existing = "existing-" + mode;
+      fs.writeFile("/" + existing, "data");
+      const existingFid = 30 + mode;
+      await clone(existingFid);
+      const beforeExisting = calls.length;
+      await create(existingFid, existing, mode);
+      assert.equal(calls.length, beforeExisting + 1);
+      assert.deepEqual(calls.at(-1), { read: readable, write: writable, truncate: false });
+      const existingRead = await read(existingFid, readable ? 117 : 7);
+      if (readable) assert.equal(existingRead.subarray(4).toString(), "data");
+      else assert.equal(existingRead.readUInt32LE(), 9);
+      assert.equal((await write(existingFid, writable ? 119 : 7)).readUInt32LE(), writable ? 1 : 9);
+      await c.query(120, [u32(existingFid)]);
+    }
+    fs.writeFile("/exclusive", "keep");
+    await clone(40);
+    const beforeExclusive = calls.length;
+    assert.equal((await create(40, "exclusive", 0o200, 7)).readUInt32LE(), 17);
+    assert.equal(calls.length, beforeExclusive, "O_EXCL never falls back to open");
+    assert.equal(Buffer.from(fs.readFile("/exclusive")).toString(), "keep");
+    fs.writeFile("/readonly-truncate", "truncate");
+    await clone(41);
+    await create(41, "readonly-truncate", 0o1000);
+    assert.deepEqual(calls.at(-1), { read: true, write: false, truncate: true });
+    assert.equal(fs.readFile("/readonly-truncate").length, 0);
+    assert.equal((await write(41, 7)).readUInt32LE(), 9);
+    fs.writeFile("/open-race", "old contents");
+    await clone(42);
+    replaceOnOpen = true;
+    assert.equal((await create(42, "open-race", 0o1000, 7)).readUInt32LE(), 116);
+    assert.equal(Buffer.from(fs.readFile("/open-race")).toString(), "replacement intact");
+    assert.equal(Buffer.from(fs.readFile("/before-open-race")).toString(), "old contents");
+    await c.close();
+    const ro = await client(fs, { readOnly: true });
+    await ro.query(110, [u32(1), u32(50), u16(0)]);
+    assert.equal(
+      (
+        await ro.query(14, [u32(50), string("denied"), u32(0), u32(0o600), u32(0)], 7)
+      ).readUInt32LE(),
+      30,
+    );
+    assert.throws(() => fs.getattr("/denied"), { code: "ENOENT" });
+    await ro.close();
+  },
+);
