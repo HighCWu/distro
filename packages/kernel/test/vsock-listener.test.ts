@@ -403,6 +403,37 @@ test(
 );
 
 test(
+  "concurrent reads consume split packets in invocation order before EOF",
+  { timeout: 3000 },
+  async () => {
+    const { device, send, receive } = harness();
+    const listener = device.listen(9000);
+    const endpoint = { source: 1000, destination: 9000 };
+    await send({ ...endpoint, op: REQUEST });
+    assert.equal((await receive()).op, RESPONSE);
+    const stream = await listener.accept();
+    assert(stream);
+
+    const exact = stream.readExactly(4);
+    const remainder = stream.read();
+    const end = stream.readExactly(2);
+    await send({ ...endpoint, op: RW, payload: [1, 2] });
+    await send({ ...endpoint, op: RW, payload: [3, 4, 5] });
+    await send({ ...endpoint, op: SHUTDOWN, flags: SHUTDOWN_SEND });
+    assert.deepEqual([...(await exact)], [1, 2, 3, 4]);
+    assert.deepEqual([...(await remainder)], [5]);
+    assert.equal((await end).byteLength, 0);
+
+    await send({ ...endpoint, op: CREDIT_REQUEST });
+    const credit = await receive();
+    assert.equal(credit.op, CREDIT_UPDATE);
+    assert.equal(credit.forwarded, 5);
+    device.close();
+    await device.closed;
+  },
+);
+
+test(
   "peer receive shutdown wakes blocked writers and leaves input open",
   { timeout: 3000 },
   async () => {

@@ -119,6 +119,7 @@ function create_vsock_connection(ops: VsockConnectionOps): VsockConnectionContro
   let last_credit_update = 0;
   let peer_buf_alloc = DEFAULT_VSOCK_BUF_ALLOC;
   let peer_fwd_cnt = 0;
+  let read_tail = Promise.resolve();
   let write_tail = Promise.resolve();
 
   function wake_credit_waiters() {
@@ -179,6 +180,16 @@ function create_vsock_connection(ops: VsockConnectionOps): VsockConnectionContro
     return out.subarray(0, offset);
   }
 
+  function queue_read(operation: () => Promise<Uint8Array>): Promise<Uint8Array> {
+    // Reserve the stream until this read has restored any unconsumed suffix.
+    const result = read_tail.then(operation);
+    read_tail = result.then(
+      () => {},
+      () => {},
+    );
+    return result;
+  }
+
   async function write_serialized(data: Uint8Array) {
     let offset = 0;
     while (offset < data.byteLength) {
@@ -204,8 +215,12 @@ function create_vsock_connection(ops: VsockConnectionOps): VsockConnectionContro
   }
 
   const connection: VsockConnection = {
-    read,
-    readExactly,
+    read() {
+      return queue_read(read);
+    },
+    readExactly(length) {
+      return queue_read(() => readExactly(length));
+    },
     write,
     close() {
       if (closed) return;

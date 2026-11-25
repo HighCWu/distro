@@ -111,23 +111,24 @@ async function exerciseVsock(listener) {
     );
     console.log("vsock host: accepted two streams and verified distinct requests");
 
-    // Reverse the response order to expose any mixing between accepted streams.
-    await streams[1].write(Uint8Array.from(VSOCK_REPLIES[1]));
-    await streams[0].write(Uint8Array.from(VSOCK_REPLIES[0]));
-    await Promise.all(
-      streams.map((stream, index) =>
-        readVsockFixtureBytes(
-          stream,
-          [index === 0 ? 0xa1 : 0xb2],
-          `stream ${index + 1} acknowledgment`,
-        ),
-      ),
-    );
+    async function checkEof() {
+      if ((await streams[0].read()).length !== 0)
+        throw new Error("vsock roundtrip: expected EOF after stream 1 acknowledgment");
+    }
+    async function sendReplies() {
+      // Reverse the response order to expose mixing between accepted streams.
+      await streams[1].write(Uint8Array.from(VSOCK_REPLIES[1]));
+      await streams[0].write(Uint8Array.from(VSOCK_REPLIES[0]));
+    }
+    await Promise.all([
+      readVsockFixtureBytes(streams[0], [0xa1, 0x24], "stream 1 acknowledgment"),
+      readVsockFixtureBytes(streams[0], [0x75], "stream 1 queued suffix"),
+      checkEof(),
+      readVsockFixtureBytes(streams[1], [0xb2], "stream 2 acknowledgment"),
+      sendReplies(),
+    ]);
     console.log("vsock host: both replies acknowledged on their original streams");
-
-    const eof = await streams[0].read();
-    if (eof.length !== 0)
-      throw new Error("vsock roundtrip: expected EOF after stream 1 acknowledgment");
+    console.log("vsock host: concurrent reads preserved stream 1 acknowledgment, suffix and EOF");
     await streams[0].write(Uint8Array.from(VSOCK_FINAL_REPLY));
     console.log("vsock host: sent final frame on stream 1 after EOF");
   } finally {

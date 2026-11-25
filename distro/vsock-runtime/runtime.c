@@ -121,6 +121,8 @@ int main(void)
 		check_reply(sockets[index], replies[index], deadline);
 	for (size_t index = 0; index < 2; index++)
 		send_all(sockets[index], &acknowledgments[index], 1, deadline);
+	const uint8_t suffix[] = { 0x24, 0x75 };
+	send_all(sockets[0], suffix, sizeof(suffix), deadline);
 
 	check(shutdown(sockets[0], SHUT_WR) == 0, "half-close stream 1 for writes");
 	check_reply(sockets[0], final_reply, deadline);
