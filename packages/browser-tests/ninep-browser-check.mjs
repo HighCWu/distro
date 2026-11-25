@@ -15,7 +15,7 @@ const stages = [
   "9p transport: mounted 9P2000.L over a vsock file descriptor",
   "9p transport: listed remote directory",
   "9p transport: read exact remote file bytes",
-  "9p transport: read exact imported directory snapshot bytes",
+  "9p transport: read exact imported directory snapshot bytes and name",
   "9p transport: created, wrote, appended and reopened exact remote file bytes",
   "9p transport: linked, shared writes and unlinked an exact alias",
   "9p transport: preserved signed seconds and nanosecond timestamps",

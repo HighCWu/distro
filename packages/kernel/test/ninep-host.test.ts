@@ -231,6 +231,28 @@ async function client(fs: Fs, options: { readOnly?: boolean; timeout?: number } 
   };
 }
 
+test("9P names and symlink targets preserve a leading UTF-8 BOM", { timeout: 3000 }, async () => {
+  const fs = new MemoryFs({ file: "plain bytes", "\uFEFFfile": "prefixed bytes" });
+  const c = await client(fs);
+  for (const [name, expected] of [
+    ["file", "plain bytes"],
+    ["\uFEFFfile", "prefixed bytes"],
+  ] as const) {
+    const walked = await c.query(110, [u32(1), u32(2), u16(1), string(name)]);
+    assert.equal(walked.readUInt16LE(), 1);
+    await c.query(12, [u32(2), u32(0)]);
+    const read = await c.query(116, [u32(2), u64(0), u32(128)]);
+    assert.equal(read.readUInt32LE(), Buffer.byteLength(expected));
+    assert.equal(read.subarray(4).toString(), expected);
+    await c.query(120, [u32(2)]);
+  }
+  await c.query(16, [u32(1), string("link"), string("\uFEFFfile"), u32(0)]);
+  await c.query(110, [u32(1), u32(2), u16(1), string("link")]);
+  const link = await c.query(22, [u32(2)]);
+  assert.deepEqual(link, string("\uFEFFfile"));
+  await c.close();
+});
+
 test(
   "9P2000.L serves exact MemoryFs reads, writes, EOF, clunk and disconnect",
   { timeout: 3000 },

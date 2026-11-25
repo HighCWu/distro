@@ -18,7 +18,7 @@ export async function startNinepMemory(vsock, linuxModule, signal) {
   let fs;
   try {
     await mkdir(join(directory, "project"));
-    await writeFile(join(directory, "project", "input.txt"), "linux-wasm 9p transport\n");
+    await writeFile(join(directory, "project", "\uFEFFinput.txt"), "linux-wasm 9p transport\n");
     fs = await importNinepDirectorySnapshot(directory, { maxBytes: 256, maxEntries: 4 });
   } finally {
     await rm(directory, { recursive: true, force: true });

@@ -18,7 +18,7 @@ async function createSnapshot() {
   const root = await origin.getDirectoryHandle(name, { create: true });
   try {
     const project = await root.getDirectoryHandle("project", { create: true });
-    const input = await project.getFileHandle("input.txt", { create: true });
+    const input = await project.getFileHandle("\uFEFFinput.txt", { create: true });
     const data = await input.createWritable();
     try {
       await data.write("linux-wasm 9p transport\n");

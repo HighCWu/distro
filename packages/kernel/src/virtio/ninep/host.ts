@@ -153,7 +153,7 @@ export function serveNinep(
 
 const enc = new TextEncoder();
 const lenient = new TextDecoder();
-const strict = new TextDecoder("utf-8", { fatal: true });
+const strict = new TextDecoder("utf-8", { fatal: true, ignoreBOM: true });
 
 class Writer {
   buf: Uint8Array;
