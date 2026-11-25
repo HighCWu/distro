@@ -73,7 +73,8 @@ function checkedHostname(host: string) {
 }
 
 interface Connection {
-  socket: WebSocket;
+  socket: WebSocket | undefined;
+  pending: Set<WebSocket> | undefined;
   timer: ReturnType<typeof setTimeout>;
   credit: number | undefined;
   closed: boolean;
@@ -101,17 +102,27 @@ interface Stream {
  * or half-close. Guest EOF leaves the proxy stream open for replies; only
  * remote closure or cancellation ends it. Excess inbound buffering resets the
  * stream. This adapter handles TCP only, and selects no default public proxy.
+ * Up to four unique explicit endpoints race until the first valid v1 initial
+ * CONTINUE. Losers close; established streams never migrate or replay.
  * The shared WebSocket closes when its final session finishes or is aborted.
  */
-export function wispNetwork(url: string | URL): NetworkOptions {
-  const endpoint = new URL(url);
-  if (
-    !["ws:", "wss:"].includes(endpoint.protocol) ||
-    endpoint.hash ||
-    endpoint.username ||
-    endpoint.password
-  )
-    throw new TypeError("expected a ws: or wss: Wisp endpoint without credentials or fragment");
+export function wispNetwork(url: string | URL | readonly (string | URL)[]): NetworkOptions {
+  const inputs: readonly (string | URL)[] = Array.isArray(url) ? url : [url as string | URL];
+  const endpoints = new Set<string>();
+  for (const input of inputs) {
+    const endpoint = new URL(input);
+    if (
+      !["ws:", "wss:"].includes(endpoint.protocol) ||
+      endpoint.hash ||
+      endpoint.username ||
+      endpoint.password
+    )
+      throw new TypeError("expected a ws: or wss: Wisp endpoint without credentials or fragment");
+    endpoints.add(endpoint.href);
+    if (endpoints.size > 4)
+      throw new RangeError("at most four unique Wisp endpoints are supported");
+  }
+  if (endpoints.size === 0) throw new RangeError("at least one Wisp endpoint is required");
   let connection: Connection | undefined;
   let nextId = 1;
   let receivedBytes = 0;
@@ -136,7 +147,7 @@ export function wispNetwork(url: string | URL): NetworkOptions {
   };
   const closeStream = (stream: Stream, reason: number) => {
     const c = stream.connection;
-    if (!stream.opened || !c || c.closed || c.socket.readyState !== WebSocket.OPEN) return;
+    if (!stream.opened || !c?.socket || c.closed || c.socket.readyState !== WebSocket.OPEN) return;
     const bytes = packet(4, stream.id, Uint8Array.of(reason));
     if (c.socket.bufferedAmount + bytes.length > MAX_SOCKET_BYTES) {
       failConnection(c, new Error("Wisp send buffer exceeded during closure"));
@@ -154,14 +165,64 @@ export function wispNetwork(url: string | URL): NetworkOptions {
     clearTimeout(c.timer);
     if (connection === c) connection = undefined;
     for (const stream of streams.values()) if (stream.connection === c) finish(stream, error);
-    c.socket.close();
+    const pending = c.pending;
+    c.pending = undefined;
+    if (pending) {
+      for (const socket of pending) socket.close();
+      pending.clear();
+    }
+    c.socket?.close();
+  }
+  function connectedPacket(c: Connection, bytes: Uint8Array<ArrayBuffer>) {
+    const view = new DataView(bytes.buffer);
+    const id = view.getUint32(1, true);
+    const type = bytes[0];
+    if (
+      id === 0 ||
+      (type !== 2 && type !== 3 && type !== 4) ||
+      (type === 3 && bytes.length !== 9) ||
+      (type === 4 && bytes.length !== 6)
+    ) {
+      failConnection(c, new Error("invalid Wisp stream packet"));
+      return;
+    }
+    const stream = streams.get(id);
+    if (!stream || stream.connection !== c || stream.ended) return;
+    if (type === 3) {
+      stream.credit = view.getUint32(5, true);
+      notify(stream);
+    } else if (type === 4) {
+      const reason = bytes[5]!;
+      stream.opened = false;
+      finish(
+        stream,
+        reason === 2
+          ? undefined
+          : new Error(`Wisp: ${reasons[reason] ?? `close reason 0x${reason.toString(16)}`}`),
+      );
+    } else if (bytes.length > 5) {
+      const length = bytes.length - 5;
+      if (
+        length > MAX_STREAM_BYTES - stream.bytes ||
+        length > MAX_TOTAL_BYTES - receivedBytes ||
+        stream.queue.length >= MAX_QUEUE_PACKETS
+      ) {
+        closeStream(stream, 0x81);
+        finish(stream, new Error("Wisp receive buffer capacity exceeded"));
+        return;
+      }
+      stream.queue.push(bytes.subarray(5));
+      stream.bytes += length;
+      receivedBytes += length;
+      notify(stream);
+    }
   }
   function getConnection() {
     if (connection) return connection;
-    const socket = new WebSocket(endpoint);
-    socket.binaryType = "arraybuffer";
+    const pending = new Set<WebSocket>();
     const c: Connection = {
-      socket,
+      socket: undefined,
+      pending,
       timer: setTimeout(
         () => failConnection(c, new Error("Wisp initial CONTINUE timed out")),
         HANDSHAKE_MS,
@@ -170,72 +231,62 @@ export function wispNetwork(url: string | URL): NetworkOptions {
       closed: false,
     };
     connection = c;
-    socket.addEventListener("error", () => failConnection(c, new Error("Wisp WebSocket error")));
-    socket.addEventListener("close", () => failConnection(c, new Error("Wisp WebSocket closed")));
-    socket.addEventListener("message", (event: MessageEvent) => {
-      if (c.closed) return;
-      if (
-        !(event.data instanceof ArrayBuffer) ||
-        event.data.byteLength < 5 ||
-        event.data.byteLength > MAX_PACKET + 5
-      ) {
-        failConnection(c, new Error("invalid or oversized Wisp packet"));
-        return;
+    let lastError = new Error("Wisp endpoints unavailable");
+    const failedCandidate = (socket: WebSocket, error: Error) => {
+      if (c.closed || c.pending !== pending || !pending.delete(socket)) return;
+      socket.close();
+      if (pending.size === 0) failConnection(c, error);
+    };
+    for (const endpoint of endpoints) {
+      let socket: WebSocket;
+      try {
+        socket = new WebSocket(endpoint);
+      } catch (error) {
+        lastError = new Error("Wisp WebSocket creation failed", { cause: error });
+        continue;
       }
-      const bytes = new Uint8Array(event.data);
-      const view = new DataView(event.data);
-      const id = view.getUint32(1, true);
-      const type = bytes[0];
-      if (c.credit === undefined) {
-        if (id !== 0 || type !== 3 || bytes.length !== 9) {
-          failConnection(c, new Error("expected Wisp v1 initial CONTINUE on stream zero"));
+      pending.add(socket);
+      socket.binaryType = "arraybuffer";
+      const failed = (error: Error) => {
+        if (c.socket === socket) failConnection(c, error);
+        else failedCandidate(socket, error);
+      };
+      socket.addEventListener("error", () => failed(new Error("Wisp WebSocket error")));
+      socket.addEventListener("close", () => failed(new Error("Wisp WebSocket closed")));
+      socket.addEventListener("message", (event: MessageEvent) => {
+        if (c.closed || (c.socket !== socket && (c.pending !== pending || !pending.has(socket))))
           return;
-        }
-        c.credit = view.getUint32(5, true);
-        clearTimeout(c.timer);
-        for (const stream of streams.values()) if (stream.connection === c) notify(stream);
-        return;
-      }
-      if (
-        id === 0 ||
-        (type !== 2 && type !== 3 && type !== 4) ||
-        (type === 3 && bytes.length !== 9) ||
-        (type === 4 && bytes.length !== 6)
-      ) {
-        failConnection(c, new Error("invalid Wisp stream packet"));
-        return;
-      }
-      const stream = streams.get(id);
-      if (!stream || stream.connection !== c || stream.ended) return;
-      if (type === 3) {
-        stream.credit = view.getUint32(5, true);
-        notify(stream);
-      } else if (type === 4) {
-        const reason = bytes[5]!;
-        stream.opened = false;
-        finish(
-          stream,
-          reason === 2
-            ? undefined
-            : new Error(`Wisp: ${reasons[reason] ?? `close reason 0x${reason.toString(16)}`}`),
-        );
-      } else if (bytes.length > 5) {
-        const length = bytes.length - 5;
         if (
-          length > MAX_STREAM_BYTES - stream.bytes ||
-          length > MAX_TOTAL_BYTES - receivedBytes ||
-          stream.queue.length >= MAX_QUEUE_PACKETS
+          !(event.data instanceof ArrayBuffer) ||
+          event.data.byteLength < 5 ||
+          event.data.byteLength > MAX_PACKET + 5
         ) {
-          closeStream(stream, 0x81);
-          finish(stream, new Error("Wisp receive buffer capacity exceeded"));
+          failed(new Error("invalid or oversized Wisp packet"));
           return;
         }
-        stream.queue.push(bytes.subarray(5));
-        stream.bytes += length;
-        receivedBytes += length;
-        notify(stream);
-      }
-    });
+        const bytes = new Uint8Array(event.data);
+        if (c.credit === undefined) {
+          const view = new DataView(event.data);
+          if (bytes.length !== 9 || bytes[0] !== 3 || view.getUint32(1, true) !== 0) {
+            failed(new Error("expected Wisp v1 initial CONTINUE on stream zero"));
+            return;
+          }
+          c.socket = socket;
+          c.pending = undefined;
+          c.credit = view.getUint32(5, true);
+          clearTimeout(c.timer);
+          for (const loser of pending) if (loser !== socket) loser.close();
+          pending.clear();
+          for (const stream of streams.values()) if (stream.connection === c) notify(stream);
+          return;
+        }
+        connectedPacket(c, bytes);
+      });
+    }
+    if (pending.size === 0) {
+      failConnection(c, lastError);
+      throw lastError;
+    }
     return c;
   }
   function wait(stream: Stream) {
@@ -270,20 +321,22 @@ export function wispNetwork(url: string | URL): NetworkOptions {
   }
   async function send(stream: Stream, bytes: Uint8Array<ArrayBuffer>, data = false) {
     const c = stream.connection!;
+    const socket = c.socket;
+    if (!socket) throw new Error("Wisp connection has no selected endpoint");
     for (;;) {
       if (stream.ended || c.closed) throw stream.error ?? new Error("Wisp stream closed");
       if (data && stream.credit === 0) {
         await wait(stream);
         continue;
       }
-      if (c.socket.bufferedAmount + bytes.length > MAX_SOCKET_BYTES) {
+      if (socket.bufferedAmount + bytes.length > MAX_SOCKET_BYTES) {
         await new Promise((resolve) => setTimeout(resolve, 10));
         continue;
       }
-      if (c.socket.readyState !== WebSocket.OPEN) throw new Error("Wisp WebSocket is not open");
+      if (socket.readyState !== WebSocket.OPEN) throw new Error("Wisp WebSocket is not open");
       // No suspension between checking/reserving packet credit and sending.
       if (data) stream.credit--;
-      c.socket.send(bytes);
+      socket.send(bytes);
       return;
     }
   }

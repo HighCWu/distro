@@ -23,9 +23,9 @@ export async function runPublicAgentWasm64Suite(
   assert: RuntimeAssertions,
   runCase: (name: string, body: () => Promise<void>) => Promise<void>,
   writeLine: (line: string) => void,
-  options: { userland?: boolean; networking?: boolean; wispUrl?: string } = {},
+  options: { userland?: boolean; networking?: boolean; wispEndpoints?: readonly string[] } = {},
 ) {
-  if ((options.networking || options.wispUrl) && !options.userland)
+  if ((options.networking || options.wispEndpoints) && !options.userland)
     throw new Error("networking requires native userland");
   const passed: string[] = [];
   const check = (name: string, body: () => Promise<void>) =>
@@ -36,8 +36,8 @@ export async function runPublicAgentWasm64Suite(
     });
   const agent = guestAgent({ abi: "wasm64", image });
   let outbound = 0;
-  const network = options.wispUrl
-    ? createNetwork(wispNetwork(options.wispUrl))
+  const network = options.wispEndpoints
+    ? createNetwork(wispNetwork(options.wispEndpoints))
     : options.networking
       ? createNetwork({
           connectTcp() {
@@ -283,7 +283,7 @@ export async function runPublicAgentWasm64Suite(
         assert.equal(outbound, 0);
       });
     }
-    if (options.wispUrl) {
+    if (options.wispEndpoints) {
       await check("native wget resolves a name and receives exact bytes over Wisp", async () => {
         assert.equal(
           await agent.fs.readTextFile("/etc/resolv.conf"),

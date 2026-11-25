@@ -29,7 +29,11 @@ globalThis.runPublicNativeAgent = async ({
     {
       userland,
       networking,
-      wispUrl: wisp ? new URL("/wisp-test", location.href.replace(/^http/, "ws")).href : undefined,
+      wispEndpoints: wisp
+        ? ["/wisp-stalled", "/wisp-test"].map(
+            (path) => new URL(path, location.href.replace(/^http/, "ws")).href,
+          )
+        : undefined,
     },
   );
 };

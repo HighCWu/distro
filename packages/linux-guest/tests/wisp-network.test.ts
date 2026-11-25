@@ -19,6 +19,7 @@ function credit(value: number) {
 class FakeSocket extends EventTarget {
   static OPEN = 1;
   static sockets: FakeSocket[] = [];
+  static failUrls = new Set<string>();
   readyState = 0;
   bufferedAmount = 0;
   binaryType = "blob";
@@ -26,6 +27,7 @@ class FakeSocket extends EventTarget {
   readonly url: string | URL;
   constructor(url: string | URL) {
     super();
+    if (FakeSocket.failUrls.has(String(url))) throw new Error("fixture constructor failure");
     this.url = url;
     FakeSocket.sockets.push(this);
   }
@@ -103,6 +105,7 @@ async function turn() {
 async function withSocket(fn: () => Promise<void>) {
   const original = globalThis.WebSocket;
   FakeSocket.sockets = [];
+  FakeSocket.failUrls.clear();
   globalThis.WebSocket = FakeSocket as unknown as typeof WebSocket;
   try {
     await fn();
@@ -332,4 +335,143 @@ test("voluntary CLOSE drains queued replies while outbound DATA waits on credit 
       assert.equal(s.closed, true);
       assert.equal(socket.sent.filter((bytes) => bytes[0] === 2).length, 0);
     }
+  }));
+
+test("configured endpoint race picks only a valid v1 handshake and ignores every loser event", async () =>
+  withSocket(async () => {
+    const network = wispNetwork([
+      "ws://bad.invalid/",
+      "ws://closed.invalid/",
+      new URL("ws://winner.invalid/"),
+      "ws://slow.invalid/",
+    ] as const);
+    const s = session();
+    const done = Promise.resolve(network.connectTcp(s.value));
+    assert.equal(FakeSocket.sockets.length, 4);
+    const [bad, closed, winner, slow] = FakeSocket.sockets;
+    bad!.receive(3, 1, credit(1));
+    closed!.close();
+    assert.equal(s.reads, 0);
+    winner!.handshake(1);
+    await turn();
+    assert.equal(slow!.readyState, 3);
+    assert.equal(bad!.readyState, 3);
+    slow!.receive(3, 0, credit(1));
+    slow!.dispatchEvent(new Event("error"));
+    slow!.dispatchEvent(new Event("close"));
+    bad!.receive(4, 0, Uint8Array.of(0x44));
+    await turn();
+    assert.equal(winner!.readyState, 1);
+    assert.equal(winner!.sent.filter((bytes) => bytes[0] === 1).length, 1);
+    for (const loser of [bad!, closed!, slow!]) assert.equal(loser.sent.length, 0);
+    s.input.close();
+    winner!.receive(2, 1, Uint8Array.of(9, 0, 255));
+    winner!.receive(4, 1, Uint8Array.of(2));
+    await done;
+    assert.deepEqual(s.output, [Uint8Array.of(9, 0, 255)]);
+  }));
+
+test("last pending session cancellation closes all candidates; a later cohort can race afresh", async () =>
+  withSocket(async () => {
+    const network = wispNetwork(["ws://one.invalid/", "ws://two.invalid/"]);
+    const first = session();
+    const second = session();
+    const a = Promise.resolve(network.connectTcp(first.value));
+    const b = Promise.resolve(network.connectTcp(second.value));
+    const firstAbort = assert.rejects(a, /aborted/);
+    first.abort.abort("one");
+    await firstAbort;
+    assert.equal(FakeSocket.sockets.length, 2);
+    assert.ok(FakeSocket.sockets.every((socket) => socket.readyState !== 3));
+    const lastAbort = assert.rejects(b, /aborted/);
+    second.abort.abort("two");
+    await lastAbort;
+    assert.ok(FakeSocket.sockets.every((socket) => socket.readyState === 3));
+    const third = session();
+    const c = Promise.resolve(network.connectTcp(third.value));
+    assert.equal(FakeSocket.sockets.length, 4);
+    const winner = FakeSocket.sockets[3]!;
+    winner.handshake();
+    await turn();
+    assert.equal(FakeSocket.sockets[2]!.readyState, 3);
+    third.input.close();
+    winner.receive(4, 3, Uint8Array.of(2));
+    await c;
+  }));
+
+test("all failed candidates settle immediately including constructor failure, without replaying live streams", async () =>
+  withSocket(async () => {
+    const network = wispNetwork(["ws://throws.invalid/", "ws://other.invalid/"]);
+    FakeSocket.failUrls.add("ws://throws.invalid/");
+    const first = session();
+    const done = Promise.resolve(network.connectTcp(first.value));
+    const failed = assert.rejects(done, /WebSocket closed/);
+    FakeSocket.sockets[0]!.close();
+    await failed;
+    assert.equal(first.reads, 0);
+    FakeSocket.failUrls.add("ws://other.invalid/");
+    const unavailable = session();
+    await assert.rejects(Promise.resolve(network.connectTcp(unavailable.value)), /creation failed/);
+    assert.equal(
+      FakeSocket.sockets.length,
+      1,
+      "all constructor failures also settle without a socket",
+    );
+    FakeSocket.failUrls.clear();
+    const second = session();
+    const third = session();
+    const b = Promise.resolve(network.connectTcp(second.value));
+    const c = Promise.resolve(network.connectTcp(third.value));
+    const winner = FakeSocket.sockets[1]!;
+    winner.handshake();
+    await turn();
+    assert.equal(winner.sent.filter((bytes) => bytes[0] === 1).length, 2);
+    const failedB = assert.rejects(b, /WebSocket closed/);
+    const failedC = assert.rejects(c, /WebSocket closed/);
+    winner.close();
+    await Promise.all([failedB, failedC]);
+    assert.equal(
+      FakeSocket.sockets.length,
+      3,
+      "existing streams never trigger rerace or migration",
+    );
+    assert.equal(FakeSocket.sockets[2]!.sent.length, 0);
+  }));
+
+test("endpoint lists normalize duplicates, enforce four unique URLs and retain endpoint policy", async () =>
+  withSocket(async () => {
+    assert.throws(() => wispNetwork([]), /at least one/);
+    assert.throws(
+      () => wispNetwork(Array.from({ length: 5 }, (_, i) => `ws://proxy-${i}.invalid/`)),
+      /four unique/,
+    );
+    for (const invalid of [
+      "https://proxy.invalid/",
+      "ws://user:secret@proxy.invalid/",
+      "ws://proxy.invalid/#fragment",
+    ])
+      assert.throws(() => wispNetwork(["ws://good.invalid/", invalid]), /endpoint/);
+    const network = wispNetwork([
+      "WS://EXAMPLE.COM:80",
+      new URL("ws://example.com/"),
+      "ws://other.invalid/",
+    ]);
+    const s = session();
+    const done = Promise.resolve(network.connectTcp(s.value));
+    assert.equal(FakeSocket.sockets.length, 2);
+    assert.equal(String(FakeSocket.sockets[0]!.url), "ws://example.com/");
+    const aborted = assert.rejects(done, /aborted/);
+    s.abort.abort();
+    await aborted;
+    // URL inputs use string conversion, without a same-realm instanceof gate.
+    const foreignUrl = Object.assign(Object.create(null), {
+      toString: () => "ws://foreign.invalid/",
+    }) as URL;
+    const foreign = wispNetwork(foreignUrl);
+    const another = session();
+    const pending = Promise.resolve(foreign.connectTcp(another.value));
+    assert.equal(String(FakeSocket.sockets.at(-1)!.url), "ws://foreign.invalid/");
+    const cancel = assert.rejects(pending, /aborted/);
+    another.abort.abort();
+    await cancel;
   }));

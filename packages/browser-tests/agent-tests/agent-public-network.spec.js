@@ -12,6 +12,24 @@ function frame(type, stream, payload) {
 
 test("runs native wasm64 HTTP through public agent networking", async ({ page }) => {
   const connections = new Map();
+  const stalled = new Map();
+  let sendHandshake;
+  // Hold the working proxy's reply until both routes are installed for this round.
+  const startHandshake = () => {
+    if (!sendHandshake || stalled.size !== connections.size) return;
+    const send = sendHandshake;
+    sendHandshake = undefined;
+    send();
+  };
+  await page.routeWebSocket(/\/wisp-stalled$/, (socket) => {
+    expect(stalled.has(socket)).toBe(false);
+    stalled.set(socket, false);
+    socket.onMessage(() => {
+      throw new Error("Wisp sent application traffic to a proxy without a handshake");
+    });
+    socket.onClose(() => stalled.set(socket, true));
+    startHandshake();
+  });
   await page.routeWebSocket(/\/wisp-test$/, (socket) => {
     expect(connections.has(socket)).toBe(false);
     const connection = { replied: false, closed: false };
@@ -51,16 +69,24 @@ test("runs native wasm64 HTTP through public agent networking", async ({ page })
         }
       }
     });
-    socket.send(frame(3, 0, [1, 0, 0, 0]));
+    expect(sendHandshake).toBeUndefined();
+    sendHandshake = () => socket.send(frame(3, 0, [1, 0, 0, 0]));
+    startHandshake();
   });
   for (let round = 1; round <= 2; round++) {
     await checkPublicAgent(page, true, true, true);
     await expect
       .poll(() => [...connections.values()].map(({ replied, closed }) => [replied, closed]))
       .toEqual(Array.from({ length: round }, () => [true, true]));
-    console.log(`Wisp round ${round}: exact CONNECT target, HTTP bytes and WebSocket shutdown`);
+    await expect
+      .poll(() => [...stalled.values()])
+      .toEqual(Array.from({ length: round }, () => true));
+    console.log(`Wisp round ${round}: exact CONNECT target, HTTP bytes and both WebSockets closed`);
   }
   await page.close();
   expect(connections.size).toBe(2);
-  console.log("Wisp page: close awaited after two distinct completed HTTP connections");
+  expect(stalled.size).toBe(2);
+  console.log(
+    "Wisp page: close awaited after two completed HTTP connections and two stalled peers",
+  );
 });
