@@ -13,6 +13,9 @@ busybox mount -t proc proc /proc || fail "mount procfs"
 busybox mount -t sysfs sysfs /sys || fail "mount sysfs"
 /tun-probe || fail "TUN bidirectional IPv4"
 test ! -e /sys/class/net/wasmtun || fail "TUN survives last close"
+/tap-probe || fail "TAP bidirectional Ethernet"
+test ! -e /sys/class/net/wasmtap || fail "TAP survives last close"
+echo 'virtual network: TAP interface removed on last close'
 
 ip link add name wasmleft type veth || fail "create veth pair"
 peer_index=$(cat /sys/class/net/wasmleft/iflink)
