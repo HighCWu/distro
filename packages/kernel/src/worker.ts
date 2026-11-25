@@ -105,7 +105,11 @@ import {
   type DylinkWorkerSnapshot,
 } from "./dylink_process_worker.ts";
 import { prepare_dylink_call_metadata } from "./dylink_call_metadata.ts";
-import { DynamicVforkState, dynamic_vfork_allowed } from "./dynamic-vfork.ts";
+import {
+  DynamicVforkState,
+  dynamic_vfork_allowed,
+  dynamic_vfork_replay_allowed,
+} from "./dynamic-vfork.ts";
 import {
   create_dynamic_process_copy_context,
   dynamic_process_copy_allowed,
@@ -861,8 +865,7 @@ function user_imports({
           clone &&
           dynamic_vfork_allowed({
             context,
-            loaderCreated:
-              dynamic !== undefined || dynamic_process_value(context?.dynamic?.process_state) !== 0,
+            loaderCreated: dynamic !== undefined,
             layout,
             number: nr,
             args: [arg0, arg1, arg2, arg3, arg4, arg5],
@@ -902,6 +905,18 @@ function user_imports({
             dynamicOperationDepth,
             vforkPending: dynamic_vfork.pending,
           });
+        let vforkSnapshot: DylinkWorkerSnapshot | undefined;
+        if (dynamicVfork && dynamic) {
+          try {
+            // The suspended parent retains its shared memory and file pins.
+            // Export before marking vfork pending, while the loader is idle.
+            vforkSnapshot = dynamic.exportWorkerSnapshot();
+          } catch (error) {
+            if (control(error)) throw error;
+            const errno = snapshot_error_errno(error);
+            return kernel_address === "i64" ? -BigInt(errno) : -errno;
+          }
+        }
         let copyContext: UserContext | null = null;
         if (dynamicCopy) {
           try {
@@ -958,7 +973,7 @@ function user_imports({
               process_copy_context = null;
             }
           }
-          if (dynamicVfork) return dynamic_vfork.run(kernelInvoke);
+          if (dynamicVfork) return dynamic_vfork.run(kernelInvoke, vforkSnapshot);
           if (dynamicThread)
             return run_dynamic_thread_clone(
               context?.dynamic?.process_state,
@@ -1747,7 +1762,9 @@ function start({
     shared_user_prepare &&
     (!user_copy_status ||
       !user_context?.dynamic?.worker_snapshot ||
-      !user_context.dynamic.worker_membership)
+      (user_context.dynamic.vfork_child
+        ? !dynamic_vfork_replay_allowed(user_context)
+        : !user_context.dynamic.worker_membership))
   )
     throw new Error(
       "shared dynamic Worker preparation has no replay snapshot, membership, or acknowledgement",
@@ -1881,39 +1898,47 @@ function start({
           const dynamic = user?.dynamic;
           const membership = dynamic?.worker_membership;
           const publication = dynamic?.worker_publication;
-          if (!user || !dynamic || !membership || !publication || !user_copy_status) {
+          const vforkReplay = dynamic?.vfork_child === true;
+          if (
+            !user ||
+            !dynamic?.worker_snapshot ||
+            !user_copy_status ||
+            (vforkReplay ? !dynamic_vfork_replay_allowed(user) : !membership || !publication)
+          ) {
             cancelAdmission(-95);
             direct.port1.close();
             direct.port2.close();
             return -95;
           }
-          try {
-            admissionChannel = DylinkWorkerChannel.attach(membership.shared);
-            const admission = admissionChannel.beginAdmission(publication.generation);
-            if (!admission.ok) {
-              settle_user_copy(user_copy_status, admission.errno);
+          if (!vforkReplay && membership && publication) {
+            try {
+              admissionChannel = DylinkWorkerChannel.attach(membership.shared);
+              const admission = admissionChannel.beginAdmission(publication.generation);
+              if (!admission.ok) {
+                settle_user_copy(user_copy_status, admission.errno);
+                direct.port1.close();
+                direct.port2.close();
+                return admission.errno;
+              }
+              admissionToken = admission.value;
+              admissionPending = true;
+              childUser = {
+                ...user,
+                dynamic: {
+                  ...dynamic,
+                  worker_membership: {
+                    shared: membership.shared,
+                    participant: admissionToken,
+                  },
+                },
+              };
+            } catch (error) {
+              const errno = error instanceof DylinkWorkerChannelError ? -Math.abs(error.errno) : -5;
+              cancelAdmission(errno);
               direct.port1.close();
               direct.port2.close();
-              return admission.errno;
+              return errno;
             }
-            admissionToken = admission.value;
-            admissionPending = true;
-            childUser = {
-              ...user,
-              dynamic: {
-                ...dynamic,
-                worker_membership: {
-                  shared: membership.shared,
-                  participant: admissionToken,
-                },
-              },
-            };
-          } catch (error) {
-            const errno = error instanceof DylinkWorkerChannelError ? -Math.abs(error.errno) : -5;
-            cancelAdmission(errno);
-            direct.port1.close();
-            direct.port2.close();
-            return errno;
           }
         }
 

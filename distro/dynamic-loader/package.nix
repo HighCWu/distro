@@ -459,6 +459,8 @@ pkgs.stdenvNoCC.mkDerivation (finalAttrs: {
     spawn-runtime = vm-test.rawInitramfsTest {
       name = "dynamic-spawn-${platform.wasmArch}";
       init = "${finalAttrs.finalPackage}/spawn.wasm";
+      files."/capacity-leaf.so" = "${finalAttrs.finalPackage}/lib/capacity-leaf.so";
+      recordRuntimeLog = true;
     };
     runtime = vm-test.rawInitramfsTest {
       name = "${finalAttrs.pname}-${platform.wasmArch}";

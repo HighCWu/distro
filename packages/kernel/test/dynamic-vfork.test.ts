@@ -6,7 +6,10 @@ import {
   DynamicVforkState,
   dynamic_vfork_allowed,
   dynamic_vfork_context,
+  dynamic_vfork_replay_allowed,
 } from "../src/dynamic-vfork.ts";
+import { create_dynamic_process_state, DYNAMIC_LOADER_CLAIMED } from "../src/dynamic-thread.ts";
+import { prepare_dylink_worker_snapshot } from "../src/dylink_process_worker.ts";
 import type { UserContext, WasmAddress } from "../src/wasm.ts";
 
 const module = new WebAssembly.Module(new Uint8Array([0, 97, 115, 109, 1, 0, 0, 0]));
@@ -24,6 +27,7 @@ function context(address: "i32" | "i64", vforkChild = false): UserContext {
       tagSignatures: new Map([["tag", "tag-signature"]]),
       functionMetadata: new Map([["main", { signature: "signature", imported: false }]]),
       privateExports: new Set(["private"]),
+      process_state: create_dynamic_process_state(),
       ...(vforkChild ? { vfork_child: true } : {}),
     },
   };
@@ -81,7 +85,110 @@ for (const address of ["i32", "i64"] as const) {
     assert.equal(candidate({ context: context(address, true) }), false);
     assert.equal(candidate({ context: { ...context(address), dynamic: undefined } }), false);
   });
+
+  test(`${address}: settled loaded vfork requires the single-threaded loader claim without a cohort`, () => {
+    const loaded = context(address);
+    Atomics.store(new Int32Array(loaded.dynamic!.process_state!), 0, DYNAMIC_LOADER_CLAIMED);
+    assert.equal(candidate({ context: loaded, loaderCreated: true }), true);
+    assert.equal(candidate({ context: loaded, loaderCreated: false }), false);
+    for (const value of [0, 1, 0x20000000, 0x40000000]) {
+      Atomics.store(new Int32Array(loaded.dynamic!.process_state!), 0, value);
+      assert.equal(candidate({ context: loaded, loaderCreated: true }), false);
+    }
+    Atomics.store(new Int32Array(loaded.dynamic!.process_state!), 0, DYNAMIC_LOADER_CLAIMED);
+    loaded.dynamic!.worker_publication = { processIdentity: "cohort", generation: 0 };
+    assert.equal(candidate({ context: loaded, loaderCreated: true }), false);
+    delete loaded.dynamic!.worker_publication;
+    loaded.dynamic!.worker_membership = {} as NonNullable<
+      typeof loaded.dynamic
+    >["worker_membership"];
+    assert.equal(candidate({ context: loaded, loaderCreated: true }), false);
+    delete loaded.dynamic!.worker_membership;
+    delete loaded.dynamic!.process_state;
+    assert.equal(candidate({ context: loaded, loaderCreated: true }), false);
+  });
 }
+
+test("vfork replay snapshot is child-only, requires no cohort and clears on failure or retry", () => {
+  const parent = context("i64");
+  Atomics.store(new Int32Array(parent.dynamic!.process_state!), 0, DYNAMIC_LOADER_CLAIMED);
+  const snapshot = prepare_dylink_worker_snapshot({
+    version: 1,
+    address: "i64",
+    tableAddress: "i64",
+    main: {
+      handle: 0n,
+      lastMap: 0n,
+      cursor: 0n,
+      tableLength: 0,
+      functionSlots: [],
+      tableSlots: [],
+      addressNames: [],
+    },
+    files: [],
+    groups: [],
+    objectGroups: [],
+    aliases: [],
+    globalOrder: [],
+    owners: [],
+    ownerNames: [],
+    nextOwner: 1,
+    symbols: [],
+  });
+  const state = new DynamicVforkState();
+  const child = state.run(() => {
+    const child = state.context(parent)!;
+    assert.equal(child.dynamic?.vfork_child, true);
+    assert.equal(child.memory, parent.memory);
+    assert.equal(child.dynamic?.worker_snapshot, snapshot);
+    assert.equal(child.dynamic?.worker_membership, undefined);
+    assert.equal(child.dynamic?.worker_publication, undefined);
+    assert.equal(dynamic_vfork_replay_allowed(child), true);
+    assert.equal(parent.dynamic?.worker_snapshot, undefined);
+    assert.equal(parent.dynamic?.vfork_child, undefined);
+    return child;
+  }, snapshot);
+  assert.equal(state.context(parent), parent);
+  assert.equal(dynamic_vfork_replay_allowed(parent), false);
+  assert.equal(
+    dynamic_vfork_replay_allowed({
+      ...child,
+      dynamic: { ...child.dynamic!, worker_snapshot: undefined },
+    }),
+    false,
+  );
+  assert.equal(
+    dynamic_vfork_replay_allowed({
+      ...child,
+      dynamic: {
+        ...child.dynamic!,
+        worker_publication: { processIdentity: "cohort", generation: 0 },
+      },
+    }),
+    false,
+  );
+  assert.equal(
+    dynamic_vfork_replay_allowed({
+      ...child,
+      dynamic: {
+        ...child.dynamic!,
+        worker_membership: {} as NonNullable<typeof child.dynamic>["worker_membership"],
+      },
+    }),
+    false,
+  );
+  const failure = new Error("clone failed");
+  assert.throws(
+    () =>
+      state.run(() => {
+        throw failure;
+      }, snapshot),
+    (error) => error === failure,
+  );
+  assert.equal(state.pending, false);
+  state.run(() => assert.equal(state.context(parent)?.dynamic?.worker_snapshot, undefined));
+  assert.equal(parent.dynamic?.worker_snapshot, undefined);
+});
 
 test("vfork marks only the child context copy and clears the pending marker on return", () => {
   const parent = context("i64");

@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: MIT
 #define _GNU_SOURCE
+#include <dlfcn.h>
 #include <errno.h>
 #include <fcntl.h>
 #include <spawn.h>
@@ -113,6 +114,16 @@ int main(int argc, char **argv)
     verify_parent(process_value, thread_value, ECHILD);
 
     puts("dynamic spawn: callback-vfork, exec, wait, fd actions and ENOENT recovery pass");
+    void *library = dlopen("/capacity-leaf.so", RTLD_NOW | RTLD_LOCAL);
+    require(library != NULL, "load shared library before spawning");
+    int (*leaf_value)(void) = (int (*)(void))dlsym(library, "capacity_leaf_value");
+    require(leaf_value && leaf_value() == 0x13579bdf, "call shared library before spawning");
+    require(spawn_child_with_closed_fd(process_value, thread_value) == 0,
+            "spawn after a shared library has been loaded");
+    verify_parent(process_value, thread_value, ECHILD);
+    require(leaf_value() == 0x13579bdf, "call shared library after spawning");
+    require(dlclose(library) == 0, "close shared library after spawning");
+    puts("dynamic spawn: loaded library, exec, wait and parent reuse pass");
     puts("::vm-test::pass");
     for (;;) pause();
 }
