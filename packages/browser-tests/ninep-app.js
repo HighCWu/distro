@@ -6,8 +6,32 @@ import {
   entropyDevice,
   vsockDevice,
 } from "@lowland/kernel";
-import { MemoryFs, serveNinep } from "./node_modules/@lowland/kernel/dist/virtio/ninep/host.js";
+import {
+  importNinepBrowserDirectorySnapshot,
+  serveNinep,
+} from "./node_modules/@lowland/kernel/dist/ninep.js";
 import { runRuntimeSmoke } from "./runtime-smoke.js";
+
+async function createSnapshot() {
+  const origin = await navigator.storage.getDirectory();
+  const name = `ninep-smoke-${crypto.randomUUID()}`;
+  const root = await origin.getDirectoryHandle(name, { create: true });
+  try {
+    const project = await root.getDirectoryHandle("project", { create: true });
+    const input = await project.getFileHandle("input.txt", { create: true });
+    const data = await input.createWritable();
+    try {
+      await data.write("linux-wasm 9p transport\n");
+      await data.close();
+    } catch (error) {
+      await data.abort().catch(() => {});
+      throw error;
+    }
+    return await importNinepBrowserDirectorySnapshot(root, { maxBytes: 256, maxEntries: 4 });
+  } finally {
+    await origin.removeEntry(name, { recursive: true });
+  }
+}
 
 globalThis.bootNinepRuntimeSmoke = async () => {
   if (!crossOriginIsolated) throw new Error("9P runtime requires cross-origin isolation");
@@ -19,7 +43,7 @@ globalThis.bootNinepRuntimeSmoke = async () => {
   let session;
   let deviceHandedOff = false;
   try {
-    const fs = new MemoryFs();
+    const fs = await createSnapshot();
     fs.writeFile("/message.txt", "linux-wasm 9p transport\n");
     server = serveNinep(vsock, { port: 18109 });
     session = server.add(fs, { readOnly: false });

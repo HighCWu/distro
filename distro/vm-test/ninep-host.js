@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: MIT
 
 import { spawn } from "node:child_process";
-import { copyFile, mkdtemp, readFile, rm } from "node:fs/promises";
+import { copyFile, mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir, userInfo } from "node:os";
 import { join } from "node:path";
 import { pipeline } from "node:stream/promises";
@@ -9,11 +9,23 @@ import { pipeline } from "node:stream/promises";
 export const NINEP_PORT = 18109;
 
 export async function startNinepMemory(vsock, linuxModule, signal) {
-  const { MemoryFs, serveNinep } = await import(new URL("./virtio/ninep/host.js", linuxModule));
+  const { serveNinep } = await import(new URL("./virtio/ninep/host.js", linuxModule));
+  const { importNinepDirectorySnapshot } = await import(
+    new URL("./virtio/ninep/node-directory-snapshot.js", linuxModule)
+  );
+  signal.throwIfAborted();
+  const directory = await mkdtemp(join(tmpdir(), "linux-wasm-ninep-snapshot-"));
+  let fs;
+  try {
+    await mkdir(join(directory, "project"));
+    await writeFile(join(directory, "project", "input.txt"), "linux-wasm 9p transport\n");
+    fs = await importNinepDirectorySnapshot(directory, { maxBytes: 256, maxEntries: 4 });
+  } finally {
+    await rm(directory, { recursive: true, force: true });
+  }
   signal.throwIfAborted();
   const server = serveNinep(vsock, { port: NINEP_PORT });
   try {
-    const fs = new MemoryFs();
     fs.writeFile("/message.txt", "linux-wasm 9p transport\n");
     const session = server.add(fs, { readOnly: false });
     if (session.name !== "fs1") throw new Error("unexpected first 9P memory export name");

@@ -24,6 +24,14 @@
     "./plugin": {
       "types": "./dist/plugin.d.ts",
       "default": "./dist/plugin.js"
+    },
+    "./ninep": {
+      "types": "./dist/ninep.d.ts",
+      "default": "./dist/ninep.js"
+    },
+    "./ninep/node": {
+      "types": "./dist/virtio/ninep/node-directory-snapshot.d.ts",
+      "node": "./dist/virtio/ninep/node-directory-snapshot.js"
     }
   },
   "scripts": {

@@ -20,6 +20,8 @@ busybox timeout -s KILL 20 /mount-fd --verify /mnt/9p/message.txt || fail "verif
 echo '9p transport: read exact remote file bytes'
 
 if [ "${1:-}" = --memory ]; then
+  busybox timeout -s KILL 20 /mount-fd --verify /mnt/9p/project/input.txt || fail "verify imported directory snapshot"
+  echo '9p transport: read exact imported directory snapshot bytes'
   busybox timeout -s KILL 30 /write-file /mnt/9p/written.bin /mnt/9p/alias.bin || fail "write and hard-link remote file"
 else
   busybox timeout -s KILL 30 /write-file /mnt/9p/written.bin || fail "write and reopen remote file"
