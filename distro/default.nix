@@ -1771,6 +1771,12 @@ lib.makeScope (scope: lib.callPackageWith ({ inherit lib pkgs; } // scope)) (
       sysroot = self.sysroot-wasm64;
       vm-test = vmTestWasm64;
     };
+    task-io-accounting = callPackage ./task-io-accounting/package.nix { };
+    task-io-accounting-wasm64 = self.task-io-accounting.override {
+      platform = self.platform-wasm64;
+      sdk = self.sdk-wasm64;
+      vm-test = vmTestWasm64;
+    };
     pcre2 = callPackage ./pcre2/package.nix { };
     pcre2-wasm64 = self.pcre2.override {
       platform = self.platform-wasm64;

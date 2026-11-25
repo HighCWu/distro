@@ -22,8 +22,8 @@
     inherit pkgs;
     owner = "HighCWu";
     repo = "linux";
-    rev = "2542f828969e15db70ef2ea60d6bffb6d6c7d3f0";
-    hash = "sha256-+aN/uUqoOzuzeA0TK7EgBw4uHRquWEqAwPyGuEpnVPE=";
+    rev = "49a6e956b1b4e6d8834f6e8fcb9676342a8c747e";
+    hash = "sha256-zAHO+zjji1enmrv1NkHPvztm8mZ+q2UpahhJmYZ9Z7w=";
   },
 }:
 
@@ -240,6 +240,9 @@ pkgs.stdenvNoCC.mkDerivation (finalAttrs: {
     grep -qx 'CONFIG_DNOTIFY=y' .config
     grep -qx 'CONFIG_MEMBARRIER=y' .config
     grep -qx 'CONFIG_CROSS_MEMORY_ATTACH=y' .config
+    for option in TASKSTATS TASK_XACCT TASK_IO_ACCOUNTING; do
+      grep -qx "CONFIG_$option=y" .config
+    done
     for namespace in NAMESPACES UTS_NS IPC_NS PID_NS NET_NS TIME_NS; do
       grep -qx "CONFIG_$namespace=y" .config
     done
