@@ -67,6 +67,12 @@ type File = {
   dependencies: Map<string, string>;
   handle?: bigint;
 };
+
+// Kept outside open's lexical environment: retained linker options must own
+// only reachable dependency maps, never a process-wide file/alias snapshot.
+function dependencyResolver(dependencies: ReadonlyMap<string, ReadonlyMap<string, string>>) {
+  return (name: string, parent: string) => dependencies.get(parent)!.get(name)!;
+}
 type ReplayGroupState = {
   group: Group;
   root: string;
@@ -2580,7 +2586,7 @@ export class ProcessDylink {
     this.#error = "dynamic queries are disabled while a vfork child is active";
     return true;
   }
-  #read(path: string, known: ReadonlyMap<string, File>): File {
+  #read(path: string, known: Pick<ReadonlyMap<string, File>, "get">): File {
     const encoded = encode_linux_string(path + "\0");
     if (encoded.length > 4096) throw new DylinkSearchMiss("dynamic path exceeds PATH_MAX");
     const pointer = this.#call(
@@ -3174,8 +3180,11 @@ export class ProcessDylink {
       if (!this.#mainHandle) this.#mainHandle = this.#linkMap("", 0n);
       if (!this.#unsigned(pathPointer)) return this.#word(this.#mainHandle);
       const path = this.#string(pathPointer);
-      const local = new Map(this.#files);
-      const aliases = new Map(this.#aliases);
+      const local = new Map<string, File>();
+      const aliases = new Map<string, string>();
+      const fileByKey = (key: string) => local.get(key) ?? this.#files.get(key);
+      const aliasByName = (name: string) => aliases.get(name) ?? this.#aliases.get(name);
+      const knownFiles = { get: fileByKey };
       let environment: string[] | undefined;
       const searchEnvironment = () => {
         if (environment) return environment;
@@ -3187,8 +3196,8 @@ export class ProcessDylink {
         // Descriptor names can refer to a different inode after close/reuse.
         // Always reopen them and deduplicate by the pinned file identity.
         const descriptorPath = /^\/(?:proc\/self\/fd|dev\/fd)\/[0-9]+$/.test(name);
-        const existing = descriptorPath ? undefined : aliases.get(name);
-        if (existing && local.has(existing)) return local.get(existing)!;
+        const existing = descriptorPath ? undefined : aliasByName(name);
+        if (existing && fileByKey(existing)) return fileByKey(existing)!;
         const origin = parent ? parent.path.slice(0, parent.path.lastIndexOf("/")) || "/" : ".";
         const runtimePaths =
           parent?.metadata.runtimePaths.flatMap((entry) => entry.split(":")) ?? [];
@@ -3202,25 +3211,25 @@ export class ProcessDylink {
             ].map((directory) => `${directory || "."}/${name}`);
         if (postThread && !scopedPublicationOpen && !descriptorPath) {
           for (const candidate of candidates) {
-            const known = aliases.get(candidate);
-            if (known && local.has(known)) return local.get(known)!;
+            const known = aliasByName(candidate);
+            if (known && fileByKey(known)) return fileByKey(known)!;
           }
           throw new Error("loading a new dynamic object is disabled after thread creation");
         }
         let failure: unknown = new Error(`dynamic library not found: ${name}`);
         for (const candidate of candidates) {
-          const known = descriptorPath ? undefined : aliases.get(candidate);
-          if (known && local.has(known)) return local.get(known)!;
+          const known = descriptorPath ? undefined : aliasByName(candidate);
+          if (known && fileByKey(known)) return fileByKey(known)!;
           try {
-            const file = this.#read(candidate, local);
-            if (local.has(file.key)) {
+            const file = this.#read(candidate, knownFiles);
+            if (fileByKey(file.key)) {
               // #read returns the resident object before acquiring another
               // pin. Its existing reference must stay owned by that object.
               if (!descriptorPath) {
                 aliases.set(candidate, file.key);
-                if (!aliases.has(name)) aliases.set(name, file.key);
+                if (aliasByName(name) === undefined) aliases.set(name, file.key);
               }
-              return local.get(file.key)!;
+              return fileByKey(file.key)!;
             }
             if (postThread && !scopedPublicationOpen) {
               this.#unpin(file.pin);
@@ -3235,9 +3244,9 @@ export class ProcessDylink {
             local.set(file.key, file);
             if (!descriptorPath) {
               aliases.set(candidate, file.key);
-              if (!aliases.has(name)) aliases.set(name, file.key);
+              if (aliasByName(name) === undefined) aliases.set(name, file.key);
               const basename = file.path.slice(file.path.lastIndexOf("/") + 1);
-              if (!aliases.has(basename)) aliases.set(basename, file.key);
+              if (aliasByName(basename) === undefined) aliases.set(basename, file.key);
             }
             return file;
           } catch (error) {
@@ -3278,7 +3287,7 @@ export class ProcessDylink {
           this.#bindLazyFunctions();
         }
         for (const [name, key] of aliases) this.#aliases.set(name, key);
-        if (aliases.size) this.#touchWorkerGraph();
+        if (this.#aliases.size) this.#touchWorkerGraph();
         this.#busy = false;
         acquired = false;
         old.group.ensureInitializedFrom(old.root);
@@ -3293,7 +3302,7 @@ export class ProcessDylink {
         if (visited.has(file.key)) continue;
         visited.add(file.key);
         if (this.#reuse.has(file.key)) {
-          for (const key of file.dependencies.values()) queue.push(local.get(key)!);
+          for (const key of file.dependencies.values()) queue.push(fileByKey(key)!);
           continue;
         }
         for (const dependency of file.metadata.needed) {
@@ -3302,7 +3311,7 @@ export class ProcessDylink {
           queue.push(child);
         }
       }
-      const files = [...visited].map((key) => local.get(key)!);
+      const files = [...visited].map((key) => fileByKey(key)!);
       const fresh = files.filter((file) => !this.#reuse.has(file.key));
       if (scopedPublicationOpen && fresh.length === 0)
         throw new Error("Worker publication producer requires at least one fresh dynamic module");
@@ -3422,7 +3431,9 @@ export class ProcessDylink {
             this.#grow(required);
           },
           reuse: this.#reuse,
-          resolveDependency: (name, parent) => local.get(parent)!.dependencies.get(name)!,
+          resolveDependency: dependencyResolver(
+            new Map(files.map((file) => [file.key, file.dependencies])),
+          ),
           isControlFlow: this.#options.isControlFlow,
           execution: {
             prepare: (name, bytes) => {

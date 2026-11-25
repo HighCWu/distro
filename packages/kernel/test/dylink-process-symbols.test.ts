@@ -866,3 +866,104 @@ test("threaded loader queries and reopens only already published objects", () =>
   assert.match(loaderError(process, memory), /vfork child/);
   assert.equal(process.open(0, 2), 0, "vfork still blocks dlopen(NULL)");
 });
+
+test("ordinary dlopen stages deltas without iterating resident file or alias maps", () => {
+  const memory = new WebAssembly.Memory({ initial: 4, maximum: 4, shared: true });
+  const main = new WebAssembly.Instance(new WebAssembly.Module(mainModule(3)));
+  const callbacks = loaderCallbacks(memory);
+  const signatures = new Map(
+    ["collision_strong", "collision_weak", "collision_got", "collision_alias"].map((name) => [
+      name,
+      "[[],[127]]",
+    ]),
+  );
+  const privateExports = new Set(Object.keys(callbacks));
+  let pins = 0;
+  const process = new ProcessDylink(
+    processOptions(memory, main, callbacks, signatures, privateExports, undefined, {
+      onPin: () => pins++,
+      onUnpin: () => pins--,
+    }),
+  );
+  const resident = new Set<Map<unknown, unknown>>();
+  const originalSet = Map.prototype.set;
+  Map.prototype.set = function (key, value) {
+    const file = value as { module?: unknown; dependencies?: unknown; pin?: unknown } | null;
+    if (
+      file &&
+      typeof file === "object" &&
+      file.module instanceof WebAssembly.Module &&
+      file.dependencies instanceof Map &&
+      typeof file.pin === "number"
+    )
+      resident.add(this);
+    if (
+      typeof key === "string" &&
+      key.startsWith("/") &&
+      typeof value === "string" &&
+      /^[0-9]+:[0-9]+$/.test(value)
+    )
+      resident.add(this);
+    return originalSet.call(this, key, value);
+  };
+  let first: ReturnType<ProcessDylink["open"]>;
+  try {
+    writeString(memory, 256, "/plugins/root2.so");
+    first = process.open(256, 2);
+    assert.notEqual(first, 0);
+  } finally {
+    Map.prototype.set = originalSet;
+  }
+  assert.ok(resident.size >= 2, "the first real load published resident file and path-alias maps");
+  const iterator = Map.prototype[Symbol.iterator];
+  Map.prototype[Symbol.iterator] = function () {
+    assert.equal(
+      resident.has(this),
+      false,
+      "opening another object must not copy/iterate a resident graph map",
+    );
+    return iterator.call(this);
+  };
+  try {
+    writeString(memory, 256, "/plugins/root.so");
+    assert.equal(process.open(256, 2 | 4), 0, "failed RTLD_NOLOAD remains transactional");
+    assert.equal(pins, 2, "failed staging releases its new pin");
+    writeString(memory, 256, "/plugins/liblate.so");
+    const late = process.open(256, 2);
+    assert.notEqual(late, 0);
+    writeString(memory, 12000, "late_symbol");
+    const slot = process.symbol(late, 12000);
+    assert.notEqual(slot, 0);
+    const table = main.exports.__indirect_function_table as WebAssembly.Table;
+    assert.equal(
+      (table.get(Number(slot)) as () => number)(),
+      9,
+      "new independent object executes through real linker",
+    );
+    writeString(memory, 256, "root2.so");
+    assert.equal(
+      process.open(256, 2 | 4),
+      first,
+      "resident aliases remain visible through staging-first reads",
+    );
+    callbacks.setDescriptorTarget("/plugins/root2.so");
+    writeString(memory, 256, "/proc/self/fd/9");
+    assert.equal(process.open(256, 2), first, "descriptor reopen deduplicates the live inode");
+    callbacks.setDescriptorTarget("/plugins/liblate.so");
+    assert.equal(
+      process.open(256, 2),
+      late,
+      "descriptor reuse is reopened instead of cached by its path",
+    );
+    assert.equal(pins, 3, "resident reopens do not acquire replacement pins");
+  } finally {
+    Map.prototype[Symbol.iterator] = iterator;
+  }
+  const snapshot = process.exportWorkerSnapshot();
+  assert.equal(snapshot.files.length, 3);
+  assert.equal(
+    snapshot.aliases.some(([name]) => name === "/plugins/root.so" || name === "root.so"),
+    false,
+    "failed staged aliases never enter the committed graph",
+  );
+});
