@@ -1138,6 +1138,94 @@ test(
 );
 
 test(
+  "mknod creates Unix pathname socket metadata without any host socket endpoint",
+  { timeout: 3000 },
+  async () => {
+    const fs = new MemoryFs({ directory: {} });
+    const c = await client(fs);
+    const create = (fid: number, name: string, major = 0, minor = 0, expected = 19) =>
+      c.query(
+        18,
+        [u32(fid), string(name), u32(0o140660), u32(major), u32(minor), u32(0)],
+        expected,
+      );
+    const qid = await create(1, "socket");
+    const meta = fs.getattr("/socket");
+    assert.equal(meta.type, "socket");
+    assert.equal(meta.size, 0);
+    assert.equal(meta.mode, 0o660);
+    assert.equal(meta.nlink, 1);
+    assert.equal(qid[0], 0);
+    assert.equal(qid.readBigUInt64LE(5), BigInt(meta.ino!));
+    await c.query(110, [u32(1), u32(2), u16(1), string("socket")]);
+    const attr = await c.query(24, [u32(2), u64(0x7ff)]);
+    assert.equal(attr.readUInt32LE(21), 0o140660);
+    assert.equal(attr.readBigUInt64LE(41), 0n);
+    assert.equal(attr.readBigUInt64LE(49), 0n);
+    const directory = await c.query(40, [u32(1), u64(0), u32(1024)]);
+    let listed = false;
+    for (let at = 4; at < directory.length;) {
+      const length = directory.readUInt16LE(at + 22);
+      if (directory.subarray(at + 24, at + 24 + length).toString() === "socket") {
+        assert.equal(directory[at + 21], 12);
+        listed = true;
+      }
+      at += 24 + length;
+    }
+    assert.equal(listed, true, "pathname sockets report DT_SOCK");
+    assert.equal((await c.query(12, [u32(2), u32(2)], 7)).readUInt32LE(), 95);
+    assert.equal((await c.query(116, [u32(2), u64(0), u32(1)], 7)).readUInt32LE(), 9);
+    assert.equal(
+      (await c.query(118, [u32(2), u64(0), u32(1), Buffer.from("x")], 7)).readUInt32LE(),
+      9,
+    );
+    assert.throws(
+      () => fs.open("/socket", { read: true, write: true, truncate: false, append: false }),
+      { code: "EOPNOTSUPP" },
+    );
+    assert.throws(() => fs.readFile("/socket"), { code: "EINVAL" });
+    assert.throws(() => fs.writeFile("/socket", "not a socket bridge"), { code: "EOPNOTSUPP" });
+    assert.equal((await create(1, "socket", 0, 0, 7)).readUInt32LE(), 17);
+    assert.equal((await create(1, "device", 1, 0, 7)).readUInt32LE(), 95);
+    assert.equal((await create(1, "device", 0, 1, 7)).readUInt32LE(), 95);
+    let replaced = false;
+    const unsubscribe = fs.onChange((change) => {
+      if (change.type === "create" && change.path === "/replaced-socket" && !replaced) {
+        replaced = true;
+        fs.move(change.path, "/original-socket");
+        fs.mksocket(change.path, 0o600);
+      }
+    });
+    const captured = await create(1, "replaced-socket");
+    unsubscribe();
+    assert.equal(captured.readBigUInt64LE(5), BigInt(fs.getattr("/original-socket").ino!));
+    assert.notEqual(captured.readBigUInt64LE(5), BigInt(fs.getattr("/replaced-socket").ino!));
+    await c.query(110, [u32(1), u32(3), u16(1), string("directory")]);
+    fs.move("/directory", "/directory-before");
+    fs.mkdirp("/directory");
+    assert.equal((await create(3, "stale", 0, 0, 7)).readUInt32LE(), 116);
+    assert.throws(() => fs.getattr("/directory/stale"), { code: "ENOENT" });
+    await c.query(110, [u32(1), u32(4), u16(1), string("directory")]);
+    await create(4, "fresh");
+    assert.equal(fs.getattr("/directory/fresh").type, "socket");
+    await c.query(20, [u32(2), u32(1), string("renamed-socket")]);
+    assert.equal(fs.getattr("/renamed-socket").type, "socket");
+    await c.query(122, [u32(2)]);
+    assert.throws(() => fs.getattr("/renamed-socket"), { code: "ENOENT" });
+    await c.close();
+    const ro = await client(fs, { readOnly: true });
+    assert.equal(
+      (
+        await ro.query(18, [u32(1), string("denied"), u32(0o140660), u32(0), u32(0), u32(0)], 7)
+      ).readUInt32LE(),
+      30,
+    );
+    assert.throws(() => fs.getattr("/denied"), { code: "ENOENT" });
+    await ro.close();
+  },
+);
+
+test(
   "create mkdir and symlink atomically preserve their walked parent directory",
   { timeout: 3000 },
   async () => {
@@ -1581,7 +1669,7 @@ test(
     for (const [mode, major, minor] of [
       [0o020600, 1, 3],
       [0o060600, 0, 0],
-      [0o140600, 0, 0],
+      [0o140600, 1, 0],
       [0o010600, 1, 0],
       [0o010600, 0, 1],
     ] as const)

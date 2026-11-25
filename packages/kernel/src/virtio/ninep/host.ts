@@ -113,6 +113,7 @@ const fileTypes = {
   file: { mode: 0o100000, dirent: 8, permissions: 0o644 },
   symlink: { mode: 0o120000, dirent: 10, permissions: 0o777 },
   fifo: { mode: 0o010000, dirent: 1, permissions: 0o600 },
+  socket: { mode: 0o140000, dirent: 12, permissions: 0o600 },
 } satisfies Record<FsFileType, { mode: number; dirent: number; permissions: number }>;
 const AT_REMOVEDIR = 0x200;
 const O_ACCMODE = 3,
@@ -1169,7 +1170,8 @@ class Session {
         let a = await fs.getattr(f.path);
         if (f.identity && !matchesIdentity(a, f.identity)) throw new FsError("ESTALE", f.path);
         f.type = a.type;
-        if (a.type === "fifo") throw new FsError("EOPNOTSUPP", "FIFO I/O belongs to the Linux VFS");
+        if (a.type === "fifo" || a.type === "socket")
+          throw new FsError("EOPNOTSUPP", "special inode I/O belongs to the Linux instance");
         if (a.type === "file") {
           const truncate = (flags & O_TRUNC) !== 0;
           const append = (flags & O_APPEND) !== 0;
@@ -1275,16 +1277,22 @@ class Session {
           minor = r.u32();
         r.u32(); // gid: ownership policy is provided by the backend.
         checkName(name);
-        if ((mode & 0o170000) !== fileTypes.fifo.mode || major !== 0 || minor !== 0)
-          throw new FsError("EOPNOTSUPP", "only FIFO inode metadata is supported");
+        const type =
+          (mode & 0o170000) === fileTypes.fifo.mode
+            ? "fifo"
+            : (mode & 0o170000) === fileTypes.socket.mode
+              ? "socket"
+              : undefined;
+        if (!type || major !== 0 || minor !== 0)
+          throw new FsError("EOPNOTSUPP", "only FIFO and Unix socket inode metadata is supported");
         const path = join(directory.path, name);
-        const created = await this.#need("mkfifo", "EOPNOTSUPP")(
+        const created = await this.#need(type === "fifo" ? "mkfifo" : "mksocket", "EOPNOTSUPP")(
           path,
           mode & 0o7777,
           directory.identity,
         );
-        if (created.type !== "fifo")
-          throw new FsError("EIO", "backend did not create FIFO metadata");
+        if (created.type !== type)
+          throw new FsError("EIO", "backend returned the wrong special inode type");
         return new Writer(HDR + 13).qid(qidOf(path, created));
       }
       case Tunlinkat: {

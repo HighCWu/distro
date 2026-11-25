@@ -20,6 +20,7 @@ const stages = [
   "9p transport: preserved signed seconds and nanosecond timestamps",
   "9p transport: preserved user extended attributes",
   "9p transport: created, used and removed a standard named pipe",
+  "9p transport: bound, exchanged and removed a standard local socket",
   "9p transport: unmounted remote filesystem",
   PASS,
 ];

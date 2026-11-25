@@ -2,10 +2,13 @@
 #define _GNU_SOURCE
 #include <errno.h>
 #include <fcntl.h>
+#include <stddef.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <sys/socket.h>
 #include <sys/stat.h>
+#include <sys/un.h>
 #include <sys/xattr.h>
 #include <unistd.h>
 
@@ -253,6 +256,64 @@ static void verify_fifo(const char *path)
 	puts("9p transport: created, used and removed a standard named pipe");
 }
 
+static void verify_unix_socket(const char *path)
+{
+	static const unsigned char message[] = { 0x53, 0, 0xff, 0x14, 0x80, 0x27 };
+	unsigned char observed[sizeof(message) + 1];
+	struct sockaddr_un address = { .sun_family = AF_UNIX };
+	size_t length = strlen(path);
+	if (length >= sizeof(address.sun_path)) {
+		errno = ENAMETOOLONG;
+		fail("named socket path exceeds sockaddr_un capacity");
+	}
+	memcpy(address.sun_path, path, length + 1);
+	socklen_t address_length = offsetof(struct sockaddr_un, sun_path) + length + 1;
+	int server = socket(AF_UNIX, SOCK_DGRAM | SOCK_NONBLOCK | SOCK_CLOEXEC, 0);
+	if (server < 0)
+		fail("create named datagram socket");
+	if (bind(server, (struct sockaddr *)&address, address_length) != 0)
+		fail("bind named datagram socket");
+	struct stat metadata;
+	if (stat(path, &metadata) != 0)
+		fail("stat named socket");
+	if (!S_ISSOCK(metadata.st_mode)) {
+		errno = EPROTO;
+		fail("named socket has wrong file type");
+	}
+	int client = socket(AF_UNIX, SOCK_DGRAM | SOCK_NONBLOCK | SOCK_CLOEXEC, 0);
+	if (client < 0)
+		fail("create local datagram client");
+	if (connect(client, (struct sockaddr *)&address, address_length) != 0)
+		fail("connect to named datagram socket");
+	ssize_t count;
+	do {
+		count = send(client, message, sizeof(message), 0);
+	} while (count < 0 && errno == EINTR);
+	if (count != sizeof(message)) {
+		if (count >= 0)
+			errno = EIO;
+		fail("send named socket datagram");
+	}
+	do {
+		count = recv(server, observed, sizeof(observed), 0);
+	} while (count < 0 && errno == EINTR);
+	if (count != sizeof(message) || memcmp(observed, message, sizeof(message)) != 0) {
+		if (count >= 0)
+			errno = EPROTO;
+		fail("receive exact named socket datagram");
+	}
+	if (close(client) != 0 || close(server) != 0)
+		fail("close named socket endpoints");
+	if (unlink(path) != 0)
+		fail("unlink named socket");
+	errno = 0;
+	if (lstat(path, &metadata) != -1 || errno != ENOENT) {
+		errno = EPROTO;
+		fail("named socket remains after unlink");
+	}
+	puts("9p transport: bound, exchanged and removed a standard local socket");
+}
+
 int main(int argc, char **argv)
 {
 	if (argc != 2 && argc != 3) {
@@ -308,6 +369,7 @@ int main(int argc, char **argv)
 		verify_timestamps(argv[1]);
 		verify_xattrs(argv[1]);
 		verify_fifo(argv[2]);
+		verify_unix_socket(argv[2]);
 	}
 	return 0;
 }
