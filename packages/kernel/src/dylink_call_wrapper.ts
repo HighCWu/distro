@@ -20,7 +20,7 @@ export function create_dylink_call_wrapper(
     throw new TypeError("unsupported dynamic calling signature");
   if (!Number.isInteger(owner) || owner < 0 || owner > 0xffffffff)
     throw new TypeError("dynamic caller owner exceeds i32");
-  const key = `${owner}:${signature}`;
+  const key = `call:${signature}`;
   let cache = compiledWrappers.get(context);
   let compiled = cache?.get(key);
   if (!compiled) {
@@ -34,16 +34,6 @@ export function create_dylink_call_wrapper(
         bytes.push(byte);
       } while (value);
       return bytes;
-    };
-    const signed = (value: number) => {
-      const bytes: number[] = [];
-      for (;;) {
-        const byte = value & 0x7f;
-        value >>= 7;
-        const done = (value === 0 && !(byte & 0x40)) || (value === -1 && !!(byte & 0x40));
-        bytes.push(byte | (done ? 0 : 0x80));
-        if (done) return bytes;
-      }
     };
     const string = (value: string) => {
       const bytes = [...new TextEncoder().encode(value)];
@@ -59,8 +49,8 @@ export function create_dylink_call_wrapper(
       0, // global.get context
       0x21,
       ...leb(parameters.length),
-      0x41,
-      ...signed(owner | 0),
+      0x23,
+      1, // global.get owner (instance-specific immutable i32)
       0x24,
       0, // global.set context
       0x06,
@@ -98,7 +88,7 @@ export function create_dylink_call_wrapper(
         ...results,
       ]),
       ...section(2, [
-        2,
+        3,
         ...string("env"),
         ...string("target"),
         0,
@@ -108,6 +98,11 @@ export function create_dylink_call_wrapper(
         3,
         0x7f,
         1,
+        ...string("env"),
+        ...string("owner"),
+        3,
+        0x7f,
+        0,
       ]),
       ...section(3, [1, 0]),
       ...section(7, [1, ...string("call"), 0, 1]),
@@ -121,7 +116,7 @@ export function create_dylink_call_wrapper(
     cache.set(key, compiled);
   }
   const instance = new WebAssembly.Instance(compiled, {
-    env: { target, context },
+    env: { target, context, owner: owner | 0 },
   });
   return instance.exports.call as CallableFunction;
 }
@@ -144,7 +139,7 @@ export function create_dylink_tail_call_wrapper(
     throw new TypeError("unsupported dynamic calling signature");
   if (!Number.isInteger(owner) || owner < 0 || owner > 0xffffffff)
     throw new TypeError("dynamic caller owner exceeds i32");
-  const key = `tail:${owner}:${signature}`;
+  const key = `tail:${signature}`;
   let cache = compiledWrappers.get(context);
   let compiled = cache?.get(key);
   if (!compiled) {
@@ -159,16 +154,6 @@ export function create_dylink_tail_call_wrapper(
       } while (value);
       return bytes;
     };
-    const signed = (value: number) => {
-      const bytes: number[] = [];
-      for (;;) {
-        const byte = value & 0x7f;
-        value >>= 7;
-        const done = (value === 0 && !(byte & 0x40)) || (value === -1 && !!(byte & 0x40));
-        bytes.push(byte | (done ? 0 : 0x80));
-        if (done) return bytes;
-      }
-    };
     const string = (value: string) => {
       const bytes = [...new TextEncoder().encode(value)];
       return [...leb(bytes.length), ...bytes];
@@ -176,8 +161,8 @@ export function create_dylink_tail_call_wrapper(
     const section = (id: number, bytes: number[]) => [id, ...leb(bytes.length), ...bytes];
     const body = [
       0, // No locals: this wrapper must not preserve a caller frame.
-      0x41,
-      ...signed(owner | 0),
+      0x23,
+      1, // global.get owner (instance-specific immutable i32)
       0x24,
       0, // global.set context
       ...parameters.flatMap((_, index) => [0x20, ...leb(index)]),
@@ -203,7 +188,7 @@ export function create_dylink_tail_call_wrapper(
         ...results,
       ]),
       ...section(2, [
-        2,
+        3,
         ...string("env"),
         ...string("target"),
         0,
@@ -213,6 +198,11 @@ export function create_dylink_tail_call_wrapper(
         3,
         0x7f,
         1,
+        ...string("env"),
+        ...string("owner"),
+        3,
+        0x7f,
+        0,
       ]),
       ...section(3, [1, 0]),
       ...section(7, [1, ...string("call"), 0, 1]),
@@ -226,7 +216,7 @@ export function create_dylink_tail_call_wrapper(
     cache.set(key, compiled);
   }
   const instance = new WebAssembly.Instance(compiled, {
-    env: { target, context },
+    env: { target, context, owner: owner | 0 },
   });
   return instance.exports.call as CallableFunction;
 }

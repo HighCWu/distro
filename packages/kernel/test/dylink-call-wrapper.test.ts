@@ -57,7 +57,7 @@ test("typed caller wrappers retain scalar, i64 and multi-value results and resto
   assert.equal(context.value, 9);
 });
 
-test("caller owner constants preserve the complete i32 bit pattern", () => {
+test("caller owner imports preserve the complete i32 bit pattern", () => {
   const context = new WebAssembly.Global({ value: "i32", mutable: true }, 5);
   const provider = new WebAssembly.Instance(module([], [0x7f], [0x23, 0], contextImport), {
     env: { context },
@@ -67,6 +67,42 @@ test("caller owner constants preserve the complete i32 bit pattern", () => {
     assert.equal(call(), owner | 0);
     assert.equal(context.value, 5);
   }
+});
+
+test("different owners share compiled wrappers but retain instance-specific identity", (t) => {
+  const context = new WebAssembly.Global({ value: "i32", mutable: true }, 6);
+  const provider = new WebAssembly.Instance(module([], [0x7f], [0x23, 0], contextImport), {
+    env: { context },
+  }).exports.call as CallableFunction;
+  let compilations = 0;
+  t.mock.method(
+    WebAssembly,
+    "Module",
+    new Proxy(WebAssembly.Module, {
+      construct(target, args, newTarget) {
+        compilations++;
+        return Reflect.construct(target, args, newTarget);
+      },
+    }),
+  );
+
+  const owners = [17, 22, 0x80000000, 0xffffffff];
+  const calls = owners.map((owner) =>
+    create_dylink_call_wrapper("[[],[127]]", provider, context, owner),
+  );
+  assert.equal(compilations, 1);
+  const tails = owners.map((owner) =>
+    create_dylink_tail_call_wrapper("[[],[127]]", provider, context, owner),
+  );
+  assert.equal(compilations, 2);
+  for (const index of [3, 0, 2, 1, 3]) {
+    assert.equal(calls[index]!(), owners[index]! | 0);
+    assert.equal(context.value, 6);
+    assert.equal(tails[index]!(), owners[index]! | 0);
+    assert.equal(context.value, owners[index]! | 0);
+    context.value = 6;
+  }
+  assert.equal(compilations, 2);
 });
 
 test("same-context wrappers sharing a signature and owner bind independent targets", () => {
