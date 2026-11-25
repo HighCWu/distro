@@ -688,8 +688,17 @@ function cacheReplayableModuleAnalysis(
   key: string,
   bytes: Uint8Array<ArrayBuffer>,
   analysis: ReplayableModuleAnalysis,
+  allowEviction: boolean,
 ) {
   if (bytes.byteLength > replayableModuleAnalysisCacheMaxBytes) return;
+  // A full snapshot walk must not churn a graph larger than the cache. Admit
+  // misses only into spare capacity, before allocating an owned byte copy.
+  if (
+    !allowEviction &&
+    (replayableModuleAnalysisCache.size >= replayableModuleAnalysisCacheMaxEntries ||
+      replayableModuleAnalysisCacheBytes > replayableModuleAnalysisCacheMaxBytes - bytes.byteLength)
+  )
+    return;
 
   let ownedBytes: Uint8Array<ArrayBuffer>;
   try {
@@ -723,6 +732,7 @@ function validateReplayableModule(
   key: string,
   bytes: Uint8Array<ArrayBuffer>,
   address: "i32" | "i64",
+  allowCacheEviction = true,
 ): ReplayableModuleAnalysis {
   // Include both the module key and address ABI. Length-prefixing keeps keys
   // unambiguous even when a caller-provided module key contains separators.
@@ -748,7 +758,7 @@ function validateReplayableModule(
   }
 
   const analysis = analyzeReplayableModule(key, bytes, address);
-  cacheReplayableModuleAnalysis(cacheKey, bytes, analysis);
+  cacheReplayableModuleAnalysis(cacheKey, bytes, analysis, allowCacheEviction);
   return analysis;
 }
 
@@ -889,7 +899,7 @@ function sanitizeWorkerSnapshot(value: unknown, copy: boolean): DylinkWorkerSnap
     };
     files.push(sanitized);
     filesByKey.set(key, sanitized);
-    fileMetadata.set(key, validateReplayableModule(key, bytes, address));
+    fileMetadata.set(key, validateReplayableModule(key, bytes, address, false));
   }
   const fileKeys = new Set(filesByKey.keys());
   for (const file of files) {

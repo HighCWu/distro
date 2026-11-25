@@ -3,7 +3,11 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import { prepare_dylink_worker_module } from "../src/dylink_worker_module.ts";
-import { validate_dylink_worker_replayable_module } from "../src/dylink_process_worker.ts";
+import {
+  validate_dylink_worker_replayable_module,
+  validate_dylink_worker_snapshot,
+  type DylinkWorkerSnapshot,
+} from "../src/dylink_process_worker.ts";
 
 const header = [0, 0x61, 0x73, 0x6d, 1, 0, 0, 0];
 
@@ -188,6 +192,57 @@ function withModuleCompilationCount(run: (count: () => number) => void) {
   } finally {
     Object.defineProperty(WebAssembly, "Module", descriptor);
   }
+}
+
+function cacheSnapshot(
+  keys: readonly string[],
+  bytes: Uint8Array<ArrayBuffer>,
+): DylinkWorkerSnapshot {
+  return {
+    version: 1,
+    address: "i32",
+    tableAddress: "i32",
+    main: {
+      handle: 0n,
+      lastMap: 0n,
+      cursor: 0n,
+      tableLength: 0,
+      functionSlots: [],
+      tableSlots: [],
+      addressNames: [],
+    },
+    files: keys.map((key, index) => ({
+      key,
+      path: `/${key}.so`,
+      pin: index + 1,
+      bytes,
+      dependencies: [],
+    })),
+    groups: keys.map((key, index) => ({
+      id: index,
+      root: key,
+      handle: BigInt(index + 1),
+      order: [key],
+      lazyFunctions: [],
+      functionSlots: [],
+      externalSymbols: [],
+      placements: [[key, { base: 0n, tableBase: 0n }]],
+    })),
+    objectGroups: keys.map((key, index) => [
+      key,
+      { groupId: index, root: key, handle: BigInt(index + 1) },
+    ]),
+    aliases: [],
+    globalOrder: [],
+    owners: [],
+    ownerNames: [],
+    nextOwner: 1,
+    symbols: [],
+  };
+}
+
+function emptyReplayModule() {
+  return new Uint8Array([...header, ...section(0, [...name("dylink.0"), 1, 4, 0, 0, 0, 0])]);
 }
 
 function appendLargeCustomSection(source: Uint8Array<ArrayBuffer>, paddingBytes: number) {
@@ -377,7 +432,7 @@ test("replayable analysis cache hit survives an LRU refresh allocation failure",
 });
 
 test("replayable analysis cache evicts bounded entries without rejecting valid modules", () => {
-  const source = activeElementModule(0);
+  const source = emptyReplayModule();
   const lastIndex = 1024;
   withModuleCompilationCount((compilationCount) => {
     for (let index = 0; index <= lastIndex; index++) {
@@ -386,8 +441,48 @@ test("replayable analysis cache evicts bounded entries without rejecting valid m
     const afterFill = compilationCount();
     validate_dylink_worker_replayable_module(`analysis-cache-entry-${lastIndex}`, source, "i32");
     assert.equal(compilationCount(), afterFill, "the newest entry remains cached");
+    const scan = cacheSnapshot(["analysis-cache-scan-miss", "analysis-cache-entry-1"], source);
+    validate_dylink_worker_snapshot(scan);
+    const afterScan = compilationCount();
+    assert.ok(afterScan > afterFill, "the scan validates a miss without rejecting the graph");
+    validate_dylink_worker_replayable_module("analysis-cache-entry-1", source, "i32");
+    assert.equal(compilationCount(), afterScan, "a scan miss did not evict the oldest cached key");
+    validate_dylink_worker_snapshot(scan);
+    assert.equal(
+      compilationCount() - afterScan,
+      afterScan - afterFill,
+      "repeating the scan reanalyzes only its unadmitted miss, preserving the cached hit",
+    );
+    const beforeDirectAdmission = compilationCount();
     validate_dylink_worker_replayable_module("analysis-cache-entry-0", source, "i32");
-    assert.ok(compilationCount() > afterFill, "the least-recently-used entry was evicted");
+    assert.ok(
+      compilationCount() > beforeDirectAdmission,
+      "the least-recently-used entry was evicted",
+    );
+    const afterDirectAdmission = compilationCount();
+    validate_dylink_worker_replayable_module("analysis-cache-entry-2", source, "i32");
+    assert.ok(
+      compilationCount() > afterDirectAdmission,
+      "direct admission still evicts its LRU key",
+    );
+    // A rejected changed module removes its stale entry, leaving one spare
+    // slot for the following scan without evicting an unrelated key.
+    const changed = source.slice();
+    changed[0] = 1;
+    assert.throws(
+      () => validate_dylink_worker_snapshot(cacheSnapshot(["analysis-cache-entry-2"], changed)),
+      /invalid/,
+    );
+    const afterInvalidation = compilationCount();
+    assert.throws(
+      () => validate_dylink_worker_snapshot(cacheSnapshot(["analysis-cache-entry-2"], changed)),
+      /invalid/,
+    );
+    assert.ok(compilationCount() > afterInvalidation, "failed scan analyses are not cached");
+    validate_dylink_worker_snapshot(cacheSnapshot(["analysis-cache-spare-slot"], source));
+    const afterSpareScan = compilationCount();
+    validate_dylink_worker_replayable_module("analysis-cache-spare-slot", source, "i32");
+    assert.equal(compilationCount(), afterSpareScan, "a scan can fill the freed slot");
   });
 });
 
