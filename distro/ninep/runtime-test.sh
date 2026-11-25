@@ -8,9 +8,8 @@ fail() {
   exit 1
 }
 
-IFS= read -r export_name </ninep-export-name || fail "read export name"
 busybox mkdir -p /mnt/9p || fail "create mountpoint"
-busybox timeout -s KILL 30 /mount-fd "$export_name" || fail "mount trans=fd"
+busybox timeout -s KILL 30 /mount-fd || fail "mount trans=fd"
 echo '9p transport: mounted 9P2000.L over a vsock file descriptor'
 
 listing=$(busybox timeout -s KILL 20 busybox ls -1 /mnt/9p) || fail "list remote directory"
@@ -19,6 +18,8 @@ echo '9p transport: listed remote directory'
 
 busybox timeout -s KILL 20 /mount-fd --verify /mnt/9p/message.txt || fail "verify remote file bytes"
 echo '9p transport: read exact remote file bytes'
+
+busybox timeout -s KILL 30 /write-file /mnt/9p/written.bin || fail "write and reopen remote file"
 
 busybox timeout -s KILL 20 busybox umount /mnt/9p || fail "unmount remote filesystem"
 busybox rmdir /mnt/9p || fail "remove detached mountpoint"

@@ -1,6 +1,9 @@
 // SPDX-License-Identifier: MIT
 
 import { spawn } from "node:child_process";
+import { copyFile, mkdtemp, readFile, rm } from "node:fs/promises";
+import { tmpdir, userInfo } from "node:os";
+import { join } from "node:path";
 import { pipeline } from "node:stream/promises";
 
 export const NINEP_PORT = 18109;
@@ -8,6 +11,8 @@ export const NINEP_PORT = 18109;
 export async function exerciseNinep(listener, serverExecutable, exportPath, signal) {
   let stream;
   let child;
+  let exportDirectory;
+  let failed = false;
   let listenerClosed = false;
   const tasks = [];
 
@@ -26,16 +31,36 @@ export async function exerciseNinep(listener, serverExecutable, exportPath, sign
   signal.addEventListener("abort", stop, { once: true });
   try {
     signal.throwIfAborted();
+    exportDirectory = await mkdtemp(join(tmpdir(), "linux-wasm-ninep-"));
+    await copyFile(join(exportPath, "message.txt"), join(exportDirectory, "message.txt"));
+    signal.throwIfAborted();
     stream = await listener.accept();
     signal.throwIfAborted();
     if (!stream) throw new Error("9P listener closed before accepting a stream");
     closeListener();
+    // Test-only preamble consumed before Linux acquires the 9P descriptor.
+    await stream.write(new TextEncoder().encode(`${exportDirectory}\n`));
+    signal.throwIfAborted();
 
     // FD mode serves exactly the accepted connection. Keep logs out of the
     // binary 9P response stream.
     child = spawn(
       serverExecutable,
-      ["-f", "-n", "-S", "-r", "0", "-w", "1", "-L", "stderr", "-e", exportPath],
+      [
+        "-f",
+        "-n",
+        "-S",
+        "-U",
+        userInfo().username,
+        "-r",
+        "0",
+        "-w",
+        "1",
+        "-L",
+        "stderr",
+        "-e",
+        exportDirectory,
+      ],
       {
         stdio: ["pipe", "pipe", "inherit"],
       },
@@ -85,13 +110,27 @@ export async function exerciseNinep(listener, serverExecutable, exportPath, sign
     await Promise.all(tasks);
     signal.throwIfAborted();
     if (!sentRequest || !sentReply) throw new Error("diod did not exchange 9P traffic");
+    const written = await readFile(join(exportDirectory, "written.bin"));
+    const expected = Buffer.from(
+      Uint8Array.from({ length: 12546 }, (_, index) => (index * 37 + 11) % 251),
+    );
+    if (!written.equals(expected)) throw new Error("9P host output file has incorrect bytes");
+    console.log("9p host: exact written file verified after disconnect");
     console.log("9p host: Linux stream reached EOF and diod exited successfully");
   } catch (error) {
+    failed = true;
     signal.throwIfAborted();
     throw error;
   } finally {
     signal.removeEventListener("abort", stop);
     stop();
     await Promise.allSettled(tasks);
+    if (exportDirectory) {
+      try {
+        await rm(exportDirectory, { recursive: true, force: true });
+      } catch (error) {
+        if (!failed) throw error;
+      }
+    }
   }
 }

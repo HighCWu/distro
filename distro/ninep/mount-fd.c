@@ -65,9 +65,9 @@ int main(int argc, char **argv)
 	if (argc == 3 && strcmp(argv[1], "--verify") == 0)
 		return verify_file(argv[2]);
 
-	if (argc != 2 || argv[1][0] != '/' || strpbrk(argv[1], ",\r\n")) {
+	if (argc != 1) {
 		errno = EINVAL;
-		fail("expected one absolute 9P export name");
+		fail("expected no mount arguments");
 	}
 
 	int fd = socket(AF_VSOCK, SOCK_STREAM | SOCK_CLOEXEC, 0);
@@ -81,16 +81,39 @@ int main(int argc, char **argv)
 	if (connect(fd, (struct sockaddr *)&host, sizeof(host)) < 0)
 		fail("connect to host server");
 
+	char export_name[4096];
+	size_t used = 0;
+	for (;;) {
+		char byte;
+		ssize_t count = read(fd, &byte, 1);
+		if (count < 0 && errno == EINTR)
+			continue;
+		if (count != 1)
+			fail("read temporary export name");
+		if (byte == '\n')
+			break;
+		if (used == sizeof(export_name) - 1 || byte == '\0' || byte == ',' || byte == '\r') {
+			errno = EINVAL;
+			fail("invalid temporary export name");
+		}
+		export_name[used++] = byte;
+	}
+	export_name[used] = '\0';
+	if (used == 0 || export_name[0] != '/') {
+		errno = EINVAL;
+		fail("temporary export name must be absolute");
+	}
+
 	char options[4096];
 	int length = snprintf(options, sizeof(options),
 			      "trans=fd,rfdno=%d,wfdno=%d,version=9p2000.L,cache=none,access=any,aname=%s",
-			      fd, fd, argv[1]);
+			      fd, fd, export_name);
 	if (length < 0 || (size_t)length >= sizeof(options)) {
 		errno = ENAMETOOLONG;
 		fail("format mount options");
 	}
-	if (mount("host", "/mnt/9p", "9p", MS_RDONLY, options) < 0)
-		fail("mount read-only 9P export");
+	if (mount("host", "/mnt/9p", "9p", 0, options) < 0)
+		fail("mount writable 9P export");
 
 	/* trans=fd acquired its own references for both directions during mount. */
 	if (close(fd) < 0)
