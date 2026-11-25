@@ -434,7 +434,7 @@ export class MemoryFs implements Fs {
   }
 
   open(path: string, flags: FsOpenFlags): FsFile {
-    const n = this.#lookup(path);
+    const n = this.#checkedNode(path, flags.expected);
     if (n.type !== "file") throw new FsError("EISDIR", path);
     if (flags.write && n.dynamic) throw new FsError("EACCES", path);
     if (flags.truncate) {
@@ -588,9 +588,7 @@ export class MemoryFs implements Fs {
   }
 
   #xattrNode(path: string, expected: FsIdentity): MemNode {
-    const node = this.#find(path);
-    if (!node || BigInt(node.ino) !== BigInt(expected.ino) || BigInt(expected.dev ?? 0) !== 0n)
-      throw new FsError("ESTALE", path);
+    const node = this.#checkedNode(path, expected);
     if (node.type !== "file" && node.type !== "dir") throw new FsError("EOPNOTSUPP");
     return node;
   }
@@ -645,8 +643,16 @@ export class MemoryFs implements Fs {
     this.#emit("setattr", path);
   }
 
-  setattr(path: string, attr: FsSetAttr): void {
-    this.#setattr(this.#lookup(path), attr);
+  #checkedNode(path: string, expected?: FsIdentity): MemNode {
+    if (!expected) return this.#lookup(path);
+    const node = this.#find(path);
+    if (!node || BigInt(node.ino) !== BigInt(expected.ino) || BigInt(expected.dev ?? 0) !== 0n)
+      throw new FsError("ESTALE", path);
+    return node;
+  }
+
+  setattr(path: string, attr: FsSetAttr, expected?: FsIdentity): void {
+    this.#setattr(this.#checkedNode(path, expected), attr);
     this.#emit(attr.size !== undefined ? "truncate" : "setattr", path);
   }
 

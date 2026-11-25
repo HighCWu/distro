@@ -853,3 +853,94 @@ test(
     await c.close();
   },
 );
+
+test(
+  "walked fids atomically reject replacement truncation and path setattr",
+  { timeout: 3000 },
+  async () => {
+    const fs = new MemoryFs({ "message.txt": "original inode contents" });
+    const originalOpen = fs.open.bind(fs),
+      originalSetattr = fs.setattr.bind(fs);
+    let replaceOnOpen = false,
+      replaceOnSetattr = false;
+    fs.open = (path, flags) => {
+      if (replaceOnOpen) {
+        replaceOnOpen = false;
+        fs.move(path, "/pre-open-original");
+        fs.writeFile(path, "replacement must not truncate");
+      }
+      return originalOpen(path, flags);
+    };
+    fs.setattr = (path, attr, expected) => {
+      if (replaceOnSetattr) {
+        replaceOnSetattr = false;
+        fs.move(path, "/pre-setattr-original");
+        fs.writeFile(path, "setattr replacement intact");
+      }
+      return originalSetattr(path, attr, expected);
+    };
+    const c = await client(fs);
+    await c.query(110, [u32(1), u32(2), u16(1), string("message.txt")]);
+    replaceOnOpen = true;
+    assert.equal((await c.query(12, [u32(2), u32(2 | 0o1000)], 7)).readUInt32LE(), 116);
+    assert.equal(
+      Buffer.from(fs.readFile("/message.txt")).toString(),
+      "replacement must not truncate",
+    );
+    assert.equal(
+      Buffer.from(fs.readFile("/pre-open-original")).toString(),
+      "original inode contents",
+    );
+    // A fresh fid to the current inode still supports ordinary O_TRUNC.
+    await c.query(110, [u32(1), u32(3), u16(1), string("message.txt")]);
+    await c.query(12, [u32(3), u32(2 | 0o1000)]);
+    assert.equal(fs.readFile("/message.txt").length, 0);
+    const payload = Buffer.from("open original data");
+    await c.query(118, [u32(3), u64(0), u32(payload.length), payload]);
+    const setattr = (fid: number, size: number, mode: number, expected = 27) =>
+      c.query(
+        26,
+        [
+          u32(fid),
+          u32(1 | 8),
+          u32(mode),
+          u32(0),
+          u32(0),
+          u64(size),
+          u64(0),
+          u64(0),
+          u64(0),
+          u64(0),
+        ],
+        expected,
+      );
+    fs.move("/message.txt", "/open-retained");
+    fs.writeFile("/message.txt", "new path inode");
+    await setattr(3, 4, 0o600);
+    assert.equal(Buffer.from(fs.readFile("/open-retained")).toString(), "open");
+    assert.equal(fs.getattr("/open-retained").mode, 0o600);
+    assert.equal(
+      Buffer.from(fs.readFile("/message.txt")).toString(),
+      "new path inode",
+      "open-file handle setattr follows its retained inode after rename",
+    );
+    fs.rm("/open-retained");
+    await setattr(3, 2, 0o640);
+    assert.equal(
+      (await c.query(116, [u32(3), u64(0), u32(64)])).subarray(4).toString(),
+      "op",
+      "open-file handle setattr remains valid after unlink",
+    );
+    await c.query(110, [u32(1), u32(4), u16(1), string("message.txt")]);
+    replaceOnSetattr = true;
+    assert.equal((await setattr(4, 0, 0, 7)).readUInt32LE(), 116);
+    assert.equal(Buffer.from(fs.readFile("/message.txt")).toString(), "setattr replacement intact");
+    assert.equal(fs.getattr("/message.txt").mode, 0o644);
+    assert.equal(Buffer.from(fs.readFile("/pre-setattr-original")).toString(), "new path inode");
+    await c.query(110, [u32(1), u32(5), u16(1), string("message.txt")]);
+    await setattr(5, 4, 0o640);
+    assert.equal(Buffer.from(fs.readFile("/message.txt")).toString(), "seta");
+    assert.equal(fs.getattr("/message.txt").mode, 0o640);
+    await c.close();
+  },
+);

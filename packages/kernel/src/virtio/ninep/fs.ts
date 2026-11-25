@@ -171,6 +171,9 @@ export interface FsOpenFlags {
   /** O_TRUNC: truncate to 0 first. */
   truncate: boolean;
   append: boolean;
+  /** If present, atomically verify this inode before opening or truncating.
+   * A missing/replaced inode must fail ESTALE without applying O_TRUNC. */
+  expected?: FsIdentity;
 }
 
 /** Stable identity captured by a fid, rather than inferred from its path. */
@@ -238,8 +241,9 @@ export interface Fs {
     flags: number,
     expected: FsIdentity,
   ): MaybePromise<void>;
-  /** Change a path that is not open. An empty change updates ctime only. */
-  setattr?(path: string, attr: FsSetAttr): MaybePromise<void>;
+  /** Change a path that is not open. An empty change updates ctime only.
+   * Verify expected atomically before any mutation when it is supplied. */
+  setattr?(path: string, attr: FsSetAttr, expected?: FsIdentity): MaybePromise<void>;
   statfs?(): MaybePromise<FsStatFs>;
   /** Called once the last mount of this file system is gone (unmounted, or the VM exited). */
   close?(): MaybePromise<void>;

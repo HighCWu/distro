@@ -1163,7 +1163,7 @@ class Session {
           const file = await this.#open(
             f,
             state,
-            fs.open(f.path, { read, write, truncate, append }),
+            fs.open(f.path, { read, write, truncate, append, expected: f.identity }),
             write,
           );
           a = (await file.getattr?.()) ?? (await fs.getattr(f.path));
@@ -1325,7 +1325,7 @@ class Session {
         if (Object.keys(attr).length === 0 && !(valid & 64)) return new Writer(HDR);
         const file = fileOf(f);
         await this.#ordered(f, () =>
-          file?.setattr ? file.setattr(attr) : this.#need("setattr")(f.path, attr),
+          file?.setattr ? file.setattr(attr) : this.#need("setattr")(f.path, attr, f.identity),
         );
         return new Writer(HDR);
       }
