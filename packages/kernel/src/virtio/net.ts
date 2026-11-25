@@ -148,14 +148,23 @@ function random_mac(): MacAddress {
 }
 
 function copy_packet(chain: VirtqueueChain, packet: Uint8Array) {
-  let offset = 0;
+  const buffers: Uint8Array[] = [];
+  let capacity = 0;
   for (const descriptor of chain) {
     assert(descriptor.writable, "virtio-net receive descriptor must be writable");
-    const length = Math.min(packet.byteLength - offset, descriptor.array.byteLength);
-    if (length > 0) descriptor.array.set(packet.subarray(offset, offset + length));
+    buffers.push(descriptor.array);
+    capacity += descriptor.array.byteLength;
+  }
+  if (capacity < packet.byteLength) {
+    chain.release(0);
+    return;
+  }
+  let offset = 0;
+  for (const buffer of buffers) {
+    const length = Math.min(packet.byteLength - offset, buffer.byteLength);
+    if (length > 0) buffer.set(packet.subarray(offset, offset + length));
     offset += length;
   }
-  assert(offset === packet.byteLength, "virtio-net receive buffer is too small");
   chain.release(offset);
 }
 
