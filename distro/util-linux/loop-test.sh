@@ -16,8 +16,8 @@ test -c /dev/loop-control || fail "loop-control node"
 test ! -e /dev/loop0 || fail "loop devices must start unallocated"
 cp /fixture.ext4 /tmp/loop.ext4
 case "$(losetup --version)" in
-  *util-linux*) ;;
-  *) fail "expected util-linux losetup" ;;
+*util-linux*) ;;
+*) fail "expected util-linux losetup" ;;
 esac
 
 loop=$(losetup --find --show /tmp/loop.ext4) || fail "attach writable image"

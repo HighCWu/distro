@@ -279,12 +279,15 @@ stdenv.mkDerivation (finalAttrs: {
           ncurses
           finalAttrs.finalPackage
         ];
-        files."/fixture.ext4" = pkgs.runCommand "loop-fixture.ext4" {
-          nativeBuildInputs = [ pkgs.e2fsprogs ];
-        } ''
-          truncate -s 8M "$out"
-          mkfs.ext4 -q -F "$out"
-        '';
+        files."/fixture.ext4" =
+          pkgs.runCommand "loop-fixture.ext4"
+            {
+              nativeBuildInputs = [ pkgs.e2fsprogs ];
+            }
+            ''
+              truncate -s 8M "$out"
+              mkfs.ext4 -q -F "$out"
+            '';
       };
     };
 })

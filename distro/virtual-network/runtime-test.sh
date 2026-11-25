@@ -39,13 +39,13 @@ ip route add 198.19.0.0/24 dev wasmdummy table 101 || fail "add separate route t
 ip rule add priority 1101 to 198.19.0.0/24 table 101 || fail "add policy rule"
 route=$(ip route get 198.19.0.12) || fail "lookup policy-selected route"
 case " $route " in
-  *" dev wasmdummy "*) ;;
-  *) fail "policy lookup selected an unexpected device: $route" ;;
+*" dev wasmdummy "*) ;;
+*) fail "policy lookup selected an unexpected device: $route" ;;
 esac
 ip rule del priority 1101 || fail "delete policy rule"
 if route=$(ip route get 198.19.0.12 2>/dev/null); then
   case " $route " in
-    *" dev wasmdummy "*) fail "custom table was selected after rule removal" ;;
+  *" dev wasmdummy "*) fail "custom table was selected after rule removal" ;;
   esac
 fi
 ip route del 198.19.0.0/24 dev wasmdummy table 101 || fail "delete custom route"
