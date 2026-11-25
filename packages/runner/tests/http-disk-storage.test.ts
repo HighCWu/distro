@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: MIT
-import type { BlockDeviceStorage } from "@lowland/kernel";
+import { openHttpBlockStorage, type BlockDeviceStorage } from "@lowland/kernel";
 import assert from "node:assert/strict";
 import { createServer, type RequestListener } from "node:http";
 import test, { type TestContext } from "node:test";
@@ -104,6 +104,17 @@ test("HTTP disk discovery does not install an image without a strong ETag", asyn
     response.end(new Uint8Array(512));
   });
   await assert.rejects(install(host), /requires a strong ETag/);
+});
+
+test("the public HTTP block storage accepts URL objects and rejects other schemes", async (t) => {
+  const host = await serve(t, (_request, response) => {
+    response.writeHead(206, { ETag: '"image"', "Content-Range": "bytes 0-511/1024" });
+    response.end(new Uint8Array(512));
+  });
+  const disk = await openHttpBlockStorage(new URL(host));
+  assert.equal(disk.capacity, 1024);
+  disk.stop?.();
+  await assert.rejects(openHttpBlockStorage(new URL("file:///disk.img")), /must use http or https/);
 });
 
 test(
