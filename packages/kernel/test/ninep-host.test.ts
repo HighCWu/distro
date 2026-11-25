@@ -1132,3 +1132,123 @@ test(
     await ro.close();
   },
 );
+
+test(
+  "create mkdir and symlink atomically preserve their walked parent directory",
+  { timeout: 3000 },
+  async () => {
+    const fs = new MemoryFs({
+      directory: { existing: "original child" },
+      race: { existing: "must not truncate" },
+      "type-race": { existing: "original type child" },
+      "missing-race": { existing: "original missing child" },
+    });
+    const originalOpen = fs.open.bind(fs),
+      originalGetattr = fs.getattr.bind(fs);
+    let swapOnOpen = false,
+      swapOnGetattr = "";
+    fs.open = (path, flags) => {
+      if (swapOnOpen) {
+        swapOnOpen = false;
+        const source = { ino: originalGetattr("/race/existing").ino! };
+        fs.move("/race", "/race-before");
+        fs.mkdirp("/race");
+        fs.link("/race-before/existing", "/race/existing", {
+          source,
+          directory: { ino: originalGetattr("/race").ino! },
+        });
+      }
+      return originalOpen(path, flags);
+    };
+    fs.getattr = (path) => {
+      if (path === swapOnGetattr) {
+        swapOnGetattr = "";
+        const parent = path.slice(0, path.lastIndexOf("/"));
+        fs.move(parent, parent + "-before");
+        fs.mkdirp(parent);
+        if (parent === "/type-race") fs.mkdirp(path);
+      }
+      return originalGetattr(path);
+    };
+    const c = await client(fs);
+    const walk = (fid: number, path: string) =>
+      c.query(110, [u32(1), u32(fid), u16(1), string(path)]);
+    const create = (fid: number, name: string, flags = 0, expected = 15) =>
+      c.query(14, [u32(fid), string(name), u32(flags), u32(0o640), u32(0)], expected);
+    const oldParent = { ino: fs.getattr("/directory").ino! };
+    await walk(2, "directory");
+    fs.move("/directory", "/directory-before");
+    fs.mkdirp("/directory");
+    fs.writeFile("/directory/existing", "replacement child");
+    assert.equal(
+      (await c.query(72, [u32(2), string("existing"), u32(0o755), u32(0)], 7)).readUInt32LE(),
+      116,
+    );
+    assert.equal(
+      (await c.query(16, [u32(2), string("existing"), string("target"), u32(0)], 7)).readUInt32LE(),
+      116,
+    );
+    assert.equal(
+      (await create(2, "existing", 0o200, 7)).readUInt32LE(),
+      116,
+      "parent identity precedes O_EXCL/EEXIST",
+    );
+    assert.equal((await create(2, "new-file", 0, 7)).readUInt32LE(), 116);
+    assert.equal(Buffer.from(fs.readFile("/directory/existing")).toString(), "replacement child");
+    assert.throws(() => fs.getattr("/directory/new-file"), { code: "ENOENT" });
+    assert.throws(() => fs.create("/directory/existing", 0o600, oldParent), { code: "ESTALE" });
+    assert.throws(() => fs.mkdir("/directory/existing", 0o700, oldParent), { code: "ESTALE" });
+    assert.throws(() => fs.symlink("/directory/existing", "target", oldParent), { code: "ESTALE" });
+    const currentParent = { ino: fs.getattr("/directory").ino! };
+    const alias = fs.create("/directory//./alias-file", 0o600, currentParent);
+    alias.write!(0, Buffer.from("normalized"));
+    fs.mkdir("/directory//./alias-dir", 0o700, currentParent);
+    fs.symlink("/directory//./alias-link", "alias-file", currentParent);
+    assert.equal(Buffer.from(fs.readFile("/directory/alias-file")).toString(), "normalized");
+    assert.equal(fs.readlink("/directory/alias-link"), "alias-file");
+    await walk(3, "directory");
+    await c.query(72, [u32(3), string("new-dir"), u32(0o750), u32(0)]);
+    await c.query(16, [u32(3), string("new-link"), string("existing"), u32(0)]);
+    assert.equal(fs.getattr("/directory/new-dir").type, "dir");
+    assert.equal(fs.readlink("/directory/new-link"), "existing");
+    await c.query(110, [u32(3), u32(4), u16(0)]);
+    await create(4, "new-file");
+    assert.equal(fs.getattr("/directory/new-file").mode, 0o640);
+    await c.query(110, [u32(3), u32(5), u16(0)]);
+    await create(5, "existing");
+    assert.equal(
+      (await c.query(116, [u32(5), u64(0), u32(64)])).subarray(4).toString(),
+      "replacement child",
+    );
+    await walk(10, "race");
+    swapOnOpen = true;
+    assert.equal(
+      (await create(10, "existing", 0o1000, 7)).readUInt32LE(),
+      116,
+      "fallback checks parent even if replacement aliases the exact same target inode",
+    );
+    assert.equal(Buffer.from(fs.readFile("/race/existing")).toString(), "must not truncate");
+    assert.equal(Buffer.from(fs.readFile("/race-before/existing")).toString(), "must not truncate");
+    await walk(11, "type-race");
+    swapOnGetattr = "/type-race/existing";
+    assert.equal(
+      (await create(11, "existing", 0, 7)).readUInt32LE(),
+      116,
+      "fallback parent identity is checked before replacement target type errors",
+    );
+    assert.equal(fs.getattr("/type-race/existing").type, "dir");
+    await walk(12, "missing-race");
+    swapOnGetattr = "/missing-race/existing";
+    assert.equal(
+      (await create(12, "existing", 0, 7)).readUInt32LE(),
+      116,
+      "fallback missing target does not hide replacement parent identity",
+    );
+    assert.throws(() => fs.getattr("/missing-race/existing"), { code: "ENOENT" });
+    assert.equal(
+      Buffer.from(fs.readFile("/missing-race-before/existing")).toString(),
+      "original missing child",
+    );
+    await c.close();
+  },
+);

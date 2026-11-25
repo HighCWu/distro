@@ -174,6 +174,9 @@ export interface FsOpenFlags {
   /** If present, atomically verify this inode before opening or truncating.
    * A missing/replaced inode must fail ESTALE without applying O_TRUNC. */
   expected?: FsIdentity;
+  /** Verify the path's parent in the same atomic operation, before checking
+   * the final component or applying truncation. */
+  expectedDirectory?: FsIdentity;
 }
 
 /** Stable identity captured by a fid, rather than inferred from its path. */
@@ -211,10 +214,12 @@ export interface Fs {
   readdir(path: string): MaybePromise<FsDirEntry[]>;
   /** Open a regular file. */
   open(path: string, flags: FsOpenFlags): MaybePromise<FsFile>;
-  /** Create a regular file (EEXIST if the name exists) and return it open for reading and writing. */
-  create?(path: string, mode: number): MaybePromise<FsFile>;
-  mkdir?(path: string, mode: number): MaybePromise<void>;
-  symlink?(path: string, target: string): MaybePromise<void>;
+  /** Create a regular file and return it open for reading/writing. All three
+   * creation operations must verify a supplied parent identity atomically,
+   * before checking the target's existence/type or mutating the directory. */
+  create?(path: string, mode: number, expectedDirectory?: FsIdentity): MaybePromise<FsFile>;
+  mkdir?(path: string, mode: number, expectedDirectory?: FsIdentity): MaybePromise<void>;
+  symlink?(path: string, target: string, expectedDirectory?: FsIdentity): MaybePromise<void>;
   readlink?(path: string): MaybePromise<string>;
   /** `dir`: rmdir (ENOTEMPTY unless empty), else unlink. Supplied inode/parent
    * identities must be checked atomically before mutation, or fail ESTALE. */

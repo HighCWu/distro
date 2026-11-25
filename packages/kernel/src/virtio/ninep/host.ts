@@ -1186,6 +1186,7 @@ class Session {
       }
       case Tlcreate: {
         const f = this.#dir(r.u32());
+        const expectedDirectory = f.identity;
         const name = r.name();
         const flags = r.u32(),
           mode = r.u32();
@@ -1198,13 +1199,23 @@ class Session {
         };
         let file: FsFile;
         try {
-          file = await this.#open(f, state, this.#need("create")(path, mode & 0o7777), access);
+          file = await this.#open(
+            f,
+            state,
+            this.#need("create")(path, mode & 0o7777, expectedDirectory),
+            access,
+          );
         } catch (e) {
           // The guest sends Tlcreate for a name it believes missing; if it exists now (the host made
           // it meanwhile), open(O_CREAT) without O_EXCL opens it, as on a local file system.
           if (flags & O_EXCL || (e as { code?: unknown } | null)?.code !== "EEXIST") throw e;
-          const a = await fs.getattr(path);
-          if (a.type !== "file") throw new FsError(a.type === "dir" ? "EISDIR" : "EEXIST");
+          let observed: FsAttr | undefined;
+          try {
+            observed = await fs.getattr(path);
+          } catch (error) {
+            const code = (error as { code?: unknown } | null)?.code;
+            if (code !== "ENOENT" && code !== "ENOTDIR") throw error;
+          }
           file = await this.#open(
             f,
             state,
@@ -1212,7 +1223,8 @@ class Session {
               ...access,
               append: (flags & O_APPEND) !== 0,
               truncate: (flags & O_TRUNC) !== 0,
-              expected: identityOf(a),
+              expected: observed === undefined ? undefined : identityOf(observed),
+              expectedDirectory,
             }),
             access,
           );
@@ -1231,8 +1243,8 @@ class Session {
         const name = r.name();
         checkName(name);
         const path = join(f.path, name);
-        if (type === Tmkdir) await this.#need("mkdir")(path, r.u32() & 0o7777);
-        else await this.#need("symlink", "EOPNOTSUPP")(path, r.name());
+        if (type === Tmkdir) await this.#need("mkdir")(path, r.u32() & 0o7777, f.identity);
+        else await this.#need("symlink", "EOPNOTSUPP")(path, r.name(), f.identity);
         return new Writer(HDR + 13).qid(qidOf(path, await fs.getattr(path)));
       }
       case Tlink: {

@@ -434,6 +434,7 @@ export class MemoryFs implements Fs {
   }
 
   open(path: string, flags: FsOpenFlags): FsFile {
+    this.#checkParentIdentity(path, flags.expectedDirectory);
     const n = this.#checkedNode(path, flags.expected);
     if (n.type !== "file") throw new FsError("EISDIR", path);
     if (flags.write && n.dynamic) throw new FsError("EACCES", path);
@@ -477,7 +478,8 @@ export class MemoryFs implements Fs {
     };
   }
 
-  create(path: string, mode: number): FsFile {
+  create(path: string, mode: number, expectedDirectory?: FsIdentity): FsFile {
+    this.#checkParentIdentity(path, expectedDirectory);
     const { dir, name } = this.#dirOf(path);
     if (dir.children!.has(name)) throw new FsError("EEXIST", path);
     const n = this.#node("file", mode & 0o7777, { data: EMPTY, size: 0 });
@@ -487,7 +489,8 @@ export class MemoryFs implements Fs {
     return this.#file(n, path);
   }
 
-  mkdir(path: string, mode: number): void {
+  mkdir(path: string, mode: number, expectedDirectory?: FsIdentity): void {
+    this.#checkParentIdentity(path, expectedDirectory);
     const { dir, name } = this.#dirOf(path);
     if (dir.children!.has(name)) throw new FsError("EEXIST", path);
     dir.children!.set(name, this.#node("dir", mode & 0o7777, { children: new Map() }));
@@ -496,7 +499,8 @@ export class MemoryFs implements Fs {
     this.#emit("mkdir", path);
   }
 
-  symlink(path: string, target: string): void {
+  symlink(path: string, target: string, expectedDirectory?: FsIdentity): void {
+    this.#checkParentIdentity(path, expectedDirectory);
     const { dir, name } = this.#dirOf(path);
     if (dir.children!.has(name)) throw new FsError("EEXIST", path);
     dir.children!.set(name, this.#node("symlink", 0o777, { target }));
@@ -669,6 +673,10 @@ export class MemoryFs implements Fs {
     }
     node.ctime = fsTimeNow();
     this.#emit("setattr", path);
+  }
+
+  #checkParentIdentity(path: string, expected?: FsIdentity): void {
+    if (expected) this.#checkedNode("/" + parts(path).slice(0, -1).join("/"), expected);
   }
 
   #checkedNode(path: string, expected?: FsIdentity): MemNode {
