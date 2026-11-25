@@ -6,9 +6,15 @@
   llvm-toolchain,
   vm-test,
   busybox,
+  linux64Abi ? false,
 }:
+assert !linux64Abi || platform.addressBits == 64;
+
+let
+  packageName = "libffi-runtime-${platform.wasmArch}${pkgs.lib.optionalString linux64Abi "-linux64-abi"}";
+in
 pkgs.stdenvNoCC.mkDerivation (finalAttrs: {
-  pname = "libffi-runtime-${platform.wasmArch}";
+  pname = packageName;
   inherit (pkgs.libffi) src version;
   outputs = [
     "out"
@@ -35,6 +41,12 @@ pkgs.stdenvNoCC.mkDerivation (finalAttrs: {
 
   buildPhase = ''
     runHook preBuild
+
+    ${sdk-dynamic-loader}/bin/wasm-linux-dlopen-cc -dM -E -x c /dev/null > compiler-macros
+    if ${if linux64Abi then "! " else ""}grep -qx '#define __wasm_linux64__ 1' compiler-macros; then
+      echo "Compiler ABI does not match ${packageName}" >&2
+      exit 1
+    fi
 
     CC=${sdk-dynamic-loader}/bin/wasm-linux-dlopen-cc \
       AR=${llvm-toolchain}/bin/llvm-ar \
@@ -105,7 +117,7 @@ pkgs.stdenvNoCC.mkDerivation (finalAttrs: {
   };
 
   passthru.checks.runtime = vm-test.rawInitramfsTest {
-    name = "libffi-runtime-${platform.wasmArch}";
+    name = packageName;
     init = ./runtime-test.sh;
     contents = [
       busybox

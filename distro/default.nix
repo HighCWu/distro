@@ -1755,6 +1755,15 @@ lib.makeScope (scope: lib.callPackageWith ({ inherit lib pkgs; } // scope)) (
       busybox = self.busybox-wasm64;
       vm-test = vmTestWasm64;
     };
+    libffi-runtime-linux64-abi-wasm64 = self.libffi-runtime.override {
+      linux64Abi = true;
+      platform = self.linux64-abi-wasm64.wordPlatform;
+      sdk-dynamic-loader = self.linux64-abi-dynamic-wasm64.sdk;
+      llvm-toolchain = self.linux64-abi-wasm64.dependencies.toolchainWord;
+      # BusyBox launches the test as a separate executable.
+      busybox = self.busybox-wasm64;
+      vm-test = vmTestWasm64;
+    };
     mincore-nommu = callPackage ./mincore-nommu/package.nix { };
     mincore-nommu-wasm64 = self.mincore-nommu.override {
       platform = self.platform-wasm64;

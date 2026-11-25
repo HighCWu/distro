@@ -192,19 +192,27 @@ static int variadic_slot_layout(const FfiWasmTypeInfo *type, size_t *alignment,
   if (type == NULL || alignment == NULL || slot_size == NULL) {
     return 0;
   }
-  /* The wasm varargs area follows the promoted type's natural ABI layout.
-   * In particular, wasm64 int arguments occupy 4-byte slots, not 8-byte
-   * machine words; va_arg(int) advances by sizeof(int). Indirect structs
-   * occupy pointer slots, and coerced structs occupy at least four bytes. */
+  /* Indirect structs use a pointer slot; the copied value is aligned
+   * separately according to its aggregate type. */
   if (type->kind == FFI_WASM_TYPE_INDIRECT_STRUCT) {
     *alignment = _Alignof(void *);
     *slot_size = sizeof(void *);
     return 1;
   }
   *alignment = type->alignment;
+#if defined(__wasm_linux64__)
+  /* Linux64 allocates at least one eight-byte word for each variadic
+   * argument. The zeroed tail supplies padding above the low value bytes. */
+  if (*alignment < 8) {
+    *alignment = 8;
+  }
+#else
+  /* The standard Wasm ABI uses natural alignment for promoted scalars and
+   * four-byte slots for structs coerced to narrower integer values. */
   if (type->kind == FFI_WASM_TYPE_COERCED_STRUCT && *alignment < 4) {
     *alignment = 4;
   }
+#endif
   return checked_align_up(type->size, *alignment, slot_size);
 }
 
