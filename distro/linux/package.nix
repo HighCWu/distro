@@ -22,8 +22,8 @@
     inherit pkgs;
     owner = "HighCWu";
     repo = "linux";
-    rev = "49a6e956b1b4e6d8834f6e8fcb9676342a8c747e";
-    hash = "sha256-zAHO+zjji1enmrv1NkHPvztm8mZ+q2UpahhJmYZ9Z7w=";
+    rev = "730a1845f7b501d77bc65fa8326ebccb43c028b6";
+    hash = "sha256-fGsVTHXgpknSQaTFrIJq22IXGoyvqfxXKPpegExkB4Q=";
   },
 }:
 
@@ -243,6 +243,8 @@ pkgs.stdenvNoCC.mkDerivation (finalAttrs: {
     for option in TASKSTATS TASK_XACCT TASK_IO_ACCOUNTING; do
       grep -qx "CONFIG_$option=y" .config
     done
+    grep -qx 'CONFIG_PSI=y' .config
+    ! grep -qx 'CONFIG_PSI_DEFAULT_DISABLED=y' .config
     for namespace in NAMESPACES UTS_NS IPC_NS PID_NS NET_NS TIME_NS; do
       grep -qx "CONFIG_$namespace=y" .config
     done

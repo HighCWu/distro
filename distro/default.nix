@@ -1777,6 +1777,12 @@ lib.makeScope (scope: lib.callPackageWith ({ inherit lib pkgs; } // scope)) (
       sdk = self.sdk-wasm64;
       vm-test = vmTestWasm64;
     };
+    psi-runtime = callPackage ./psi-runtime/package.nix { };
+    psi-runtime-wasm64 = self.psi-runtime.override {
+      platform = self.platform-wasm64;
+      sdk = self.sdk-wasm64;
+      vm-test = vmTestWasm64;
+    };
     pcre2 = callPackage ./pcre2/package.nix { };
     pcre2-wasm64 = self.pcre2.override {
       platform = self.platform-wasm64;
