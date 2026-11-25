@@ -82,6 +82,7 @@ interface MemNode {
   dynamic?: () => string | Uint8Array;
   children?: Map<string, MemNode>;
   target?: string;
+  xattrs?: Map<string, Uint8Array>;
 }
 
 function parts(path: string): string[] {
@@ -584,6 +585,64 @@ export class MemoryFs implements Fs {
     this.#touchDir(a.dir);
     if (b.dir !== a.dir) this.#touchDir(b.dir);
     return true;
+  }
+
+  #xattrNode(path: string, expected: FsIdentity): MemNode {
+    const node = this.#find(path);
+    if (!node || BigInt(node.ino) !== BigInt(expected.ino) || BigInt(expected.dev ?? 0) !== 0n)
+      throw new FsError("ESTALE", path);
+    if (node.type !== "file" && node.type !== "dir") throw new FsError("EOPNOTSUPP");
+    return node;
+  }
+
+  #xattrName(name: string): void {
+    if (!name.startsWith("user.") || name.length === 5) throw new FsError("EOPNOTSUPP");
+    if (name.includes("\0")) throw new FsError("EINVAL");
+    if (enc.encode(name).length > 255) throw new FsError("ERANGE");
+  }
+
+  getxattr(path: string, name: string, expected: FsIdentity): Uint8Array {
+    const node = this.#xattrNode(path, expected);
+    if (name === "") {
+      const names: string[] = [];
+      let size = 0;
+      for (const entry of node.xattrs?.keys() ?? []) {
+        size += enc.encode(entry).length + 1;
+        if (size > 65536) throw new FsError("E2BIG");
+        names.push(entry);
+      }
+      return enc.encode(names.length ? names.join("\0") + "\0" : "");
+    }
+    this.#xattrName(name);
+    const value = node.xattrs?.get(name);
+    if (!value) throw new FsError("ENODATA");
+    return value.slice();
+  }
+
+  setxattr(
+    path: string,
+    name: string,
+    value: Uint8Array | null,
+    flags: number,
+    expected: FsIdentity,
+  ): void {
+    const node = this.#xattrNode(path, expected);
+    this.#xattrName(name);
+    if (flags & ~3) throw new FsError("EINVAL");
+    const exists = node.xattrs?.has(name) ?? false;
+    if (value === null) {
+      if (!exists) throw new FsError("ENODATA");
+      node.xattrs!.delete(name);
+    } else {
+      if (value.byteLength > 65536) throw new FsError("E2BIG");
+      if (flags & 1 && exists) throw new FsError("EEXIST");
+      if (flags & 2 && !exists) throw new FsError("ENODATA");
+      const owned = value.slice();
+      node.xattrs ??= new Map();
+      node.xattrs.set(name, owned);
+    }
+    node.ctime = fsTimeNow();
+    this.#emit("setattr", path);
   }
 
   setattr(path: string, attr: FsSetAttr): void {

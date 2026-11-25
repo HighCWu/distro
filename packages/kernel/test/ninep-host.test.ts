@@ -172,6 +172,7 @@ async function client(fs: Fs, options: { readOnly?: boolean; timeout?: number } 
     let bytes = Buffer.alloc(0);
     while (bytes.length < 7 || bytes.length < bytes.readUInt32LE(0)) {
       const packet = await h.receive();
+      if (packet.op === CREDIT_UPDATE) continue;
       assert.equal(packet.op, RW);
       receivedBytes += packet.payload.length;
       bytes = Buffer.concat([bytes, Buffer.from(packet.payload)]);
@@ -666,6 +667,189 @@ test(
     const original = times(await c.query(24, [u32(2), u64(0x7ff)]));
     assert.deepEqual(alias, original, "hard links share the exact same inode timestamps");
     assert.deepEqual(original.mtime, { seconds: -2n, nanoseconds: 123456789 });
+    await c.close();
+  },
+);
+
+test(
+  "user xattrs use bounded positional fids and atomic inode-checked clunk commits",
+  { timeout: 3000 },
+  async () => {
+    const fs = new MemoryFs({ "message.txt": "xattr inode", directory: {} });
+    const c = await client(fs);
+    await c.open();
+    let nextFid = 100;
+    const begin = async (name: string, size: number, flags = 0, source = 2) => {
+      const fid = nextFid++;
+      await c.query(110, [u32(source), u32(fid), u16(0)]);
+      await c.query(32, [u32(fid), string(name), u64(size), u32(flags)]);
+      return fid;
+    };
+    const write = (fid: number, offset: number, value: string) => {
+      const bytes = Buffer.from(value);
+      return c.query(118, [u32(fid), u64(offset), u32(bytes.length), bytes]);
+    };
+    const clunk = (fid: number, expected = 121) => c.query(120, [u32(fid)], expected);
+    const read = async (name: string, source = 2) => {
+      const fid = nextFid++;
+      const size = await c.query(30, [u32(source), u32(fid), string(name)]);
+      const value = await c.query(116, [u32(fid), u64(0), u32(65536)]);
+      assert.equal(BigInt(value.readUInt32LE()), size.readBigUInt64LE());
+      await clunk(fid);
+      return value.subarray(4);
+    };
+    const first = await begin("user.alpha", 6, 1);
+    await write(first, 3, "def");
+    await write(first, 0, "abc");
+    assert.equal((await c.query(116, [u32(first), u64(0), u32(6)], 7)).readUInt32LE(), 9);
+    await clunk(first);
+    assert.equal((await read("user.alpha")).toString(), "abcdef");
+    assert.equal((await read("")).toString(), "user.alpha\0");
+    const exists = await begin("user.alpha", 1, 1);
+    await write(exists, 0, "x");
+    assert.equal((await clunk(exists, 7)).readUInt32LE(), 17);
+    const missing = await begin("user.missing", 1, 2);
+    await write(missing, 0, "x");
+    assert.equal((await clunk(missing, 7)).readUInt32LE(), 61);
+    assert.equal((await read("user.alpha")).toString(), "abcdef");
+    const incomplete = await begin("user.partial", 6);
+    await write(incomplete, 0, "abc");
+    await write(incomplete, 0, "abc");
+    assert.equal(
+      (await clunk(incomplete, 7)).readUInt32LE(),
+      22,
+      "overlapping writes cannot pretend to cover the remaining bytes",
+    );
+    assert.equal(
+      (await c.query(30, [u32(2), u32(nextFid++), string("user.partial")], 7)).readUInt32LE(),
+      61,
+    );
+    await c.query(70, [u32(1), u32(2), string("alias")]);
+    await c.query(110, [u32(1), u32(3), u16(1), string("alias")]);
+    assert.equal((await read("user.alpha", 3)).toString(), "abcdef");
+    const replace = await begin("user.alpha", 3, 2, 3);
+    await write(replace, 0, "new");
+    await clunk(replace);
+    assert.equal((await read("user.alpha")).toString(), "new", "hard links share inode attributes");
+    const removal = await begin("user.alpha", 0);
+    await clunk(removal);
+    assert.equal(
+      (await c.query(30, [u32(3), u32(nextFid++), string("user.alpha")], 7)).readUInt32LE(),
+      61,
+    );
+    assert.equal((await read("")).length, 0);
+    const missingRemoval = await begin("user.alpha", 0);
+    assert.equal((await clunk(missingRemoval, 7)).readUInt32LE(), 61);
+    assert.equal(
+      (await c.query(30, [u32(2), u32(nextFid++), string("security.label")], 7)).readUInt32LE(),
+      95,
+    );
+    await c.query(110, [u32(1), u32(4), u16(1), string("directory")]);
+    const directory = await begin("user.dir", 3, 0, 4);
+    await write(directory, 0, "dir");
+    await clunk(directory);
+    assert.equal((await read("user.dir", 4)).toString(), "dir");
+    const overflow = nextFid++;
+    await c.query(110, [u32(2), u32(overflow), u16(0)]);
+    assert.equal(
+      (
+        await c.query(32, [u32(overflow), string("user.large"), u64(65537), u32(0)], 7)
+      ).readUInt32LE(),
+      7,
+    );
+    const large = await begin("user.large", 65536);
+    const pattern = Buffer.from(Uint8Array.from({ length: 65536 }, (_, index) => index % 251));
+    for (let offset = 0; offset < pattern.length; offset += 1024) {
+      const part = pattern.subarray(offset, offset + 1024);
+      await c.query(118, [u32(large), u64(offset), u32(part.length), part]);
+    }
+    await clunk(large);
+    const largeRead = nextFid++;
+    assert.equal(
+      (await c.query(30, [u32(2), u32(largeRead), string("user.large")])).readBigUInt64LE(),
+      65536n,
+    );
+    for (let offset = 0; offset < pattern.length; offset += 1024) {
+      const bytes = await c.query(116, [u32(largeRead), u64(offset), u32(1024)]);
+      assert.deepEqual(bytes.subarray(4), pattern.subarray(offset, offset + 1024));
+    }
+    await clunk(largeRead);
+    const stale = await begin("user.stale", 3);
+    await write(stale, 0, "old");
+    const oldIdentity = { ino: fs.getattr("/message.txt").ino! };
+    fs.move("/message.txt", "/old-message");
+    fs.writeFile("/message.txt", "replacement");
+    assert.equal((await clunk(stale, 7)).readUInt32LE(), 116);
+    const replacementIdentity = { ino: fs.getattr("/message.txt").ino! };
+    assert.throws(() => fs.getxattr("/message.txt", "user.stale", replacementIdentity), {
+      code: "ENODATA",
+    });
+    assert.throws(() => fs.getxattr("/old-message", "user.stale", oldIdentity), {
+      code: "ENODATA",
+    });
+    await c.query(110, [u32(1), u32(5), u16(1), string("message.txt")]);
+    const abandoned = await begin("user.abandoned", 3, 0, 5);
+    await write(abandoned, 0, "new");
+    await c.close();
+    assert.throws(() => fs.getxattr("/message.txt", "user.abandoned", replacementIdentity), {
+      code: "ENODATA",
+    });
+    const ro = await client(fs, { readOnly: true });
+    await ro.open();
+    await ro.query(110, [u32(2), u32(100), u16(0)]);
+    assert.equal(
+      (await ro.query(32, [u32(100), string("user.denied"), u64(1), u32(0)], 7)).readUInt32LE(),
+      30,
+    );
+    await ro.close();
+  },
+);
+
+test(
+  "xattr snapshot fids have a fixed session allocation limit and release on clunk",
+  { timeout: 3000 },
+  async () => {
+    const fs = new MemoryFs({ "message.txt": "bounded xattrs" });
+    fs.setxattr("/message.txt", "user.value", Uint8Array.of(7), 0, {
+      ino: fs.getattr("/message.txt").ino!,
+    });
+    const c = await client(fs);
+    await c.open();
+    for (let index = 0; index < 16; index++)
+      await c.query(30, [u32(2), u32(100 + index), string("user.value")]);
+    assert.equal(
+      (await c.query(30, [u32(2), u32(200), string("user.value")], 7)).readUInt32LE(),
+      23,
+    );
+    await c.query(120, [u32(100)]);
+    await c.query(30, [u32(2), u32(200), string("user.value")]);
+    await c.close();
+  },
+);
+
+test(
+  "renegotiating version abandons a pending xattr clunk instead of committing it",
+  { timeout: 3000 },
+  async () => {
+    const fs = new MemoryFs({ "message.txt": "abandoned clunk" });
+    const c = await client(fs);
+    await c.open();
+    await c.query(110, [u32(2), u32(100), u16(0)]);
+    await c.query(32, [u32(100), string("user.cancelled"), u64(3), u32(0)]);
+    await c.query(118, [u32(100), u64(0), u32(3), Buffer.from("new")]);
+    await c.send(
+      Buffer.concat([
+        frame(120, 500, [u32(100)]),
+        frame(100, 65535, [u32(4096), string("9P2000.L")]),
+      ]),
+    );
+    const reply = await c.reply();
+    assert.equal(reply.type, 101);
+    assert.equal(reply.tag, 65535);
+    assert.throws(
+      () => fs.getxattr("/message.txt", "user.cancelled", { ino: fs.getattr("/message.txt").ino! }),
+      { code: "ENODATA" },
+    );
     await c.close();
   },
 );

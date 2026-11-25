@@ -225,6 +225,19 @@ export interface Fs {
   /** Replaces `to` if it exists. Return false for a same-inode no-op, so fid
    * paths stay unchanged; void/true indicate a successful move. */
   rename?(from: string, to: string): MaybePromise<void | boolean>;
+  /** Read user.* bytes, or NUL-delimited names when name is empty. Verify
+   * the captured inode identity before accessing the attribute storage. */
+  getxattr?(path: string, name: string, expected: FsIdentity): MaybePromise<Uint8Array>;
+  /** Atomically verify identity and CREATE(1)/REPLACE(2) rules. Null removes
+   * an existing attribute. The 9P zero-size convention cannot distinguish
+   * removexattr from setting an empty value. */
+  setxattr?(
+    path: string,
+    name: string,
+    value: Uint8Array | null,
+    flags: number,
+    expected: FsIdentity,
+  ): MaybePromise<void>;
   /** Change a path that is not open. An empty change updates ctime only. */
   setattr?(path: string, attr: FsSetAttr): MaybePromise<void>;
   statfs?(): MaybePromise<FsStatFs>;

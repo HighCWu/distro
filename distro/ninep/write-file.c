@@ -4,7 +4,9 @@
 #include <fcntl.h>
 #include <stdio.h>
 #include <stdlib.h>
+#include <string.h>
 #include <sys/stat.h>
+#include <sys/xattr.h>
 #include <unistd.h>
 
 enum { INITIAL_BYTES = 12289, APPEND_BYTES = 257,
@@ -141,6 +143,70 @@ static void verify_timestamps(const char *path)
 	puts("9p transport: preserved signed seconds and nanosecond timestamps");
 }
 
+static void verify_xattrs(const char *path)
+{
+	static const char name[] = "user.ninep-runtime";
+	static const unsigned char replacement[] = { 0, 0xff, 0x83, 0x13, 0 };
+	unsigned char value[9217], observed[sizeof(value)];
+	for (size_t i = 0; i < sizeof(value); ++i)
+		value[i] = (unsigned char)(i * 29 + (i >> 8));
+
+	errno = 0;
+	if (setxattr(path, name, replacement, sizeof(replacement), XATTR_REPLACE) != -1 ||
+	    errno != ENODATA)
+		fail("replace missing extended attribute must return ENODATA");
+	if (setxattr(path, name, value, sizeof(value), XATTR_CREATE) != 0)
+		fail("create binary extended attribute");
+	errno = 0;
+	if (setxattr(path, name, replacement, sizeof(replacement), XATTR_CREATE) != -1 ||
+	    errno != EEXIST)
+		fail("create duplicate extended attribute must return EEXIST");
+	if (getxattr(path, name, NULL, 0) != sizeof(value) ||
+	    getxattr(path, name, observed, sizeof(observed)) != sizeof(value) ||
+	    memcmp(value, observed, sizeof(value)) != 0) {
+		errno = EPROTO;
+		fail("round-trip binary extended attribute");
+	}
+
+	if (setxattr(path, name, replacement, sizeof(replacement), XATTR_REPLACE) != 0)
+		fail("replace binary extended attribute");
+	if (getxattr(path, name, observed, sizeof(observed)) != sizeof(replacement) ||
+	    memcmp(replacement, observed, sizeof(replacement)) != 0) {
+		errno = EPROTO;
+		fail("round-trip replacement extended attribute");
+	}
+
+	char names[512];
+	ssize_t length = listxattr(path, names, sizeof(names));
+	if (length < 0)
+		fail("list extended attributes");
+	int found = 0;
+	const char *end = names + length;
+	for (const char *cursor = names; cursor < end;) {
+		const char *separator = memchr(cursor, '\0', (size_t)(end - cursor));
+		if (!separator || separator == cursor) {
+			errno = EPROTO;
+			fail("invalid null-delimited extended attribute list");
+		}
+		if ((size_t)(separator - cursor) == sizeof(name) - 1 &&
+		    memcmp(cursor, name, sizeof(name) - 1) == 0)
+			found = 1;
+		cursor = separator + 1;
+	}
+	if (!found) {
+		errno = EPROTO;
+		fail("find exact extended attribute name in list");
+	}
+
+	if (removexattr(path, name) != 0)
+		fail("remove extended attribute");
+	errno = 0;
+	if (getxattr(path, name, NULL, 0) != -1 || errno != ENODATA)
+		fail("read removed extended attribute must return ENODATA");
+	verify_file(path, expected_byte(0));
+	puts("9p transport: preserved user extended attributes");
+}
+
 int main(int argc, char **argv)
 {
 	if (argc != 2 && argc != 3) {
@@ -194,6 +260,7 @@ int main(int argc, char **argv)
 	if (argc == 3) {
 		verify_hard_link(argv[1], argv[2]);
 		verify_timestamps(argv[1]);
+		verify_xattrs(argv[1]);
 	}
 	return 0;
 }

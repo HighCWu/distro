@@ -762,6 +762,16 @@ interface Fid {
   path: string;
   type: FsFileType;
   identity?: FsIdentity;
+  xattr?: {
+    bytes: Uint8Array;
+    write?: {
+      name: string;
+      flags: number;
+      identity: FsIdentity;
+      coverage: Uint8Array;
+      remaining: number;
+    };
+  };
   /** The open file (Tlopen/Tlcreate of a regular file). */
   file?: FsFile;
   /** Directory listing taken at readdir offset 0 (with . and ..). */
@@ -796,6 +806,15 @@ function explicitTime(seconds: bigint, nanoseconds: bigint): FsTime {
   return fsTime(BigInt.asIntN(64, seconds), Number(nanoseconds));
 }
 
+const XATTR_MAX_BYTES = 65536;
+const XATTR_MAX_FIDS = 16;
+function checkXattrName(name: string, list = false): void {
+  if (name === "" && list) return;
+  if (name.includes("\0")) throw new FsError("EINVAL");
+  if (!name.startsWith("user.") || name.length === 5) throw new FsError("EOPNOTSUPP");
+  if (enc.encode(name).length > 255) throw new FsError("ERANGE");
+}
+
 /** A running request: `dead` once it was flushed or timed out (its result is dropped). */
 interface Pending {
   dead: boolean;
@@ -810,6 +829,8 @@ class Session {
   #msize: number;
   #pending = new Map<number, Pending>();
   #destroyed = false;
+  #xattrCount = 0;
+  #xattrReservations = new Set<number>();
 
   constructor(exp: Export, msize: number) {
     this.exp = exp;
@@ -849,10 +870,22 @@ class Session {
   }
 
   #closeFile(f: Fid): void {
+    this.#discardXattr(f);
     const file = f.file;
     f.file = undefined;
     if (file?.close)
       void this.#ordered(f, () => file.close!()).catch((e) => this.#failed("close", e));
+  }
+
+  #discardXattr(f: Fid): void {
+    if (!f.xattr) return;
+    f.xattr = undefined;
+    this.#xattrCount--;
+  }
+
+  #reserveXattr(): void {
+    if (this.#xattrCount >= XATTR_MAX_FIDS) throw new FsError("ENFILE", "9p xattr fid limit");
+    this.#xattrCount++;
   }
 
   #failed(what: string, e: unknown): number {
@@ -911,9 +944,10 @@ class Session {
     return { reply, finished: completion };
   }
 
-  #fid(n: number): Fid {
+  #fid(n: number, allowXattr = false): Fid {
     const f = this.#fids.get(n);
     if (!f) throw new FsError("EBADF", `unknown fid ${n}`);
+    if (f.xattr && !allowXattr) throw new FsError("EBADF", "not an ordinary file fid");
     return f;
   }
 
@@ -979,6 +1013,13 @@ class Session {
     switch (type) {
       case Tversion: {
         // A second Tversion: a new session on this connection.
+        for (const [tag, pending] of this.#pending) {
+          if (pending === state) continue;
+          pending.dead = true;
+          clearTimeout(pending.timer);
+          pending.resolve(null);
+          this.#pending.delete(tag);
+        }
         const msize = r.u32();
         const version = r.str();
         this.#msize = Math.max(4096, Math.min(msize, this.#msize));
@@ -993,25 +1034,32 @@ class Session {
       case Tattach: {
         // The guest attaches again for each uid it acts as (access=client), naming the same file system.
         const fid = r.u32();
+        if (this.#xattrReservations.has(fid) || this.#fids.get(fid)?.xattr)
+          throw new FsError("EINVAL", "xattr fid already reserved");
         (r.u32(), r.str());
         if (r.str() !== this.exp.name)
           throw new FsError("ENOENT", "an attach to another file system on this connection");
         const a = await fs.getattr("/");
         if (a.type !== "dir")
           throw new FsError("ENOTDIR", "the file system's root is not a directory");
-        if (!state.dead)
+        if (!state.dead) {
+          if (this.#xattrReservations.has(fid) || this.#fids.get(fid)?.xattr)
+            throw new FsError("EINVAL", "xattr fid already reserved");
           this.#fids.set(fid, {
             path: "/",
             type: "dir",
             identity: identityOf(a),
             chain: Promise.resolve(),
           });
+        }
         return new Writer(HDR + 13).qid(qidOf("/", a));
       }
       case Twalk: {
         const fid = r.u32(),
           newfid = r.u32(),
           n = r.u16();
+        if (this.#xattrReservations.has(newfid) || this.#fids.get(newfid)?.xattr)
+          throw new FsError("EINVAL", "xattr fid already reserved");
         const f = this.#fid(fid);
         let path = f.path,
           ftype = f.type;
@@ -1034,6 +1082,8 @@ class Session {
           identity = identityOf(a);
         }
         if (qids.length === n && !state.dead) {
+          if (this.#xattrReservations.has(newfid) || this.#fids.get(newfid)?.xattr)
+            throw new FsError("EINVAL", "xattr fid already reserved");
           // A fid replaced here (newfid in use, or walked in place) closes its open file.
           const old = this.#fids.get(newfid);
           if (old) this.#closeFile(old);
@@ -1051,8 +1101,31 @@ class Session {
       case Tclunk:
       case Tremove: {
         const n = r.u32();
-        const f = this.#fid(n);
+        const f = this.#fid(n, true);
         this.#fids.delete(n);
+        if (f.xattr) {
+          try {
+            if (type !== Tclunk) throw new FsError("EINVAL", "xattr fid requires clunk");
+            await this.#ordered(f, async () => {
+              const xattr = f.xattr;
+              if (!xattr?.write) return;
+              if (state.dead || this.#destroyed) throw new FsError("ECANCELED");
+              if (xattr.write.remaining) throw new FsError("EINVAL", "incomplete xattr write");
+              // QEMU/Linux convention: zero declared bytes remove the xattr;
+              // the wire cannot distinguish this from setting an empty value.
+              await this.#need("setxattr", "EOPNOTSUPP")(
+                f.path,
+                xattr.write.name,
+                xattr.bytes.length ? xattr.bytes : null,
+                xattr.write.flags,
+                xattr.write.identity,
+              );
+            });
+          } finally {
+            this.#discardXattr(f);
+          }
+          return new Writer(HDR);
+        }
         const file = f.file;
         f.file = undefined;
         await this.#ordered(f, () => file?.close?.());
@@ -1287,9 +1360,17 @@ class Session {
         return w;
       }
       case Tread: {
-        const f = this.#fid(r.u32());
+        const f = this.#fid(r.u32(), true);
         const offset = filePosition(r.u64()),
           count = Math.min(r.u32(), this.#msize - HDR - 4);
+        if (f.xattr) {
+          if (f.xattr.write) throw new FsError("EBADF", "write-only xattr fid");
+          const bytes = f.xattr.bytes.subarray(
+            Math.min(offset, f.xattr.bytes.length),
+            Math.min(offset + count, f.xattr.bytes.length),
+          );
+          return new Writer(HDR + 4 + bytes.length).u32(bytes.length).bytes(bytes);
+        }
         const file = fileOf(f);
         if (!file) throw new FsError(f.type === "dir" ? "EISDIR" : "EBADF");
         const data = await file.read(offset, count);
@@ -1298,10 +1379,27 @@ class Session {
         return new Writer(HDR + 4 + n).u32(n).bytes(n === data.length ? data : data.subarray(0, n));
       }
       case Twrite: {
-        const f = this.#fid(r.u32());
+        const f = this.#fid(r.u32(), true);
         const offset = filePosition(r.u64()),
           count = r.u32();
         const data = r.bytes(count);
+        if (f.xattr) {
+          const xattr = f.xattr;
+          if (!xattr.write) throw new FsError("EBADF", "read-only xattr fid");
+          if (offset > xattr.bytes.length || count > xattr.bytes.length - offset)
+            throw new FsError("EINVAL", "xattr write exceeds declared size");
+          await this.#ordered(f, () => {
+            if (state.dead || this.#destroyed) return;
+            xattr.bytes.set(data, offset);
+            for (let index = offset; index < offset + count; index++) {
+              if (!xattr.write!.coverage[index]) {
+                xattr.write!.coverage[index] = 1;
+                xattr.write!.remaining--;
+              }
+            }
+          });
+          return new Writer(HDR + 4).u32(count);
+        }
         const file = fileOf(f);
         if (!file?.write) throw new FsError(f.type === "dir" ? "EISDIR" : "EBADF");
         this.exp.stats.bytesWritten += count;
@@ -1327,10 +1425,73 @@ class Session {
           client = r.str();
         return new Writer().u8(2).u64(start).u64(length).u32(procId).str(client);
       }
-      case Txattrwalk:
-      case Txattrcreate:
-        // Extended attributes are not implemented by these backends.
-        throw new FsError("EOPNOTSUPP");
+      case Txattrwalk: {
+        const source = this.#fid(r.u32()),
+          fid = r.u32(),
+          name = r.name();
+        checkXattrName(name, true);
+        if (source.type !== "file" && source.type !== "dir") throw new FsError("EOPNOTSUPP");
+        if (!source.identity) throw new FsError("ESTALE");
+        if (this.#fids.has(fid) || this.#xattrReservations.has(fid)) throw new FsError("EINVAL");
+        this.#reserveXattr();
+        this.#xattrReservations.add(fid);
+        let retained = false;
+        try {
+          const value = await this.#need("getxattr", "EOPNOTSUPP")(
+            source.path,
+            name,
+            source.identity,
+          );
+          if (!(value instanceof Uint8Array) || value.byteLength > XATTR_MAX_BYTES)
+            throw new FsError("E2BIG");
+          const bytes = value.slice();
+          if (!state.dead && !this.#destroyed) {
+            this.#fids.set(fid, {
+              path: source.path,
+              type: source.type,
+              identity: source.identity,
+              xattr: { bytes },
+              chain: Promise.resolve(),
+            });
+            retained = true;
+          }
+          return new Writer(HDR + 8).u64(bytes.length);
+        } finally {
+          this.#xattrReservations.delete(fid);
+          if (!retained) this.#xattrCount--;
+        }
+      }
+      case Txattrcreate: {
+        const f = this.#fid(r.u32()),
+          name = r.name(),
+          size = r.u64(),
+          flags = r.u32();
+        checkXattrName(name);
+        if (f.file) throw new FsError("EINVAL", "xattrcreate requires an unopened cloned fid");
+        if (f.type !== "file" && f.type !== "dir") throw new FsError("EOPNOTSUPP");
+        if (!f.identity) throw new FsError("ESTALE");
+        if (size > BigInt(XATTR_MAX_BYTES)) throw new FsError("E2BIG");
+        if (flags & ~3) throw new FsError("EINVAL");
+        this.#need("setxattr", "EOPNOTSUPP");
+        this.#reserveXattr();
+        try {
+          const length = Number(size);
+          f.xattr = {
+            bytes: new Uint8Array(length),
+            write: {
+              name,
+              flags,
+              identity: f.identity,
+              coverage: new Uint8Array(length),
+              remaining: length,
+            },
+          };
+        } catch (error) {
+          this.#xattrCount--;
+          throw error;
+        }
+        return new Writer(HDR);
+      }
       default:
         throw new FsError("EOPNOTSUPP", `unknown message type ${type}`);
     }
