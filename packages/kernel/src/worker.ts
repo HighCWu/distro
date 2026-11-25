@@ -10,6 +10,7 @@ import {
   type ForkProfile,
   type ForkProfileRequest,
 } from "./fork-profile.ts";
+import { copy_fork_memory_to_fresh_target } from "./fork-memory-copy.ts";
 import {
   fork_signal_test,
   fork_resume_signal_test,
@@ -1777,8 +1778,9 @@ function start({
       const copied = profile ? profile.measure("allocate_ns", allocate) : allocate();
       const destination = memory_bytes(copied.memory, 0, source.byteLength);
       if (!destination) throw new RangeError("invalid destination memory");
-      if (profile) profile.measure("copy_ns", () => destination.set(source));
-      else destination.set(source);
+      const copy = () => copy_fork_memory_to_fresh_target(source, destination);
+      if (profile) profile.measure("copy_ns", copy);
+      else copy();
       user_context = { ...user_context, ...copied };
     } catch {
       settle_user_copy(user_copy_status, USER_COPY_NO_MEMORY);
