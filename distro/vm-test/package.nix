@@ -14,6 +14,7 @@ let
     cp ${./protocol.js} $out/protocol.js
     cp ${./run-test.js} $out/run-test.js
     cp ${./shutdown.js} $out/shutdown.js
+    cp ${./ninep-host.js} $out/ninep-host.js
   '';
 
   runner = runnerBase // {
@@ -51,6 +52,7 @@ let
       readOnlyDisks ? false,
       nodeArguments ? [ ],
       vsockRoundtrip ? false,
+      ninepExport ? null,
       recordRuntimeLog ? false,
     }:
     let
@@ -101,6 +103,15 @@ let
           ${lib.optionalString snapshotFirstDisk "--snapshot-first-disk"} \
           ${lib.optionalString readOnlyDisks "--readonly-disks"} \
           ${lib.optionalString vsockRoundtrip "--vsock-roundtrip"} \
+          ${
+            lib.optionalString (ninepExport != null) (
+              "--ninep "
+              + lib.escapeShellArgs [
+                "${pkgs.diod}/sbin/diod"
+                (toString ninepExport)
+              ]
+            )
+          } \
           ${kernel}/dist/index.js \
           ${initramfs} \
           ${lib.concatMapStringsSep " " (diskCopy: diskCopy.name) diskCopies} \
@@ -212,6 +223,7 @@ let
       readOnlyDisks ? false,
       nodeArguments ? [ ],
       vsockRoundtrip ? false,
+      ninepExport ? null,
       recordRuntimeLog ? false,
     }:
     bootInstalledSystem {
@@ -224,6 +236,7 @@ let
         readOnlyDisks
         nodeArguments
         vsockRoundtrip
+        ninepExport
         recordRuntimeLog
         ;
       initramfs = image.mkInitramfs {

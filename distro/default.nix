@@ -72,6 +72,8 @@ lib.makeScope (scope: lib.callPackageWith ({ inherit lib pkgs; } // scope)) (
     linuxCheckpointRestore64 = self.linux-wasm64.override { checkpointRestoreCandidate = true; };
     kernelCheckpointRestore64 = self.kernel-wasm64.override { linux = linuxCheckpointRestore64; };
     vmTestCheckpointRestore64 = vmTestWasm64.override { kernel = kernelCheckpointRestore64; };
+    linuxNinep32 = self.linux.override { ninepCandidate = true; };
+    linuxNinep64 = self.linux-wasm64.override { ninepCandidate = true; };
     prctlMmMapCheckpointRestore32 = callPackage ./prctl-mm-map/package.nix {
       vm-test = vmTestCheckpointRestore32;
     };
@@ -655,6 +657,12 @@ lib.makeScope (scope: lib.callPackageWith ({ inherit lib pkgs; } // scope)) (
     virtual-network = callPackage ./virtual-network/package.nix { };
     autofs-runtime = callPackage ./autofs-runtime/package.nix { };
     vsock-runtime = callPackage ./vsock-runtime/package.nix { };
+    ninep = callPackage ./ninep/package.nix {
+      linux = linuxNinep32;
+      vm-test = self.vm-test.override {
+        kernel = self.kernel.override { linux = linuxNinep32; };
+      };
+    };
     key-dh-runtime = callPackage ./key-dh-runtime/package.nix { };
     key-dh-runtime-wasm64 = self.key-dh-runtime.override {
       stdenv = self.stdenv-wasm64;
@@ -841,6 +849,15 @@ lib.makeScope (scope: lib.callPackageWith ({ inherit lib pkgs; } // scope)) (
       platform = self.platform-wasm64;
       linux = self.linux-wasm64;
       vm-test = vmTestWasm64;
+    };
+    ninep-wasm64 = self.ninep.override {
+      stdenv = self.stdenv-wasm64;
+      platform = self.platform-wasm64;
+      linux = linuxNinep64;
+      busybox = self.busybox-wasm64;
+      vm-test = vmTestWasm64.override {
+        kernel = self.kernel-wasm64.override { linux = linuxNinep64; };
+      };
     };
     direct-io-wasm64 = callPackage ./direct-io/package.nix {
       stdenv = self.stdenv-wasm64;

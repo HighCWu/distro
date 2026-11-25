@@ -16,6 +16,7 @@
   userNamespaceCandidate ? false,
   elfContainerCandidate ? false,
   checkpointRestoreCandidate ? false,
+  ninepCandidate ? false,
   llvm-toolchain-unwrapped,
   src ? import ./fetch-source.nix {
     inherit pkgs;
@@ -53,6 +54,7 @@ let
         userNamespaceCandidate
         elfContainerCandidate
         checkpointRestoreCandidate
+        ninepCandidate
         ;
       sourceIdentity = identity src;
       llvmToolchainIdentity = identity llvm-toolchain-unwrapped;
@@ -127,6 +129,9 @@ pkgs.stdenvNoCC.mkDerivation (finalAttrs: {
     ''}
     ${lib.optionalString checkpointRestoreCandidate ''
       scripts/config --enable CHECKPOINT_RESTORE
+    ''}
+    ${lib.optionalString ninepCandidate ''
+      scripts/config --enable NET_9P --enable NET_9P_FD --enable 9P_FS
     ''}
     scripts/config --enable MEMFD_CREATE
     # Allocate loop devices on demand through /dev/loop-control.
@@ -268,7 +273,28 @@ pkgs.stdenvNoCC.mkDerivation (finalAttrs: {
           ! grep -qx 'CONFIG_CHECKPOINT_RESTORE=y' .config
         ''
     }
-    ! grep -qx 'CONFIG_MMU=y' .config
+    ${
+      if ninepCandidate then
+        ''
+          for option in NET_9P NET_9P_FD 9P_FS NETFS_SUPPORT; do
+            if ! grep -qx "CONFIG_$option=y" .config; then
+              echo "Missing required 9P kernel config: CONFIG_$option=y" >&2
+              exit 1
+            fi
+          done
+        ''
+      else
+        ''
+          if grep -Eq '^CONFIG_(NET_9P|NET_9P_FD|9P_FS)=[ym]$' .config; then
+            echo "9P kernel config requires ninepCandidate" >&2
+            exit 1
+          fi
+        ''
+    }
+    if grep -qx 'CONFIG_MMU=y' .config; then
+      echo "Wasm kernel requires CONFIG_MMU=n" >&2
+      exit 1
+    fi
 
     make vmlinux.wasm
 
@@ -303,7 +329,7 @@ pkgs.stdenvNoCC.mkDerivation (finalAttrs: {
       ''
         cd ${finalAttrs.finalPackage}
         sha256sum --check linux-build/SHA256SUMS
-        jq --exit-status '.schemaVersion == 1 and .wasmBits == ${toString wasmBits} and .debug == ${builtins.toJSON debug} and .mmapCopyTest == ${builtins.toJSON mmapCopyTest} and .fileMmapCandidate == ${builtins.toJSON fileMmapCandidate} and .fileMmapStreamCandidate == ${builtins.toJSON fileMmapStreamCandidate} and .vtimeCandidate == ${builtins.toJSON vtimeCandidate} and .elfContainerCandidate == ${builtins.toJSON elfContainerCandidate} and .checkpointRestoreCandidate == ${builtins.toJSON checkpointRestoreCandidate}' linux-build/build.json
+        jq --exit-status '.schemaVersion == 1 and .wasmBits == ${toString wasmBits} and .debug == ${builtins.toJSON debug} and .mmapCopyTest == ${builtins.toJSON mmapCopyTest} and .fileMmapCandidate == ${builtins.toJSON fileMmapCandidate} and .fileMmapStreamCandidate == ${builtins.toJSON fileMmapStreamCandidate} and .vtimeCandidate == ${builtins.toJSON vtimeCandidate} and .elfContainerCandidate == ${builtins.toJSON elfContainerCandidate} and .checkpointRestoreCandidate == ${builtins.toJSON checkpointRestoreCandidate} and .ninepCandidate == ${builtins.toJSON ninepCandidate}' linux-build/build.json
             test -s linux-build/kernel.config
             test -s linux-build/LICENSES/preferred/GPL-2.0
             touch $out

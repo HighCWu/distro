@@ -9,6 +9,8 @@ let cpus = 1;
 let snapshotFirstDisk = false;
 let readOnlyDisks = false;
 let vsockRoundtrip = false;
+let ninepServer;
+let ninepExport;
 const positional = [];
 const args = process.argv.slice(2);
 for (let index = 0; index < args.length; index++) {
@@ -20,6 +22,10 @@ for (let index = 0; index < args.length; index++) {
     readOnlyDisks = true;
   } else if (args[index] === "--vsock-roundtrip") {
     vsockRoundtrip = true;
+  } else if (args[index] === "--ninep") {
+    ninepServer = args[++index];
+    ninepExport = args[++index];
+    if (!ninepServer || !ninepExport) throw new Error("--ninep requires a server and export path");
   } else {
     positional.push(args[index]);
   }
@@ -30,13 +36,15 @@ if (
   !initramfsPath ||
   !Number.isSafeInteger(cpus) ||
   cpus < 1 ||
-  (vsockRoundtrip && diskPaths.length !== 0)
+  ((vsockRoundtrip || ninepServer) && diskPaths.length !== 0) ||
+  (vsockRoundtrip && ninepServer)
 ) {
   throw new Error(
-    "usage: run-test.js [--cpus <count>] [--vsock-roundtrip] <linux-module> <initramfs> [disk ...]",
+    "usage: run-test.js [--cpus <count>] [--vsock-roundtrip | --ninep <server> <export>] <linux-module> <initramfs> [disk ...]",
   );
 }
 
+const ninep = ninepServer ? await import("./ninep-host.js") : null;
 const { blockDevice, bootMachine, consoleDevice, entropyDevice, vsockDevice } = await import(
   pathToFileURL(linuxPath).href
 );
@@ -61,6 +69,7 @@ let vsockTask;
 let vsockTimer;
 let vsockHostPassed = false;
 let vsockUserPassed = false;
+const vsockAbort = new AbortController();
 
 const KERNEL_MEMORY_MAXIMUM_BYTES = 0xffff * 0x10000;
 const MAXIMUM_EXPECTED_INITIAL_MEMORY_BYTES = 16 * 0x100000;
@@ -70,7 +79,7 @@ function finish(value) {
   // subsequently observed while the device and console queues are draining.
   if (!value.passed) runtimeFailure ??= value;
   if (settled) return;
-  if (value.passed && vsockRoundtrip) {
+  if (value.passed && vsockListener) {
     vsockUserPassed = true;
     if (!vsockHostPassed) return;
   }
@@ -235,9 +244,9 @@ const devices = [
 const disks = [];
 let startupFailed = false;
 try {
-  if (vsockRoundtrip) {
+  if (vsockRoundtrip || ninepServer) {
     vsock = vsockDevice();
-    vsockListener = vsock.listen(VSOCK_FIXTURE_PORT);
+    vsockListener = vsock.listen(ninep ? ninep.NINEP_PORT : VSOCK_FIXTURE_PORT);
     devices.push(vsock);
   }
   for (const [diskIndex, diskPath] of diskPaths.entries()) {
@@ -292,9 +301,12 @@ if (machine) initialMemoryBytes = machine.memory.buffer.byteLength;
 
 if (machine && vsockListener) {
   vsockTimer = setTimeout(() => {
-    finish({ passed: false, reason: "vsock roundtrip: fixture timed out after 60 seconds" });
+    finish({ passed: false, reason: "vsock fixture timed out after 60 seconds" });
   }, VSOCK_FIXTURE_TIMEOUT_MS);
-  vsockTask = exerciseVsock(vsockListener)
+  const exercise = ninep
+    ? ninep.exerciseNinep(vsockListener, ninepServer, ninepExport, vsockAbort.signal)
+    : exerciseVsock(vsockListener);
+  vsockTask = exercise
     .then(() => {
       vsockHostPassed = true;
       if (vsockUserPassed) finish({ passed: true });
@@ -316,6 +328,7 @@ void machine?.closed.catch((error) => {
 
 const outcome = await result;
 clearTimeout(vsockTimer);
+if (!outcome.passed) vsockAbort.abort();
 let cleanupFailed = false;
 shuttingDown = true;
 try {
@@ -339,4 +352,5 @@ const finalOutcome = runtimeFailure ?? outcome;
 if (!finalOutcome.passed) console.error(`vm test failed: ${finalOutcome.reason}`);
 const passed = finalOutcome.passed && !startupFailed && !cleanupFailed;
 if (passed && vsockRoundtrip) console.log("vsock runtime: machine and device shutdown complete");
+if (passed && ninepServer) console.log("9p runtime: machine, device and server shutdown complete");
 process.exitCode = passed ? 0 : 1;
