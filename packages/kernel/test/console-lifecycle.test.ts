@@ -4,6 +4,100 @@ import test from "node:test";
 import { consoleDevice } from "../src/virtio/console.ts";
 import { close_virtio_device, virtio_imports } from "../src/virtio/core.ts";
 
+test("console scatters input, preserves its remainder and releases zero-capacity chains", async () => {
+  const input = new ReadableStream<Uint8Array>({
+    start(controller) {
+      controller.enqueue(new Uint8Array([1, 2, 3, 4, 5, 6, 7]));
+      controller.close();
+    },
+  });
+  const device = consoleDevice(input, null);
+  const memory = new WebAssembly.Memory({ initial: 1, maximum: 1, shared: true });
+  const errors: unknown[] = [];
+  const imports = virtio_imports({
+    memory,
+    devices: [device],
+    trigger_irq() {},
+    on_error(error) {
+      errors.push(error);
+    },
+  });
+  const view = new DataView(memory.buffer);
+  const bytes = new Uint8Array(memory.buffer);
+  bytes.fill(0xcc, 256, 300);
+  for (const [i, length, next] of [
+    [0, 0, false],
+    [1, 2, true],
+    [2, 0, true],
+    [3, 2, false],
+    [4, 5, false],
+  ] as const) {
+    view.setBigUint64(i * 16, BigInt(256 + i * 8), true);
+    view.setUint32(i * 16 + 8, length, true);
+    view.setUint16(i * 16 + 12, i + 10, true);
+    view.setUint16(i * 16 + 14, (1 << 7) | (1 << 1) | Number(next), true);
+  }
+  imports.enable_vring(0, 0, 8, 0, 1);
+  imports.notify(0, 0);
+  await new Promise((resolve) => setImmediate(resolve));
+  imports.enable_vring(0, 1, 1, 128, 2);
+  imports.notify(0, 1);
+  await new Promise((resolve) => setImmediate(resolve));
+  assert.deepEqual(errors, []);
+  for (const [i, length] of [
+    [0, 0],
+    [1, 4],
+    [4, 3],
+  ] as const) {
+    assert.equal(view.getUint32(i * 16 + 8, true), length);
+    assert.equal(view.getUint16(i * 16 + 12, true), i + 10);
+    assert.equal(view.getUint16(i * 16 + 14, true) & (1 << 15), 1 << 15);
+  }
+  assert.deepEqual([...bytes.slice(264, 266)], [1, 2]);
+  assert.deepEqual([...bytes.slice(280, 282)], [3, 4]);
+  assert.deepEqual([...bytes.slice(288, 293)], [5, 6, 7, 0xcc, 0xcc]);
+  assert.deepEqual([...bytes.slice(272, 280)], Array(8).fill(0xcc));
+  await close_virtio_device(device);
+});
+
+test("console preflights even trailing descriptors before consuming input", async () => {
+  const input = new ReadableStream<Uint8Array>({
+    start(controller) {
+      controller.enqueue(new Uint8Array([42]));
+    },
+  });
+  const device = consoleDevice(input, null);
+  const memory = new WebAssembly.Memory({ initial: 1, maximum: 1, shared: true });
+  const errors: unknown[] = [];
+  const imports = virtio_imports({
+    memory,
+    devices: [device],
+    trigger_irq() {},
+    on_error(error) {
+      errors.push(error);
+    },
+  });
+  const view = new DataView(memory.buffer);
+  const bytes = new Uint8Array(memory.buffer);
+  bytes.fill(0xcc, 256, 272);
+  for (let i = 0; i < 2; i++) {
+    view.setBigUint64(i * 16, BigInt(256 + i * 8), true);
+    view.setUint32(i * 16 + 8, 8, true);
+    view.setUint16(i * 16 + 14, (1 << 7) | (i === 0 ? 3 : 0), true);
+  }
+  imports.enable_vring(0, 0, 2, 0, 1);
+  imports.notify(0, 0);
+  await new Promise((resolve) => setImmediate(resolve));
+  imports.enable_vring(0, 1, 1, 128, 2);
+  imports.notify(0, 1);
+  await new Promise((resolve) => setImmediate(resolve));
+  assert.equal(errors.length, 1);
+  assert.match(String(errors[0]), /receiver must be writable/);
+  assert.deepEqual([...bytes.slice(256, 272)], Array(16).fill(0xcc));
+  assert.equal(view.getUint16(14, true) & (1 << 15), 0);
+  await close_virtio_device(device);
+});
+
 test("empty input does not block and partial delivery resumes source pulls", async () => {
   const chunks = [new Uint8Array(), new Uint8Array([1, 2, 3, 4, 5]), new Uint8Array([6, 7])];
   let pulls = 0;

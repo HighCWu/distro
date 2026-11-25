@@ -83,12 +83,20 @@ export function consoleDevice(
     while (guest_ready && receive_chains.length > 0 && pending_input.length > 0) {
       const chain = receive_chains.shift()!;
       const chunk = pending_input[0]!;
-      const [desc, trailing] = chain;
-      assert(desc && desc.writable, "receiver must be writable");
-      assert(!trailing, "too many descriptors");
+      const buffers: Uint8Array[] = [];
+      for (const desc of chain) {
+        assert(desc.writable, "receiver must be writable");
+        buffers.push(desc.array);
+      }
+      assert(buffers.length > 0, "receiver must be writable");
 
-      const n = Math.min(chunk.byteLength, desc.array.byteLength);
-      desc.array.set(chunk.subarray(0, n));
+      let n = 0;
+      for (const buffer of buffers) {
+        const length = Math.min(chunk.byteLength - n, buffer.byteLength);
+        buffer.set(chunk.subarray(n, n + length));
+        n += length;
+        if (n === chunk.byteLength) break;
+      }
       chain.release(n);
       if (n < chunk.byteLength) pending_input[0] = chunk.subarray(n);
       else pending_input.shift();
