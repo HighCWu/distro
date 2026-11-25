@@ -2,6 +2,7 @@
 
 import assert from "node:assert/strict";
 import test from "node:test";
+import { prepare_dylink_call_metadata } from "../src/dylink_call_metadata.ts";
 import { ProcessDylink } from "../src/dylink_process.ts";
 import { DylinkInitializationError } from "../src/dylink_linker.ts";
 import { prepare_dylink_worker_publication } from "../src/dylink_process_worker.ts";
@@ -439,8 +440,30 @@ test("per-group dynamic snapshots retain only names in the full load graph", () 
   );
   const pathAddress = 256;
   writeString(memory, pathAddress, "/plugins/root.so");
-  const rootHandle = parent.open(pathAddress, 1); // RTLD_LAZY
+  const compileInputs = ["/plugins/root.so", "/usr/lib/libdep.so"].flatMap((path) => {
+    const bytes = modules.get(path)!;
+    return [Buffer.from(bytes), Buffer.from(prepare_dylink_call_metadata(bytes).bytes)];
+  });
+  const compiles = compileInputs.map(() => 0);
+  const Module = WebAssembly.Module;
+  WebAssembly.Module = new Proxy(Module, {
+    construct(target, args, newTarget) {
+      const source = args[0];
+      if (source instanceof Uint8Array) {
+        const index = compileInputs.findIndex((bytes) => bytes.equals(source));
+        if (index >= 0) compiles[index]!++;
+      }
+      return Reflect.construct(target, args, newTarget);
+    },
+  });
+  let rootHandle: ReturnType<ProcessDylink["open"]>;
+  try {
+    rootHandle = parent.open(pathAddress, 1); // RTLD_LAZY
+  } finally {
+    WebAssembly.Module = Module;
+  }
   assert.notEqual(rootHandle, 0, loaderError(parent, memory));
+  assert.deepEqual(compiles, [1, 1, 1, 1], "each original and rewritten module compiles once");
   const invoke = lookUpFunction(parent, memory, parentTable, Number(rootHandle), "invoke");
   assert.equal(invoke(), 18, "main symbols preempt strong and weak dependency definitions");
   const readGotFunction = lookUpFunction(

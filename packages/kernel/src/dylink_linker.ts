@@ -78,6 +78,8 @@ export type DylinkReplayTableWrite = Readonly<{
 export function link_dylink_graph(options: {
   root: string;
   files: ReadonlyMap<string, Uint8Array<ArrayBuffer>>;
+  /** Admission modules keyed by the exact owned byte arrays in files. */
+  validatedOriginals?: ReadonlyMap<Uint8Array<ArrayBuffer>, WebAssembly.Module>;
   memory: WebAssembly.Memory;
   table: WebAssembly.Table;
   /** Process-private table used only by marked side-module tail calls. */
@@ -175,7 +177,14 @@ export function link_dylink_graph(options: {
         : tail.bytes;
     if (tail.tailTableRequired && !options.tailTable)
       throw new Error("dynamic tail-call ABI table is unavailable");
-    const originalModule = new WebAssembly.Module(bytes);
+    // The tail prepare step returns a copy even without a rewrite. Continue
+    // validating those bytes with the readers below, reusing engine validation
+    // only for the corresponding unmodified admission input.
+    const admitted =
+      !tail.tailTableRequired && !options.replay
+        ? options.validatedOriginals?.get(source)
+        : undefined;
+    const originalModule = admitted ?? new WebAssembly.Module(bytes);
     if (!user_poll_function_imports_supported(bytes, memoryArena.address))
       throw new Error("unsupported dynamic user poll function import");
     const metadata = read_wasm_dylink(originalModule);

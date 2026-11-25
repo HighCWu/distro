@@ -3395,6 +3395,9 @@ export class ProcessDylink {
         group = link_dylink_graph({
           root: root.key,
           files: new Map(files.map((file) => [file.key, file.bytes])),
+          validatedOriginals: scopedPublicationOpen
+            ? undefined
+            : new Map(files.map((file) => [file.bytes, file.module])),
           memory: this.#options.memory,
           table: this.#table,
           tailTable: this.#tailTable ?? undefined,
