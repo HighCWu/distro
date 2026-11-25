@@ -529,14 +529,18 @@ test(
   async () => {
     const fs = new MemoryFs({ "message.txt": "identity", destination: {} });
     let fileStats = 0;
+    const hideWalkIdentity = (path: string, attr: ReturnType<MemoryFs["getattr"]>) => {
+      if ((path === "/message.txt" && fileStats++ === 0) || path === "/destination") {
+        const { ino, dev, ...withoutIdentity } = attr;
+        return withoutIdentity;
+      }
+      return attr;
+    };
     const backend: Fs = {
-      getattr(path) {
-        const attr = fs.getattr(path);
-        if ((path === "/message.txt" && fileStats++ === 0) || path === "/destination") {
-          const { ino, dev, ...withoutIdentity } = attr;
-          return withoutIdentity;
-        }
-        return attr;
+      getattr: fs.getattr.bind(fs),
+      lookup(directory, name, expected) {
+        const path = directory === "/" ? "/" + name : directory + "/" + name;
+        return hideWalkIdentity(path, fs.lookup(directory, name, expected));
       },
       readdir: fs.readdir.bind(fs),
       open: fs.open.bind(fs),
@@ -1384,5 +1388,121 @@ test(
       ["new-child", "extra"],
     );
     await c.close();
+  },
+);
+
+test(
+  "walk resolves each step against its captured directory identity",
+  { timeout: 3000 },
+  async () => {
+    const fs = new MemoryFs({
+      directory: { child: { leaf: "old" } },
+      keeper: "keep",
+      middle: { secret: "old secret" },
+    });
+    const originalLookup = fs.lookup.bind(fs);
+    let replaceAfterStep = false;
+    fs.lookup = (directory, name, expected) => {
+      const result = originalLookup(directory, name, expected);
+      if (replaceAfterStep && directory === "/" && name === "middle") {
+        replaceAfterStep = false;
+        fs.move("/middle", "/middle-before");
+        fs.mkdirp("/middle");
+        fs.writeFile("/middle/secret", "replacement secret");
+      }
+      return result;
+    };
+    const c = await client(fs);
+    const walk = (source: number, destination: number, names: string[], expected = 111) =>
+      c.query(
+        110,
+        [u32(source), u32(destination), u16(names.length), ...names.map(string)],
+        expected,
+      );
+    const attr = (fid: number, expected = 25) => c.query(24, [u32(fid), u64(0x7ff)], expected);
+    await walk(1, 2, ["directory"]);
+    await walk(1, 3, ["keeper"]);
+    const keeper = inodeAndLinks(await attr(3));
+    fs.move("/directory", "/directory-before");
+    fs.mkdirp("/directory/child");
+    fs.writeFile("/directory/child/leaf", "new");
+    assert.equal((await walk(2, 10, ["child"], 7)).readUInt32LE(), 116);
+    assert.equal((await walk(2, 11, [".."], 7)).readUInt32LE(), 116);
+    assert.equal((await walk(2, 12, [])).readUInt16LE(), 0);
+    assert.equal((await attr(12, 7)).readUInt32LE(), 116, "zero-step clone retains stale identity");
+    assert.equal(
+      (await attr(2, 7)).readUInt32LE(),
+      116,
+      "source fid was not changed by failed walks",
+    );
+    await walk(1, 4, ["directory"]);
+    assert.equal((await walk(4, 5, ["child", "leaf"])).readUInt16LE(), 2);
+    assert.equal(
+      inodeAndLinks(await attr(5)).ino,
+      BigInt(fs.getattr("/directory/child/leaf").ino!),
+    );
+    await c.query(20, [u32(4), u32(1), string("directory-renamed")]);
+    assert.equal(
+      (await walk(4, 6, ["child"])).readUInt16LE(),
+      1,
+      "walk follows a valid renamed directory fid",
+    );
+    await walk(4, 7, [".."]);
+    await walk(1, 8, [".."]);
+    const root = inodeAndLinks(await attr(1));
+    assert.deepEqual(inodeAndLinks(await attr(7)), root);
+    assert.deepEqual(inodeAndLinks(await attr(8)), root, "root .. stays root");
+    assert.equal(
+      (await walk(4, 9, ["."], 7)).readUInt32LE(),
+      22,
+      "existing dot-name validation is unchanged",
+    );
+    const middleIdentity = BigInt(fs.getattr("/middle").ino!);
+    replaceAfterStep = true;
+    const partial = await walk(1, 3, ["middle", "secret"]);
+    assert.equal(partial.readUInt16LE(), 1);
+    assert.equal(
+      partial.readBigUInt64LE(7),
+      middleIdentity,
+      "only the first successful step is reported",
+    );
+    assert.deepEqual(
+      inodeAndLinks(await attr(3)),
+      keeper,
+      "partial walk leaves an existing newfid untouched",
+    );
+    const absent = await walk(4, 3, ["child", "missing"]);
+    assert.equal(absent.readUInt16LE(), 1);
+    assert.deepEqual(inodeAndLinks(await attr(3)), keeper);
+    await c.close();
+    const legacy: Fs = {
+      getattr(path) {
+        const { ino, dev, ...attr } = fs.getattr(path);
+        return attr;
+      },
+      readdir: fs.readdir.bind(fs),
+      open: fs.open.bind(fs),
+    };
+    const old = await client(legacy);
+    assert.equal(
+      (await old.query(110, [u32(1), u32(2), u16(1), string("directory-renamed")])).readUInt16LE(),
+      1,
+    );
+    await old.close();
+    const stableWithoutLookup: Fs = {
+      getattr: fs.getattr.bind(fs),
+      readdir: fs.readdir.bind(fs),
+      open: fs.open.bind(fs),
+    };
+    const unsupported = await client(stableWithoutLookup);
+    assert.equal(
+      (
+        await unsupported.query(110, [u32(1), u32(2), u16(1), string("directory-renamed")], 7)
+      ).readUInt32LE(),
+      95,
+      "a stable source identity cannot silently fall back to non-atomic lookup",
+    );
+    assert.equal((await unsupported.query(110, [u32(1), u32(3), u16(0)])).readUInt16LE(), 0);
+    await unsupported.close();
   },
 );

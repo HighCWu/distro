@@ -1079,7 +1079,10 @@ class Session {
             const name = r.name();
             if (ftype !== "dir") throw new FsError("ENOTDIR");
             const next = name === ".." ? parent(path) : (checkName(name), join(path, name));
-            a = await fs.getattr(next);
+            if (fs.lookup) a = await fs.lookup(path, name, identity);
+            else if (identity)
+              throw new FsError("EOPNOTSUPP", "backend lacks identity-checked lookup");
+            else a = await fs.getattr(next);
             path = next;
           } catch (e) {
             if (i === 0) throw e;

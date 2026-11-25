@@ -421,6 +421,21 @@ export class MemoryFs implements Fs {
     return this.#attr(this.#checkedNode(path, expected));
   }
 
+  lookup(directory: string, name: string, expected?: FsIdentity): FsAttr {
+    const node = this.#checkedNode(directory, expected);
+    if (!node.children) throw new FsError("ENOTDIR", directory);
+    if (name === "..") {
+      const parent = "/" + parts(directory).slice(0, -1).join("/");
+      return this.#attr(this.#lookup(parent));
+    }
+    if (!name || name === "." || name.includes("/") || name.includes("\0"))
+      throw new FsError("EINVAL", name);
+    if (enc.encode(name).length > 255) throw new FsError("ENAMETOOLONG", name);
+    const child = node.children.get(name);
+    if (!child) throw new FsError("ENOENT", name);
+    return this.#attr(child);
+  }
+
   readdir(path: string, expected?: FsIdentity): FsDirEntry[] {
     const n = this.#checkedNode(path, expected);
     if (!n.children) throw new FsError("ENOTDIR", path);

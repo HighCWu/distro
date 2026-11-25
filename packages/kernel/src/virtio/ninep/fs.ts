@@ -213,6 +213,10 @@ export interface Fs {
   /** Check a supplied captured identity atomically before returning data. */
   getattr(path: string, expected?: FsIdentity): MaybePromise<FsAttr>;
   readdir(path: string, expected?: FsIdentity): MaybePromise<FsDirEntry[]>;
+  /** Resolve one child (or ..) atomically with the source-directory identity
+   * check. Required for walks from identity-bearing fids. Backends without
+   * inode identities may retain the legacy path-only getattr fallback. */
+  lookup?(directory: string, name: string, expected?: FsIdentity): MaybePromise<FsAttr>;
   /** Open a regular file. */
   open(path: string, flags: FsOpenFlags): MaybePromise<FsFile>;
   /** Create a regular file and return it open for reading/writing. All three
