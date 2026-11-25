@@ -827,7 +827,7 @@ export class ProcessDylink {
     processIdentity: string,
     baseGeneration: number,
     snapshot: DylinkWorkerSnapshot,
-  ): DylinkWorkerPublicationState {
+  ): void {
     const context = this.#workerPublicationAdvanceContext;
     if (!context || context.advanced || context.snapshot !== snapshot)
       throw new DylinkWorkerSnapshotError(
@@ -886,12 +886,10 @@ export class ProcessDylink {
       snapshot: targetSnapshot,
     });
     this.#validateAppendOnlyWorkerSlots(baseState.snapshot, targetSnapshot);
-    const result = this.#copyWorkerPublicationState(nextState);
     this.#workerPublicationState = nextState;
     this.#workerPublicationRevision = context.snapshotRevision;
     context.advanced = true;
     if (openScope) openScope.advanced = true;
-    return result;
   }
   #validateAppendOnlyWorkerSlots(base: DylinkWorkerSnapshot, target: DylinkWorkerSnapshot): void {
     if (

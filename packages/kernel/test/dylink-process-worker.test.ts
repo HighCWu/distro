@@ -869,7 +869,7 @@ test("owner advances its Worker baseline only for the current pre-constructor pu
   const dynamicBytes = initializationHookDynamicModule();
   let fixture: ReturnType<typeof makeInitializationHookProcess>;
   let publishedSnapshot: DylinkWorkerSnapshot | undefined;
-  let advanced: ReturnType<ProcessDylink["advanceWorkerPublicationBeforeInitialize"]> | undefined;
+  let advanced: ReturnType<ProcessDylink["getWorkerPublicationState"]> | undefined;
   fixture = makeInitializationHookProcess(dynamicBytes, {
     beforeInitialize(snapshot) {
       publishedSnapshot = snapshot;
@@ -894,11 +894,9 @@ test("owner advances its Worker baseline only for the current pre-constructor pu
         DylinkWorkerSnapshotError,
       );
 
-      advanced = fixture.process.advanceWorkerPublicationBeforeInitialize(
-        "owner-process",
-        0,
-        snapshot,
-      );
+      fixture.process.advanceWorkerPublicationBeforeInitialize("owner-process", 0, snapshot);
+      advanced = fixture.process.getWorkerPublicationState();
+      assert.ok(advanced);
       assert.equal(advanced.generation, 1);
       assert.throws(
         () =>
@@ -1000,11 +998,13 @@ test("scoped Worker producer preflights and publishes one local group after thre
     beforeInitialize(snapshot, ownerRollback) {
       hookCalls++;
       if (!hasBaseline) return;
-      const advanced = fixture.process.advanceWorkerPublicationBeforeInitialize(
+      fixture.process.advanceWorkerPublicationBeforeInitialize(
         "worker-process",
         baselineGeneration,
         snapshot,
       );
+      const advanced = fixture.process.getWorkerPublicationState();
+      assert.ok(advanced);
       baselineGeneration = advanced.generation;
       ownerRollback?.commit();
     },
@@ -1291,11 +1291,13 @@ test("published new exports keep their canonical slots callable through receiver
     queryBlocked: () => false,
     beforeInitialize(snapshot, ownerRollback) {
       if (!baselineReady) return;
-      const advanced = parent.process.advanceWorkerPublicationBeforeInitialize(
+      parent.process.advanceWorkerPublicationBeforeInitialize(
         "callable-publication",
         baselineGeneration,
         snapshot,
       );
+      const advanced = parent.process.getWorkerPublicationState();
+      assert.ok(advanced);
       baselineGeneration = advanced.generation;
       ownerRollback?.commit();
     },
