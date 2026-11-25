@@ -108,12 +108,12 @@ const Rlerror = 7,
 const QTDIR = 0x80,
   QTSYMLINK = 0x02,
   QTFILE = 0;
-const S_IFDIR = 0o040000,
-  S_IFREG = 0o100000,
-  S_IFLNK = 0o120000;
-const DT_DIR = 4,
-  DT_REG = 8,
-  DT_LNK = 10;
+const fileTypes = {
+  dir: { mode: 0o040000, dirent: 4, permissions: 0o755 },
+  file: { mode: 0o100000, dirent: 8, permissions: 0o644 },
+  symlink: { mode: 0o120000, dirent: 10, permissions: 0o777 },
+  fifo: { mode: 0o010000, dirent: 1, permissions: 0o600 },
+} satisfies Record<FsFileType, { mode: number; dirent: number; permissions: number }>;
 const AT_REMOVEDIR = 0x200;
 const O_ACCMODE = 3,
   O_EXCL = 0o200,
@@ -1169,6 +1169,7 @@ class Session {
         let a = await fs.getattr(f.path);
         if (f.identity && !matchesIdentity(a, f.identity)) throw new FsError("ESTALE", f.path);
         f.type = a.type;
+        if (a.type === "fifo") throw new FsError("EOPNOTSUPP", "FIFO I/O belongs to the Linux VFS");
         if (a.type === "file") {
           const truncate = (flags & O_TRUNC) !== 0;
           const append = (flags & O_APPEND) !== 0;
@@ -1266,8 +1267,26 @@ class Session {
         });
         return new Writer(HDR);
       }
-      case Tmknod:
-        throw new FsError("EOPNOTSUPP");
+      case Tmknod: {
+        const directory = this.#dir(r.u32());
+        const name = r.name(),
+          mode = r.u32(),
+          major = r.u32(),
+          minor = r.u32();
+        r.u32(); // gid: ownership policy is provided by the backend.
+        checkName(name);
+        if ((mode & 0o170000) !== fileTypes.fifo.mode || major !== 0 || minor !== 0)
+          throw new FsError("EOPNOTSUPP", "only FIFO inode metadata is supported");
+        const path = join(directory.path, name);
+        const created = await this.#need("mkfifo", "EOPNOTSUPP")(
+          path,
+          mode & 0o7777,
+          directory.identity,
+        );
+        if (created.type !== "fifo")
+          throw new FsError("EIO", "backend did not create FIFO metadata");
+        return new Writer(HDR + 13).qid(qidOf(path, created));
+      }
       case Tunlinkat: {
         const f = this.#dir(r.u32());
         const name = r.name();
@@ -1320,12 +1339,12 @@ class Session {
         const file = fileOf(f);
         const a = file?.getattr ? await file.getattr() : await fs.getattr(f.path, f.identity);
         const size = a.size ?? 0;
-        const perm = a.mode ?? (a.type === "dir" ? 0o755 : a.type === "symlink" ? 0o777 : 0o644);
-        const fmt = a.type === "dir" ? S_IFDIR : a.type === "symlink" ? S_IFLNK : S_IFREG;
+        const fileType = fileTypes[a.type];
+        const perm = a.mode ?? fileType.permissions;
         const w = new Writer(HDR + 153)
           .u64(P9_STATS_BASIC)
           .qid(qidOf(f.path, a))
-          .u32(fmt | (perm & 0o7777))
+          .u32(fileType.mode | (perm & 0o7777))
           .u32(a.uid ?? FS_DEFAULT_OWNER)
           .u32(a.gid ?? FS_DEFAULT_OWNER)
           .u64(a.nlink ?? (a.type === "dir" ? 2 : 1))
@@ -1392,7 +1411,7 @@ class Session {
           w.u8(qidType(e.type))
             .u32(0)
             .u64(inode(path, e.ino, e.dev));
-          w.u64(i + 1).u8(e.type === "dir" ? DT_DIR : e.type === "symlink" ? DT_LNK : DT_REG);
+          w.u64(i + 1).u8(fileTypes[e.type].dirent);
           w.u16(name.length).bytes(name);
         }
         w.dv.setUint32(HDR, w.n - start, true);

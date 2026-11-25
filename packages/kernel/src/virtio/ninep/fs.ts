@@ -71,7 +71,7 @@ export class FsError extends Error {
   }
 }
 
-export type FsFileType = "file" | "dir" | "symlink";
+export type FsFileType = "file" | "dir" | "symlink" | "fifo";
 
 /** Exact Linux timespec64 value; seconds are signed and nsec is normalized. */
 export interface FsTime {
@@ -225,6 +225,8 @@ export interface Fs {
   create?(path: string, mode: number, expectedDirectory?: FsIdentity): MaybePromise<FsFile>;
   mkdir?(path: string, mode: number, expectedDirectory?: FsIdentity): MaybePromise<void>;
   symlink?(path: string, target: string, expectedDirectory?: FsIdentity): MaybePromise<void>;
+  /** FIFO inode metadata only; the Linux client's VFS implements pipe I/O. */
+  mkfifo?(path: string, mode: number, expectedDirectory?: FsIdentity): MaybePromise<FsAttr>;
   /** Verify a supplied captured identity atomically before reading the target. */
   readlink?(path: string, expected?: FsIdentity): MaybePromise<string>;
   /** `dir`: rmdir (ENOTEMPTY unless empty), else unlink. Supplied inode/parent

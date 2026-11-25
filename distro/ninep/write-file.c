@@ -207,6 +207,52 @@ static void verify_xattrs(const char *path)
 	puts("9p transport: preserved user extended attributes");
 }
 
+static void verify_fifo(const char *path)
+{
+	static const unsigned char message[] = { 0x31, 0, 0xff, 0x42, 0x80, 0x13 };
+	unsigned char observed[sizeof(message)];
+	struct stat metadata;
+	if (mkfifo(path, 0600) != 0)
+		fail("create named pipe");
+	if (stat(path, &metadata) != 0)
+		fail("stat named pipe");
+	if (!S_ISFIFO(metadata.st_mode)) {
+		errno = EPROTO;
+		fail("named pipe has wrong file type");
+	}
+
+	int fd = open(path, O_RDWR | O_NONBLOCK | O_CLOEXEC);
+	if (fd < 0)
+		fail("open named pipe for local VFS read and write");
+	ssize_t count;
+	do {
+		count = write(fd, message, sizeof(message));
+	} while (count < 0 && errno == EINTR);
+	if (count != sizeof(message)) {
+		if (count >= 0)
+			errno = EIO;
+		fail("write named pipe payload");
+	}
+	do {
+		count = read(fd, observed, sizeof(observed));
+	} while (count < 0 && errno == EINTR);
+	if (count != sizeof(message) || memcmp(observed, message, sizeof(message)) != 0) {
+		if (count >= 0)
+			errno = EPROTO;
+		fail("read exact named pipe payload");
+	}
+	if (close(fd) != 0)
+		fail("close named pipe");
+	if (unlink(path) != 0)
+		fail("unlink named pipe");
+	errno = 0;
+	if (lstat(path, &metadata) != -1 || errno != ENOENT) {
+		errno = EPROTO;
+		fail("named pipe remains after unlink");
+	}
+	puts("9p transport: created, used and removed a standard named pipe");
+}
+
 int main(int argc, char **argv)
 {
 	if (argc != 2 && argc != 3) {
@@ -261,6 +307,7 @@ int main(int argc, char **argv)
 		verify_hard_link(argv[1], argv[2]);
 		verify_timestamps(argv[1]);
 		verify_xattrs(argv[1]);
+		verify_fifo(argv[2]);
 	}
 	return 0;
 }

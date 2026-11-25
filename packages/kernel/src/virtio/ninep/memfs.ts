@@ -33,6 +33,7 @@ import {
   type FsSetAttr,
   type FsStatFs,
   type FsIdentity,
+  type FsFileType,
 } from "./fs.ts";
 
 /** A file's content in a tree: text (UTF-8), bytes, or a function evaluated once per open. */
@@ -65,7 +66,7 @@ const EMPTY = new Uint8Array(0);
 
 interface MemNode {
   ino: number;
-  type: "file" | "dir" | "symlink";
+  type: FsFileType;
   mode: number;
   uid: number;
   gid: number;
@@ -253,7 +254,9 @@ export class MemoryFs implements Fs {
           : (n.size ?? 0)
         : n.type === "symlink"
           ? enc.encode(n.target!).length
-          : 4096;
+          : n.type === "fifo"
+            ? 0
+            : 4096;
     return {
       type: n.type,
       mode: n.mode,
@@ -304,6 +307,7 @@ export class MemoryFs implements Fs {
     const { dir, name } = this.#dirOf(path);
     const old = dir.children!.get(name);
     if (old?.type === "dir") throw new FsError("EISDIR", path);
+    if (old?.type === "fifo") throw new FsError("EOPNOTSUPP", "FIFO I/O belongs to the Linux VFS");
     const mode = opts.mode ?? old?.mode ?? 0o644;
     if (old && old.type === "file") {
       // Keep the node (inode number, links, open files): the host changed its data.
@@ -451,6 +455,7 @@ export class MemoryFs implements Fs {
   open(path: string, flags: FsOpenFlags): FsFile {
     this.#checkParentIdentity(path, flags.expectedDirectory);
     const n = this.#checkedNode(path, flags.expected);
+    if (n.type === "fifo") throw new FsError("EOPNOTSUPP", "FIFO I/O belongs to the Linux VFS");
     if (n.type !== "file") throw new FsError("EISDIR", path);
     if (flags.write && n.dynamic) throw new FsError("EACCES", path);
     if (flags.truncate) {
@@ -521,6 +526,18 @@ export class MemoryFs implements Fs {
     dir.children!.set(name, this.#node("symlink", 0o777, { target }));
     this.#touchDir(dir);
     this.#emit("symlink", path, target);
+  }
+
+  mkfifo(path: string, mode: number, expectedDirectory?: FsIdentity): FsAttr {
+    this.#checkParentIdentity(path, expectedDirectory);
+    const { dir, name } = this.#dirOf(path);
+    if (dir.children!.has(name)) throw new FsError("EEXIST", path);
+    const node = this.#node("fifo", mode & 0o7777);
+    dir.children!.set(name, node);
+    this.#touchDir(dir);
+    const created = this.#attr(node);
+    this.#emit("create", path);
+    return created;
   }
 
   remove(

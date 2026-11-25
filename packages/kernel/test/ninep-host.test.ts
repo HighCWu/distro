@@ -1506,3 +1506,104 @@ test(
     await unsupported.close();
   },
 );
+
+test(
+  "mknod creates FIFO metadata for Linux VFS without a host byte-file endpoint",
+  { timeout: 3000 },
+  async () => {
+    const fs = new MemoryFs({ directory: {} });
+    const c = await client(fs);
+    const mknod = (
+      fid: number,
+      name: string,
+      mode = 0o010640,
+      major = 0,
+      minor = 0,
+      expected = 19,
+    ) => c.query(18, [u32(fid), string(name), u32(mode), u32(major), u32(minor), u32(0)], expected);
+    const qid = await mknod(1, "pipe");
+    assert.equal(qid[0], 0, "FIFO QID is a non-directory ordinary qid");
+    const meta = fs.getattr("/pipe");
+    assert.equal(meta.type, "fifo");
+    assert.equal(meta.size, 0);
+    assert.equal(meta.nlink, 1);
+    assert.equal(meta.mode, 0o640);
+    assert.equal(qid.readBigUInt64LE(5), BigInt(meta.ino!));
+    await c.query(110, [u32(1), u32(2), u16(1), string("pipe")]);
+    const attr = await c.query(24, [u32(2), u64(0x7ff)]);
+    assert.equal(attr[8], 0);
+    assert.equal(attr.readUInt32LE(21), 0o010640);
+    assert.equal(attr.readBigUInt64LE(33), 1n);
+    assert.equal(attr.readBigUInt64LE(41), 0n);
+    assert.equal(attr.readBigUInt64LE(49), 0n);
+    const listing = await c.query(40, [u32(1), u64(0), u32(1024)]);
+    let found = false;
+    for (let at = 4; at < listing.length;) {
+      const length = listing.readUInt16LE(at + 22);
+      const name = listing.subarray(at + 24, at + 24 + length).toString();
+      if (name === "pipe") {
+        assert.equal(listing[at + 21], 1);
+        found = true;
+      }
+      at += 24 + length;
+    }
+    assert.equal(found, true, "readdir reports DT_FIFO");
+    let replaced = false;
+    const unsubscribe = fs.onChange((change) => {
+      if (change.type === "create" && change.path === "/callback-pipe" && !replaced) {
+        replaced = true;
+        fs.move(change.path, "/callback-pipe-first");
+        fs.mkfifo(change.path, 0o666);
+      }
+    });
+    const captured = await mknod(1, "callback-pipe");
+    unsubscribe();
+    assert.equal(captured.readBigUInt64LE(5), BigInt(fs.getattr("/callback-pipe-first").ino!));
+    assert.notEqual(
+      captured.readBigUInt64LE(5),
+      BigInt(fs.getattr("/callback-pipe").ino!),
+      "QID belongs to the created inode even if the create observer replaces its path",
+    );
+    assert.equal((await c.query(12, [u32(2), u32(2)], 7)).readUInt32LE(), 95);
+    assert.equal((await c.query(116, [u32(2), u64(0), u32(1)], 7)).readUInt32LE(), 9);
+    assert.equal(
+      (await c.query(118, [u32(2), u64(0), u32(1), Buffer.from("x")], 7)).readUInt32LE(),
+      9,
+    );
+    assert.throws(
+      () => fs.open("/pipe", { read: true, write: true, append: false, truncate: false }),
+      { code: "EOPNOTSUPP" },
+    );
+    assert.throws(() => fs.readFile("/pipe"), { code: "EINVAL" });
+    assert.throws(() => fs.writeFile("/pipe", "not a pipe bridge"), { code: "EOPNOTSUPP" });
+    assert.equal(fs.getattr("/pipe").type, "fifo");
+    assert.equal((await mknod(1, "pipe", 0o010600, 0, 0, 7)).readUInt32LE(), 17);
+    for (const [mode, major, minor] of [
+      [0o020600, 1, 3],
+      [0o060600, 0, 0],
+      [0o140600, 0, 0],
+      [0o010600, 1, 0],
+      [0o010600, 0, 1],
+    ] as const)
+      assert.equal((await mknod(1, "unsupported", mode, major, minor, 7)).readUInt32LE(), 95);
+    assert.throws(() => fs.getattr("/unsupported"), { code: "ENOENT" });
+    await c.query(110, [u32(1), u32(3), u16(1), string("directory")]);
+    fs.move("/directory", "/old-directory");
+    fs.mkdirp("/directory");
+    assert.equal((await mknod(3, "stale-pipe", 0o010600, 0, 0, 7)).readUInt32LE(), 116);
+    assert.throws(() => fs.getattr("/directory/stale-pipe"), { code: "ENOENT" });
+    await c.query(110, [u32(1), u32(4), u16(1), string("directory")]);
+    await mknod(4, "fresh-pipe");
+    assert.equal(fs.getattr("/directory/fresh-pipe").type, "fifo");
+    await c.close();
+    const ro = await client(fs, { readOnly: true });
+    assert.equal(
+      (
+        await ro.query(18, [u32(1), string("denied"), u32(0o010600), u32(0), u32(0), u32(0)], 7)
+      ).readUInt32LE(),
+      30,
+    );
+    assert.throws(() => fs.getattr("/denied"), { code: "ENOENT" });
+    await ro.close();
+  },
+);
