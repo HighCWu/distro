@@ -3,7 +3,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import { virtio_imports } from "../src/virtio/core.ts";
-import { vsockDevice } from "../src/virtio/vsock.ts";
+import { vsockConnectionClosed, vsockConnectionReset, vsockDevice } from "../src/virtio/vsock.ts";
 
 const REQUEST = 1;
 const RESPONSE = 2;
@@ -244,7 +244,9 @@ test(
 
     await send({ source: 1000, destination: 9000, op: RW, payload: [8] });
     assert.deepEqual([...(await a.read())], [8]);
+    const local_close = vsockConnectionClosed(a);
     a.close();
+    await local_close;
     assert.equal((await receive()).op, SHUTDOWN);
     assert.throws(() => device.listen(9000), /in use/);
     await send({ source: 1000, destination: 9000, op: RST });
@@ -255,6 +257,32 @@ test(
     await device.closed;
     assert.equal(await pending, null);
     assert.throws(() => device.listen(9001), /closed/);
+  },
+);
+
+test(
+  "peer reset settles the terminal observer without a pending read",
+  { timeout: 3000 },
+  async () => {
+    const { device, send, receive } = harness();
+    const listener = device.listen(9000);
+    const endpoint = { source: 1000, destination: 9000 };
+    await send({ ...endpoint, op: REQUEST, credit: 0 });
+    assert.equal((await receive()).op, RESPONSE);
+    const stream = await listener.accept();
+    assert(stream);
+    assert.throws(() => vsockConnectionClosed({ ...stream }), /invalid vsock connection/);
+    const closed = vsockConnectionClosed(stream);
+    assert.equal(vsockConnectionClosed(stream), closed);
+
+    const blocked = assert.rejects(stream.write(Uint8Array.of(7)), /closed/);
+    await send({ ...endpoint, op: RW, credit: 0, payload: [1] });
+    await send({ ...endpoint, op: RST, credit: 0 });
+    await closed;
+    await blocked;
+
+    device.close();
+    await device.closed;
   },
 );
 
@@ -285,6 +313,63 @@ test(
     device.close();
     await device.closed;
     assert.equal((await b.read()).byteLength, 0);
+  },
+);
+
+test(
+  "local reset drops queued data only for its stream and emits RST",
+  { timeout: 3000 },
+  async () => {
+    const { device, send, receive } = harness();
+    const listener = device.listen(9000);
+    const endpoint = { source: 1000, destination: 9000 };
+    await send({ ...endpoint, op: REQUEST, credit: 2 });
+    assert.equal((await receive()).op, RESPONSE);
+    const stream = await listener.accept();
+    assert(stream);
+    await send({ ...endpoint, source: 1001, op: REQUEST });
+    assert.equal((await receive()).op, RESPONSE);
+    const other = await listener.accept();
+    assert(other);
+
+    const blocked = assert.rejects(stream.write(Uint8Array.of(1, 2, 3)), /closed/);
+    await other.write(Uint8Array.of(4));
+    await send({ ...endpoint, op: RW, credit: 2, payload: [5] });
+
+    const closed = vsockConnectionClosed(stream);
+    assert.throws(() => vsockConnectionReset({ ...stream }), /invalid vsock connection/);
+    vsockConnectionReset(stream);
+    vsockConnectionReset(stream);
+    await closed;
+    await blocked;
+    assert.equal((await stream.read()).byteLength, 0);
+    assert.deepEqual(await receive(), {
+      source: 9000,
+      destination: 1001,
+      op: RW,
+      forwarded: 0,
+      payload: [4],
+    });
+    assert.deepEqual(await receive(), {
+      source: 9000,
+      destination: 1000,
+      op: RST,
+      forwarded: 0,
+      payload: [],
+    });
+
+    await send({ ...endpoint, op: REQUEST });
+    assert.equal((await receive()).op, RESPONSE);
+    const replacement = await listener.accept();
+    assert(replacement);
+    vsockConnectionReset(stream);
+    await replacement.write(Uint8Array.of(6));
+    assert.deepEqual((await receive()).payload, [6]);
+    await other.write(Uint8Array.of(7));
+    assert.deepEqual((await receive()).payload, [7]);
+
+    device.close();
+    await device.closed;
   },
 );
 
@@ -376,11 +461,17 @@ test(
     assert.equal((await receive()).op, RESPONSE);
     const stream = await listener.accept();
     assert(stream);
+    const closed = vsockConnectionClosed(stream);
+    let terminal = false;
+    void closed.then(() => {
+      terminal = true;
+    });
 
     await send({ ...endpoint, op: RW, payload: [0x51, 0, 0xff] });
     const request = stream.readExactly(4);
     await send({ ...endpoint, op: SHUTDOWN, flags: SHUTDOWN_SEND });
     assert.deepEqual([...(await request)], [0x51, 0, 0xff]);
+    assert.equal(terminal, false);
     // Successive shutdown messages cannot reopen a completed direction.
     await send({ ...endpoint, op: SHUTDOWN, flags: 0 });
     assert.equal((await stream.read()).byteLength, 0);
@@ -394,6 +485,7 @@ test(
       payload: [0x13, 0xa5],
     });
     await send({ ...endpoint, op: SHUTDOWN, forwarded: 2, flags: SHUTDOWN_RCV });
+    await closed;
     assert.equal((await receive()).op, RST);
     listener.close();
     device.listen(9000).close();
@@ -444,11 +536,17 @@ test(
     assert.equal((await receive()).op, RESPONSE);
     const stream = await listener.accept();
     assert(stream);
+    const closed = vsockConnectionClosed(stream);
+    let terminal = false;
+    void closed.then(() => {
+      terminal = true;
+    });
 
     const writing = assert.rejects(stream.write(Uint8Array.of(1, 2, 3)), /peer stopped receiving/);
     await Promise.resolve();
     await send({ ...endpoint, op: SHUTDOWN, credit: 2, flags: SHUTDOWN_RCV });
     await writing;
+    assert.equal(terminal, false);
     await assert.rejects(stream.write(Uint8Array.of(4)), /peer stopped receiving/);
 
     await send({ ...endpoint, op: RW, payload: [0x61] });
@@ -458,6 +556,7 @@ test(
     assert.equal((await receive()).op, CREDIT_UPDATE);
     const end = stream.read();
     await send({ ...endpoint, op: SHUTDOWN, flags: SHUTDOWN_SEND });
+    await closed;
     assert.equal((await end).byteLength, 0);
     assert.equal((await receive()).op, RST);
     device.close();

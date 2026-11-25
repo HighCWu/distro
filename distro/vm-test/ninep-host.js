@@ -8,6 +8,56 @@ import { pipeline } from "node:stream/promises";
 
 export const NINEP_PORT = 18109;
 
+export async function startNinepMemory(vsock, linuxModule, signal) {
+  const { MemoryFs, serveNinep } = await import(new URL("./virtio/ninep/host.js", linuxModule));
+  signal.throwIfAborted();
+  const server = serveNinep(vsock, { port: NINEP_PORT });
+  try {
+    const fs = new MemoryFs();
+    fs.writeFile("/message.txt", "linux-wasm 9p transport\n");
+    const session = server.add(fs, { readOnly: false });
+    if (session.name !== "fs1") throw new Error("unexpected first 9P memory export name");
+
+    const { promise: completed, resolve, reject } = Promise.withResolvers();
+    const abort = () => reject(signal.reason);
+    let attached = false;
+    signal.addEventListener("abort", abort, { once: true });
+    session.onConnection = (connected) => {
+      if (connected) {
+        attached = true;
+        console.log("9p memory host: Linux attached the first export");
+        return;
+      }
+      if (!attached) return;
+      try {
+        signal.throwIfAborted();
+        const written = fs.readFile("/written.bin");
+        if (
+          written.length !== 12546 ||
+          written.some((byte, index) => byte !== (index * 37 + 11) % 251)
+        ) {
+          throw new Error("9P memory export has incorrect written bytes");
+        }
+        console.log("9p memory host: exact written file verified after Linux detached");
+        resolve();
+      } catch (error) {
+        reject(error);
+      }
+    };
+    return {
+      completed,
+      close() {
+        signal.removeEventListener("abort", abort);
+        session.onConnection = undefined;
+        server.close();
+      },
+    };
+  } catch (error) {
+    server.close();
+    throw error;
+  }
+}
+
 export async function exerciseNinep(listener, serverExecutable, exportPath, signal) {
   let stream;
   let child;

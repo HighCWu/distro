@@ -22,16 +22,34 @@ let
       install -Dm755 mount-fd "$out/bin/mount-fd"
       install -Dm755 write-file "$out/bin/write-file"
     '';
-    passthru.checks.runtime = vm-test.rawInitramfsTest {
-      name = "ninep-${platform.wasmArch}";
-      init = ./runtime-test.sh;
-      contents = [ busybox ];
-      files = {
-        "/mount-fd" = "${probe}/bin/mount-fd";
-        "/write-file" = "${probe}/bin/write-file";
+    passthru.checks = {
+      runtime = vm-test.rawInitramfsTest {
+        name = "ninep-${platform.wasmArch}";
+        init = ./runtime-test.sh;
+        contents = [ busybox ];
+        files = {
+          "/mount-fd" = "${probe}/bin/mount-fd";
+          "/write-file" = "${probe}/bin/write-file";
+        };
+        ninepExport = exportDirectory;
+        recordRuntimeLog = true;
       };
-      ninepExport = exportDirectory;
-      recordRuntimeLog = true;
+      host-runtime = vm-test.rawInitramfsTest {
+        name = "ninep-memory-host-${platform.wasmArch}";
+        heavy = true;
+        init = pkgs.writeText "ninep-memory-init" ''
+          #!/bin/busybox sh
+          exec /bin/busybox sh /ninep-runtime --memory
+        '';
+        contents = [ busybox ];
+        files = {
+          "/ninep-runtime" = ./runtime-test.sh;
+          "/mount-fd" = "${probe}/bin/mount-fd";
+          "/write-file" = "${probe}/bin/write-file";
+        };
+        ninepMemory = true;
+        recordRuntimeLog = true;
+      };
     };
   };
 in

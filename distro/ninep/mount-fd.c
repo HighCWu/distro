@@ -65,9 +65,10 @@ int main(int argc, char **argv)
 	if (argc == 3 && strcmp(argv[1], "--verify") == 0)
 		return verify_file(argv[2]);
 
-	if (argc != 1) {
+	int memory = argc == 2 && strcmp(argv[1], "--memory") == 0;
+	if (argc != 1 && !memory) {
 		errno = EINVAL;
-		fail("expected no mount arguments");
+		fail("expected --memory or no mount arguments");
 	}
 
 	int fd = socket(AF_VSOCK, SOCK_STREAM | SOCK_CLOEXEC, 0);
@@ -81,27 +82,29 @@ int main(int argc, char **argv)
 	if (connect(fd, (struct sockaddr *)&host, sizeof(host)) < 0)
 		fail("connect to host server");
 
-	char export_name[4096];
-	size_t used = 0;
-	for (;;) {
-		char byte;
-		ssize_t count = read(fd, &byte, 1);
-		if (count < 0 && errno == EINTR)
-			continue;
-		if (count != 1)
-			fail("read temporary export name");
-		if (byte == '\n')
-			break;
-		if (used == sizeof(export_name) - 1 || byte == '\0' || byte == ',' || byte == '\r') {
-			errno = EINVAL;
-			fail("invalid temporary export name");
+	char export_name[4096] = "fs1";
+	if (!memory) {
+		size_t used = 0;
+		for (;;) {
+			char byte;
+			ssize_t count = read(fd, &byte, 1);
+			if (count < 0 && errno == EINTR)
+				continue;
+			if (count != 1)
+				fail("read temporary export name");
+			if (byte == '\n')
+				break;
+			if (used == sizeof(export_name) - 1 || byte == '\0' || byte == ',' || byte == '\r') {
+				errno = EINVAL;
+				fail("invalid temporary export name");
+			}
+			export_name[used++] = byte;
 		}
-		export_name[used++] = byte;
-	}
-	export_name[used] = '\0';
-	if (used == 0 || export_name[0] != '/') {
-		errno = EINVAL;
-		fail("temporary export name must be absolute");
+		export_name[used] = '\0';
+		if (used == 0 || export_name[0] != '/') {
+			errno = EINVAL;
+			fail("temporary export name must be absolute");
+		}
 	}
 
 	char options[4096];

@@ -12,7 +12,8 @@
   "files": [
     "dist",
     "vmlinux.wasm",
-    "linux-build"
+    "linux-build",
+    "src/virtio/ninep/LICENSE.MIT"
   ],
   "type": "module",
   "exports": {

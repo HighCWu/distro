@@ -31,6 +31,8 @@
   lua-wasm64,
   mmap-benchmark,
   mmap-benchmark-wasm64,
+  ninep,
+  ninep-wasm64,
   linux-guest,
   openssl,
   openssl-wasm64,
@@ -554,6 +556,8 @@ let
       // {
         site-live = siteCheck;
         service-worker = serviceWorkerCheck;
+        ninep-wasm32-chromium = ninepCheck 32;
+        ninep-wasm64-chromium = ninepCheck 64;
       }
     );
   };
@@ -584,6 +588,41 @@ let
       suite = runtimeSuite 64;
       expectedTests = runtimeTests;
       project = lib.removePrefix "memory64-" name;
+    };
+
+  ninepCheck =
+    bits:
+    let
+      assets = (if bits == 64 then ninep-wasm64 else ninep).checks.host-runtime.runtimeAssets;
+      runtimeKernel = (if bits == 64 then kernel-wasm64 else kernel).override {
+        linux = (if bits == 64 then linux-wasm64 else linux).override { ninepCandidate = true; };
+      };
+      profile = pkgs.writeText "ninep-browser-profile.json" (
+        builtins.toJSON {
+          addressBits = bits;
+          inherit (assets) cpus;
+        }
+      );
+      suite = pkgs.runCommand "ninep-wasm${toString bits}-browser-tests" { } ''
+        mkdir -p $out/node_modules/@lowland/bytes $out/node_modules/@lowland/kernel
+        ${playwright.linkRuntime "$out"}
+        cp ${source}/memory64-index.html $out/index.html
+        cp ${source}/ninep-app.js $out/app.js
+        cp ${source}/ninep-browser-check.mjs $out/ninep-browser-check.mjs
+        cp ${source}/runtime-smoke.js $out/runtime-smoke.js
+        cp ${source}/server.js $out/server.js
+        cp ${../vm-test/protocol.js} $out/protocol.js
+        cp ${profile} $out/profile.json
+        cp ${assets.initramfs} $out/ninep-memory.cpio
+        cp -r ${bytes}/. $out/node_modules/@lowland/bytes/
+        cp -r ${runtimeKernel}/. $out/node_modules/@lowland/kernel/
+      '';
+    in
+    playwright.mkCheck {
+      name = "browser-tests-ninep-wasm${toString bits}-chromium";
+      project = "chromium";
+      inherit suite;
+      script = "ninep-browser-check.mjs";
     };
 
   processSuite =

@@ -77,6 +77,27 @@ export interface VsockConnection {
   close(): void;
 }
 
+const connection_lifecycle = new WeakMap<
+  VsockConnection,
+  { closed: Promise<void>; reset(): void }
+>();
+
+function vsock_connection_lifecycle(connection: VsockConnection) {
+  const lifecycle = connection_lifecycle.get(connection);
+  if (!lifecycle) throw new TypeError("invalid vsock connection");
+  return lifecycle;
+}
+
+/** Observe a device-owned connection's terminal state without pulling the read stream. */
+export function vsockConnectionClosed(connection: VsockConnection): Promise<void> {
+  return vsock_connection_lifecycle(connection).closed;
+}
+
+/** Abort a device-owned connection and discard its queued data. */
+export function vsockConnectionReset(connection: VsockConnection): void {
+  vsock_connection_lifecycle(connection).reset();
+}
+
 /** Accepts Linux-initiated streams on a host vsock port. */
 export interface VsockListener {
   /** Waits for one connection, or returns null after close. Only one call may wait at a time. */
@@ -105,12 +126,14 @@ interface VsockConnectionController {
 interface VsockConnectionOps {
   send(op: number, flags: number, payload: Uint8Array, fwd_cnt: number): boolean;
   close(): void;
+  reset(): void;
 }
 
 function create_vsock_connection(ops: VsockConnectionOps): VsockConnectionController {
   const read_buffer: Uint8Array[] = [];
   const read_waiters: ((value: Uint8Array) => void)[] = [];
   const credit_waiters: (() => void)[] = [];
+  const { promise: closed_promise, resolve: resolve_closed } = Promise.withResolvers<void>();
   let closed = false;
   let peer_shutdown = 0;
   let bytes_read = 0;
@@ -135,6 +158,7 @@ function create_vsock_connection(ops: VsockConnectionOps): VsockConnectionContro
   function close_from_peer() {
     if (closed) return;
     closed = true;
+    resolve_closed();
     wake_readers_at_eof();
     wake_credit_waiters();
   }
@@ -228,6 +252,14 @@ function create_vsock_connection(ops: VsockConnectionOps): VsockConnectionContro
       close_from_peer();
     },
   };
+  connection_lifecycle.set(connection, {
+    closed: closed_promise,
+    reset() {
+      if (closed) return;
+      read_buffer.length = 0;
+      ops.reset();
+    },
+  });
 
   return {
     connection,
@@ -282,7 +314,7 @@ interface VsockTerminationPacket {
   readonly kind: "termination";
   readonly owner: VsockConnectionState;
   bytes: Uint8Array;
-  reset?: { error: Error; preserve_pending: boolean };
+  reset?: { error: Error; preserve_pending: boolean; discard_writes?: true };
 }
 
 type VsockQueuedPacket =
@@ -359,7 +391,9 @@ export function vsockDevice({ guestCid = 3n }: { guestCid?: bigint } = {}): Vsoc
       const stale =
         (packet.kind === "stream" &&
           (connections.get(packet.owner.key) !== packet.owner ||
-            (packet.op === VsockOp.RW && packet.owner.controller.peer_receive_closed))) ||
+            (packet.op === VsockOp.RW &&
+              (packet.owner.controller.peer_receive_closed ||
+                packet.owner.termination?.reset?.discard_writes)))) ||
         (packet.kind === "refusal" && connections.has(packet.key));
       if (!stale && rx_buffers.length === 0) break;
       pending_packets.shift();
@@ -443,7 +477,7 @@ export function vsockDevice({ guestCid = 3n }: { guestCid?: bigint } = {}): Vsoc
 
   function terminate(state: VsockConnectionState, reset?: VsockTerminationPacket["reset"]) {
     // Each reserved tuple gets one terminal packet, independent of ordinary
-    // packet credit. It shares the FIFO so accepted writes go out first.
+    // packet credit. It shares the FIFO with writes that remain eligible.
     // The ephemeral-port pool and incoming admission cap also bound these slots.
     const previous = state.termination;
     if (previous && (!reset || previous.reset)) return;
@@ -506,6 +540,14 @@ export function vsockDevice({ guestCid = 3n }: { guestCid?: bigint } = {}): Vsoc
         // Reserve the tuple until peer shutdown. Otherwise late traffic could
         // reach another connection after the port is recycled.
         terminate(state);
+      },
+      reset() {
+        if (connections.get(state.key) !== state) return;
+        terminate(state, {
+          error: new Error("host reset vsock connection"),
+          preserve_pending: false,
+          discard_writes: true,
+        });
       },
     });
     const state: VsockConnectionState = {

@@ -9,7 +9,7 @@ fail() {
 }
 
 busybox mkdir -p /mnt/9p || fail "create mountpoint"
-busybox timeout -s KILL 30 /mount-fd || fail "mount trans=fd"
+busybox timeout -s KILL 30 /mount-fd "$@" || fail "mount trans=fd"
 echo '9p transport: mounted 9P2000.L over a vsock file descriptor'
 
 listing=$(busybox timeout -s KILL 20 busybox ls -1 /mnt/9p) || fail "list remote directory"
@@ -25,4 +25,8 @@ busybox timeout -s KILL 20 busybox umount /mnt/9p || fail "unmount remote filesy
 busybox rmdir /mnt/9p || fail "remove detached mountpoint"
 echo '9p transport: unmounted remote filesystem'
 echo '::vm-test::pass'
+# Leave the machine running until the host sees the session detach unaided.
+if [ "${1:-}" = --memory ]; then
+  exec /bin/busybox sleep 300
+fi
 exec /bin/busybox poweroff -f

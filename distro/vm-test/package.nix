@@ -53,6 +53,7 @@ let
       nodeArguments ? [ ],
       vsockRoundtrip ? false,
       ninepExport ? null,
+      ninepMemory ? false,
       recordRuntimeLog ? false,
     }:
     let
@@ -112,6 +113,7 @@ let
               ]
             )
           } \
+          ${lib.optionalString ninepMemory "--ninep-memory"} \
           ${kernel}/dist/index.js \
           ${initramfs} \
           ${lib.concatMapStringsSep " " (diskCopy: diskCopy.name) diskCopies} \
@@ -224,6 +226,7 @@ let
       nodeArguments ? [ ],
       vsockRoundtrip ? false,
       ninepExport ? null,
+      ninepMemory ? false,
       recordRuntimeLog ? false,
     }:
     bootInstalledSystem {
@@ -237,6 +240,7 @@ let
         nodeArguments
         vsockRoundtrip
         ninepExport
+        ninepMemory
         recordRuntimeLog
         ;
       initramfs = image.mkInitramfs {
