@@ -576,7 +576,10 @@ test("writer poisons and fatals when the post-Prepare wakeup fails", () => {
   assert.equal(fatalCalls, 1);
 });
 
-test("writer deadlines poison a publication that cannot reach a worker barrier", () => {
+test("writer deadlines poison a publication that cannot reach a worker barrier", (t) => {
+  let tick = 0;
+  let barrierWaits = 0;
+  t.mock.method(performance, "now", () => tick);
   const memory = new WebAssembly.Memory({ initial: 2, maximum: 4, shared: true });
   let hasThread = false;
   let writer!: DylinkWorkerWriter;
@@ -595,7 +598,11 @@ test("writer deadlines poison a publication that cannot reach a worker barrier",
     (error) => {
       throw error;
     },
-    () => {},
+    () => {
+      assert.equal(unwrap(channel.observe()).state, "prepare");
+      barrierWaits++;
+      tick = 5;
+    },
     5,
   );
   const pathname = new TextEncoder().encode("/plugins/late.so\0");
@@ -603,6 +610,7 @@ test("writer deadlines poison a publication that cannot reach a worker barrier",
   hasThread = true;
 
   assert.throws(() => writer.open(owner.pathAddress, 2));
+  assert.equal(barrierWaits, 1);
   assert.equal(unwrap(channel.observe()).state, "poison");
   assert.throws(
     () => owner.process.getWorkerPublicationState(),
