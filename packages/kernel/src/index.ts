@@ -68,7 +68,12 @@ export {
   type EthernetPort,
   type MacAddress,
 } from "./virtio/net.ts";
-export { type VsockConnection, type VsockDevice, vsockDevice } from "./virtio/vsock.ts";
+export {
+  type VsockConnection,
+  type VsockDevice,
+  type VsockListener,
+  vsockDevice,
+} from "./virtio/vsock.ts";
 export { decode_linux_bytes, encode_linux_string } from "./linux-string.ts";
 
 type MaybePromise<T> = T | PromiseLike<T>;
