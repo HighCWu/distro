@@ -652,6 +652,7 @@ lib.makeScope (scope: lib.callPackageWith ({ inherit lib pkgs; } // scope)) (
     vm-events = callPackage ./vm-events/package.nix { };
     direct-io = callPackage ./direct-io/package.nix { };
     packet-sockets = callPackage ./packet-sockets/package.nix { };
+    virtual-network = callPackage ./virtual-network/package.nix { };
     key-dh-runtime = callPackage ./key-dh-runtime/package.nix { };
     key-dh-runtime-wasm64 = self.key-dh-runtime.override {
       stdenv = self.stdenv-wasm64;
@@ -817,6 +818,13 @@ lib.makeScope (scope: lib.callPackageWith ({ inherit lib pkgs; } // scope)) (
       platform = self.platform-wasm64;
       musl = self.musl-wasm64;
       llvm-runtimes = self.llvm-runtimes-wasm64;
+      busybox = self.busybox-wasm64;
+      vm-test = vmTestWasm64;
+    };
+    virtual-network-wasm64 = self.virtual-network.override {
+      stdenv = self.stdenv-wasm64;
+      platform = self.platform-wasm64;
+      linux = self.linux-wasm64;
       busybox = self.busybox-wasm64;
       vm-test = vmTestWasm64;
     };
