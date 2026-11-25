@@ -1,37 +1,33 @@
 # SPDX-License-Identifier: MIT
-# Query the main module static data/BSS and published Wasm mmap records.
+# Query main-module static data/BSS, the linked stack, and Wasm mmap records.
 --- a/src/mman/mmap.c
 +++ b/src/mman/mmap.c
-@@ -47,6 +47,97 @@
+@@ -47,6 +47,107 @@
  
  static pthread_mutex_t mappings_lock = PTHREAD_MUTEX_INITIALIZER;
  static struct wasm_mapping *mappings;
 +
 +extern uintptr_t __wasm_brk_layout_v1(void);
++extern char __stack_low __attribute__((weak, visibility("hidden")));
++extern char __stack_high __attribute__((weak, visibility("hidden")));
 +
-+/* The main module's linker data/BSS interval is resident even though it has no
-+ * mmap record. Round it to Linux's 64 KiB page boundaries; do not include the
-+ * heap or the rest of Wasm linear memory. */
-+static int wasm_static_data_range(uintptr_t *begin, uintptr_t *end)
++/* Linker ranges are resident without mmap records. Round each range to
++ * Linux's 64 KiB pages without extending it into the rest of linear memory. */
++static int wasm_linked_page_range(uintptr_t low, uintptr_t high,
++				  uintptr_t *begin, uintptr_t *end)
 +{
-+	uintptr_t layout_address = __wasm_brk_layout_v1();
-+	const uintptr_t *layout = (const uintptr_t *)layout_address;
-+	uintptr_t data_begin, data_end, rounded_end;
++	uintptr_t rounded_end;
 +	uintptr_t page_mask = (uintptr_t)PAGESIZE - 1;
 +
-+	if (!layout_address)
++	if (high < low)
 +		return -EINVAL;
-+	data_begin = layout[1];
-+	data_end = layout[2];
-+	if (data_end < data_begin)
-+		return -EINVAL;
-+	if (data_begin == data_end) {
-+		*begin = *end = data_end;
++	if (low == high) {
++		*begin = *end = high;
 +		return 0;
 +	}
-+	*begin = data_begin & ~page_mask;
-+	rounded_end = data_end & ~page_mask;
-+	if (data_end & page_mask) {
++	*begin = low & ~page_mask;
++	rounded_end = high & ~page_mask;
++	if (high & page_mask) {
 +		if (rounded_end > UINTPTR_MAX - PAGESIZE)
 +			return -EINVAL;
 +		rounded_end += PAGESIZE;
@@ -42,13 +38,14 @@
 +	return 0;
 +}
 +
-+/* Return only the contiguous covered prefix. Published mmap records are
-+ * unioned with the main module's static data/BSS interval, but allocator
-+ * capacity, heap pages, and memory size are not proof of live mappings. */
++/* Union the published mmap records with the main module's linked ranges,
++ * returning only the contiguous covered prefix. */
 +__attribute__((export_name("__wasm_mmap_query_v1")))
 +long __wasm_mmap_query_v1(uintptr_t address, size_t pages)
 +{
-+	uintptr_t end, cursor, static_begin, static_end;
++	uintptr_t end, cursor, static_begin, static_end, stack_begin, stack_end;
++	uintptr_t layout_address;
++	const uintptr_t *layout;
 +	size_t bytes;
 +	struct wasm_mapping *current;
 +	int error, lock_error, unlock_error;
@@ -61,7 +58,18 @@
 +	if (bytes > UINTPTR_MAX - address)
 +		return -EINVAL;
 +	end = address + bytes;
-+	error = wasm_static_data_range(&static_begin, &static_end);
++	layout_address = __wasm_brk_layout_v1();
++	if (!layout_address)
++		return -EINVAL;
++	layout = (const uintptr_t *)layout_address;
++	error = wasm_linked_page_range(layout[1], layout[2],
++				       &static_begin, &static_end);
++	if (error)
++		return error;
++	/* Both weak bounds are equal in a shared module with no linked stack. */
++	error = wasm_linked_page_range((uintptr_t)&__stack_low,
++				       (uintptr_t)&__stack_high,
++				       &stack_begin, &stack_end);
 +	if (error)
 +		return error;
 +
@@ -74,6 +82,8 @@
 +		uintptr_t covered_end = cursor;
 +		if (static_begin <= cursor && cursor < static_end)
 +			covered_end = static_end;
++		if (stack_begin <= cursor && cursor < stack_end && stack_end > covered_end)
++			covered_end = stack_end;
 +
 +		for (current = mappings; current; current = current->next) {
 +			uintptr_t mapping_begin = (uintptr_t)current->address;

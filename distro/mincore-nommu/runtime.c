@@ -71,6 +71,14 @@ int main(void)
 	puts("mincore-nommu: initial image data and BSS residency pass");
 	fflush(stdout);
 
+	volatile unsigned char stack_probe = 0x38;
+	uintptr_t stack_page = (uintptr_t)&stack_probe & ~(uintptr_t)(page_size - 1);
+	require(stack_probe == 0x38, "touch linked stack page");
+	require_resident((void *)stack_page, page_size, page_size,
+			 "query the current stack page");
+	puts("mincore-nommu: linked stack residency pass");
+	fflush(stdout);
+
 	require(page_size <= SIZE_MAX / 3, "three-page length does not overflow");
 	size_t length = page_size * 3;
 	unsigned char *mapping = mmap(NULL, length, PROT_READ | PROT_WRITE,
