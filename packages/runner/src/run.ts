@@ -65,7 +65,8 @@ options:
   -j, --cpus <number>     Number of CPUs to use (default: number of CPUs on the machine)
       --no-console        Don't attach a console device
       --no-entropy        Don't attach an entropy device
-      --disk <string>     Path to a disk image to use (can be specified multiple times)
+      --disk <string>     Local disk image path or read-only HTTP(S) Range URL (repeatable)
+                          HTTP images require a strong ETag and byte-range support
       --share HOST:GUEST  Mount a host directory read-write (can be specified multiple times)
       --share-ro HOST:GUEST
                           Mount a host directory read-only (can be specified multiple times)

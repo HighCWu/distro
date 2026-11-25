@@ -57,6 +57,7 @@ let
       cp packages/runner/src/run.ts $out/run.ts
       cp packages/runner/src/disk-worker.ts $out/disk-worker.ts
       cp packages/runner/src/disk-storage.ts $out/disk-storage.ts
+      cp packages/runner/src/http-disk-storage.ts $out/http-disk-storage.ts
       cp packages/runner/src/shares.ts $out/shares.ts
       cp packages/runner/package.json $out/package.json
       cp -RL ${bytes}/. $out/node_modules/@lowland/bytes/

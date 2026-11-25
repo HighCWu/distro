@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import { spawn } from "node:child_process";
 import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
+import { createServer } from "node:http";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import test from "node:test";
@@ -63,4 +64,53 @@ test("runner persists a virtio disk served by a filesystem worker", async (t) =>
     "until [ -b /dev/vdb ]; do sleep 0.1; done; dd if=/dev/vdb bs=512 count=1 2>/dev/null | head -n 1",
   );
   assert.match(output, new RegExp(marker));
+});
+
+test("runner reads a remote virtio disk and powers off", async (t) => {
+  const image = Buffer.alloc(1024 * 1024);
+  const marker = "http-worker-virtio-range";
+  const markerOffset = 128 * 512;
+  image.write(marker + "\n", markerOffset);
+  const etag = '"runner-range-test"';
+  const requests: { offset: number; end: number; validator: string | undefined }[] = [];
+  const server = createServer((request, response) => {
+    const range = /^bytes=(\d+)-(\d+)$/.exec(request.headers.range ?? "");
+    const offset = Number(range?.[1]);
+    const end = Number(range?.[2]);
+    const validator = request.headers["if-range"];
+    if (
+      !range ||
+      Array.isArray(validator) ||
+      offset > end ||
+      end >= image.length ||
+      (requests.length && validator !== etag)
+    ) {
+      response.writeHead(400).end();
+      return;
+    }
+    requests.push({ offset, end, validator });
+    response.writeHead(206, {
+      ETag: etag,
+      "Content-Range": `bytes ${offset}-${end}/${image.length}`,
+      "Content-Length": end - offset + 1,
+    });
+    response.end(image.subarray(offset, end + 1));
+  });
+  t.after(() => {
+    server.close();
+    server.closeAllConnections();
+  });
+  await new Promise<void>((resolve, reject) => {
+    server.once("error", reject);
+    server.listen(0, "127.0.0.1", resolve);
+  });
+  const address = server.address();
+  assert(address && typeof address === "object");
+  const output = await run_disk(
+    `http://127.0.0.1:${address.port}/disk.img`,
+    "until [ -b /dev/vdb ]; do sleep 0.1; done; dd if=/dev/vdb bs=512 skip=128 count=1 2>/dev/null | head -n 1",
+  );
+  assert.match(output, new RegExp(marker));
+  assert.deepEqual(requests[0], { offset: 0, end: 511, validator: undefined });
+  assert(requests.some(({ offset, end }) => offset <= markerOffset && end >= markerOffset));
 });
