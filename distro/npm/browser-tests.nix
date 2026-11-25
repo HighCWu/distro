@@ -265,6 +265,7 @@ let
           suite = agentPublicSuite true true;
           expectedTests = [ "runs native wasm64 HTTP through public agent networking" ];
           project = lib.removePrefix "agent-public-network-wasm64-" name;
+          recordRuntimeLog = true;
         }
       ))
       // (lib.genAttrs [ "agent-minimal-root-wasm64-chromium" "agent-minimal-root-wasm64-firefox" ] (
