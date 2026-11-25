@@ -19,7 +19,9 @@ export async function checkPublicNetwork(
   const body = "native wasm64 public network passed\n";
   await agent.fs.mkdir("/tmp/public-www");
   await agent.fs.writeTextFile("/tmp/public-www/index.html", body);
-  const server = await agent.exec(["httpd", "-f", "-p", "18080", "-h", "/tmp/public-www"]);
+  // The attachment and the LISTEN check below both use IPv4. A bare port
+  // lets an IPv6-enabled BusyBox choose an IPv6 wildcard listener instead.
+  const server = await agent.exec(["httpd", "-f", "-p", "0.0.0.0:18080", "-h", "/tmp/public-www"]);
   const stdout = collect(server.stdout);
   const stderr = collect(server.stderr);
   void stdout.catch(() => {});
