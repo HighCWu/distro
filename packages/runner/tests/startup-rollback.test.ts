@@ -9,7 +9,8 @@ import { join } from "node:path";
 import test from "node:test";
 import { fileURLToPath } from "node:url";
 
-const runner = fileURLToPath(new URL("../src/run.ts", import.meta.url));
+const packagedRunner = process.env.LINUX_RUNNER_TEST_RUNNER;
+const sourceRunner = fileURLToPath(new URL("../src/run.ts", import.meta.url));
 
 async function run(args: string[], fault?: "terminate" | "kernel") {
   // Exiting a failed entry module alone does not prove Worker teardown. Record
@@ -48,9 +49,15 @@ async function run(args: string[], fault?: "terminate" | "kernel") {
     }
   `;
   const preload = `data:text/javascript;base64,${Buffer.from(monitor).toString("base64")}`;
-  const child = spawn(process.execPath, ["--import", preload, runner, "--no-console", ...args], {
-    stdio: ["ignore", "ignore", "pipe"],
-  });
+  // The packaged launcher owns its dependency resolution. Preload through its
+  // environment so the same real Worker instrumentation survives the wrapper.
+  const env = { ...process.env };
+  env.NODE_OPTIONS = `${env.NODE_OPTIONS ? `${env.NODE_OPTIONS} ` : ""}--import=${preload}`;
+  const child = spawn(
+    packagedRunner || process.execPath,
+    [...(packagedRunner ? [] : [sourceRunner]), "--no-console", ...args],
+    { env, stdio: ["ignore", "ignore", "pipe"] },
+  );
   let stderr = "";
   child.stderr.setEncoding("utf8");
   child.stderr.on("data", (chunk: string) => {
