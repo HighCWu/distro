@@ -1,5 +1,13 @@
 #!/usr/bin/env node
-import { bootMachine, consoleDevice, entropyDevice, workerDevice } from "@lowland/kernel";
+import {
+  bootMachine,
+  closeDevice,
+  consoleDevice,
+  entropyDevice,
+  workerDevice,
+  type Machine,
+  type VirtioDevice,
+} from "@lowland/kernel";
 import { availableParallelism } from "node:os";
 import { Readable, Writable } from "node:stream";
 import { parseArgs } from "node:util";
@@ -136,25 +144,42 @@ if (args.entropy) {
   devices.push(entropyDevice());
 }
 
-for (const disk of args.disk) {
-  const worker = new Worker(new URL("./disk-worker.ts", import.meta.url), {
-    workerData: { path: disk },
-  });
-  try {
-    const device = await workerDevice(worker);
-    void device.closed.finally(() => worker.terminate()).catch(() => {});
+const openDisks = new Set<VirtioDevice>();
+const diskTerminations: Promise<void>[] = [];
+let machine: Machine;
+try {
+  for (const disk of args.disk) {
+    const worker = new Worker(new URL("./disk-worker.ts", import.meta.url), {
+      workerData: { path: disk },
+    });
+    let device: VirtioDevice;
+    try {
+      device = await workerDevice(worker);
+    } catch (error) {
+      await worker.terminate().catch(() => {});
+      throw error;
+    }
+    openDisks.add(device);
+    const termination = device.closed.finally(() => {
+      openDisks.delete(device);
+      return worker.terminate();
+    });
+    void termination.catch(() => {});
+    diskTerminations.push(termination);
     devices.push(device);
-  } catch (error) {
-    await worker.terminate();
-    throw error;
   }
-}
 
-const machine = await bootMachine({
-  args: ["root=/dev/vda", "rootwait", "init=/init", args.cmdline, shares.cmdline].filter(Boolean),
-  cpus: parseInt(args.cpus, 10),
-  plugins: devices,
-});
+  machine = await bootMachine({
+    args: ["root=/dev/vda", "rootwait", "init=/init", args.cmdline, shares.cmdline].filter(Boolean),
+    cpus: parseInt(args.cpus, 10),
+    plugins: devices,
+  });
+} catch (error) {
+  // bootMachine may already have closed some devices before rejecting.
+  await Promise.allSettled([...openDisks].map(closeDevice));
+  await Promise.allSettled(diskTerminations);
+  throw error;
+}
 
 const bootConsole = machine.bootConsole
   .pipeTo(Writable.toWeb(process.stderr) as WritableStream<Uint8Array>, {
@@ -171,4 +196,5 @@ try {
   restoreTerminal();
   if (args.console) process.stdin.pause();
   await bootConsole;
+  await Promise.allSettled(diskTerminations);
 }
