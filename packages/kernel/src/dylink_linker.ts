@@ -8,6 +8,7 @@ import {
   read_wasm_memories,
   dynamic_tail_table_import,
   prepare_wasm_dynamic_tail_calls,
+  wasm_instantiation_is_table_inert,
   type WasmDylink,
 } from "./wasm_binary.ts";
 import { wasm_table_get } from "./wasm.ts";
@@ -118,6 +119,10 @@ export function link_dylink_graph(options: {
   /** Only the process profile which refuses Worker creation may use LLD's
    * first-thread TLS image. No imported/public TLS binding is provided. */
   initialThreadLocalTls?: boolean;
+  /** Skip only the post-instantiation table pass for modules without Start or
+   * Element sections. The caller must ensure execution.prepare does not add
+   * instantiation effects. Replay and relocation/constructor calls still settle. */
+  skipTableSettleForInertInstantiation?: boolean;
   /** Process-owned execution wrappers preserve the calling object's identity. */
   execution?: {
     prepare(name: string, bytes: Uint8Array<ArrayBuffer>): WebAssembly.Module;
@@ -150,6 +155,7 @@ export function link_dylink_graph(options: {
       tableBase: bigint;
       dependencies: string[];
       tailTableRequired: boolean;
+      settleAfterInstantiation: boolean;
       initialization: Initialization;
     }
   >();
@@ -236,6 +242,10 @@ export function link_dylink_graph(options: {
       signatures: read_wasm_dynamic_signatures(bytes),
       exports,
       tailTableRequired: tail.tailTableRequired,
+      settleAfterInstantiation:
+        !options.skipTableSettleForInertInstantiation ||
+        !!options.replay ||
+        !wasm_instantiation_is_table_inert(bytes),
       base: 0n,
       tableBase: 0n,
       dependencies: metadata.needed.map(
@@ -1016,7 +1026,8 @@ export function link_dylink_graph(options: {
         ? options.execution.instantiate(record.name, instantiate)
         : instantiate();
       options.execution?.register(record.name, record.instance);
-      if (!options.replay?.deferTableWrites) options.execution?.settleTable();
+      if (!options.replay?.deferTableWrites && record.settleAfterInstantiation)
+        options.execution?.settleTable();
       // Publish each provider immediately, as the previous late JS lookup did.
       // A later start section can call an earlier module through this edge.
       for (const { providerName, target } of forwards.get(record) ?? []) {

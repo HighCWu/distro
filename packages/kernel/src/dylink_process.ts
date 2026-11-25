@@ -3421,6 +3421,7 @@ export class ProcessDylink {
           externalTags: this.#tags,
           functionPointers: this.#pointers,
           initialThreadLocalTls: true,
+          skipTableSettleForInertInstantiation: !scopedPublicationOpen,
           lazyFunctions: !!(flags & 1),
           validateSymbols: (types) => {
             if (flags & 256) this.#validateLazyFunctionTypes(types);

@@ -368,6 +368,23 @@ function read_definitions(bytes: Cursor, definitions: WasmMemoryType[]) {
   bytes.expect_done("memory section");
 }
 
+/** Conservative framing probe for an already engine-validated side module. */
+export function wasm_instantiation_is_table_inert(module: Uint8Array): boolean {
+  try {
+    const bytes = new Cursor(module);
+    for (const expected of [0, 97, 115, 109, 1, 0, 0, 0])
+      if (bytes.byte() !== expected) return false;
+    while (!bytes.done) {
+      const id = bytes.byte();
+      bytes.span();
+      if (id === 8 || id === 9 || id > 13) return false;
+    }
+    return true;
+  } catch {
+    return false;
+  }
+}
+
 export function read_wasm_memories(module: Uint8Array, globals?: WasmGlobalImport[]): WasmMemories {
   const bytes = new Cursor(module);
   const header = [0x00, 0x61, 0x73, 0x6d, 0x01, 0x00, 0x00, 0x00];

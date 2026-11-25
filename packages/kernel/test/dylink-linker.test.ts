@@ -30,6 +30,7 @@ function binary(
     callLazyExport?: boolean;
     startCall?: boolean;
     privateExport?: string;
+    element?: "empty" | "active";
   } = {},
 ) {
   const metadata = [
@@ -76,6 +77,9 @@ function binary(
     ]),
     ...(options.trap === "start" ? [section(8, [0])] : []),
     ...(options.startCall ? [section(8, [(options.functionImports ?? 0) + 1])] : []),
+    ...(options.element
+      ? [section(9, options.element === "empty" ? [0] : [1, 0, 0x41, 0, 11, 1, 0])]
+      : []),
     section(10, [
       options.startCall || options.callLazyExport ? 2 : 1,
       body.length,
@@ -124,6 +128,81 @@ test("deferred Worker replay preserves the live table and pointer map", () => {
   assert.deepEqual([...pointers], [[marker, 7n]]);
   assert.equal(graph.replayTableWrites.find((write) => write.index === 3n)?.value, answer.value);
   assert.equal(graph.replayFunctionPointers.get(answer.value as CallableFunction), 3n);
+});
+
+test("post-instantiation table settling skips only opted-in inert non-replay modules", () => {
+  const tableImport = [1, ...text("env"), ...text("__indirect_function_table"), 1, 0x70, 0, 1];
+  for (const mode of [
+    "default",
+    "inert",
+    "empty-element",
+    "active-element",
+    "start",
+    "replay",
+  ] as const) {
+    const module =
+      mode === "start"
+        ? binary({
+            startCall: true,
+            functionImports: 1,
+            imports: [1, ...text("env"), ...text("hook"), 0, 0],
+          })
+        : mode === "empty-element" || mode === "active-element"
+          ? binary({ imports: tableImport, element: mode === "empty-element" ? "empty" : "active" })
+          : binary();
+    const options = setup(new Map([["root", module]]));
+    const marker = new WebAssembly.Instance(new WebAssembly.Module(binary())).exports
+      .answer as CallableFunction;
+    let settles = 0;
+    let starts = 0;
+    const linked = link_dylink_graph({
+      ...options,
+      skipTableSettleForInertInstantiation: mode !== "default",
+      ...(mode === "replay"
+        ? {
+            replay: {
+              placements: new Map([["root", { base: 128n, tableBase: 3n }]]),
+              functionSlots: new Map([["root", new Map([["answer", 3n]])]]),
+            },
+          }
+        : {}),
+      hostFunctions: new Map([
+        [
+          "env",
+          new Map([
+            [
+              "hook",
+              () => {
+                starts++;
+                options.table.set(0, marker);
+                return 42;
+              },
+            ],
+          ]),
+        ],
+      ]),
+      execution: {
+        prepare(_name, bytes) {
+          return new WebAssembly.Module(bytes);
+        },
+        instantiate(_name, action) {
+          return action();
+        },
+        register() {},
+        callable(fn) {
+          return fn;
+        },
+        settleTable() {
+          settles++;
+          if (mode === "start") assert.equal(options.table.get(0), marker);
+          if (mode === "active-element") assert.equal(options.table.get(0)?.(), 42);
+        },
+      },
+    });
+    assert.equal((linked.lookup("answer")!.value as CallableFunction)(), 42);
+    assert.equal(settles, mode === "inert" ? 0 : 1, mode);
+    assert.equal(starts, mode === "start" ? 1 : 0, mode);
+  }
 });
 
 test("execution hooks retain original public scope, own-object lookup and canonical wrapped pointers", () => {
@@ -224,49 +303,52 @@ test("execution hooks retain original public scope, own-object lookup and canoni
 });
 
 test("relocations and constructors use execution callables and settle successful table changes", () => {
-  const options = setup(
-    new Map([
-      ["root", binary({ needed: ["reloc"], exportName: "__wasm_call_ctors" })],
-      ["reloc", binary({ exportName: "__wasm_apply_data_relocs" })],
-    ]),
-  );
-  const owners = new Map<CallableFunction, string>();
-  const events: string[] = [];
-  const linked = link_dylink_graph({
-    ...options,
-    execution: {
-      prepare(_name, bytes) {
-        return new WebAssembly.Module(bytes);
+  for (const skipTableSettleForInertInstantiation of [false, true]) {
+    const options = setup(
+      new Map([
+        ["root", binary({ needed: ["reloc"], exportName: "__wasm_call_ctors" })],
+        ["reloc", binary({ exportName: "__wasm_apply_data_relocs" })],
+      ]),
+    );
+    const owners = new Map<CallableFunction, string>();
+    const events: string[] = [];
+    const linked = link_dylink_graph({
+      ...options,
+      skipTableSettleForInertInstantiation,
+      execution: {
+        prepare(_name, bytes) {
+          return new WebAssembly.Module(bytes);
+        },
+        instantiate(name, action) {
+          events.push(`instantiate:${name}`);
+          return action();
+        },
+        register(name, instance) {
+          for (const value of Object.values(instance.exports))
+            if (typeof value === "function") owners.set(value, name);
+        },
+        callable(fn) {
+          events.push(`call:${owners.get(fn)}`);
+          return fn;
+        },
+        settleTable() {
+          events.push("settle");
+        },
       },
-      instantiate(name, action) {
-        events.push(`instantiate:${name}`);
-        return action();
-      },
-      register(name, instance) {
-        for (const value of Object.values(instance.exports))
-          if (typeof value === "function") owners.set(value, name);
-      },
-      callable(fn) {
-        events.push(`call:${owners.get(fn)}`);
-        return fn;
-      },
-      settleTable() {
-        events.push("settle");
-      },
-    },
-  });
-  assert.deepEqual(events, [
-    "instantiate:reloc",
-    "settle",
-    "instantiate:root",
-    "settle",
-    "call:reloc",
-    "settle",
-  ]);
-  assert.equal(linked.lookupOwn("root", "__wasm_call_ctors"), undefined);
-  events.length = 0;
-  linked.initialize();
-  assert.deepEqual(events, ["call:root", "settle"]);
+    });
+    assert.deepEqual(events, [
+      "instantiate:reloc",
+      ...(skipTableSettleForInertInstantiation ? [] : ["settle"]),
+      "instantiate:root",
+      ...(skipTableSettleForInertInstantiation ? [] : ["settle"]),
+      "call:reloc",
+      "settle",
+    ]);
+    assert.equal(linked.lookupOwn("root", "__wasm_call_ctors"), undefined);
+    events.length = 0;
+    linked.initialize();
+    assert.deepEqual(events, ["call:root", "settle"]);
+  }
 });
 
 test("dependency graph deduplicates diamonds and zeroes only allocated data", () => {
