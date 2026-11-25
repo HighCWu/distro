@@ -127,7 +127,27 @@ test("disk storage completes short host I/O and stops at zero progress", () => {
   storage.close!();
 });
 
-test("read-only disk fallback omits write and flush and closes without fsync", () => {
+test("disk zeroing completes partial writes and rejects short completion", () => {
+  const { operations, calls } = fake();
+  let storage!: BlockDeviceStorage;
+  installDiskStorage(
+    "disk",
+    (value) => {
+      storage = value;
+    },
+    operations,
+  );
+  assert.equal(storage.writeZeroes!(100, 5), undefined);
+  assert.deepEqual(calls, ["r+", ["write", 0, 5, 100], ["write", 2, 3, 102], ["write", 4, 1, 104]]);
+
+  assert.throws(() => storage.writeZeroes!(510, 5), /exceeds capacity/);
+  assert.equal(calls.length, 4, "out-of-range zeroing must not write to the file");
+  operations.writeSync = () => 0;
+  assert.throws(() => storage.writeZeroes!(100, 5), /could not write the complete/);
+  storage.close!();
+});
+
+test("read-only disk fallback omits write, zeroing and flush and closes without fsync", () => {
   const { operations, calls } = fake();
   operations.openSync = (_path, flags) => {
     calls.push(flags);
@@ -138,6 +158,7 @@ test("read-only disk fallback omits write and flush and closes without fsync", (
     "disk",
     (storage) => {
       assert.equal(storage.write, undefined);
+      assert.equal(storage.writeZeroes, undefined);
       assert.equal(storage.flush, undefined);
       storage.close!();
     },
@@ -175,6 +196,31 @@ test("disk close always releases the descriptor and preserves a failed fsync", (
     (error) => error === reason,
   );
   assert.equal(closed, 1);
+});
+
+test("disk zeroing preserves bytes before and after a multi-chunk range", async () => {
+  const directory = mkdtempSync(join(tmpdir(), "linux-wasm-disk-zero-"));
+  const path = join(directory, "root.img");
+  const original = new Uint8Array(160 * 1024).fill(0x7b);
+  const expected = original.slice();
+  const offset = 512;
+  const length = 130 * 1024;
+  expected.fill(0, offset, offset + length);
+  let storage: BlockDeviceStorage | undefined;
+  try {
+    writeFileSync(path, original);
+    installDiskStorage(path, (value) => {
+      storage = value;
+    });
+    await storage!.writeZeroes!(offset, length);
+    await storage!.close!();
+    storage = undefined;
+    assert.deepEqual(new Uint8Array(readFileSync(path)), expected);
+  } finally {
+    await storage?.close?.();
+    unlinkSync(path);
+    rmdirSync(directory);
+  }
 });
 
 test("disk storage persists actual file bytes across descriptor reopen", async () => {

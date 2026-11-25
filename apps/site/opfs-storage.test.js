@@ -145,6 +145,83 @@ for (const operation of ["read", "write"]) {
   });
 }
 
+test("OPFS zeroes an exact interior range across chunks and short writes", () => {
+  const file = new Uint8Array(3 * 64 * 1024).fill(42);
+  const start = 513;
+  const end = file.length - 509;
+  let nextOffset = start;
+  let writes = 0;
+  let storage;
+  installOpfsStorage(
+    {
+      getSize: () => file.length,
+      write(data, { at }) {
+        assert.equal(at, nextOffset);
+        assert.ok(data.length <= 64 * 1024);
+        const count = Math.min(4 * 1024, data.length);
+        file.set(data.subarray(0, count), at);
+        nextOffset += count;
+        writes++;
+        return count;
+      },
+    },
+    undefined,
+    (value) => {
+      storage = value;
+    },
+  );
+  storage.writeZeroes(start, end - start);
+  assert.equal(nextOffset, end);
+  assert.equal(storage.capacity, file.length);
+  assert.ok(file.subarray(0, start).every((byte) => byte === 42));
+  assert.ok(file.subarray(start, end).every((byte) => byte === 0));
+  assert.ok(file.subarray(end).every((byte) => byte === 42));
+
+  const completedWrites = writes;
+  storage.writeZeroes(file.length, 0);
+  for (const [offset, length] of [
+    [-1, 1],
+    [0, -1],
+    [0.5, 1],
+    [0, NaN],
+    [file.length - 1, 2],
+    [file.length + 1, 0],
+    [0, 2 ** 53],
+  ]) {
+    assert.throws(() => storage.writeZeroes(offset, length), RangeError);
+  }
+  assert.equal(writes, completedWrites);
+});
+
+test("OPFS zeroing reports a nonprogress write and propagates handle errors", () => {
+  const file = new Uint8Array(512).fill(42);
+  const failure = new Error("storage unavailable");
+  let writes = 0;
+  let storage;
+  installOpfsStorage(
+    {
+      getSize: () => file.length,
+      write(data, { at }) {
+        if (++writes === 2) return 0;
+        if (writes > 2) throw failure;
+        file.set(data.subarray(0, 2), at);
+        return 2;
+      },
+    },
+    undefined,
+    (value) => {
+      storage = value;
+    },
+  );
+  assert.throws(() => storage.writeZeroes(5, 4), /zeroing stopped/);
+  assert.equal(writes, 2);
+  assert.deepEqual(file.subarray(4, 10), Uint8Array.of(42, 0, 0, 42, 42, 42));
+  assert.throws(
+    () => storage.writeZeroes(5, 4),
+    (error) => error === failure,
+  );
+});
+
 test("invalid capacity releases the handle without truncating data", () => {
   for (const capacity of [-512, 1, NaN, Infinity, 2 ** 53]) {
     let closed = 0;

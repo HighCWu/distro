@@ -2,6 +2,8 @@
 import * as fs from "node:fs";
 import type { BlockDeviceStorage } from "@lowland/kernel";
 
+const zeroChunk = new Uint8Array(64 * 1024);
+
 interface DiskFileOperations {
   openSync(path: string, flags: string): number;
   fstatSync(file: number): { size: number };
@@ -39,6 +41,16 @@ export function installDiskStorage(
   }
   try {
     const { size: capacity } = operations.fstatSync(file);
+    function write(offset: number, data: Uint8Array, length = data.byteLength) {
+      let written = 0;
+      while (written < length) {
+        const n = operations.writeSync(file, data, written, length - written, offset + written);
+        if (n <= 0) break;
+        written += n;
+      }
+      return written;
+    }
+
     install({
       capacity,
       read(offset, target) {
@@ -56,22 +68,26 @@ export function installDiskStorage(
         }
         return read;
       },
-      write: readonly
+      write: readonly ? undefined : (offset, data) => write(offset, data),
+      writeZeroes: readonly
         ? undefined
-        : (offset, data) => {
-            let written = 0;
-            while (written < data.byteLength) {
-              const n = operations.writeSync(
-                file,
-                data,
-                written,
-                data.byteLength - written,
-                offset + written,
-              );
-              if (n === 0) break;
-              written += n;
+        : (offset, length) => {
+            if (
+              !Number.isSafeInteger(offset) ||
+              !Number.isSafeInteger(length) ||
+              offset < 0 ||
+              length < 0 ||
+              length > capacity - offset
+            ) {
+              throw new RangeError("disk zero range exceeds capacity");
             }
-            return written;
+            while (length > 0) {
+              const chunkLength = Math.min(length, zeroChunk.byteLength);
+              if (write(offset, zeroChunk, chunkLength) !== chunkLength)
+                throw new Error("could not write the complete disk zero range");
+              offset += chunkLength;
+              length -= chunkLength;
+            }
           },
       flush: readonly ? undefined : () => operations.fsyncSync(file),
       close() {

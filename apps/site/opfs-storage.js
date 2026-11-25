@@ -30,6 +30,16 @@ export function installOpfsStorage(access, requestedCapacity, install) {
       access.truncate(requestedCapacity);
     }
     const capacity = access.getSize();
+    function write(offset, data) {
+      let written = 0;
+      while (written < data.byteLength) {
+        const n = access.write(data.subarray(written), { at: offset + written });
+        if (n === 0) break;
+        written += n;
+      }
+      return written;
+    }
+
     install({
       capacity,
       read(offset, target) {
@@ -41,14 +51,26 @@ export function installOpfsStorage(access, requestedCapacity, install) {
         }
         return read;
       },
-      write(offset, data) {
-        let written = 0;
-        while (written < data.byteLength) {
-          const n = access.write(data.subarray(written), { at: offset + written });
-          if (n === 0) break;
-          written += n;
+      write,
+      writeZeroes(offset, length) {
+        if (
+          !Number.isSafeInteger(offset) ||
+          !Number.isSafeInteger(length) ||
+          offset < 0 ||
+          length < 0 ||
+          length > capacity - offset
+        ) {
+          throw new RangeError("invalid block zero range");
         }
-        return written;
+        const zeroes = new Uint8Array(Math.min(length, 64 * 1024));
+        let cleared = 0;
+        while (cleared < length) {
+          const chunk = zeroes.subarray(0, Math.min(zeroes.byteLength, length - cleared));
+          if (write(offset + cleared, chunk) !== chunk.byteLength) {
+            throw new Error("OPFS zeroing stopped before completing the requested range");
+          }
+          cleared += chunk.byteLength;
+        }
       },
       flush() {
         access.flush();
