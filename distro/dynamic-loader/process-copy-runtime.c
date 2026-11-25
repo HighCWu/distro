@@ -3,6 +3,7 @@
 
 #include <dlfcn.h>
 #include <errno.h>
+#include <fcntl.h>
 #include <sched.h>
 #include <stdint.h>
 #include <stdio.h>
@@ -49,6 +50,13 @@ struct DSOChildArguments {
   int changed_global;
   int new_value;
   int new_tls;
+};
+
+struct PrivateVforkArguments {
+  struct DSOChildArguments dso;
+  int *heap_value;
+  int pipe_read;
+  int pipe_write;
 };
 
 static _Noreturn void fail(const char *stage, int error)
@@ -246,13 +254,31 @@ static int second_child_run(void *opaque)
   return 0;
 }
 
-static pid_t start_child(int (*entry)(void *), void *args,
-                         void **stack_out)
+static int private_vfork_child_run(void *opaque)
+{
+  struct PrivateVforkArguments *args = opaque;
+  if (close(args->pipe_read) != 0) fail("private vfork child close reader", errno);
+  if (*args->heap_value != 107) fail("private vfork inherited heap", EPROTO);
+  (void)second_child_run(&args->dso);
+  *args->heap_value = 109;
+  if (*args->heap_value != 109) fail("private vfork child heap mutation", EPROTO);
+
+  // Last callback actions: the parent must observe both the marker and EOF
+  // immediately after clone returns, without a blocking read or a wait first.
+  const char marker = 'V';
+  if (write(args->pipe_write, &marker, 1) != 1)
+    fail("private vfork child final marker", errno);
+  if (close(args->pipe_write) != 0) fail("private vfork child close writer", errno);
+  return 0;
+}
+
+static pid_t start_child_with_flags(int (*entry)(void *), void *args,
+                                   int flags, void **stack_out)
 {
   void *stack = malloc(CHILD_STACK_SIZE);
   if (!stack) fail("allocate child stack", errno ? errno : ENOMEM);
   uintptr_t stack_top = ((uintptr_t)stack + CHILD_STACK_SIZE) & ~(uintptr_t)15;
-  pid_t child = clone(entry, (void *)stack_top, SIGCHLD, args);
+  pid_t child = clone(entry, (void *)stack_top, flags, args);
   if (child < 0) {
     int error = errno;
     free(stack);
@@ -260,6 +286,11 @@ static pid_t start_child(int (*entry)(void *), void *args,
   }
   *stack_out = stack;
   return child;
+}
+
+static pid_t start_child(int (*entry)(void *), void *args, void **stack_out)
+{
+  return start_child_with_flags(entry, args, SIGCHLD, stack_out);
 }
 
 int main(void)
@@ -340,6 +371,37 @@ int main(void)
       process_copy_main_global != 29 || process_copy_main_tls != 47)
     fail("parent retained DSO/main data after second child", EPROTO);
   puts("PROCESS_COPY_SECOND_CHILD_OK");
+
+  int pipe_fds[2];
+  if (pipe2(pipe_fds, O_NONBLOCK | O_CLOEXEC) != 0)
+    fail("private vfork create completion pipe", errno);
+  int *heap_value = malloc(sizeof(*heap_value));
+  if (!heap_value) fail("private vfork allocate heap", ENOMEM);
+  *heap_value = 107;
+  struct PrivateVforkArguments synchronous = {
+      .dso = second,
+      .heap_value = heap_value,
+      .pipe_read = pipe_fds[0],
+      .pipe_write = pipe_fds[1],
+  };
+  void *synchronous_stack = NULL;
+  pid_t synchronous_child = start_child_with_flags(
+      private_vfork_child_run, &synchronous, SIGCHLD | CLONE_VFORK,
+      &synchronous_stack);
+  if (close(pipe_fds[1]) != 0) fail("private vfork parent close writer", errno);
+  char marker = 0;
+  if (read(pipe_fds[0], &marker, 1) != 1 || marker != 'V')
+    fail("private vfork parent resumed before final child marker", EPROTO);
+  if (read(pipe_fds[0], &marker, 1) != 0)
+    fail("private vfork parent resumed before child writer closed", EPROTO);
+  if (*heap_value != 107 || constructor_count() != 1 || get_value() != 41 ||
+      call() != 82 || process_copy_main_global != 29 || process_copy_main_tls != 47)
+    fail("private vfork parent retained heap and DSO state", EPROTO);
+  (void)wait_for_child(synchronous_child, "wait for private vfork child");
+  if (close(pipe_fds[0]) != 0) fail("private vfork parent close reader", errno);
+  free(synchronous_stack);
+  free(heap_value);
+  puts("PROCESS_COPY_PRIVATE_VFORK_CHILD_OK");
 
   if (dlclose(primary_handle) != 0) fail_dl("dlclose parent primary library", dlerror());
   puts("PROCESS_COPY_PARENT_CLOSE_OK");

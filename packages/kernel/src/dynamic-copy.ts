@@ -9,13 +9,13 @@ import { claim_dynamic_loader, create_dynamic_process_state } from "./dynamic-th
 import type { UserContext, WasmAddress } from "./wasm.ts";
 
 const CLONE_VM = 0x00000100n;
-const CLONE_VFORK = 0x00004000n;
 const CLONE_THREAD = 0x00010000n;
 
 /**
  * Admit only callback-v1 private-memory process copies. The callback address
  * is checked for null but remains opaque; Linux validates all remaining clone
- * flags and pointer arguments.
+ * flags and pointer arguments. CLONE_VFORK without CLONE_VM still takes the
+ * private COPY path; Linux suspends the parent until the child releases its mm.
  */
 export function dynamic_process_copy_allowed({
   context,
@@ -59,7 +59,7 @@ export function dynamic_process_copy_allowed({
   } catch {
     return false;
   }
-  return (flagBits & (CLONE_VM | CLONE_THREAD | CLONE_VFORK)) === 0n;
+  return (flagBits & (CLONE_VM | CLONE_THREAD)) === 0n;
 }
 
 /**

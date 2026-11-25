@@ -402,6 +402,7 @@ pkgs.stdenvNoCC.mkDerivation (finalAttrs: {
     process-copy-runtime = vm-test.rawInitramfsTest {
       name = "dynamic-process-copy-${platform.wasmArch}";
       init = "${finalAttrs.finalPackage}/process-copy-runtime.wasm";
+      recordRuntimeLog = true;
       files = {
         "/plugins/libprocess-copy-library.so" = "${finalAttrs.finalPackage}/lib/libprocess-copy-library.so";
         "/plugins/libprocess-copy-after.so" = "${finalAttrs.finalPackage}/lib/libprocess-copy-after.so";

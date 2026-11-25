@@ -133,7 +133,26 @@ for (const address of ["i32", "i64"] as const) {
       "the callback argument is opaque and need not be non-null",
     );
 
-    for (const flag of [CLONE_VM, CLONE_THREAD, CLONE_VFORK]) {
+    assert.equal(
+      candidate({
+        args: [
+          word(address, 1),
+          word(address, 0),
+          word(address, CLONE_VFORK | 17),
+          word(address, 0),
+          word(address, 0),
+          word(address, 0),
+        ],
+      }),
+      true,
+      "private CLONE_VFORK retains Linux parent synchronization with copied memory",
+    );
+    for (const flag of [
+      CLONE_VM,
+      CLONE_THREAD,
+      CLONE_VM | CLONE_VFORK,
+      CLONE_THREAD | CLONE_VFORK,
+    ]) {
       assert.equal(
         candidate({
           args: [
