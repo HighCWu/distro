@@ -417,12 +417,12 @@ export class MemoryFs implements Fs {
 
   // --- Fs (the guest's side) -----------------------------------------------------
 
-  getattr(path: string): FsAttr {
-    return this.#attr(this.#lookup(path));
+  getattr(path: string, expected?: FsIdentity): FsAttr {
+    return this.#attr(this.#checkedNode(path, expected));
   }
 
-  readdir(path: string): FsDirEntry[] {
-    const n = this.#lookup(path);
+  readdir(path: string, expected?: FsIdentity): FsDirEntry[] {
+    const n = this.#checkedNode(path, expected);
     if (!n.children) throw new FsError("ENOTDIR", path);
     return [...n.children].map(([name, c]) => ({ name, type: c.type, ino: c.ino }));
   }

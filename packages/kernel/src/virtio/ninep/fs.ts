@@ -210,8 +210,9 @@ export interface FsFile {
  * errors have, to answer with that errno; anything else is EIO and logged.
  */
 export interface Fs {
-  getattr(path: string): MaybePromise<FsAttr>;
-  readdir(path: string): MaybePromise<FsDirEntry[]>;
+  /** Check a supplied captured identity atomically before returning data. */
+  getattr(path: string, expected?: FsIdentity): MaybePromise<FsAttr>;
+  readdir(path: string, expected?: FsIdentity): MaybePromise<FsDirEntry[]>;
   /** Open a regular file. */
   open(path: string, flags: FsOpenFlags): MaybePromise<FsFile>;
   /** Create a regular file and return it open for reading/writing. All three

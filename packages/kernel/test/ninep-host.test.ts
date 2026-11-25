@@ -1292,3 +1292,97 @@ test(
     await c.close();
   },
 );
+
+test(
+  "getattr and directory refresh reject stale paths but retain open inode and continuation",
+  { timeout: 3000 },
+  async () => {
+    const fs = new MemoryFs({
+      "message.txt": "original metadata",
+      directory: { child: "old listing" },
+    });
+    const c = await client(fs);
+    const walk = (fid: number, name: string) =>
+      c.query(110, [u32(1), u32(fid), u16(1), string(name)]);
+    const attrs = (fid: number, expected = 25) => c.query(24, [u32(fid), u64(0x7ff)], expected);
+    const listing = async (fid: number, offset: number) => {
+      const bytes = await c.query(40, [u32(fid), u64(offset), u32(1024)]);
+      assert.equal(bytes.readUInt32LE(), bytes.length - 4);
+      const names: string[] = [];
+      for (let at = 4; at < bytes.length;) {
+        const size = bytes.readUInt16LE(at + 22);
+        names.push(bytes.subarray(at + 24, at + 24 + size).toString());
+        at += 24 + size;
+      }
+      return names;
+    };
+    await walk(2, "message.txt");
+    await walk(3, "message.txt");
+    const original = inodeAndLinks(await attrs(2));
+    await c.query(12, [u32(3), u32(0)]);
+    fs.move("/message.txt", "/metadata-original");
+    fs.writeFile("/message.txt", "replacement metadata");
+    assert.equal((await attrs(2, 7)).readUInt32LE(), 116);
+    assert.deepEqual(
+      inodeAndLinks(await attrs(3)),
+      original,
+      "live open descriptor returns its original inode",
+    );
+    fs.rm("/metadata-original");
+    assert.deepEqual(
+      inodeAndLinks(await attrs(3)),
+      { ...original, nlink: 0n },
+      "unlinked open descriptor metadata survives",
+    );
+    await walk(4, "message.txt");
+    await c.query(20, [u32(4), u32(1), string("metadata-renamed")]);
+    assert.equal(
+      (await attrs(4)).readBigUInt64LE(49),
+      BigInt(Buffer.byteLength("replacement metadata")),
+    );
+    fs.rm("/metadata-renamed");
+    assert.equal((await attrs(4, 7)).readUInt32LE(), 116);
+    await walk(10, "directory");
+    await walk(11, "directory");
+    assert.deepEqual(await listing(10, 0), [".", "..", "child"]);
+    fs.move("/directory", "/directory-original");
+    fs.mkdirp("/directory");
+    fs.writeFile("/directory/new-child", "new listing");
+    assert.deepEqual(
+      await listing(10, 2),
+      ["child"],
+      "continuation retains its existing directory snapshot",
+    );
+    assert.equal(
+      (await c.query(40, [u32(10), u64(0), u32(1024)], 7)).readUInt32LE(),
+      116,
+      "offset zero refresh must validate the captured directory identity",
+    );
+    assert.equal(
+      (await c.query(40, [u32(11), u64(2), u32(1024)], 7)).readUInt32LE(),
+      116,
+      "first directory read validates identity even with a nonzero offset",
+    );
+    assert.equal((await attrs(11, 7)).readUInt32LE(), 116);
+    await walk(12, "directory");
+    await c.query(20, [u32(12), u32(1), string("directory-renamed")]);
+    assert.deepEqual(await listing(12, 0), [".", "..", "new-child"]);
+    assert.equal(inodeAndLinks(await attrs(12)).ino, BigInt(fs.getattr("/directory-renamed").ino!));
+    fs.writeFile("/directory-renamed/extra", "extra");
+    assert.deepEqual(
+      await listing(12, 0),
+      [".", "..", "new-child", "extra"],
+      "valid directory refresh sees new entries",
+    );
+    assert.equal(
+      fs.getattr("/directory-renamed").type,
+      "dir",
+      "path-only legacy backend calls remain valid",
+    );
+    assert.deepEqual(
+      fs.readdir("/directory-renamed").map((entry) => entry.name),
+      ["new-child", "extra"],
+    );
+    await c.close();
+  },
+);

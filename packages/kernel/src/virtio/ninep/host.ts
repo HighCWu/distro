@@ -1315,7 +1315,7 @@ class Session {
       case Tgetattr: {
         const f = this.#fid(r.u32());
         const file = fileOf(f);
-        const a = file?.getattr ? await file.getattr() : await fs.getattr(f.path);
+        const a = file?.getattr ? await file.getattr() : await fs.getattr(f.path, f.identity);
         const size = a.size ?? 0;
         const perm = a.mode ?? (a.type === "dir" ? 0o755 : a.type === "symlink" ? 0o777 : 0o644);
         const fmt = a.type === "dir" ? S_IFDIR : a.type === "symlink" ? S_IFLNK : S_IFREG;
@@ -1374,7 +1374,7 @@ class Session {
           f.dir = [
             { name: ".", type: "dir" },
             { name: "..", type: "dir" },
-            ...(await fs.readdir(f.path)),
+            ...(await fs.readdir(f.path, f.identity)),
           ];
         const max = Math.min(count, this.#msize - HDR - 4);
         const w = new Writer(Math.min(max, 65536) + HDR + 4);
