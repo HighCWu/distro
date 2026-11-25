@@ -1009,7 +1009,7 @@ export function prepare_dylink_worker_module(
   for (const expected of [0, 0x61, 0x73, 0x6d, 1, 0, 0, 0])
     if (reader.byte() !== expected) reader.fail("invalid WebAssembly header");
 
-  const output: Uint8Array<ArrayBuffer>[] = [source.slice(0, 8)];
+  const output: Uint8Array<ArrayBuffer>[] = [source.subarray(0, 8)];
   const seen = new Set<number>();
   let lastRank = 0;
   let dataCount: number | undefined;
@@ -1025,7 +1025,7 @@ export function prepare_dylink_worker_module(
 
     if (id === 0) {
       payload.text();
-      output.push(source.slice(sectionStart, sectionEnd));
+      output.push(source.subarray(sectionStart, sectionEnd));
       continue;
     }
 
@@ -1055,7 +1055,7 @@ export function prepare_dylink_worker_module(
         output.push(
           result.payload
             ? encodeSection(id, result.payload)
-            : source.slice(sectionStart, sectionEnd),
+            : source.subarray(sectionStart, sectionEnd),
         );
         continue;
       }
@@ -1063,7 +1063,9 @@ export function prepare_dylink_worker_module(
         if (options.deferTableWrites) {
           const transformed = transformElementsForPublication(payload, getPublicationTableImage);
           output.push(
-            transformed ? encodeSection(id, transformed) : source.slice(sectionStart, sectionEnd),
+            transformed
+              ? encodeSection(id, transformed)
+              : source.subarray(sectionStart, sectionEnd),
           );
           continue;
         }
@@ -1083,7 +1085,7 @@ export function prepare_dylink_worker_module(
         payload.expectDone("core section");
         break;
     }
-    output.push(source.slice(sectionStart, sectionEnd));
+    output.push(source.subarray(sectionStart, sectionEnd));
   }
 
   if (dataCount !== undefined && dataCount !== (actualDataCount ?? 0))

@@ -513,11 +513,16 @@ test("valid modules larger than the analysis-cache byte budget remain accepted",
 });
 
 test("reconstructed Worker preserves data indexes and elements without resetting shared memory or rerunning start", async () => {
-  const source = workerModule();
-  const original = source.slice();
+  const original = workerModule();
+  const storage = new Uint8Array(original.length + 32).fill(0xa5);
+  storage.set(original, 13);
+  const source = storage.subarray(13, 13 + original.length);
   const prepared = prepare_dylink_worker_module(source);
   assert.deepEqual(source, original, "preparation must not modify the caller's bytes");
   assert.notEqual(prepared.buffer, source.buffer, "preparation returns a new byte buffer");
+  const preparedBytes = prepared.slice();
+  source.fill(0);
+  assert.deepEqual(prepared, preparedBytes, "final output is detached from an offset source view");
   const module = new WebAssembly.Module(prepared);
 
   const memory = new WebAssembly.Memory({ initial: 1, maximum: 2, shared: true });
