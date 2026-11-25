@@ -480,8 +480,13 @@ export class DylinkWorkerChannel {
     }
   }
 
-  /** Reserve a non-live slot while a child Worker reconstructs the current graph. */
-  beginAdmission(): DylinkWorkerChannelResult<DylinkWorkerAdmissionToken> {
+  /**
+   * Reserve a non-live slot while a child Worker reconstructs the current graph.
+   * A supplied replay generation must still be current when the slot is reserved.
+   */
+  beginAdmission(
+    expectedGeneration?: number,
+  ): DylinkWorkerChannelResult<DylinkWorkerAdmissionToken> {
     if (!this.#lock()) return failure(ERRNO.EBUSY);
     try {
       const state = Atomics.load(this.#words, H_STATE);
@@ -491,6 +496,11 @@ export class DylinkWorkerChannel {
         return failure(ERRNO.EIO);
       }
       if (state !== IDLE) return failure(ERRNO.EBUSY);
+      if (
+        expectedGeneration !== undefined &&
+        expectedGeneration !== Atomics.load(this.#words, H_GENERATION)
+      )
+        return failure(ERRNO.EAGAIN);
 
       const pending = Atomics.load(this.#words, H_ADMISSIONS);
       if (pending >= this.#maxWorkers) return failure(ERRNO.ENOSPC);

@@ -425,3 +425,25 @@ test("pending Worker admissions block publication until replay completes or admi
     failure: null,
   });
 });
+
+test("Worker admission checks the replay generation before reserving a slot", () => {
+  const channel = new DylinkWorkerChannel(32, 2);
+  const writer = unwrap(channel.register());
+  const transaction = unwrap(channel.begin(writer, new Uint8Array([1])));
+  unwrap(channel.ack(writer, transaction, "prepare"));
+  assert.equal(unwrap(channel.advance(writer, transaction)), "commit");
+  unwrap(channel.ack(writer, transaction, "commit"));
+  assert.equal(unwrap(channel.advance(writer, transaction)), "finalize");
+  unwrap(channel.ack(writer, transaction, "finalize"));
+  assert.deepEqual(unwrap(channel.finish(writer, transaction)), {
+    generation: 1,
+    committed: true,
+  });
+
+  assert.equal(errorNumber(channel.beginAdmission(0)), -11, "generation zero is stale");
+  const reservation = unwrap(channel.reserve(writer));
+  unwrap(channel.cancelReservation(reservation));
+  const admission = unwrap(channel.beginAdmission(1));
+  assert.equal(errorNumber(channel.reserve(writer)), -16, "replay holds its generation");
+  unwrap(channel.completeAdmission(admission));
+});

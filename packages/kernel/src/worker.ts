@@ -101,7 +101,6 @@ import {
 import {
   DylinkWorkerSnapshotError,
   prepare_dylink_worker_snapshot,
-  validate_dylink_worker_snapshot,
   type DylinkWorkerSnapshot,
 } from "./dylink_process_worker.ts";
 import { prepare_dylink_call_metadata } from "./dylink_call_metadata.ts";
@@ -817,14 +816,18 @@ function user_imports({
       }
 
       if (dynamic_process_has_replay(context.dynamic.process_state)) {
-        if (
-          context.dynamic.worker_snapshot === undefined ||
-          context.dynamic.worker_membership === undefined
-        )
-          return 95;
+        if (!dynamic || context.dynamic.worker_membership === undefined) return 95;
         try {
-          validate_dylink_worker_snapshot(context.dynamic.worker_snapshot);
+          const publication = dynamic.getWorkerPublicationState();
+          if (!publication) return 95;
+          const { snapshot, processIdentity, generation } = publication;
+          context.dynamic = {
+            ...context.dynamic,
+            worker_snapshot: snapshot,
+            worker_publication: { processIdentity, generation },
+          };
         } catch (error) {
+          if (control(error)) throw error;
           return snapshot_error_errno(error);
         }
         return 0;
@@ -1875,7 +1878,8 @@ function start({
         if (shared_user_prepare) {
           const dynamic = user?.dynamic;
           const membership = dynamic?.worker_membership;
-          if (!user || !dynamic || !membership || !user_copy_status) {
+          const publication = dynamic?.worker_publication;
+          if (!user || !dynamic || !membership || !publication || !user_copy_status) {
             cancelAdmission(-95);
             direct.port1.close();
             direct.port2.close();
@@ -1883,7 +1887,7 @@ function start({
           }
           try {
             admissionChannel = DylinkWorkerChannel.attach(membership.shared);
-            const admission = admissionChannel.beginAdmission();
+            const admission = admissionChannel.beginAdmission(publication.generation);
             if (!admission.ok) {
               settle_user_copy(user_copy_status, admission.errno);
               direct.port1.close();
@@ -1904,7 +1908,7 @@ function start({
             };
           } catch (error) {
             const errno = error instanceof DylinkWorkerChannelError ? -Math.abs(error.errno) : -5;
-            settle_user_copy(user_copy_status, errno);
+            cancelAdmission(errno);
             direct.port1.close();
             direct.port2.close();
             return errno;
