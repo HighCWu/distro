@@ -8,8 +8,8 @@
  static struct wasm_mapping *mappings;
 +
 +extern uintptr_t __wasm_brk_layout_v1(void);
-+extern char __stack_low __attribute__((weak, visibility("hidden")));
-+extern char __stack_high __attribute__((weak, visibility("hidden")));
++extern char __stack_low __attribute__((__weak__, __visibility__("hidden")));
++extern char __stack_high __attribute__((__weak__, __visibility__("hidden")));
 +
 +/* Linker ranges are resident without mmap records. Round each range to
 + * Linux's 64 KiB pages without extending it into the rest of linear memory. */
