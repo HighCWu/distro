@@ -29,6 +29,7 @@ import {
   type FsOpenFlags,
   type FsSetAttr,
   type FsStatFs,
+  type FsIdentity,
 } from "./fs.ts";
 
 /** A file's content in a tree: text (UTF-8), bytes, or a function evaluated once per open. */
@@ -40,9 +41,18 @@ export interface FsTree {
 
 /** What the guest changed (MemoryFs.onChange). */
 export interface MemoryFsChange {
-  type: "create" | "write" | "truncate" | "setattr" | "mkdir" | "symlink" | "remove" | "rename";
+  type:
+    | "create"
+    | "write"
+    | "truncate"
+    | "setattr"
+    | "mkdir"
+    | "symlink"
+    | "remove"
+    | "rename"
+    | "link";
   path: string;
-  /** rename: the new path; symlink: the target. */
+  /** rename/link: the new path; symlink: the target. */
   to?: string;
 }
 
@@ -496,12 +506,45 @@ export class MemoryFs implements Fs {
     this.#emit("remove", path);
   }
 
-  rename(from: string, to: string): void {
-    this.#rename(from, to);
-    this.#emit("rename", from, to);
+  link(from: string, to: string, expected: { source: FsIdentity; directory: FsIdentity }): void {
+    const node = this.#find(from);
+    if (
+      !node ||
+      BigInt(node.ino) !== BigInt(expected.source.ino) ||
+      BigInt(expected.source.dev ?? 0) !== 0n
+    )
+      throw new FsError("ESTALE", from);
+    if (node.type === "dir") throw new FsError("EPERM", from);
+    // Resolve and compare both objects in this synchronous mutation. A stale
+    // directory fid must never direct the new name into a replacement tree.
+    let target: { dir: MemNode; name: string };
+    try {
+      target = this.#dirOf(to);
+    } catch (error) {
+      if (error instanceof FsError && (error.code === "ENOENT" || error.code === "ENOTDIR"))
+        throw new FsError("ESTALE", to);
+      throw error;
+    }
+    if (
+      BigInt(target.dir.ino) !== BigInt(expected.directory.ino) ||
+      BigInt(expected.directory.dev ?? 0) !== 0n
+    )
+      throw new FsError("ESTALE", to);
+    if (target.dir.children!.has(target.name)) throw new FsError("EEXIST", to);
+    target.dir.children!.set(target.name, node);
+    node.nlink++;
+    node.ctimeMs = Date.now();
+    this.#touchDir(target.dir);
+    this.#emit("link", from, to);
   }
 
-  #rename(from: string, to: string): void {
+  rename(from: string, to: string): boolean {
+    if (!this.#rename(from, to)) return false;
+    this.#emit("rename", from, to);
+    return true;
+  }
+
+  #rename(from: string, to: string): boolean {
     const a = this.#dirOf(from),
       b = this.#dirOf(to);
     const n = a.dir.children!.get(a.name);
@@ -516,7 +559,7 @@ export class MemoryFs implements Fs {
       if (p === n) throw new FsError("EINVAL", `${from} into itself`);
     }
     const old = b.dir.children!.get(b.name);
-    if (old === n) return;
+    if (old === n) return false;
     if (old) {
       if (old.type === "dir" && n.type !== "dir") throw new FsError("EISDIR", to);
       if (old.type !== "dir" && n.type === "dir") throw new FsError("ENOTDIR", to);
@@ -532,6 +575,7 @@ export class MemoryFs implements Fs {
     n.ctimeMs = Date.now();
     this.#touchDir(a.dir);
     if (b.dir !== a.dir) this.#touchDir(b.dir);
+    return true;
   }
 
   setattr(path: string, attr: FsSetAttr): void {

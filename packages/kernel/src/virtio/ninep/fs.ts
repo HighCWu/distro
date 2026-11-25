@@ -143,6 +143,12 @@ export interface FsOpenFlags {
   append: boolean;
 }
 
+/** Stable identity captured by a fid, rather than inferred from its path. */
+export interface FsIdentity {
+  ino: number | bigint;
+  dev?: number | bigint;
+}
+
 /**
  * An open file (Fs.open/create), used for the guest's reads, writes,
  * getattr, truncation and fsync until it closes it. It must keep working
@@ -179,8 +185,16 @@ export interface Fs {
   readlink?(path: string): MaybePromise<string>;
   /** `dir`: rmdir (ENOTEMPTY unless empty), else unlink. */
   remove?(path: string, dir: boolean): MaybePromise<void>;
-  /** Replaces `to` if it exists (an empty directory, or a non-directory over a non-directory). */
-  rename?(from: string, to: string): MaybePromise<void>;
+  /** Atomically verify source and destination-directory identities before
+   * adding a name. Missing/replaced objects are ESTALE; no directory links. */
+  link?(
+    from: string,
+    to: string,
+    expected: { source: FsIdentity; directory: FsIdentity },
+  ): MaybePromise<void>;
+  /** Replaces `to` if it exists. Return false for a same-inode no-op, so fid
+   * paths stay unchanged; void/true indicate a successful move. */
+  rename?(from: string, to: string): MaybePromise<void | boolean>;
   /** Change a path that is not open (chmod, utimes, truncate by name). */
   setattr?(path: string, attr: FsSetAttr): MaybePromise<void>;
   statfs?(): MaybePromise<FsStatFs>;

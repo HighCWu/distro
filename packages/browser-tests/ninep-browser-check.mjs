@@ -16,6 +16,7 @@ const stages = [
   "9p transport: listed remote directory",
   "9p transport: read exact remote file bytes",
   "9p transport: created, wrote, appended and reopened exact remote file bytes",
+  "9p transport: linked, shared writes and unlinked an exact alias",
   "9p transport: unmounted remote filesystem",
   PASS,
 ];

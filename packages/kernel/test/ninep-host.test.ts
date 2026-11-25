@@ -127,6 +127,10 @@ function harness() {
 import { MemoryFs, serveNinep, type Fs } from "../src/virtio/ninep/host.ts";
 import { setImmediate as tick } from "node:timers/promises";
 
+function inodeAndLinks(bytes: Buffer) {
+  return { ino: bytes.readBigUInt64LE(13), nlink: bytes.readBigUInt64LE(33) };
+}
+
 function u16(value: number) {
   const bytes = Buffer.alloc(2);
   bytes.writeUInt16LE(value);
@@ -414,5 +418,140 @@ test(
     c.server.close();
     c.device.close();
     await c.device.closed;
+  },
+);
+
+test(
+  "hard links preserve inode, bytes, open files and same-inode rename paths",
+  { timeout: 3000 },
+  async () => {
+    const fs = new MemoryFs({ "message.txt": "known bytes\n" });
+    const initial = fs.getattr("/message.txt");
+    const c = await client(fs);
+    await c.open(true);
+    const original = inodeAndLinks(await c.query(24, [u32(2), u64(0x7ff)]));
+    assert.deepEqual(original, { ino: BigInt(initial.ino!), nlink: 1n });
+    await c.query(70, [u32(1), u32(2), string("alias.txt")]);
+    await c.query(110, [u32(1), u32(3), u16(1), string("alias.txt")]);
+    const alias = inodeAndLinks(await c.query(24, [u32(3), u64(0x7ff)]));
+    assert.deepEqual(alias, { ino: original.ino, nlink: 2n });
+    assert.equal(fs.getattr("/message.txt").nlink, 2);
+    assert.ok(fs.getattr("/message.txt").ctimeMs! >= initial.ctimeMs!);
+    await c.query(12, [u32(3), u32(2)]);
+    const changed = Buffer.from("alias bytes\n");
+    await c.query(118, [u32(3), u64(0), u32(changed.length), changed]);
+    assert.deepEqual((await c.query(116, [u32(2), u64(0), u32(128)])).subarray(4), changed);
+    assert.deepEqual(fs.readFile("/message.txt"), new Uint8Array(changed));
+    // Keep an unopened source fid: rewriting its path after a same-inode
+    // rename would incorrectly make it follow the alias that is removed next.
+    await c.query(110, [u32(1), u32(4), u16(1), string("message.txt")]);
+    await c.query(74, [u32(1), string("message.txt"), u32(1), string("alias.txt")]);
+    assert.equal(fs.getattr("/message.txt").nlink, 2);
+    assert.equal(fs.getattr("/alias.txt").nlink, 2);
+    await c.query(76, [u32(1), string("alias.txt"), u32(0)]);
+    assert.deepEqual(
+      inodeAndLinks(await c.query(24, [u32(4), u64(0x7ff)])),
+      { ino: original.ino, nlink: 1n },
+      "same-inode rename did not rewrite the original fid path",
+    );
+    assert.deepEqual(
+      (await c.query(116, [u32(3), u64(0), u32(128)])).subarray(4),
+      changed,
+      "unlinked alias remains readable through its open file",
+    );
+    await c.query(76, [u32(1), string("message.txt"), u32(0)]);
+    assert.deepEqual(inodeAndLinks(await c.query(24, [u32(2), u64(0x7ff)])), {
+      ino: original.ino,
+      nlink: 0n,
+    });
+    assert.deepEqual((await c.query(116, [u32(2), u64(0), u32(128)])).subarray(4), changed);
+    fs.writeFile("/message.txt", "replacement\n");
+    assert.notEqual(BigInt(fs.getattr("/message.txt").ino!), original.ino);
+    for (const stale of [2, 4]) {
+      const error = await c.query(70, [u32(1), u32(stale), string("wrong-alias.txt")], 7);
+      assert.equal(
+        error.readUInt32LE(),
+        116,
+        "stale walk/open source identity must not link a replacement",
+      );
+    }
+    assert.throws(() => fs.getattr("/wrong-alias.txt"), { code: "ENOENT" });
+    const staleOpen = await c.query(12, [u32(4), u32(0)], 7);
+    assert.equal(staleOpen.readUInt32LE(), 116);
+    await c.query(110, [u32(1), u32(5), u16(0)]);
+    await c.query(14, [u32(5), string("created.txt"), u32(2), u32(0o600), u32(0)]);
+    await c.query(70, [u32(1), u32(5), string("created-alias.txt")]);
+    assert.equal(fs.getattr("/created.txt").nlink, 2);
+    assert.equal(fs.getattr("/created.txt").ino, fs.getattr("/created-alias.txt").ino);
+    assert.equal(
+      (await c.query(70, [u32(1), u32(5), string("created-alias.txt")], 7)).readUInt32LE(),
+      17,
+    );
+    assert.equal(fs.getattr("/created.txt").nlink, 2, "EEXIST leaves link count unchanged");
+    assert.equal(
+      (await c.query(70, [u32(1), u32(1), string("directory-link")], 7)).readUInt32LE(),
+      1,
+    );
+    fs.mkdirp("/destination");
+    await c.query(110, [u32(1), u32(6), u16(1), string("destination")]);
+    const oldDirectory = fs.getattr("/destination").ino;
+    fs.move("/destination", "/old-destination");
+    fs.mkdirp("/destination");
+    assert.notEqual(fs.getattr("/destination").ino, oldDirectory);
+    assert.equal(
+      (await c.query(70, [u32(6), u32(5), string("wrong-directory-link")], 7)).readUInt32LE(),
+      116,
+      "a stale destination directory fid cannot link into its replacement",
+    );
+    assert.throws(() => fs.getattr("/destination/wrong-directory-link"), { code: "ENOENT" });
+    assert.throws(() => fs.getattr("/old-destination/wrong-directory-link"), { code: "ENOENT" });
+    await c.close();
+    const ro = await client(fs, { readOnly: true });
+    await ro.open();
+    assert.equal(
+      (await ro.query(70, [u32(1), u32(2), string("readonly-link")], 7)).readUInt32LE(),
+      30,
+    );
+    assert.throws(() => fs.getattr("/readonly-link"), { code: "ENOENT" });
+    await ro.close();
+  },
+);
+
+test(
+  "Tlopen cannot promote a path-only walk into hard-link authorization",
+  { timeout: 3000 },
+  async () => {
+    const fs = new MemoryFs({ "message.txt": "identity", destination: {} });
+    let fileStats = 0;
+    const backend: Fs = {
+      getattr(path) {
+        const attr = fs.getattr(path);
+        if ((path === "/message.txt" && fileStats++ === 0) || path === "/destination") {
+          const { ino, dev, ...withoutIdentity } = attr;
+          return withoutIdentity;
+        }
+        return attr;
+      },
+      readdir: fs.readdir.bind(fs),
+      open: fs.open.bind(fs),
+      link: fs.link.bind(fs),
+    };
+    const c = await client(backend);
+    await c.open();
+    assert.equal(
+      (await c.query(70, [u32(1), u32(2), string("unauthorized")], 7)).readUInt32LE(),
+      95,
+      "the stable attributes returned by open do not authorize a path-only source fid",
+    );
+    await c.query(110, [u32(1), u32(3), u16(1), string("destination")]);
+    await c.query(110, [u32(1), u32(4), u16(1), string("message.txt")]);
+    assert.equal(
+      (await c.query(70, [u32(3), u32(4), string("unauthorized-directory")], 7)).readUInt32LE(),
+      116,
+      "a directory without saved identity cannot authorize a link",
+    );
+    assert.throws(() => fs.getattr("/unauthorized"), { code: "ENOENT" });
+    assert.throws(() => fs.getattr("/destination/unauthorized-directory"), { code: "ENOENT" });
+    await c.close();
   },
 );

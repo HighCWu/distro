@@ -19,7 +19,11 @@ echo '9p transport: listed remote directory'
 busybox timeout -s KILL 20 /mount-fd --verify /mnt/9p/message.txt || fail "verify remote file bytes"
 echo '9p transport: read exact remote file bytes'
 
-busybox timeout -s KILL 30 /write-file /mnt/9p/written.bin || fail "write and reopen remote file"
+if [ "${1:-}" = --memory ]; then
+  busybox timeout -s KILL 30 /write-file /mnt/9p/written.bin /mnt/9p/alias.bin || fail "write and hard-link remote file"
+else
+  busybox timeout -s KILL 30 /write-file /mnt/9p/written.bin || fail "write and reopen remote file"
+fi
 
 busybox timeout -s KILL 20 busybox umount /mnt/9p || fail "unmount remote filesystem"
 busybox rmdir /mnt/9p || fail "remove detached mountpoint"

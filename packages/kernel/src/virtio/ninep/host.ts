@@ -40,6 +40,7 @@ import {
   type FsFile,
   type FsFileType,
   type FsSetAttr,
+  type FsIdentity,
 } from "./fs.ts";
 import {
   vsockConnectionClosed,
@@ -752,6 +753,7 @@ class Connection {
 interface Fid {
   path: string;
   type: FsFileType;
+  identity?: FsIdentity;
   /** The open file (Tlopen/Tlcreate of a regular file). */
   file?: FsFile;
   /** Directory listing taken at readdir offset 0 (with . and ..). */
@@ -762,6 +764,23 @@ interface Fid {
 
 function fileOf(f: Fid): FsFile | undefined {
   return f.file;
+}
+
+function identityOf(attr: FsAttr): FsIdentity | undefined {
+  const valid = (value: number | bigint) =>
+    typeof value === "bigint" ? value >= 0n : Number.isSafeInteger(value) && value >= 0;
+  if (attr.ino === undefined || !valid(attr.ino) || (attr.dev !== undefined && !valid(attr.dev)))
+    return undefined;
+  return { ino: attr.ino, ...(attr.dev === undefined ? {} : { dev: attr.dev }) };
+}
+
+function matchesIdentity(attr: FsAttr, expected: FsIdentity): boolean {
+  const actual = identityOf(attr);
+  return (
+    actual !== undefined &&
+    BigInt(actual.ino) === BigInt(expected.ino) &&
+    BigInt(actual.dev ?? 0) === BigInt(expected.dev ?? 0)
+  );
 }
 
 /** A running request: `dead` once it was flushed or timed out (its result is dropped). */
@@ -967,7 +986,13 @@ class Session {
         const a = await fs.getattr("/");
         if (a.type !== "dir")
           throw new FsError("ENOTDIR", "the file system's root is not a directory");
-        if (!state.dead) this.#fids.set(fid, { path: "/", type: "dir", chain: Promise.resolve() });
+        if (!state.dead)
+          this.#fids.set(fid, {
+            path: "/",
+            type: "dir",
+            identity: identityOf(a),
+            chain: Promise.resolve(),
+          });
         return new Writer(HDR + 13).qid(qidOf("/", a));
       }
       case Twalk: {
@@ -977,6 +1002,7 @@ class Session {
         const f = this.#fid(fid);
         let path = f.path,
           ftype = f.type;
+        let identity = f.identity;
         const qids: Qid[] = [];
         for (let i = 0; i < n; i++) {
           let a: FsAttr;
@@ -992,12 +1018,18 @@ class Session {
           }
           qids.push(qidOf(path, a));
           ftype = a.type;
+          identity = identityOf(a);
         }
         if (qids.length === n && !state.dead) {
           // A fid replaced here (newfid in use, or walked in place) closes its open file.
           const old = this.#fids.get(newfid);
           if (old) this.#closeFile(old);
-          this.#fids.set(newfid, { path, type: ftype, chain: old?.chain ?? Promise.resolve() });
+          this.#fids.set(newfid, {
+            path,
+            type: ftype,
+            identity,
+            chain: old?.chain ?? Promise.resolve(),
+          });
         }
         const w = new Writer(HDR + 2 + 13 * qids.length).u16(qids.length);
         for (const q of qids) w.qid(q);
@@ -1036,6 +1068,7 @@ class Session {
         const flags = r.u32();
         const write = (flags & O_ACCMODE) !== 0;
         let a = await fs.getattr(f.path);
+        if (f.identity && !matchesIdentity(a, f.identity)) throw new FsError("ESTALE", f.path);
         f.type = a.type;
         if (a.type === "file") {
           const truncate = (flags & O_TRUNC) !== 0;
@@ -1047,7 +1080,11 @@ class Session {
             fs.open(f.path, { read, write, truncate, append }),
             write,
           );
-          if (truncate) a = (await file.getattr?.()) ?? (await fs.getattr(f.path));
+          a = (await file.getattr?.()) ?? (await fs.getattr(f.path));
+          if (f.identity && !matchesIdentity(a, f.identity)) {
+            this.#closeFile(f);
+            throw new FsError("ESTALE", f.path);
+          }
         }
         f.dir = undefined;
         return new Writer(HDR + 17).qid(qidOf(f.path, a)).u32(0);
@@ -1081,6 +1118,7 @@ class Session {
         if (!state.dead) {
           f.path = path;
           f.type = "file";
+          f.identity = identityOf(a);
         }
         return new Writer(HDR + 17).qid(qidOf(path, a)).u32(0);
       }
@@ -1094,8 +1132,22 @@ class Session {
         else await this.#need("symlink", "EOPNOTSUPP")(path, r.name());
         return new Writer(HDR + 13).qid(qidOf(path, await fs.getattr(path)));
       }
-      case Tlink:
-        throw new FsError("EPERM", "no hard links");
+      case Tlink: {
+        const directory = this.#dir(r.u32());
+        const source = this.#fid(r.u32());
+        const name = r.name();
+        checkName(name);
+        if (source.type === "dir") throw new FsError("EPERM", "directory hard link");
+        if (!source.identity)
+          throw new FsError("EOPNOTSUPP", "source has no stable inode identity");
+        if (!directory.identity)
+          throw new FsError("ESTALE", "directory has no saved inode identity");
+        await this.#need("link", "EOPNOTSUPP")(source.path, join(directory.path, name), {
+          source: source.identity,
+          directory: directory.identity,
+        });
+        return new Writer(HDR);
+      }
       case Tmknod:
         throw new FsError("EOPNOTSUPP");
       case Tunlinkat: {
@@ -1129,8 +1181,8 @@ class Session {
         if (from === "/" || (under(to, from) && to !== from))
           throw new FsError(from === "/" ? "EBUSY" : "EINVAL");
         if (from !== to) {
-          await this.#need("rename")(from, to);
-          this.#renamed(from, to);
+          const moved = await this.#need("rename")(from, to);
+          if (moved !== false) this.#renamed(from, to);
         }
         return new Writer(HDR);
       }
