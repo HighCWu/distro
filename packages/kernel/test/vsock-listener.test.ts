@@ -12,6 +12,8 @@ const SHUTDOWN = 4;
 const RW = 5;
 const CREDIT_UPDATE = 6;
 const CREDIT_REQUEST = 7;
+const SHUTDOWN_RCV = 1;
+const SHUTDOWN_SEND = 2;
 const HEADER_SIZE = 44;
 const GUEST_CID = 37n;
 const HOST_CID = 2n;
@@ -20,6 +22,7 @@ interface GuestPacket {
   source: number;
   destination: number;
   op: number;
+  flags?: number;
   credit?: number;
   forwarded?: number;
   payload?: number[];
@@ -74,6 +77,7 @@ function harness() {
     source,
     destination,
     op,
+    flags = op === SHUTDOWN ? SHUTDOWN_RCV | SHUTDOWN_SEND : 0,
     credit = 256 * 1024,
     forwarded = 0,
     payload = [],
@@ -87,7 +91,7 @@ function harness() {
     view.setUint32(address + 24, payload.length, true);
     view.setUint16(address + 28, 1, true);
     view.setUint16(address + 30, op, true);
-    view.setUint32(address + 32, op === SHUTDOWN ? 3 : 0, true);
+    view.setUint32(address + 32, flags, true);
     view.setUint32(address + 36, credit, true);
     view.setUint32(address + 40, forwarded, true);
     new Uint8Array(memory.buffer, address + HEADER_SIZE, payload.length).set(payload);
@@ -360,6 +364,75 @@ test("peer shutdown preserves bytes buffered before accept", { timeout: 3000 }, 
   device.close();
   await device.closed;
 });
+
+test(
+  "peer send shutdown drains input to EOF and still receives a reply",
+  { timeout: 3000 },
+  async () => {
+    const { device, send, receive } = harness();
+    const listener = device.listen(9000);
+    const endpoint = { source: 1000, destination: 9000 };
+    await send({ ...endpoint, op: REQUEST });
+    assert.equal((await receive()).op, RESPONSE);
+    const stream = await listener.accept();
+    assert(stream);
+
+    await send({ ...endpoint, op: RW, payload: [0x51, 0, 0xff] });
+    const request = stream.readExactly(4);
+    await send({ ...endpoint, op: SHUTDOWN, flags: SHUTDOWN_SEND });
+    assert.deepEqual([...(await request)], [0x51, 0, 0xff]);
+    // Successive shutdown messages cannot reopen a completed direction.
+    await send({ ...endpoint, op: SHUTDOWN, flags: 0 });
+    assert.equal((await stream.read()).byteLength, 0);
+
+    await stream.write(Uint8Array.of(0x13, 0xa5));
+    assert.deepEqual(await receive(), {
+      source: 9000,
+      destination: 1000,
+      op: RW,
+      forwarded: 3,
+      payload: [0x13, 0xa5],
+    });
+    await send({ ...endpoint, op: SHUTDOWN, forwarded: 2, flags: SHUTDOWN_RCV });
+    assert.equal((await receive()).op, RST);
+    listener.close();
+    device.listen(9000).close();
+    device.close();
+    await device.closed;
+  },
+);
+
+test(
+  "peer receive shutdown wakes blocked writers and leaves input open",
+  { timeout: 3000 },
+  async () => {
+    const { device, send, receive } = harness();
+    const listener = device.listen(9000);
+    const endpoint = { source: 1000, destination: 9000 };
+    await send({ ...endpoint, op: REQUEST, credit: 2 });
+    assert.equal((await receive()).op, RESPONSE);
+    const stream = await listener.accept();
+    assert(stream);
+
+    const writing = assert.rejects(stream.write(Uint8Array.of(1, 2, 3)), /peer stopped receiving/);
+    await Promise.resolve();
+    await send({ ...endpoint, op: SHUTDOWN, credit: 2, flags: SHUTDOWN_RCV });
+    await writing;
+    await assert.rejects(stream.write(Uint8Array.of(4)), /peer stopped receiving/);
+
+    await send({ ...endpoint, op: RW, payload: [0x61] });
+    assert.deepEqual([...(await stream.read())], [0x61]);
+    await send({ ...endpoint, op: CREDIT_REQUEST });
+    // Discard the host payload still held in the RX queue before sending control.
+    assert.equal((await receive()).op, CREDIT_UPDATE);
+    const end = stream.read();
+    await send({ ...endpoint, op: SHUTDOWN, flags: SHUTDOWN_SEND });
+    assert.equal((await end).byteLength, 0);
+    assert.equal((await receive()).op, RST);
+    device.close();
+    await device.closed;
+  },
+);
 
 test("active host connect still handshakes and exchanges data", { timeout: 3000 }, async () => {
   const { device, send, receive } = harness();

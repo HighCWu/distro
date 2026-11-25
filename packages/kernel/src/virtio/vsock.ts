@@ -40,6 +40,7 @@ const VsockShutdown = {
   RCV: 1,
   SEND: 2,
 } as const;
+const VSOCK_FULL_SHUTDOWN = VsockShutdown.RCV | VsockShutdown.SEND;
 
 const HOST_CID = 2n;
 const DEFAULT_VSOCK_BUF_ALLOC = 256 * 1024;
@@ -66,9 +67,9 @@ function concat_bytes(chunks: Uint8Array[]) {
 
 /** A stream connection between this process and a guest, over vsock. */
 export interface VsockConnection {
-  /** Reads the next chunk; an empty chunk means the peer closed. */
+  /** Reads the next chunk; an empty chunk means the read side reached EOF. */
   read(): Promise<Uint8Array>;
-  /** Reads `length` bytes, or fewer if the peer closes first. */
+  /** Reads `length` bytes, or fewer if the read side reaches EOF first. */
   readExactly(length: number): Promise<Uint8Array>;
   /** Writes data, waiting for credit when the peer's buffer is full. */
   write(data: Uint8Array): Promise<void>;
@@ -93,8 +94,10 @@ interface VsockEndpoint {
 interface VsockConnectionController {
   readonly connection: VsockConnection;
   readonly bytes_read: number;
+  readonly peer_receive_closed: boolean;
   update_credit(buf_alloc: number, fwd_cnt: number): void;
   enqueue(data: Uint8Array): boolean;
+  receive_shutdown(flags: number): boolean;
   wake_writers(): void;
   close_from_peer(): void;
 }
@@ -109,6 +112,7 @@ function create_vsock_connection(ops: VsockConnectionOps): VsockConnectionContro
   const read_waiters: ((value: Uint8Array) => void)[] = [];
   const credit_waiters: (() => void)[] = [];
   let closed = false;
+  let peer_shutdown = 0;
   let bytes_read = 0;
   let bytes_received = 0;
   let bytes_written = 0;
@@ -121,19 +125,23 @@ function create_vsock_connection(ops: VsockConnectionOps): VsockConnectionContro
     while (credit_waiters.length > 0) credit_waiters.shift()!();
   }
 
-  function close_from_peer() {
-    if (closed) return;
-    closed = true;
+  function wake_readers_at_eof() {
     while (read_waiters.length > 0) {
       read_waiters.shift()!(new Uint8Array());
     }
+  }
+
+  function close_from_peer() {
+    if (closed) return;
+    closed = true;
+    wake_readers_at_eof();
     wake_credit_waiters();
   }
 
   async function read_chunk(): Promise<Uint8Array> {
     const chunk = read_buffer.shift();
     if (chunk) return chunk;
-    if (closed) return new Uint8Array();
+    if (closed || peer_shutdown & VsockShutdown.SEND) return new Uint8Array();
     return new Promise((resolve) => read_waiters.push(resolve));
   }
 
@@ -175,6 +183,7 @@ function create_vsock_connection(ops: VsockConnectionOps): VsockConnectionContro
     let offset = 0;
     while (offset < data.byteLength) {
       if (closed) throw new Error("vsock connection is closed");
+      if (peer_shutdown & VsockShutdown.RCV) throw new Error("vsock peer stopped receiving");
       const used = (bytes_written - peer_fwd_cnt) >>> 0;
       const available = Math.max(0, peer_buf_alloc - used);
       const n = Math.min(MAX_VSOCK_PAYLOAD, available, data.byteLength - offset);
@@ -210,6 +219,9 @@ function create_vsock_connection(ops: VsockConnectionOps): VsockConnectionContro
     get bytes_read() {
       return bytes_read;
     },
+    get peer_receive_closed() {
+      return (peer_shutdown & VsockShutdown.RCV) !== 0;
+    },
     update_credit(buf_alloc, fwd_cnt) {
       // Only bytes already queued for transmission can have been consumed by the peer.
       if ((fwd_cnt - peer_fwd_cnt) >>> 0 > (bytes_written - peer_fwd_cnt) >>> 0) return;
@@ -218,7 +230,7 @@ function create_vsock_connection(ops: VsockConnectionOps): VsockConnectionContro
       wake_credit_waiters();
     },
     enqueue(data) {
-      if (closed || data.byteLength === 0) return true;
+      if (closed || peer_shutdown & VsockShutdown.SEND || data.byteLength === 0) return true;
       const buffered = (bytes_received - bytes_read) >>> 0;
       if (buffered + data.byteLength > DEFAULT_VSOCK_BUF_ALLOC) return false;
       bytes_received = (bytes_received + data.byteLength) >>> 0;
@@ -226,6 +238,13 @@ function create_vsock_connection(ops: VsockConnectionOps): VsockConnectionContro
       if (waiter) waiter(data);
       else read_buffer.push(data.slice());
       return true;
+    },
+    receive_shutdown(flags) {
+      const new_flags = flags & VSOCK_FULL_SHUTDOWN & ~peer_shutdown;
+      peer_shutdown |= new_flags;
+      if (new_flags & VsockShutdown.SEND) wake_readers_at_eof();
+      if (new_flags & VsockShutdown.RCV) wake_credit_waiters();
+      return peer_shutdown === VSOCK_FULL_SHUTDOWN;
     },
     wake_writers: wake_credit_waiters,
     close_from_peer,
@@ -252,7 +271,7 @@ interface VsockTerminationPacket {
 }
 
 type VsockQueuedPacket =
-  | { kind: "stream"; bytes: Uint8Array; owner: VsockConnectionState }
+  | { kind: "stream"; bytes: Uint8Array; owner: VsockConnectionState; op: number }
   | { kind: "refusal"; bytes: Uint8Array; key: string }
   | VsockTerminationPacket;
 
@@ -323,7 +342,9 @@ export function vsockDevice({ guestCid = 3n }: { guestCid?: bigint } = {}): Vsoc
     while (pending_packets.length > 0) {
       const packet = pending_packets[0]!;
       const stale =
-        (packet.kind === "stream" && connections.get(packet.owner.key) !== packet.owner) ||
+        (packet.kind === "stream" &&
+          (connections.get(packet.owner.key) !== packet.owner ||
+            (packet.op === VsockOp.RW && packet.owner.controller.peer_receive_closed))) ||
         (packet.kind === "refusal" && connections.has(packet.key));
       if (!stale && rx_buffers.length === 0) break;
       pending_packets.shift();
@@ -385,6 +406,7 @@ export function vsockDevice({ guestCid = 3n }: { guestCid?: bigint } = {}): Vsoc
       kind: "stream",
       bytes: make_packet(owner, op, flags, payload, fwd_cnt),
       owner,
+      op,
     });
     queued_packets++;
     flush_rx();
@@ -415,7 +437,7 @@ export function vsockDevice({ guestCid = 3n }: { guestCid?: bigint } = {}): Vsoc
       : make_packet(
           state,
           VsockOp.SHUTDOWN,
-          VsockShutdown.RCV | VsockShutdown.SEND,
+          VSOCK_FULL_SHUTDOWN,
           new Uint8Array(),
           state.controller.bytes_read,
         );
@@ -573,10 +595,14 @@ export function vsockDevice({ guestCid = 3n }: { guestCid?: bigint } = {}): Vsoc
           send_packet(state, VsockOp.CREDIT_UPDATE, 0, new Uint8Array(), connection.bytes_read);
         break;
       case VsockOp.SHUTDOWN:
-        terminate(state, {
-          error: new Error("guest shut down vsock connection"),
-          preserve_pending: true,
-        });
+        if (connection.receive_shutdown(header.flags)) {
+          terminate(state, {
+            error: new Error("guest shut down vsock connection"),
+            preserve_pending: true,
+          });
+        } else {
+          flush_rx();
+        }
         break;
       case VsockOp.RST:
         forget(state, new Error("guest reset vsock connection"));

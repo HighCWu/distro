@@ -88,6 +88,7 @@ const VSOCK_REPLIES = [
   [0x61, 0x55, 0, 0x80, 0x31, 0xee, 0x05, 0x9a],
   [0x62, 0, 0x44, 0xda, 0x02, 0x77, 0xa9, 0x01],
 ];
+const VSOCK_FINAL_REPLY = [0x6a, 0x09, 0xff, 0, 0x33, 0x88, 0x17, 0xde];
 
 async function readVsockFixtureBytes(stream, expected, stage) {
   const actual = await stream.readExactly(expected.length);
@@ -123,6 +124,12 @@ async function exerciseVsock(listener) {
       ),
     );
     console.log("vsock host: both replies acknowledged on their original streams");
+
+    const eof = await streams[0].read();
+    if (eof.length !== 0)
+      throw new Error("vsock roundtrip: expected EOF after stream 1 acknowledgment");
+    await streams[0].write(Uint8Array.from(VSOCK_FINAL_REPLY));
+    console.log("vsock host: sent final frame on stream 1 after EOF");
   } finally {
     listener.close();
     for (const stream of streams) stream.close();

@@ -22,6 +22,7 @@ static const unsigned char replies[2][FRAME] = {
 	{0x62, 0, 0x44, 0xda, 0x02, 0x77, 0xa9, 0x01},
 };
 static const unsigned char acknowledgments[2] = {0xa1, 0xb2};
+static const unsigned char final_reply[FRAME] = {0x6a, 0x09, 0xff, 0, 0x33, 0x88, 0x17, 0xde};
 
 static void check(int ok, const char *stage)
 {
@@ -118,12 +119,16 @@ int main(void)
 		send_all(sockets[index], requests[index], FRAME, deadline);
 	for (size_t index = 0; index < 2; index++)
 		check_reply(sockets[index], replies[index], deadline);
-	for (size_t index = 0; index < 2; index++) {
+	for (size_t index = 0; index < 2; index++)
 		send_all(sockets[index], &acknowledgments[index], 1, deadline);
+
+	check(shutdown(sockets[0], SHUT_WR) == 0, "half-close stream 1 for writes");
+	check_reply(sockets[0], final_reply, deadline);
+	for (size_t index = 0; index < 2; index++)
 		check(close(sockets[index]) == 0, "close stream socket");
-	}
 
 	puts("vsock Linux: two simultaneous streams exchanged distinct binary frames");
+	puts("vsock Linux: received final frame on stream 1 after SHUT_WR");
 	puts("::vm-test::pass");
 	fflush(stdout);
 	for (;;)
