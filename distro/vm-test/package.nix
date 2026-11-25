@@ -51,6 +51,7 @@ let
       readOnlyDisks ? false,
       nodeArguments ? [ ],
       vsockRoundtrip ? false,
+      recordRuntimeLog ? false,
     }:
     let
       allDisks = lib.optional (disk != null) disk ++ disks;
@@ -58,6 +59,25 @@ let
         inherit index source;
         name = "disk-${toString index}.img";
       }) allDisks;
+      runnerSetup = lib.optionalString recordRuntimeLog "mkdir \"$out\"\n";
+      runnerLogRedirect = lib.optionalString recordRuntimeLog " | tee \"$out/runtime.log\"";
+      captureRunnerStatus =
+        if recordRuntimeLog then
+          ''
+            runner_status=("''${PIPESTATUS[@]}")
+            status="''${runner_status[0]}"
+          ''
+        else
+          "status=$?";
+      finishOutput =
+        if recordRuntimeLog then
+          ''
+            [ "''${runner_status[1]}" -eq 0 ] || exit "''${runner_status[1]}"
+            printf '%s\n' '::vm-test::closed' >> "$out/runtime.log"
+            printf '%s\n' '::vm-test::closed'
+          ''
+        else
+          "mkdir $out";
     in
     pkgs.runCommand "vm-test-${name}"
       {
@@ -75,7 +95,7 @@ let
           cp ${diskCopy.source} ${diskCopy.name}
           chmod u+w ${diskCopy.name}
         '') diskCopies}
-        set +e
+        ${runnerSetup}set +e
         timeout --kill-after=5 300 node ${lib.escapeShellArgs nodeArguments} ${runner}/run-test.js \
           --cpus ${toString cpus} \
           ${lib.optionalString snapshotFirstDisk "--snapshot-first-disk"} \
@@ -84,14 +104,14 @@ let
           ${kernel}/dist/index.js \
           ${initramfs} \
           ${lib.concatMapStringsSep " " (diskCopy: diskCopy.name) diskCopies} \
-          2>&1
-        status=$?
+          2>&1${runnerLogRedirect}
+        ${captureRunnerStatus}
         set -e
         if [ "$status" -eq 124 ]; then
           echo "vm test failed: watchdog expired after 300 seconds" >&2
         fi
         [ "$status" -eq 0 ] || exit "$status"
-        mkdir $out
+        ${finishOutput}
       '';
 
   installedDisk =
@@ -153,6 +173,7 @@ let
       # starve unrelated tests and produce misleading failures.
       heavy ? true,
       disks ? [ ],
+      recordRuntimeLog ? false,
     }:
     let
       fixtureName = lib.replaceStrings [ "_" ] [ "-" ] name;
@@ -166,7 +187,12 @@ let
       };
     in
     bootInstalledSystem {
-      inherit cpus heavy name;
+      inherit
+        cpus
+        heavy
+        name
+        recordRuntimeLog
+        ;
       disks = [ rootDisk ] ++ disks;
       initramfs = image.bootInitramfs;
     };
@@ -186,6 +212,7 @@ let
       readOnlyDisks ? false,
       nodeArguments ? [ ],
       vsockRoundtrip ? false,
+      recordRuntimeLog ? false,
     }:
     bootInstalledSystem {
       inherit
@@ -197,6 +224,7 @@ let
         readOnlyDisks
         nodeArguments
         vsockRoundtrip
+        recordRuntimeLog
         ;
       initramfs = image.mkInitramfs {
         name = "${lib.replaceStrings [ "_" ] [ "-" ] name}-initramfs";

@@ -501,12 +501,23 @@ jobs:
           name: linuxwasm
           authToken: "${{secrets.CACHIX_AUTH_TOKEN}}"
       - name: Build isolated check
+        id: isolated-check
         run: |
           installable=".#ciJobs.x86_64-linux.heavyChecks.${{ matrix.check }}"
           if [[ "${{ needs.plan.outputs.targeted }}" == true ]]; then
             nix build --no-link --print-build-logs .#checks.x86_64-linux.formatting
           fi
-          nix build --show-trace --no-link --print-build-logs "$installable"
+          output=$(nix build --show-trace --no-link --print-build-logs --print-out-paths "$installable")
+          if [[ "$output" == /nix/store/* && -f "$output/runtime.log" ]]; then
+            echo "runtime-log=$output/runtime.log" >> "$GITHUB_OUTPUT"
+          fi
+      - name: Upload target execution record
+        if: ${{ steps.isolated-check.outputs.runtime-log != '' }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: runtime-${{ matrix.check }}
+          path: ${{ steps.isolated-check.outputs.runtime-log }}
+          if-no-files-found: error
       - name: Collect validated SDK build materials
         if: ${{ success() && (matrix.check == 'sdk-check-build-materials' || matrix.check == 'sdk-wasm64-check-build-materials') }}
         env:

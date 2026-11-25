@@ -273,6 +273,7 @@ stdenv.mkDerivation (finalAttrs: {
       loop = vm-test.installedTest {
         name = "util-linux-loop-${platform.wasmArch}";
         init = ./loop-test.sh;
+        recordRuntimeLog = true;
         contents = [
           busybox
           file
