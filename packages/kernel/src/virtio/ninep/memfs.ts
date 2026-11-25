@@ -504,7 +504,14 @@ export class MemoryFs implements Fs {
     this.#emit("symlink", path, target);
   }
 
-  remove(path: string, dir: boolean): void {
+  remove(
+    path: string,
+    dir: boolean,
+    expected?: { source?: FsIdentity; directory?: FsIdentity },
+  ): void {
+    if (expected?.source) this.#checkedNode(path, expected.source);
+    if (expected?.directory)
+      this.#checkedNode("/" + parts(path).slice(0, -1).join("/"), expected.directory);
     const d = this.#dirOf(path);
     const n = d.dir.children!.get(d.name);
     if (!n) throw new FsError("ENOENT", path);
@@ -547,13 +554,34 @@ export class MemoryFs implements Fs {
     this.#emit("link", from, to);
   }
 
-  rename(from: string, to: string): boolean {
-    if (!this.#rename(from, to)) return false;
+  rename(
+    from: string,
+    to: string,
+    expected?: {
+      source?: FsIdentity;
+      sourceDirectory?: FsIdentity;
+      destinationDirectory?: FsIdentity;
+    },
+  ): boolean {
+    if (!this.#rename(from, to, expected)) return false;
     this.#emit("rename", from, to);
     return true;
   }
 
-  #rename(from: string, to: string): boolean {
+  #rename(
+    from: string,
+    to: string,
+    expected?: {
+      source?: FsIdentity;
+      sourceDirectory?: FsIdentity;
+      destinationDirectory?: FsIdentity;
+    },
+  ): boolean {
+    if (expected?.source) this.#checkedNode(from, expected.source);
+    if (expected?.sourceDirectory)
+      this.#checkedNode("/" + parts(from).slice(0, -1).join("/"), expected.sourceDirectory);
+    if (expected?.destinationDirectory)
+      this.#checkedNode("/" + parts(to).slice(0, -1).join("/"), expected.destinationDirectory);
     const a = this.#dirOf(from),
       b = this.#dirOf(to);
     const n = a.dir.children!.get(a.name);

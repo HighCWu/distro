@@ -216,8 +216,13 @@ export interface Fs {
   mkdir?(path: string, mode: number): MaybePromise<void>;
   symlink?(path: string, target: string): MaybePromise<void>;
   readlink?(path: string): MaybePromise<string>;
-  /** `dir`: rmdir (ENOTEMPTY unless empty), else unlink. */
-  remove?(path: string, dir: boolean): MaybePromise<void>;
+  /** `dir`: rmdir (ENOTEMPTY unless empty), else unlink. Supplied inode/parent
+   * identities must be checked atomically before mutation, or fail ESTALE. */
+  remove?(
+    path: string,
+    dir: boolean,
+    expected?: { source?: FsIdentity; directory?: FsIdentity },
+  ): MaybePromise<void>;
   /** Atomically verify source and destination-directory identities before
    * adding a name. Missing/replaced objects are ESTALE; no directory links. */
   link?(
@@ -225,9 +230,18 @@ export interface Fs {
     to: string,
     expected: { source: FsIdentity; directory: FsIdentity },
   ): MaybePromise<void>;
-  /** Replaces `to` if it exists. Return false for a same-inode no-op, so fid
-   * paths stay unchanged; void/true indicate a successful move. */
-  rename?(from: string, to: string): MaybePromise<void | boolean>;
+  /** Replaces `to` if it exists. Check all supplied identities atomically,
+   * even for a no-op. Return false for a same-inode no-op so fid paths stay
+   * unchanged; void/true indicate a successful move. */
+  rename?(
+    from: string,
+    to: string,
+    expected?: {
+      source?: FsIdentity;
+      sourceDirectory?: FsIdentity;
+      destinationDirectory?: FsIdentity;
+    },
+  ): MaybePromise<void | boolean>;
   /** Read user.* bytes, or NUL-delimited names when name is empty. Verify
    * the captured inode identity before accessing the attribute storage. */
   getxattr?(path: string, name: string, expected: FsIdentity): MaybePromise<Uint8Array>;

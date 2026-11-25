@@ -944,3 +944,90 @@ test(
     await c.close();
   },
 );
+
+test(
+  "remove and rename reject stale inode and parent fids without touching replacements",
+  { timeout: 3000 },
+  async () => {
+    const fs = new MemoryFs({
+      "message.txt": "original",
+      source: { child: "original child" },
+      target: { entry: "original target" },
+      good: {},
+    });
+    const c = await client(fs);
+    const walk = (fid: number, name: string) =>
+      c.query(110, [u32(1), u32(fid), u16(1), string(name)]);
+    const text = (path: string) => Buffer.from(fs.readFile(path)).toString();
+    await walk(2, "message.txt");
+    fs.move("/message.txt", "/original-message");
+    fs.writeFile("/message.txt", "replacement");
+    assert.equal((await c.query(122, [u32(2)], 7)).readUInt32LE(), 116);
+    assert.equal(text("/message.txt"), "replacement");
+    assert.equal(text("/original-message"), "original");
+    assert.equal(
+      (await c.query(24, [u32(2), u64(0x7ff)], 7)).readUInt32LE(),
+      9,
+      "failed Tremove still clunks its fid",
+    );
+    await walk(3, "original-message");
+    fs.move("/original-message", "/retained-original");
+    fs.writeFile("/original-message", "rename replacement");
+    assert.equal(
+      (await c.query(20, [u32(3), u32(1), string("bad-rename")], 7)).readUInt32LE(),
+      116,
+    );
+    assert.equal(text("/original-message"), "rename replacement");
+    assert.throws(() => fs.getattr("/bad-rename"), { code: "ENOENT" });
+    await walk(4, "original-message");
+    await c.query(20, [u32(4), u32(1), string("renamed-success")]);
+    assert.equal(text("/renamed-success"), "rename replacement");
+    await c.query(122, [u32(4)]);
+    assert.throws(() => fs.getattr("/renamed-success"), { code: "ENOENT" });
+    assert.equal((await c.query(24, [u32(4), u64(0x7ff)], 7)).readUInt32LE(), 9);
+    await walk(10, "source");
+    await walk(11, "target");
+    await walk(12, "good");
+    fs.move("/source", "/original-source");
+    fs.mkdirp("/source");
+    fs.writeFile("/source/child", "replacement child");
+    assert.equal((await c.query(76, [u32(10), string("child"), u32(0)], 7)).readUInt32LE(), 116);
+    assert.equal(text("/source/child"), "replacement child");
+    assert.equal(
+      (
+        await c.query(74, [u32(10), string("child"), u32(12), string("bad-source")], 7)
+      ).readUInt32LE(),
+      116,
+    );
+    assert.equal(
+      (await c.query(74, [u32(10), string("child"), u32(10), string("child")], 7)).readUInt32LE(),
+      116,
+      "same-path requests must still validate their saved parent identity",
+    );
+    assert.throws(() => fs.getattr("/good/bad-source"), { code: "ENOENT" });
+    await walk(13, "message.txt");
+    fs.move("/target", "/original-target");
+    fs.mkdirp("/target");
+    fs.writeFile("/target/entry", "replacement target");
+    assert.equal((await c.query(20, [u32(13), u32(11), string("entry")], 7)).readUInt32LE(), 116);
+    assert.equal(text("/message.txt"), "replacement");
+    assert.equal(text("/target/entry"), "replacement target");
+    fs.writeFile("/good/current", "current source");
+    assert.equal(
+      (await c.query(74, [u32(12), string("current"), u32(11), string("entry")], 7)).readUInt32LE(),
+      116,
+    );
+    assert.equal(text("/good/current"), "current source");
+    assert.equal(text("/target/entry"), "replacement target");
+    await walk(14, "source");
+    await walk(15, "target");
+    await c.query(74, [u32(14), string("child"), u32(15), string("moved")]);
+    assert.equal(text("/target/moved"), "replacement child");
+    await c.query(76, [u32(15), string("moved"), u32(0)]);
+    assert.throws(() => fs.getattr("/target/moved"), { code: "ENOENT" });
+    assert.equal(text("/original-source/child"), "original child");
+    assert.equal(text("/original-target/entry"), "original target");
+    assert.equal(text("/retained-original"), "original");
+    await c.close();
+  },
+);

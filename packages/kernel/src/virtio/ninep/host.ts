@@ -1131,7 +1131,7 @@ class Session {
         await this.#ordered(f, () => file?.close?.());
         if (type === Tremove) {
           if (f.path === "/") throw new FsError("EBUSY");
-          await this.#need("remove")(f.path, f.type === "dir");
+          await this.#need("remove")(f.path, f.type === "dir", { source: f.identity });
         }
         return new Writer(HDR);
       }
@@ -1241,12 +1241,19 @@ class Session {
         const name = r.name();
         const flags = r.u32();
         checkName(name);
-        await this.#need("remove")(join(f.path, name), !!(flags & AT_REMOVEDIR));
+        await this.#need("remove")(join(f.path, name), !!(flags & AT_REMOVEDIR), {
+          directory: f.identity,
+        });
         return new Writer(HDR);
       }
       case Trenameat:
       case Trename: {
         let from: string, to: string;
+        let expected: {
+          source?: FsIdentity;
+          sourceDirectory?: FsIdentity;
+          destinationDirectory?: FsIdentity;
+        };
         if (type === Trenameat) {
           const od = this.#dir(r.u32()),
             oname = r.name(),
@@ -1256,6 +1263,7 @@ class Session {
           checkName(nname);
           from = join(od.path, oname);
           to = join(nd.path, nname);
+          expected = { sourceDirectory: od.identity, destinationDirectory: nd.identity };
         } else {
           const f = this.#fid(r.u32()),
             d = this.#dir(r.u32()),
@@ -1263,13 +1271,12 @@ class Session {
           checkName(name);
           from = f.path;
           to = join(d.path, name);
+          expected = { source: f.identity, destinationDirectory: d.identity };
         }
         if (from === "/" || (under(to, from) && to !== from))
           throw new FsError(from === "/" ? "EBUSY" : "EINVAL");
-        if (from !== to) {
-          const moved = await this.#need("rename")(from, to);
-          if (moved !== false) this.#renamed(from, to);
-        }
+        const moved = await this.#need("rename")(from, to, expected);
+        if (moved !== false && from !== to) this.#renamed(from, to);
         return new Writer(HDR);
       }
       case Treadlink: {
