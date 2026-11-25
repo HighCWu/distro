@@ -18,7 +18,7 @@ async function createSnapshot() {
   const root = await origin.getDirectoryHandle(name, { create: true });
   try {
     const project = await root.getDirectoryHandle("project", { create: true });
-    const input = await project.getFileHandle("\uFEFFinput.txt", { create: true });
+    const input = await project.getFileHandle("input.txt", { create: true });
     const data = await input.createWritable();
     try {
       await data.write("linux-wasm 9p transport\n");
@@ -27,7 +27,14 @@ async function createSnapshot() {
       await data.abort().catch(() => {});
       throw error;
     }
-    return await importNinepBrowserDirectorySnapshot(root, { maxBytes: 256, maxEntries: 4 });
+    const snapshot = await importNinepBrowserDirectorySnapshot(root, {
+      maxBytes: 256,
+      maxEntries: 4,
+    });
+    // Exercise the Linux filename through the export after reading the real
+    // OPFS file. Host filesystem name handling is independent of 9P decoding.
+    snapshot.rename("/project/input.txt", "/project/\uFEFFinput.txt");
+    return snapshot;
   } finally {
     await origin.removeEntry(name, { recursive: true });
   }
