@@ -25,7 +25,7 @@ export interface DylinkWorkerRuntimeOptions {
   fatal(error: unknown): never;
   /** Wake parked Workers after a publication phase changes. */
   notify(): void;
-  /** Bounded wait that does not reenter user code or the runtime service. */
+  /** Bounded wait that may run kernel maintenance without reentering user code. */
   pause(): void;
   timeoutMs?: number;
 }
@@ -42,6 +42,7 @@ export class DylinkWorkerRuntime {
   readonly #receiver: DylinkWorkerReceiver;
   readonly #writer: DylinkWorkerWriter;
   #failed = false;
+  #receiverPauseDepth = 0;
   #kernelCheckpointTransaction: number | null = null;
   #kernelCheckpointDeadline: number | null = null;
 
@@ -122,7 +123,14 @@ export class DylinkWorkerRuntime {
             );
           if (now() >= deadline)
             return this.#fatal(new Error("Worker receiver checkpoint deadline expired"));
-          this.#pause();
+          // The outer receiver loop owns the barrier. Kernel maintenance
+          // during this pause must let that loop reach the next ACK.
+          this.#receiverPauseDepth++;
+          try {
+            this.#pause();
+          } finally {
+            this.#receiverPauseDepth--;
+          }
         }
       });
     } catch (error) {
@@ -137,6 +145,7 @@ export class DylinkWorkerRuntime {
    */
   kernelCheckpointStep(): WorkerCheckpointV2Status {
     this.#assertHealthy();
+    if (this.#receiverPauseDepth !== 0) return 1;
     // The active owner cannot receive its own publication. Its transaction is
     // still a source for the kernel, but it must continue its existing work.
     if (this.#writer.active) {
@@ -180,6 +189,7 @@ export class DylinkWorkerRuntime {
    */
   kernelCheckpointDeferredStatus(): WorkerCheckpointV2Status {
     this.#assertHealthy();
+    if (this.#receiverPauseDepth !== 0) return 1;
     const observed = this.#channel.observe();
     if (!observed.ok) {
       if (this.#receiver.hasPendingUserReturnBarrier) {

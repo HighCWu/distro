@@ -194,6 +194,63 @@ test("kernel checkpoint performs one step and keeps a prepared receiver parked",
   assert.equal(unwrap(channel.observe()).state, "prepare");
 });
 
+test("nested kernel maintenance lets the outer receiver checkpoint acknowledge Abort", (t) => {
+  const channel = new DylinkWorkerChannel(1024, 2);
+  const receiver = unwrap(channel.register());
+  const writer = unwrap(channel.register());
+  const acknowledge = DylinkWorkerChannel.prototype.ack;
+  let retryAbort = true;
+  t.mock.method(
+    DylinkWorkerChannel.prototype,
+    "ack",
+    function (this: DylinkWorkerChannel, ...args: Parameters<DylinkWorkerChannel["ack"]>) {
+      if (retryAbort && args[0].slot === receiver.slot && args[2] === "abort") {
+        retryAbort = false;
+        return { ok: false, errno: -16 } as const;
+      }
+      return acknowledge.apply(this, args);
+    },
+  );
+  const transaction = unwrap(channel.begin(writer, encode_dylink_worker_publication({} as never)));
+  let boundaries = 0;
+  let pauses = 0;
+  const runtime = new DylinkWorkerRuntime({
+    shared: channel.shared,
+    participant: receiver,
+    process: makeProcess({
+      runAtWorkerCheckpoint<T>(action: () => T) {
+        boundaries++;
+        return action();
+      },
+      prepareWorkerExtension: () => ({}),
+    }),
+    fatal(error) {
+      throw error;
+    },
+    notify() {},
+    pause() {
+      assert.equal(runtime.kernelCheckpointDeferredStatus(), 1);
+      assert.equal(runtime.kernelCheckpointStep(), 1);
+      assert.equal(boundaries, 2, "nested maintenance must not enter receiver bookkeeping");
+      const result = channel.finish(writer, transaction);
+      if (++pauses === 1) {
+        assert.deepEqual(result, { ok: false, errno: -11 }, "receiver Abort ACK is still pending");
+      } else {
+        assert.equal(pauses, 2);
+        assert.deepEqual(unwrap(result), { generation: 0, committed: false });
+      }
+    },
+  });
+
+  assert.equal(runtime.kernelCheckpointStep(), 2);
+  unwrap(channel.requestAbort(writer, transaction));
+  unwrap(channel.ack(writer, transaction, "abort"));
+  assert.equal(runtime.kernelCheckpointDeferredStatus(), 2, "outer Abort barrier remains active");
+  runtime.checkpoint();
+  assert.equal(pauses, 2);
+  assert.equal(unwrap(channel.observe()).state, "idle");
+});
+
 test("kernel checkpoint deadline is absolute for one prepared transaction", (t) => {
   let clock = 0;
   t.mock.method(performance, "now", () => clock);
