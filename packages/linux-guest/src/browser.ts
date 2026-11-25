@@ -10,6 +10,8 @@ import {
   type FSTimestamp,
 } from "@lowland/kernel";
 
+export { wispNetwork } from "./wisp-network.ts";
+
 const FileType = {
   directory: 0o040000,
   file: 0o100000,

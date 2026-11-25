@@ -1,18 +1,27 @@
 // SPDX-License-Identifier: MIT
 import { expect } from "@playwright/test";
 
-export async function checkPublicAgent(page, userland = false, networking = false) {
-  page.on("console", (message) => console.log(`[browser] ${message.text()}`));
-  page.on("pageerror", (error) => console.error(`[browser] ${error.stack ?? error}`));
-  await page.goto("/");
-  expect(await page.evaluate(() => crossOriginIsolated)).toBe(true);
-  await expect
-    .poll(() => page.evaluate(() => typeof globalThis.runPublicNativeAgent))
-    .toBe("function");
-  const result = await page.evaluate((options) => globalThis.runPublicNativeAgent(options), {
-    userland,
-    networking,
-  });
+export async function checkPublicAgent(page, userland = false, networking = false, wisp = false) {
+  const logConsole = (message) => console.log(`[browser] ${message.text()}`);
+  const logError = (error) => console.error(`[browser] ${error.stack ?? error}`);
+  page.on("console", logConsole);
+  page.on("pageerror", logError);
+  let result;
+  try {
+    await page.goto("/");
+    expect(await page.evaluate(() => crossOriginIsolated)).toBe(true);
+    await expect
+      .poll(() => page.evaluate(() => typeof globalThis.runPublicNativeAgent))
+      .toBe("function");
+    result = await page.evaluate((options) => globalThis.runPublicNativeAgent(options), {
+      userland,
+      networking,
+      wisp,
+    });
+  } finally {
+    page.off("console", logConsole);
+    page.off("pageerror", logError);
+  }
   expect(result.passed).toEqual([
     "public plugin completes root pivot before exposing capabilities",
     "public file API retains native seek, metadata and truncate behavior",
@@ -25,6 +34,8 @@ export async function checkPublicAgent(page, userland = false, networking = fals
         ]
       : []),
     ...(networking ? ["public network reaches a native HTTP server over the attached NIC"] : []),
+    ...(wisp ? ["native wget resolves a name and receives exact bytes over Wisp"] : []),
   ]);
   expect(result.closed).toBe(true);
+  console.log("public agent machine and devices closed");
 }

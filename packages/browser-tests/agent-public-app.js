@@ -8,7 +8,11 @@ async function loadImage(path) {
   return new Uint8Array(await response.arrayBuffer());
 }
 
-globalThis.runPublicNativeAgent = async ({ userland = false, networking = false } = {}) => {
+globalThis.runPublicNativeAgent = async ({
+  userland = false,
+  networking = false,
+  wisp = false,
+} = {}) => {
   const [image, root] = await Promise.all([
     loadImage("/agent-boot.img"),
     loadImage("/agent-root.erofs"),
@@ -22,6 +26,10 @@ globalThis.runPublicNativeAgent = async ({ userland = false, networking = false 
       console.log(`public agent passed: ${name}`);
     },
     (line) => console.log(line.trimEnd()),
-    { userland, networking },
+    {
+      userland,
+      networking,
+      wispUrl: wisp ? new URL("/wisp-test", location.href.replace(/^http/, "ws")).href : undefined,
+    },
   );
 };

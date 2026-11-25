@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: MIT
 import { blockDevice, bootMachine, consoleDevice, entropyDevice } from "@lowland/kernel";
 import { createNetwork, guestAgent, SeekMode, SystemError } from "../src/index.ts";
+import { wispNetwork } from "../src/browser.ts";
 import { closed_input, console_line_output } from "./helpers.ts";
 import type { RuntimeAssertions } from "./agent-wasm64-suite.ts";
 import {
@@ -22,9 +23,9 @@ export async function runPublicAgentWasm64Suite(
   assert: RuntimeAssertions,
   runCase: (name: string, body: () => Promise<void>) => Promise<void>,
   writeLine: (line: string) => void,
-  options: { userland?: boolean; networking?: boolean } = {},
+  options: { userland?: boolean; networking?: boolean; wispUrl?: string } = {},
 ) {
-  if (options.networking && !options.userland)
+  if ((options.networking || options.wispUrl) && !options.userland)
     throw new Error("networking requires native userland");
   const passed: string[] = [];
   const check = (name: string, body: () => Promise<void>) =>
@@ -35,17 +36,19 @@ export async function runPublicAgentWasm64Suite(
     });
   const agent = guestAgent({ abi: "wasm64", image });
   let outbound = 0;
-  const network = options.networking
-    ? createNetwork({
-        connectTcp() {
-          outbound++;
-          throw new Error("this suite must not use an outbound network adapter");
-        },
-        async resolveDns() {
-          throw new Error("this suite must not use DNS");
-        },
-      })
-    : undefined;
+  const network = options.wispUrl
+    ? createNetwork(wispNetwork(options.wispUrl))
+    : options.networking
+      ? createNetwork({
+          connectTcp() {
+            outbound++;
+            throw new Error("this suite must not use an outbound network adapter");
+          },
+          async resolveDns() {
+            throw new Error("this suite must not use DNS");
+          },
+        })
+      : undefined;
   const attachment = network?.attach(agent);
   // No initcpio and no manual boot arguments: the public plugin owns the
   // GPT boot disk, transport and readiness handshake just as in wasm32.
@@ -278,6 +281,21 @@ export async function runPublicAgentWasm64Suite(
       await check("public network reaches a native HTTP server over the attached NIC", async () => {
         await checkPublicNetwork(agent, attachment, assert);
         assert.equal(outbound, 0);
+      });
+    }
+    if (options.wispUrl) {
+      await check("native wget resolves a name and receives exact bytes over Wisp", async () => {
+        const result = await agent.run([
+          "/bin/busybox",
+          "wget",
+          "-T",
+          "10",
+          "-qO-",
+          "http://wisp-test.example:18081/body",
+        ]);
+        assert.equal(result.status.success, true);
+        assert.equal(new TextDecoder().decode(result.stdout), "Linux on Wasm Wisp test\n");
+        assert.equal(result.stderr.byteLength, 0);
       });
     }
   } finally {
