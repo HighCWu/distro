@@ -32,5 +32,6 @@ stdenv.mkDerivation (finalAttrs: {
     name = "vsock-runtime-${platform.wasmArch}";
     init = "${finalAttrs.finalPackage}/bin/vsock-runtime";
     vsockRoundtrip = true;
+    recordRuntimeLog = true;
   };
 })
