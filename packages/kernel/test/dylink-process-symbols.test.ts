@@ -886,17 +886,22 @@ test("ordinary dlopen stages deltas without iterating resident file or alias map
     }),
   );
   const resident = new Set<Map<unknown, unknown>>();
+  const admissionMaps = new Set<Map<unknown, unknown>>();
+  const admittedFiles: object[] = [];
   const originalSet = Map.prototype.set;
-  Map.prototype.set = function (key, value) {
-    const file = value as { module?: unknown; dependencies?: unknown; pin?: unknown } | null;
+  const trackSet: typeof originalSet = function (this: Map<unknown, unknown>, key, value) {
+    if (key instanceof Uint8Array && value instanceof WebAssembly.Module) admissionMaps.add(this);
+    const file = value as { exports?: unknown; dependencies?: unknown; pin?: unknown } | null;
     if (
       file &&
       typeof file === "object" &&
-      file.module instanceof WebAssembly.Module &&
+      Array.isArray(file.exports) &&
       file.dependencies instanceof Map &&
       typeof file.pin === "number"
-    )
+    ) {
       resident.add(this);
+      admittedFiles.push(file);
+    }
     if (
       typeof key === "string" &&
       key.startsWith("/") &&
@@ -906,6 +911,7 @@ test("ordinary dlopen stages deltas without iterating resident file or alias map
       resident.add(this);
     return originalSet.call(this, key, value);
   };
+  Map.prototype.set = trackSet;
   let first: ReturnType<ProcessDylink["open"]>;
   try {
     writeString(memory, 256, "/plugins/root2.so");
@@ -915,6 +921,11 @@ test("ordinary dlopen stages deltas without iterating resident file or alias map
     Map.prototype.set = originalSet;
   }
   assert.ok(resident.size >= 2, "the first real load published resident file and path-alias maps");
+  assert.ok(admissionMaps.size > 0, "new files share their admission modules with the linker");
+  for (const map of admissionMaps)
+    assert.equal(map.size, 0, "successful open releases its admission-only modules");
+  for (const file of admittedFiles)
+    assert.equal(Object.hasOwn(file, "module"), false, "resident files retain descriptors only");
   const iterator = Map.prototype[Symbol.iterator];
   Map.prototype[Symbol.iterator] = function () {
     assert.equal(
@@ -926,7 +937,16 @@ test("ordinary dlopen stages deltas without iterating resident file or alias map
   };
   try {
     writeString(memory, 256, "/plugins/root.so");
-    assert.equal(process.open(256, 2 | 4), 0, "failed RTLD_NOLOAD remains transactional");
+    const priorAdmissions = admissionMaps.size;
+    Map.prototype.set = trackSet;
+    try {
+      assert.equal(process.open(256, 2 | 4), 0, "failed RTLD_NOLOAD remains transactional");
+    } finally {
+      Map.prototype.set = originalSet;
+    }
+    assert.ok(admissionMaps.size > priorAdmissions, "failed new-file staging compiled admission");
+    for (const map of admissionMaps)
+      assert.equal(map.size, 0, "failed open also releases its admission-only modules");
     assert.equal(pins, 2, "failed staging releases its new pin");
     writeString(memory, 256, "/plugins/liblate.so");
     const late = process.open(256, 2);

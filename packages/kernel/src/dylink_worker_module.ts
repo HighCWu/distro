@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: MIT
-import { read_wasm_dynamic_imports, read_wasm_dylink } from "./wasm_binary.ts";
+import { read_wasm_dynamic_imports, read_wasm_dylink, type WasmDylink } from "./wasm_binary.ts";
 
 /** Errors raised while preparing a fixed module graph for a fresh Worker. */
 export class DylinkWorkerModuleError extends Error {
@@ -294,6 +294,7 @@ export function inspect_dylink_worker_empty_tls_scaffold(
   source: Uint8Array<ArrayBuffer>,
   address: "i32" | "i64",
   compiledModule?: WebAssembly.Module,
+  validatedMetadata?: WasmDylink,
 ): DylinkWorkerEmptyTlsScaffold | null {
   const sections = readCoreSections(source);
   const exports = readCoreExports(sections);
@@ -314,8 +315,10 @@ export function inspect_dylink_worker_empty_tls_scaffold(
       );
   }
 
-  const module = compiledModule ?? new WebAssembly.Module(source);
-  const metadata = read_wasm_dylink(module);
+  // Callers may supply metadata from the engine-validated exact source bytes
+  // if the admission module has already been released.
+  const metadata =
+    validatedMetadata ?? read_wasm_dylink(compiledModule ?? new WebAssembly.Module(source));
   if (!metadata || metadata.unknownSubsections.length)
     throw new DylinkWorkerModuleError(
       "empty TLS scaffolding requires recognized dylink.0 metadata",

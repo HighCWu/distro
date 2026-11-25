@@ -76,7 +76,7 @@ export type DylinkReplayTableWrite = Readonly<{
  * All modules must be trusted executable files: a Wasm start section runs during
  * instantiation, before relocations/constructors, and can have arbitrary effects.
  */
-export function link_dylink_graph(options: {
+export function link_dylink_graph(input: {
   root: string;
   files: ReadonlyMap<string, Uint8Array<ArrayBuffer>>;
   /** Admission modules keyed by the exact owned byte arrays in files. */
@@ -136,6 +136,9 @@ export function link_dylink_graph(options: {
   /** Execution control transfers (exit/exec) must escape initialization intact. */
   isControlFlow?(error: unknown): boolean;
 }) {
+  // The returned lookup closures retain runtime options. Keep the temporary
+  // admission modules outside that retained object.
+  const { validatedOriginals, ...options } = input;
   const { memory, table, stack, memoryArena, tableArena } = options;
   for (const [module, globals] of options.hostGlobals ?? [])
     for (const name of globals.keys())
@@ -187,9 +190,7 @@ export function link_dylink_graph(options: {
     // validating those bytes with the readers below, reusing engine validation
     // only for the corresponding unmodified admission input.
     const admitted =
-      !tail.tailTableRequired && !options.replay
-        ? options.validatedOriginals?.get(source)
-        : undefined;
+      !tail.tailTableRequired && !options.replay ? validatedOriginals?.get(source) : undefined;
     const originalModule = admitted ?? new WebAssembly.Module(bytes);
     if (!user_poll_function_imports_supported(bytes, memoryArena.address))
       throw new Error("unsupported dynamic user poll function import");

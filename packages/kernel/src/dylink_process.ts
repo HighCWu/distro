@@ -62,7 +62,7 @@ type File = {
   key: string;
   path: string;
   bytes: Uint8Array<ArrayBuffer>;
-  module: WebAssembly.Module;
+  exports: WebAssembly.ModuleExportDescriptor[];
   metadata: WasmDylink;
   dependencies: Map<string, string>;
   handle?: bigint;
@@ -1047,7 +1047,8 @@ export class ProcessDylink {
           emptyTlsScaffold = inspect_dylink_worker_empty_tls_scaffold(
             file.bytes,
             this.#options.address,
-            file.module,
+            undefined,
+            file.metadata,
           );
         } catch (error) {
           if (error instanceof DylinkWorkerModuleError)
@@ -1107,7 +1108,7 @@ export class ProcessDylink {
           throw new DylinkWorkerSnapshotError("EINVAL", `dynamic group ${key} is incomplete`);
         placements.push([key, { base: record.base, tableBase: record.tableBase }]);
         const slots: [string, bigint][] = [];
-        for (const entry of WebAssembly.Module.exports(file.module)) {
+        for (const entry of file.exports) {
           if (entry.kind !== "function") continue;
           const value = instance.exports[entry.name];
           if (typeof value !== "function") continue;
@@ -1259,7 +1260,7 @@ export class ProcessDylink {
         key: source.key,
         path: source.path,
         bytes: source.bytes,
-        module,
+        exports: WebAssembly.Module.exports(module),
         metadata,
         dependencies: new Map(source.dependencies),
         ...(source.handle === undefined ? {} : { handle: source.handle }),
@@ -1738,7 +1739,7 @@ export class ProcessDylink {
         key: source.key,
         path: source.path,
         bytes: source.bytes,
-        module,
+        exports: WebAssembly.Module.exports(module),
         metadata,
         dependencies: new Map(source.dependencies),
         ...(source.handle === undefined ? {} : { handle: source.handle }),
@@ -2586,7 +2587,11 @@ export class ProcessDylink {
     this.#error = "dynamic queries are disabled while a vfork child is active";
     return true;
   }
-  #read(path: string, known: Pick<ReadonlyMap<string, File>, "get">): File {
+  #read(
+    path: string,
+    known: Pick<ReadonlyMap<string, File>, "get">,
+    admissionModules: Map<Uint8Array<ArrayBuffer>, WebAssembly.Module>,
+  ): File {
     const encoded = encode_linux_string(path + "\0");
     if (encoded.length > 4096) throw new DylinkSearchMiss("dynamic path exceeds PATH_MAX");
     const pointer = this.#call(
@@ -2631,6 +2636,8 @@ export class ProcessDylink {
         const module = new WebAssembly.Module(copy);
         const metadata = read_wasm_dylink(module);
         if (!metadata) throw new Error("file is not a Wasm dynamic library");
+        const exports = WebAssembly.Module.exports(module);
+        admissionModules.set(copy, module);
         const pin = this.#options.pinFile(
           Number(this.#call("__wasm_dlopen_fd")),
           view.getBigUint64(16, true),
@@ -2642,7 +2649,7 @@ export class ProcessDylink {
           key,
           path: origin,
           bytes: copy,
-          module,
+          exports,
           metadata,
           dependencies: new Map(),
         };
@@ -2751,7 +2758,7 @@ export class ProcessDylink {
         const file = this.#files.get(key);
         if (!file)
           throw new DylinkWorkerSnapshotError("EINVAL", `dynamic module ${key} is missing`);
-        for (const entry of WebAssembly.Module.exports(file.module)) {
+        for (const entry of file.exports) {
           if (entry.kind !== "function") continue;
           reserve(`${key}.${entry.name}`, state.group.lookupOwn(key, entry.name));
         }
@@ -3169,6 +3176,7 @@ export class ProcessDylink {
     let acquired = false;
     let committed = false;
     const pins = scopedPublicationOpen && publicationScope ? publicationScope.rollback.pins : [];
+    const admissionModules = new Map<Uint8Array<ArrayBuffer>, WebAssembly.Module>();
     try {
       if (flags & ~0x1107 || !(flags & 3)) throw new Error("invalid dlopen mode");
       if (!this.#unsigned(pathPointer) && this.#mainHandle) return this.#word(this.#mainHandle);
@@ -3221,7 +3229,7 @@ export class ProcessDylink {
           const known = descriptorPath ? undefined : aliasByName(candidate);
           if (known && fileByKey(known)) return fileByKey(known)!;
           try {
-            const file = this.#read(candidate, knownFiles);
+            const file = this.#read(candidate, knownFiles, admissionModules);
             if (fileByKey(file.key)) {
               // #read returns the resident object before acquiring another
               // pin. Its existing reference must stay owned by that object.
@@ -3327,8 +3335,7 @@ export class ProcessDylink {
           if (entry.module === "env" || entry.module === "GOT.func" || entry.module === "GOT.mem")
             externalSymbolNames.add(entry.name);
         }
-        for (const entry of WebAssembly.Module.exports(file.module))
-          externalSymbolNames.add(entry.name);
+        for (const entry of file.exports) externalSymbolNames.add(entry.name);
       }
       let tailTableRequired = false;
       for (const file of fresh) {
@@ -3365,8 +3372,7 @@ export class ProcessDylink {
       const extra = files.reduce(
         (count, file) =>
           count +
-          WebAssembly.Module.exports(file.module).filter((entry) => entry.kind === "function")
-            .length +
+          file.exports.filter((entry) => entry.kind === "function").length +
           importsByFile.get(file.key)!.filter((entry) => entry.module === "GOT.func").length,
         0,
       );
@@ -3404,9 +3410,7 @@ export class ProcessDylink {
         group = link_dylink_graph({
           root: root.key,
           files: new Map(files.map((file) => [file.key, file.bytes])),
-          validatedOriginals: scopedPublicationOpen
-            ? undefined
-            : new Map(files.map((file) => [file.bytes, file.module])),
+          validatedOriginals: scopedPublicationOpen ? undefined : admissionModules,
           memory: this.#options.memory,
           table: this.#table,
           tailTable: this.#tailTable ?? undefined,
@@ -3607,6 +3611,7 @@ export class ProcessDylink {
         this.#call("__wasm_dlopen_deallocate", allocation);
       return this.#failure(error);
     } finally {
+      admissionModules.clear();
       if (acquired) this.#busy = false;
     }
   }
@@ -3701,7 +3706,7 @@ export class ProcessDylink {
       const loaded = this.#groups.get(key);
       if (!record || !loaded) continue;
       const symbols: { name: string; address: bigint }[] = [];
-      for (const entry of WebAssembly.Module.exports(file.module)) {
+      for (const entry of file.exports) {
         if (entry.kind !== "global") continue;
         const symbol = loaded.group.lookupOwn(key, entry.name);
         if (symbol?.value instanceof WebAssembly.Global && symbol.address !== undefined)
@@ -3775,7 +3780,7 @@ export class ProcessDylink {
       const file = this.#files.get(owner);
       const instance = loaded?.group.instances.get(owner);
       if (!loaded || !file || !instance) return { owner };
-      for (const entry of WebAssembly.Module.exports(file.module)) {
+      for (const entry of file.exports) {
         if (entry.kind !== "function") continue;
         const raw = instance.exports[entry.name];
         if (typeof raw !== "function") continue;
