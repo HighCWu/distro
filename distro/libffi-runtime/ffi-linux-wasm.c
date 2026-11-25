@@ -194,9 +194,18 @@ static int variadic_slot_layout(const FfiWasmTypeInfo *type, size_t *alignment,
   }
   /* The wasm varargs area follows the promoted type's natural ABI layout.
    * In particular, wasm64 int arguments occupy 4-byte slots, not 8-byte
-   * machine words; va_arg(int) advances by sizeof(int). */
+   * machine words; va_arg(int) advances by sizeof(int). Indirect structs
+   * occupy pointer slots, and coerced structs occupy at least four bytes. */
+  if (type->kind == FFI_WASM_TYPE_INDIRECT_STRUCT) {
+    *alignment = _Alignof(void *);
+    *slot_size = sizeof(void *);
+    return 1;
+  }
   *alignment = type->alignment;
-  return checked_align_up(type->size, type->alignment, slot_size);
+  if (type->kind == FFI_WASM_TYPE_COERCED_STRUCT && *alignment < 4) {
+    *alignment = 4;
+  }
+  return checked_align_up(type->size, *alignment, slot_size);
 }
 
 static ffi_status prepare_cif_module(ffi_cif *cif, int is_variadic,
@@ -305,6 +314,10 @@ ffi_status FFI_HIDDEN ffi_prep_cif_machdep_var(ffi_cif *cif, unsigned int nfixed
     case FFI_TYPE_POINTER:
       if (description.kind != FFI_WASM_TYPE_SCALAR) return FFI_BAD_TYPEDEF;
       break;
+    case FFI_TYPE_STRUCT:
+      if (description.kind != FFI_WASM_TYPE_COERCED_STRUCT &&
+          description.kind != FFI_WASM_TYPE_INDIRECT_STRUCT) return FFI_BAD_TYPEDEF;
+      break;
     default:
       return FFI_BAD_TYPEDEF;
     }
@@ -362,7 +375,7 @@ void ffi_call(ffi_cif *cif, void (*function)(void), void *result, void **argumen
 
   int has_byval_argument = 0;
   size_t maximum_alignment = sizeof(void *);
-  for (unsigned int i = 0; i < nfixedargs; ++i) {
+  for (unsigned int i = 0; i < cif->nargs; ++i) {
     if (argument_types[i].kind == FFI_WASM_TYPE_INDIRECT_STRUCT) {
       has_byval_argument = 1;
       if (argument_types[i].alignment > maximum_alignment) {
@@ -414,7 +427,7 @@ void ffi_call(ffi_cif *cif, void (*function)(void), void *result, void **argumen
     size_t pointer_bytes;
     if (__builtin_mul_overflow(call_argument_count, sizeof(void *), &pointer_bytes)) abort();
     size_t total_bytes = pointer_bytes;
-    for (unsigned int i = 0; i < nfixedargs; ++i) {
+    for (unsigned int i = 0; i < cif->nargs; ++i) {
       if (argument_types[i].kind != FFI_WASM_TYPE_INDIRECT_STRUCT) continue;
       if (!checked_align_up(total_bytes, argument_types[i].alignment, &total_bytes) ||
           argument_types[i].size > SIZE_MAX - total_bytes) {
@@ -448,8 +461,7 @@ void ffi_call(ffi_cif *cif, void (*function)(void), void *result, void **argumen
     call_arguments = (void **)storage;
     size_t offset = pointer_bytes;
     for (unsigned int i = 0; i < cif->nargs; ++i) {
-      if (i < nfixedargs &&
-          argument_types[i].kind == FFI_WASM_TYPE_INDIRECT_STRUCT) {
+      if (argument_types[i].kind == FFI_WASM_TYPE_INDIRECT_STRUCT) {
         if (!checked_align_up(offset, argument_types[i].alignment, &offset) ||
             argument_types[i].size > SIZE_MAX - offset) {
           abort();
@@ -472,10 +484,14 @@ void ffi_call(ffi_cif *cif, void (*function)(void), void *result, void **argumen
         if (!variadic_slot_layout(&argument_types[i], &slot_alignment,
                                   &slot_size) ||
             !checked_align_up(tail_cursor, slot_alignment, &tail_cursor) ||
-            slot_size > SIZE_MAX - tail_cursor) {
+            tail_cursor > vararg_bytes || slot_size > vararg_bytes - tail_cursor) {
           abort();
         }
-        memcpy(tail_storage + tail_cursor, arguments[i], argument_types[i].size);
+        if (argument_types[i].kind == FFI_WASM_TYPE_INDIRECT_STRUCT) {
+          memcpy(tail_storage + tail_cursor, &call_arguments[i], sizeof(void *));
+        } else {
+          memcpy(tail_storage + tail_cursor, arguments[i], argument_types[i].size);
+        }
         tail_cursor += slot_size;
       }
       call_arguments[cif->nargs] = tail_storage;

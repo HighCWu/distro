@@ -165,8 +165,7 @@ static int pointer_value_type(unsigned address_bits) {
 
 static int supported_variadic_tail_type(const ffi_type *type,
                                        const WasmType *description) {
-  if (type == NULL || description == NULL ||
-      description->kind != FFI_WASM_TYPE_SCALAR) {
+  if (type == NULL || description == NULL) {
     return 0;
   }
   switch (type->type) {
@@ -177,7 +176,10 @@ static int supported_variadic_tail_type(const ffi_type *type,
   case FFI_TYPE_UINT64:
   case FFI_TYPE_DOUBLE:
   case FFI_TYPE_POINTER:
-    return 1;
+    return description->kind == FFI_WASM_TYPE_SCALAR;
+  case FFI_TYPE_STRUCT:
+    return description->kind == FFI_WASM_TYPE_COERCED_STRUCT ||
+           description->kind == FFI_WASM_TYPE_INDIRECT_STRUCT;
   default:
     return 0;
   }

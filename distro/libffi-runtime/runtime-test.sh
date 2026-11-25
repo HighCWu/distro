@@ -13,5 +13,6 @@ output=$(/bin/libffi-runtime) || fail 'ffi_call consumer failed'
 expected='LIBFFI_RUNTIME_MIXED_CALL_OK'
 [ "$output" = "$expected" ] || fail "unexpected consumer output: $output"
 
+echo 'libffi runtime: mixed calls and by-value variadic aggregates verified'
 echo '::vm-test::pass'
 while :; do sleep 1; done

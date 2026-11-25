@@ -33,6 +33,10 @@ struct OneFloat {
   float value;
 };
 
+struct OneInt {
+  int32_t value;
+};
+
 struct OnePointer {
   void *value;
 };
@@ -128,6 +132,27 @@ static long long mixed_varargs_target(int fixed, ...) {
   ++mixed_vararg_calls;
   return (long long)fixed + narrow + (long long)(uintptr_t)pointer + wide +
     (long long)real;
+}
+
+static int aggregate_tail_target(int fixed, ...) {
+  va_list args;
+  va_start(args, fixed);
+  struct NestedChar narrow = va_arg(args, struct NestedChar);
+  int first = va_arg(args, int);
+  struct OneFloat single = va_arg(args, struct OneFloat);
+  struct MixedStruct mixed = va_arg(args, struct MixedStruct);
+  struct OneInt integer = va_arg(args, struct OneInt);
+  int last = va_arg(args, int);
+  va_end(args);
+
+  if (fixed != 3 || narrow.value.value != -17 || first != 11 ||
+      single.value != 1.25f || mixed.left != -8 || mixed.right != 4.5 ||
+      integer.value != 101 || last != 23) {
+    return -1;
+  }
+  mixed.left += last;
+  mixed.right *= first;
+  return mixed.left + (int)mixed.right;
 }
 
 static int fixed_cache_target(int fixed) {
@@ -319,6 +344,46 @@ static int exercise_variadic_calls(void) {
     fprintf(stderr,
             "libffi runtime: mixed variadic tail slot mismatch result=%lld expected=%lld calls=%u\n",
             result, expected, mixed_vararg_calls);
+    return -1;
+  }
+
+  ffi_type *char_fields[] = {&ffi_type_sint8, NULL};
+  ffi_type char_type = {0, 0, FFI_TYPE_STRUCT, char_fields};
+  ffi_type *nested_fields[] = {&char_type, NULL};
+  ffi_type nested_type = {0, 0, FFI_TYPE_STRUCT, nested_fields};
+  ffi_type *single_fields[] = {&ffi_type_float, NULL};
+  ffi_type single_type = {0, 0, FFI_TYPE_STRUCT, single_fields};
+  ffi_type *struct_fields[] = {&ffi_type_sint32, &ffi_type_double, NULL};
+  ffi_type struct_type = {0, 0, FFI_TYPE_STRUCT, struct_fields};
+  ffi_type *integer_fields[] = {&ffi_type_sint32, NULL};
+  ffi_type integer_type = {0, 0, FFI_TYPE_STRUCT, integer_fields};
+  ffi_type *aggregate_tail_types[] = {
+    &ffi_type_sint32, &nested_type, &ffi_type_sint32, &single_type,
+    &struct_type, &integer_type, &ffi_type_sint32,
+  };
+  if (ffi_prep_cif_var(&cif, FFI_DEFAULT_ABI, 1, 7, &ffi_type_sint32,
+                       aggregate_tail_types) != FFI_OK) {
+    fputs("libffi runtime: aggregate tail prep failed\n", stderr);
+    return -1;
+  }
+  int aggregate_fixed = 3;
+  struct NestedChar aggregate_narrow = {{-17}};
+  int aggregate_first = 11;
+  struct OneFloat aggregate_single = {1.25f};
+  struct MixedStruct aggregate_mixed = {-8, 4.5};
+  struct OneInt aggregate_integer = {101};
+  int aggregate_last = 23;
+  void *aggregate_tail_values[] = {
+    &aggregate_fixed, &aggregate_narrow, &aggregate_first, &aggregate_single,
+    &aggregate_mixed, &aggregate_integer, &aggregate_last,
+  };
+  ffi_arg aggregate_result = 0;
+  ffi_call(&cif, FFI_FN(aggregate_tail_target), &aggregate_result,
+           aggregate_tail_values);
+  if ((int)aggregate_result != 64 || aggregate_narrow.value.value != -17 ||
+      aggregate_single.value != 1.25f || aggregate_mixed.left != -8 ||
+      aggregate_mixed.right != 4.5 || aggregate_integer.value != 101) {
+    fputs("libffi runtime: aggregate tail values or by-value isolation mismatch\n", stderr);
     return -1;
   }
 
