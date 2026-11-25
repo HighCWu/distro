@@ -77,6 +77,8 @@ export interface BlockDeviceStorage {
   stop?(): void;
   /** Total bytes: a nonnegative safe integer multiple of 512, snapshotted at creation. */
   capacity: number;
+  /** Stable 1–20 printable ASCII identifier, snapshotted at creation. */
+  readonly serial?: string;
 }
 
 /**
@@ -98,6 +100,19 @@ export function blockDevice(storage: BlockDeviceStorage): VirtioDevice {
   const capacity = storage.capacity;
   if (!Number.isSafeInteger(capacity) || capacity < 0 || capacity % 512 !== 0) {
     throw new RangeError("block capacity must be a nonnegative safe integer multiple of 512");
+  }
+  const serial = storage.serial;
+  let identity: Uint8Array | undefined;
+  if (serial !== undefined) {
+    if (
+      typeof serial !== "string" ||
+      serial.length < 1 ||
+      serial.length > 20 ||
+      /[^\x20-\x7e]/.test(serial)
+    )
+      throw new RangeError("block serial must contain 1–20 printable ASCII bytes");
+    identity = new Uint8Array(20);
+    identity.set(new TextEncoder().encode(serial));
   }
   const writeZeroes = storage.write ? storage.writeZeroes?.bind(storage) : undefined;
   const config = new Uint8Array(writeZeroes ? writeZeroesConfig.size : BlockDeviceConfig.size);
@@ -257,9 +272,21 @@ export function blockDevice(storage: BlockDeviceStorage): VirtioDevice {
           break;
         }
         case BlockDeviceRequestType.GET_ID: {
-          // No stable device identifier is supplied by the storage interface.
-          // Do not report success with an untouched caller-owned ID buffer.
-          set_status(BlockDeviceStatus.UNSUPP);
+          if (!identity) {
+            set_status(BlockDeviceStatus.UNSUPP);
+            break;
+          }
+          const length = data.reduce((sum, desc) => sum + BigInt(desc.array.byteLength), 0n);
+          if (data.some((desc) => !desc.writable) || length < BigInt(identity.byteLength)) {
+            set_status(BlockDeviceStatus.IOERR);
+            break;
+          }
+          for (const desc of data) {
+            const size = Math.min(identity.byteLength - n, desc.array.byteLength);
+            if (size) desc.array.set(identity.subarray(n, n + size));
+            n += size;
+          }
+          set_status(BlockDeviceStatus.OK);
           break;
         }
         default:
@@ -267,7 +294,7 @@ export function blockDevice(storage: BlockDeviceStorage): VirtioDevice {
           set_status(BlockDeviceStatus.UNSUPP);
       }
 
-      // Only IN data and the status byte are device-written buffers. OUT
+      // Only IN/GET_ID data and the status byte are device-written buffers. OUT
       // payload bytes are consumed by the device, not written back to Linux.
       if (stopping) return;
       chain.release(n + 1);
