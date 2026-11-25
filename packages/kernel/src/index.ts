@@ -44,6 +44,7 @@ export {
 } from "./virtio/core.ts";
 export { blockDevice, type BlockDeviceStorage } from "./virtio/block.ts";
 export { openHttpBlockStorage } from "./virtio/http-block-storage.ts";
+export { openIndexedDbHttpBlockStorage } from "./virtio/indexeddb-block-storage.ts";
 export { type Endpoint, serveDevice, workerDevice } from "./virtio/remote.ts";
 export { type ConsoleDevice, consoleDevice } from "./virtio/console.ts";
 export { entropyDevice } from "./virtio/entropy.ts";

@@ -6,7 +6,8 @@ const REQUEST_TIMEOUT_MS = 60_000;
 const STRONG_ETAG = /^"[\x21\x23-\x7e\x80-\xff]*"$/;
 const CONTENT_RANGE = /^bytes (\d+)-(\d+)\/(\d+)$/i;
 
-interface HttpImage {
+/** @internal */
+export interface HttpImage {
   url: string;
   capacity: number;
   etag: string;
@@ -102,6 +103,13 @@ async function readRange(
  * Pass the result to blockDevice, or call stop() when no longer using it.
  */
 export async function openHttpBlockStorage(url: string | URL): Promise<BlockDeviceStorage> {
+  return (await openPinnedHttpBlockStorage(url)).storage;
+}
+
+/** @internal */
+export async function openPinnedHttpBlockStorage(
+  url: string | URL,
+): Promise<{ image: Readonly<HttpImage>; storage: BlockDeviceStorage }> {
   const source = new URL(url);
   if (source.protocol !== "http:" && source.protocol !== "https:") {
     throw new TypeError("HTTP disk URL must use http or https");
@@ -112,7 +120,7 @@ export async function openHttpBlockStorage(url: string | URL): Promise<BlockDevi
     const { url: finalUrl, capacity, etag } = await readRange(source.href, 0, SECTOR_BYTES, signal);
     if (!finalUrl) throw new Error("HTTP disk discovery returned no final URL");
     const image = { url: finalUrl, capacity, etag };
-    return {
+    const storage: BlockDeviceStorage = {
       capacity,
       async read(offset, target) {
         signal.throwIfAborted();
@@ -129,6 +137,7 @@ export async function openHttpBlockStorage(url: string | URL): Promise<BlockDevi
         abort.abort();
       },
     };
+    return { image: Object.freeze(image), storage };
   } catch (error) {
     abort.abort();
     throw error;
