@@ -107,7 +107,13 @@ export async function openIndexedDbHttpBlockStorage(
       if (stopped) throw new Error("persistent HTTP disk is stopped");
     };
     const validate = (offset: number, length: number) => {
-      if (!Number.isSafeInteger(offset) || offset < 0 || length > image.capacity - offset)
+      if (
+        !Number.isSafeInteger(offset) ||
+        offset < 0 ||
+        !Number.isSafeInteger(length) ||
+        length < 0 ||
+        length > image.capacity - offset
+      )
         throw new RangeError("persistent HTTP disk I/O lies outside the image");
     };
     const enqueue = <T>(operation: () => Promise<T>): Promise<T> => {
@@ -121,6 +127,26 @@ export async function openIndexedDbHttpBlockStorage(
         () => {},
       );
       return result;
+    };
+
+    const writeSectors = async (
+      start: number,
+      end: number,
+      sector: (position: number) => Uint8Array,
+    ) => {
+      assertOpen();
+      const transaction = db.transaction("sectors", "readwrite", { durability: "strict" });
+      const done = committed(transaction);
+      try {
+        const store = transaction.objectStore("sectors");
+        for (let position = start; position < end; position += SECTOR_BYTES)
+          store.put(sector(position), position / SECTOR_BYTES);
+      } catch (error) {
+        transaction.abort();
+        await done.catch(() => {});
+        throw error;
+      }
+      await done;
     };
 
     const readBytes = async (offset: number, length: number): Promise<Uint8Array> => {
@@ -214,23 +240,40 @@ export async function openIndexedDbHttpBlockStorage(
               end - start - SECTOR_BYTES,
             );
           bytes.set(payload, offset - start);
-          assertOpen();
-          const transaction = db.transaction("sectors", "readwrite", { durability: "strict" });
-          const done = committed(transaction);
-          try {
-            const store = transaction.objectStore("sectors");
-            for (let position = 0; position < bytes.byteLength; position += SECTOR_BYTES)
-              store.put(
-                bytes.slice(position, position + SECTOR_BYTES),
-                (start + position) / SECTOR_BYTES,
-              );
-          } catch (error) {
-            transaction.abort();
-            await done.catch(() => {});
-            throw error;
-          }
-          await done;
+          await writeSectors(start, end, (position) =>
+            bytes.slice(position - start, position - start + SECTOR_BYTES),
+          );
           return payload.byteLength;
+        });
+      },
+      writeZeroes(offset, length) {
+        assertOpen();
+        validate(offset, length);
+        return enqueue(async () => {
+          if (length === 0) return;
+          const zeroEnd = offset + length;
+          const start = Math.floor(offset / SECTOR_BYTES) * SECTOR_BYTES;
+          const end = Math.ceil(zeroEnd / SECTOR_BYTES) * SECTOR_BYTES;
+          let first: Uint8Array | undefined;
+          let last: Uint8Array | undefined;
+          if (start !== offset) {
+            first = await readBytes(start, SECTOR_BYTES);
+            first.fill(0, offset - start, Math.min(zeroEnd - start, SECTOR_BYTES));
+          }
+          if (end !== zeroEnd && (end - SECTOR_BYTES !== start || !first)) {
+            last = await readBytes(end - SECTOR_BYTES, SECTOR_BYTES);
+            last.fill(
+              0,
+              Math.max(0, offset - (end - SECTOR_BYTES)),
+              zeroEnd - (end - SECTOR_BYTES),
+            );
+          }
+          const zero = new Uint8Array(SECTOR_BYTES);
+          await writeSectors(start, end, (position) => {
+            if (position === start && first) return first;
+            if (position === end - SECTOR_BYTES && last) return last;
+            return zero;
+          });
         });
       },
       flush() {
