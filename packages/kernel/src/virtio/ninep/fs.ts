@@ -73,6 +73,36 @@ export class FsError extends Error {
 
 export type FsFileType = "file" | "dir" | "symlink";
 
+/** Exact Linux timespec64 value; seconds are signed and nsec is normalized. */
+export interface FsTime {
+  readonly seconds: bigint;
+  readonly nanoseconds: number;
+}
+
+export function fsTime(seconds: bigint, nanoseconds: number): FsTime {
+  if (
+    typeof seconds !== "bigint" ||
+    seconds < -(1n << 63n) ||
+    seconds >= 1n << 63n ||
+    !Number.isInteger(nanoseconds) ||
+    nanoseconds < 0 ||
+    nanoseconds >= 1000000000
+  )
+    throw new FsError("EINVAL", "invalid Linux timestamp");
+  return Object.freeze({ seconds, nanoseconds });
+}
+
+export function fsTimeNow(): FsTime {
+  const milliseconds = BigInt(Date.now());
+  let seconds = milliseconds / 1000n;
+  let remainder = milliseconds % 1000n;
+  if (remainder < 0n) {
+    seconds--;
+    remainder += 1000n;
+  }
+  return fsTime(seconds, Number(remainder) * 1000000);
+}
+
 export interface FsAttr {
   type: FsFileType;
   /** Permission bits (default 0o644 files, 0o755 directories, 0o777 links). */
@@ -82,16 +112,16 @@ export interface FsAttr {
   uid?: number;
   gid?: number;
   nlink?: number;
-  atimeMs?: number;
-  mtimeMs?: number;
-  ctimeMs?: number;
+  atime?: FsTime;
+  mtime?: FsTime;
+  ctime?: FsTime;
   /** Inode number (with `dev`). Without it one is derived from the path. */
   ino?: number | bigint;
   /** Device number, combined with `ino` (only needed when one tree spans devices). */
   dev?: number | bigint;
   /**
    * A change counter: changes when the data changes. Default: derived
-   * from mtimeMs and size. 0 means the guest never caches this file's
+   * from mtime and size. 0 means the guest never caches this file's
    * data, so each of its reads reaches the file (for computed files,
    * whose size may change).
    */
@@ -117,8 +147,8 @@ export interface FsSetAttr {
   uid?: number;
   gid?: number;
   size?: number;
-  atimeMs?: number;
-  mtimeMs?: number;
+  atime?: FsTime;
+  mtime?: FsTime;
 }
 
 export interface FsStatFs {
@@ -195,7 +225,7 @@ export interface Fs {
   /** Replaces `to` if it exists. Return false for a same-inode no-op, so fid
    * paths stay unchanged; void/true indicate a successful move. */
   rename?(from: string, to: string): MaybePromise<void | boolean>;
-  /** Change a path that is not open (chmod, utimes, truncate by name). */
+  /** Change a path that is not open. An empty change updates ctime only. */
   setattr?(path: string, attr: FsSetAttr): MaybePromise<void>;
   statfs?(): MaybePromise<FsStatFs>;
   /** Called once the last mount of this file system is gone (unmounted, or the VM exited). */

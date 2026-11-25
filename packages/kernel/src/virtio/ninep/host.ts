@@ -34,6 +34,9 @@ import {
   ERRNO,
   FS_DEFAULT_OWNER,
   FsError,
+  fsTime,
+  fsTimeNow,
+  type FsTime,
   type Fs,
   type FsAttr,
   type FsDirEntry,
@@ -397,7 +400,12 @@ const qidType = (t: FsFileType) => (t === "dir" ? QTDIR : t === "symlink" ? QTSY
 function qidOf(path: string, a: FsAttr): Qid {
   let version = a.version;
   if (version === undefined) {
-    const t = Math.floor((a.mtimeMs ?? 0) * 1000) % 0x100000000;
+    const t = Number(
+      BigInt.asUintN(
+        32,
+        (a.mtime?.seconds ?? 0n) * 1000000000n + BigInt(a.mtime?.nanoseconds ?? 0),
+      ),
+    );
     version = (t ^ Math.imul((a.size ?? 0) % 0x100000000, 0x9e3779b1)) >>> 0 || 1;
   }
   return { type: qidType(a.type), version: version >>> 0, path: inode(path, a.ino, a.dev) };
@@ -781,6 +789,11 @@ function matchesIdentity(attr: FsAttr, expected: FsIdentity): boolean {
     BigInt(actual.ino) === BigInt(expected.ino) &&
     BigInt(actual.dev ?? 0) === BigInt(expected.dev ?? 0)
   );
+}
+
+function explicitTime(seconds: bigint, nanoseconds: bigint): FsTime {
+  if (nanoseconds >= 1000000000n) throw new FsError("EINVAL", "invalid timestamp nanoseconds");
+  return fsTime(BigInt.asIntN(64, seconds), Number(nanoseconds));
 }
 
 /** A running request: `dead` once it was flushed or timed out (its result is dropped). */
@@ -1208,10 +1221,10 @@ class Session {
           .u64(size)
           .u64(4096)
           .u64(Math.ceil(size / 512));
-        const m = a.mtimeMs ?? Date.now();
-        for (const t of [a.atimeMs ?? m, m, a.ctimeMs ?? m, 0]) {
-          const s = Math.floor(t / 1000);
-          w.u64(s).u64(Math.min(999999999, Math.round((t - s * 1000) * 1e6)));
+        const m = a.mtime ?? fsTimeNow();
+        for (const t of [a.atime ?? m, m, a.ctime ?? m, fsTime(0n, 0)]) {
+          const exact = fsTime(t.seconds, t.nanoseconds);
+          w.u64(exact.seconds).u64(exact.nanoseconds);
         }
         return w.u64(0).u64(0);
       }
@@ -1231,15 +1244,16 @@ class Session {
         if (valid & 2) attr.uid = uid;
         if (valid & 4) attr.gid = gid;
         if (valid & 8) attr.size = filePosition(size);
-        if (valid & 16)
-          attr.atimeMs = valid & 128 ? Number(as) * 1000 + Number(an) / 1e6 : Date.now();
-        if (valid & 32)
-          attr.mtimeMs = valid & 256 ? Number(ms) * 1000 + Number(mn) / 1e6 : Date.now();
+        const now = fsTimeNow();
+        if (valid & 16) attr.atime = valid & 128 ? explicitTime(as, an) : now;
+        if (valid & 32) attr.mtime = valid & 256 ? explicitTime(ms, mn) : now;
+        // Omitted fields carry arbitrary bytes on the wire. No selected
+        // attributes (and no ctime request) means no backend mutation at all.
+        if (Object.keys(attr).length === 0 && !(valid & 64)) return new Writer(HDR);
         const file = fileOf(f);
-        if (Object.keys(attr).length)
-          await this.#ordered(f, () =>
-            file?.setattr ? file.setattr(attr) : this.#need("setattr")(f.path, attr),
-          );
+        await this.#ordered(f, () =>
+          file?.setattr ? file.setattr(attr) : this.#need("setattr")(f.path, attr),
+        );
         return new Writer(HDR);
       }
       case Treaddir: {

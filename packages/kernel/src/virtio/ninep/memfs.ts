@@ -22,6 +22,9 @@
 import {
   FS_DEFAULT_OWNER,
   FsError,
+  fsTime,
+  fsTimeNow,
+  type FsTime,
   type FsAttr,
   type FsDirEntry,
   type FsFile,
@@ -66,9 +69,9 @@ interface MemNode {
   mode: number;
   uid: number;
   gid: number;
-  atimeMs: number;
-  mtimeMs: number;
-  ctimeMs: number;
+  atime: FsTime;
+  mtime: FsTime;
+  ctime: FsTime;
   /** Bumped on every data change (FsAttr.version). */
   version: number;
   /** Directory entries pointing at this node. */
@@ -98,16 +101,16 @@ export class MemoryFs implements Fs {
 
   /** A file system with `tree`'s files (see FsTree), or empty. */
   constructor(tree?: FsTree) {
-    const now = Date.now();
+    const now = fsTimeNow();
     this.#root = {
       ino: 1,
       type: "dir",
       mode: 0o755,
       uid: FS_DEFAULT_OWNER,
       gid: FS_DEFAULT_OWNER,
-      atimeMs: now,
-      mtimeMs: now,
-      ctimeMs: now,
+      atime: now,
+      mtime: now,
+      ctime: now,
       version: 1,
       nlink: 2,
       children: new Map(),
@@ -174,16 +177,16 @@ export class MemoryFs implements Fs {
   }
 
   #node(type: MemNode["type"], mode: number, extra: Partial<MemNode> = {}): MemNode {
-    const now = Date.now();
+    const now = fsTimeNow();
     return {
       ino: this.#nextIno++,
       type,
       mode,
       uid: FS_DEFAULT_OWNER,
       gid: FS_DEFAULT_OWNER,
-      atimeMs: now,
-      mtimeMs: now,
-      ctimeMs: now,
+      atime: now,
+      mtime: now,
+      ctime: now,
       version: 1,
       nlink: type === "dir" ? 2 : 1,
       ...extra,
@@ -191,7 +194,7 @@ export class MemoryFs implements Fs {
   }
 
   #touchDir(dir: MemNode): void {
-    dir.mtimeMs = dir.ctimeMs = Date.now();
+    dir.mtime = dir.ctime = fsTimeNow();
     dir.version++;
   }
 
@@ -204,7 +207,7 @@ export class MemoryFs implements Fs {
   }
 
   #changed(n: MemNode): void {
-    n.mtimeMs = n.ctimeMs = Date.now();
+    n.mtime = n.ctime = fsTimeNow();
     n.version++;
   }
 
@@ -258,31 +261,36 @@ export class MemoryFs implements Fs {
       gid: n.gid,
       nlink: n.nlink,
       ino: n.ino,
-      atimeMs: n.atimeMs,
-      mtimeMs: n.mtimeMs,
-      ctimeMs: n.ctimeMs,
+      atime: n.atime,
+      mtime: n.mtime,
+      ctime: n.ctime,
       version: n.dynamic ? 0 : n.version,
     };
   }
 
   #setattr(n: MemNode, attr: FsSetAttr): void {
+    // Validate and own all selected exact times before changing any metadata.
+    const atime =
+      attr.atime === undefined ? undefined : fsTime(attr.atime.seconds, attr.atime.nanoseconds);
+    const mtime =
+      attr.mtime === undefined ? undefined : fsTime(attr.mtime.seconds, attr.mtime.nanoseconds);
     if (attr.size !== undefined) this.#truncate(n, attr.size);
     if (attr.mode !== undefined) n.mode = attr.mode & 0o7777;
     if (attr.uid !== undefined) n.uid = attr.uid;
     if (attr.gid !== undefined) n.gid = attr.gid;
-    if (attr.atimeMs !== undefined) n.atimeMs = attr.atimeMs;
-    if (attr.mtimeMs !== undefined) {
-      n.mtimeMs = attr.mtimeMs;
+    if (atime !== undefined) n.atime = atime;
+    if (mtime !== undefined) {
+      n.mtime = mtime;
       n.version++;
     }
-    n.ctimeMs = Date.now();
+    n.ctime = fsTimeNow();
   }
 
   #unlinkNode(dir: MemNode, name: string, n: MemNode): void {
     dir.children!.delete(name);
     if (n.type === "dir") dir.nlink--;
     n.nlink--;
-    n.ctimeMs = Date.now();
+    n.ctime = fsTimeNow();
     this.#touchDir(dir);
   }
 
@@ -533,7 +541,7 @@ export class MemoryFs implements Fs {
     if (target.dir.children!.has(target.name)) throw new FsError("EEXIST", to);
     target.dir.children!.set(target.name, node);
     node.nlink++;
-    node.ctimeMs = Date.now();
+    node.ctime = fsTimeNow();
     this.#touchDir(target.dir);
     this.#emit("link", from, to);
   }
@@ -572,7 +580,7 @@ export class MemoryFs implements Fs {
       a.dir.nlink--;
       b.dir.nlink++;
     }
-    n.ctimeMs = Date.now();
+    n.ctime = fsTimeNow();
     this.#touchDir(a.dir);
     if (b.dir !== a.dir) this.#touchDir(b.dir);
     return true;

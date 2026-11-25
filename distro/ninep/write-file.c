@@ -106,6 +106,41 @@ static void verify_hard_link(const char *path, const char *alias)
 	puts("9p transport: linked, shared writes and unlinked an exact alias");
 }
 
+static void require_timestamps(const char *path, struct timespec atime,
+			       struct timespec mtime)
+{
+	struct stat observed;
+	if (fstatat(AT_FDCWD, path, &observed, 0) != 0)
+		fail("stat file timestamps");
+	if (observed.st_atim.tv_sec != atime.tv_sec ||
+	    observed.st_atim.tv_nsec != atime.tv_nsec ||
+	    observed.st_mtim.tv_sec != mtime.tv_sec ||
+	    observed.st_mtim.tv_nsec != mtime.tv_nsec) {
+		errno = EPROTO;
+		fail("exact file timestamps did not round-trip");
+	}
+}
+
+static void verify_timestamps(const char *path)
+{
+	const struct timespec initial[2] = {
+		{ .tv_sec = -271828182, .tv_nsec = 123456789 },
+		{ .tv_sec = 1700000042, .tv_nsec = 987654321 },
+	};
+	if (utimensat(AT_FDCWD, path, initial, 0) != 0)
+		fail("set signed seconds and exact nanoseconds");
+	require_timestamps(path, initial[0], initial[1]);
+
+	const struct timespec updated[2] = {
+		{ .tv_nsec = UTIME_OMIT },
+		{ .tv_sec = 1700000084, .tv_nsec = 456789123 },
+	};
+	if (utimensat(AT_FDCWD, path, updated, 0) != 0)
+		fail("change mtime with atime omitted");
+	require_timestamps(path, initial[0], updated[1]);
+	puts("9p transport: preserved signed seconds and nanosecond timestamps");
+}
+
 int main(int argc, char **argv)
 {
 	if (argc != 2 && argc != 3) {
@@ -156,7 +191,9 @@ int main(int argc, char **argv)
 
 	verify_file(argv[1], expected_byte(0));
 	puts("9p transport: created, wrote, appended and reopened exact remote file bytes");
-	if (argc == 3)
+	if (argc == 3) {
 		verify_hard_link(argv[1], argv[2]);
+		verify_timestamps(argv[1]);
+	}
 	return 0;
 }

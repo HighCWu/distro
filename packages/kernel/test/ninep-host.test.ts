@@ -143,7 +143,7 @@ function u32(value: number) {
 }
 function u64(value: number | bigint) {
   const bytes = Buffer.alloc(8);
-  bytes.writeBigUInt64LE(BigInt(value));
+  bytes.writeBigUInt64LE(BigInt.asUintN(64, BigInt(value)));
   return bytes;
 }
 function string(value: string) {
@@ -436,7 +436,12 @@ test(
     const alias = inodeAndLinks(await c.query(24, [u32(3), u64(0x7ff)]));
     assert.deepEqual(alias, { ino: original.ino, nlink: 2n });
     assert.equal(fs.getattr("/message.txt").nlink, 2);
-    assert.ok(fs.getattr("/message.txt").ctimeMs! >= initial.ctimeMs!);
+    const changedTime = fs.getattr("/message.txt").ctime!;
+    assert.ok(
+      changedTime.seconds > initial.ctime!.seconds ||
+        (changedTime.seconds === initial.ctime!.seconds &&
+          changedTime.nanoseconds >= initial.ctime!.nanoseconds),
+    );
     await c.query(12, [u32(3), u32(2)]);
     const changed = Buffer.from("alias bytes\n");
     await c.query(118, [u32(3), u64(0), u32(changed.length), changed]);
@@ -552,6 +557,115 @@ test(
     );
     assert.throws(() => fs.getattr("/unauthorized"), { code: "ENOENT" });
     assert.throws(() => fs.getattr("/destination/unauthorized-directory"), { code: "ENOENT" });
+    await c.close();
+  },
+);
+
+test(
+  "setattr/getattr preserve signed seconds and exact nanoseconds atomically",
+  { timeout: 3000 },
+  async () => {
+    const fs = new MemoryFs({ "message.txt": "exact timestamps" });
+    const c = await client(fs);
+    await c.open(true);
+    const times = (bytes: Buffer) => ({
+      atime: { seconds: bytes.readBigInt64LE(73), nanoseconds: Number(bytes.readBigUInt64LE(81)) },
+      mtime: { seconds: bytes.readBigInt64LE(89), nanoseconds: Number(bytes.readBigUInt64LE(97)) },
+    });
+    const set = (
+      valid: number,
+      atime: [bigint, bigint],
+      mtime: [bigint, bigint],
+      mode = 0o777,
+      fid = 2,
+    ) =>
+      c.query(26, [
+        u32(fid),
+        u32(valid),
+        u32(mode),
+        u32(123),
+        u32(456),
+        u64(0xffffffffffffffffn),
+        u64(atime[0]),
+        u64(atime[1]),
+        u64(mtime[0]),
+        u64(mtime[1]),
+      ]);
+    await set(16 | 32 | 128 | 256, [-1n, 999999999n], [-123456789n, 123n]);
+    const historical = times(await c.query(24, [u32(2), u64(0x7ff)]));
+    assert.deepEqual(historical, {
+      atime: { seconds: -1n, nanoseconds: 999999999 },
+      mtime: { seconds: -123456789n, nanoseconds: 123 },
+    });
+    const currentSeconds = BigInt(Math.floor(Date.now() / 1000));
+    const ignored: [bigint, bigint] = [0xffffffffffffffffn, 0xffffffffffffffffn];
+    await set(32 | 256, ignored, [currentSeconds, 123456789n]);
+    const current = times(await c.query(24, [u32(2), u64(0x7ff)]));
+    assert.deepEqual(
+      current.atime,
+      historical.atime,
+      "omitted atime does not use invalid wire fields",
+    );
+    assert.deepEqual(current.mtime, { seconds: currentSeconds, nanoseconds: 123456789 });
+    assert.deepEqual(fs.getattr("/message.txt").mtime, current.mtime);
+    assert.ok(Object.isFrozen(fs.getattr("/message.txt").mtime), "stored exact time is immutable");
+    const beforeOmit = fs.getattr("/message.txt");
+    await set(0, ignored, ignored);
+    assert.deepEqual(
+      fs.getattr("/message.txt"),
+      beforeOmit,
+      "all omitted fields cause no mutation",
+    );
+    await set(64, ignored, ignored);
+    const { ctime, ...afterCtime } = fs.getattr("/message.txt");
+    const { ctime: previousCtime, ...beforeCtime } = beforeOmit;
+    assert.notStrictEqual(ctime, previousCtime, "the ctime-only request reached the backend");
+    assert.deepEqual(afterCtime, beforeCtime);
+    for (const [an, mn] of [
+      [1000000000n, 123n],
+      [123n, 1000000000n],
+    ] as const) {
+      const beforeInvalid = fs.getattr("/message.txt");
+      const error = await c.query(
+        26,
+        [
+          u32(2),
+          u32(1 | 16 | 32 | 128 | 256),
+          u32(0o777),
+          u32(0),
+          u32(0),
+          u64(0),
+          u64(-2n),
+          u64(an),
+          u64(3n),
+          u64(mn),
+        ],
+        7,
+      );
+      assert.equal(error.readUInt32LE(), 22);
+      assert.deepEqual(
+        fs.getattr("/message.txt"),
+        beforeInvalid,
+        "invalid selected ns cannot partially change mode or either timestamp",
+      );
+    }
+    const beforeNow = BigInt(Date.now()) * 1000000n;
+    await set(16, ignored, ignored);
+    const afterNow = BigInt(Date.now()) * 1000000n;
+    const now = times(await c.query(24, [u32(2), u64(0x7ff)]));
+    const atimeNs = now.atime.seconds * 1000000000n + BigInt(now.atime.nanoseconds);
+    assert.ok(
+      atimeNs >= beforeNow && atimeNs <= afterNow,
+      "NOW ignores unselected explicit values",
+    );
+    assert.deepEqual(now.mtime, current.mtime, "NOW atime leaves omitted mtime exact");
+    await c.query(70, [u32(1), u32(2), string("time-alias")]);
+    await c.query(110, [u32(1), u32(3), u16(1), string("time-alias")]);
+    await set(32 | 256, ignored, [-2n, 123456789n], 0, 3);
+    const alias = times(await c.query(24, [u32(3), u64(0x7ff)]));
+    const original = times(await c.query(24, [u32(2), u64(0x7ff)]));
+    assert.deepEqual(alias, original, "hard links share the exact same inode timestamps");
+    assert.deepEqual(original.mtime, { seconds: -2n, nanoseconds: 123456789 });
     await c.close();
   },
 );
