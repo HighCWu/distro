@@ -4,6 +4,65 @@ import test from "node:test";
 import { consoleDevice } from "../src/virtio/console.ts";
 import { close_virtio_device, virtio_imports } from "../src/virtio/core.ts";
 
+test("console TX preserves scatter output and reports no device-written bytes", async () => {
+  for (const invalidTrailing of [false, true]) {
+    const chunks: number[][] = [];
+    const output = new WritableStream<Uint8Array>({
+      write(chunk) {
+        chunks.push([...chunk]);
+      },
+    });
+    const device = consoleDevice(null, output);
+    const memory = new WebAssembly.Memory({ initial: 1, maximum: 1, shared: true });
+    const errors: unknown[] = [];
+    let interrupts = 0;
+    const imports = virtio_imports({
+      memory,
+      devices: [device],
+      trigger_irq() {
+        interrupts++;
+      },
+      on_error(error) {
+        errors.push(error);
+      },
+    });
+    const view = new DataView(memory.buffer);
+    const bytes = new Uint8Array(memory.buffer);
+    bytes.set([1, 2, 3], 256);
+    bytes.set([4, 5], 264);
+    for (let i = 0; i < 2; i++) {
+      view.setBigUint64(i * 16, BigInt(256 + i * 8), true);
+      view.setUint32(i * 16 + 8, i === 0 ? 3 : 2, true);
+      view.setUint16(i * 16 + 12, 17 + i, true);
+      view.setUint16(i * 16 + 14, (1 << 7) | (i === 0 ? 1 : invalidTrailing ? 2 : 0), true);
+    }
+    imports.enable_vring(0, 1, 2, 0, 1);
+    imports.notify(0, 1);
+    await new Promise((resolve) => setImmediate(resolve));
+    assert.deepEqual([...bytes.slice(256, 259)], [1, 2, 3]);
+    assert.deepEqual([...bytes.slice(264, 266)], [4, 5]);
+    if (invalidTrailing) {
+      assert.deepEqual(chunks, [], "validate the trailing descriptor before any host output");
+      assert.equal(errors.length, 1);
+      assert.match(String(errors[0]), /transmitter must be readable/);
+      assert.equal(view.getUint32(8, true), 3);
+      assert.equal(view.getUint16(14, true) & (1 << 15), 0);
+      assert.equal(interrupts, 0);
+    } else {
+      assert.deepEqual(chunks, [
+        [1, 2, 3],
+        [4, 5],
+      ]);
+      assert.deepEqual(errors, []);
+      assert.equal(view.getUint32(8, true), 0);
+      assert.equal(view.getUint16(12, true), 17);
+      assert.equal(view.getUint16(14, true), (1 << 7) | (1 << 15));
+      assert.equal(interrupts, 1);
+    }
+    await close_virtio_device(device);
+  }
+});
+
 test("console scatters input, preserves its remainder and releases zero-capacity chains", async () => {
   const input = new ReadableStream<Uint8Array>({
     start(controller) {

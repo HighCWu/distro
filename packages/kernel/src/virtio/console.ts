@@ -141,13 +141,13 @@ export function consoleDevice(
       flush_input();
     }
     for (const chain of queue) {
-      let n = 0;
+      const buffers: Uint8Array[] = [];
       for (const { array, writable } of chain) {
         assert(!writable, "transmitter must be readable");
-        await writer?.write(array);
-        n += array.byteLength;
+        buffers.push(array);
       }
-      chain.release(n);
+      for (const array of buffers) await writer?.write(array);
+      chain.release(0);
     }
   }
 
