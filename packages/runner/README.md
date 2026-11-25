@@ -5,12 +5,14 @@
 The private Node runner boots the configured kernel package with console,
 entropy, optional host directory shares, and file-backed block devices.
 `wasm-linux-runner --disk path/to/root.img` attaches an existing image; repeat
-`--disk` for additional devices. With no disk option the Nix wrapper supplies
-its default root image. This does not select a different kernel ABI or create
-an image automatically.
+`--disk` for additional devices. Use `--disk-ro path/to/base.img` to attach a
+local image read-only even when the host can write to it. HTTP(S) Range
+images are always read-only. Disk arguments are attached in command-line
+order. With no disk option the Nix wrapper supplies its default root image.
 
-Each disk worker first attempts a read-write open and falls back to read-only
-if that fails. Read-only devices omit write and flush callbacks. Read/write
+For `--disk`, the worker first attempts a read-write open and falls back to
+read-only if that fails. For `--disk-ro`, it opens the file read-only from the
+start. Read-only devices omit write, zeroing, and flush callbacks. Read/write
 loops complete short host I/O or stop at zero progress. Writable flush uses
 `fsyncSync`; normal device close attempts fsync and then releases the file
 descriptor even if fsync fails, preserving the sync error if close also fails.
