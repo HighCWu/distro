@@ -41,6 +41,36 @@ let
         fsck.erofs "$out"
         python3 ${./check-image.py} "$out" ${if tolerance == 0 then "shared" else "inline"}
       '';
+  compressedImage =
+    pkgs.runCommand "erofs-compressed-lz4.erofs"
+      {
+        nativeBuildInputs = [
+          pkgs.erofs-utils
+          pkgs.python3
+        ];
+      }
+      ''
+        python3 ${./compressed-fixture.py} make root
+        mkfs.erofs --all-root -T 0 -U 00000000-0000-0000-0000-000000000000 \
+          -zlz4 --max-extent-bytes=262144 "$out" root
+        dump.erofs --path=/payload -e "$out" | tee extents.txt
+        fsck.erofs --extract=extracted "$out"
+        python3 ${./compressed-fixture.py} check extents.txt extracted
+      '';
+  compressedProgram =
+    pkgs.runCommand "erofs-compressed-${platform.wasmArch}"
+      {
+        nativeBuildInputs = [
+          llvm-toolchain
+          pkgs.wabt
+        ];
+      }
+      ''
+        mkdir $out
+        clang ${flags} -O2 -Wall -Wextra -Werror ${./compressed-runtime.c} -o $out/erofs-compressed.wasm
+        chmod 0755 $out/erofs-compressed.wasm
+        wasm-validate --enable-memory64 --enable-threads --enable-exceptions $out/erofs-compressed.wasm
+      '';
   program =
     pkgs.runCommand "erofs-metadata-${platform.wasmArch}"
       {
@@ -61,6 +91,14 @@ let
             "/invalid.erofs" = pkgs.writeText "invalid-erofs" "not an EROFS image\n";
           };
           readOnlyDisks = true;
+        };
+        passthru.checks.compressed = vm-test.rawInitramfsTest {
+          name = "erofs-compressed-${platform.wasmArch}";
+          init = "${compressedProgram}/erofs-compressed.wasm";
+          disks = [ compressedImage ];
+          files."/compressed.erofs" = compressedImage;
+          readOnlyDisks = true;
+          recordRuntimeLog = true;
         };
       }
       ''
