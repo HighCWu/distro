@@ -2,6 +2,7 @@
 # SPDX-License-Identifier: MIT
 """Build and inspect a deterministic, compressed SquashFS Zstandard image."""
 from pathlib import Path
+import os
 import struct
 import sys
 
@@ -10,6 +11,8 @@ SQUASHFS_MAGIC = 0x73717368
 SQUASHFS_COMPRESSION_IDS = {"xz": 4, "zstd": 6}
 COMPRESSION_LABELS = {"xz": "XZ", "zstd": "Zstandard"}
 BLOCK_SIZE = 262144
+XATTR_NAME = "user.squashfs-test"
+XATTR_VALUE = b"squashfs-xattr-fixture-v1"
 
 
 def payload():
@@ -19,7 +22,7 @@ def payload():
     return bytes(data)
 
 
-def check(image_path, superblock_path, extracted_directory, compression):
+def check(image_path, superblock_path, extracted_directory, compression, xattrs=False):
     assert compression in SQUASHFS_COMPRESSION_IDS, f"unsupported compression: {compression}"
     image = Path(image_path).read_bytes()
     assert len(image) >= 96, "SquashFS superblock is truncated"
@@ -38,20 +41,36 @@ def check(image_path, superblock_path, extracted_directory, compression):
     report = Path(superblock_path).read_text()
     assert f"Compression {compression}" in report, f"unsquashfs does not report {compression} compression"
     assert f"Block size {BLOCK_SIZE}" in report, "unsquashfs reports the wrong block size"
-    actual = Path(extracted_directory, "payload").read_bytes()
+    extracted_payload = Path(extracted_directory, "payload")
+    actual = extracted_payload.read_bytes()
     assert len(actual) == SIZE and actual == payload(), "extracted payload differs byte-for-byte"
+    if xattrs:
+        assert os.getxattr(extracted_payload, XATTR_NAME) == XATTR_VALUE, "extracted xattr differs"
+        assert XATTR_NAME in os.listxattr(extracted_payload), "extracted xattr is absent from list"
 
 
-if len(sys.argv) == 3 and sys.argv[1] == "make":
+if sys.argv[1:2] == ["make"] and len(sys.argv) in (3, 4):
+    with_xattrs = len(sys.argv) == 4 and sys.argv[3] == "xattrs"
+    assert len(sys.argv) == 3 or with_xattrs, "expected optional xattrs mode"
     root = Path(sys.argv[2])
     root.mkdir()
-    (root / "payload").write_bytes(payload())
-elif sys.argv[1:2] == ["check"] and len(sys.argv) in (5, 6):
-    expected_compression = sys.argv[5] if len(sys.argv) == 6 else "zstd"
-    check(sys.argv[2], sys.argv[3], sys.argv[4], expected_compression)
-    print(
+    target = root / "payload"
+    target.write_bytes(payload())
+    if with_xattrs:
+        os.setxattr(target, XATTR_NAME, XATTR_VALUE)
+elif sys.argv[1:2] == ["check"] and len(sys.argv) in (5, 6, 7):
+    expected_compression = sys.argv[5] if len(sys.argv) >= 6 else "zstd"
+    with_xattrs = len(sys.argv) == 7 and sys.argv[6] == "xattrs"
+    assert len(sys.argv) != 7 or with_xattrs, "expected optional xattrs mode"
+    check(sys.argv[2], sys.argv[3], sys.argv[4], expected_compression, with_xattrs)
+    marker = (
         f"squashfs-{expected_compression} fixture: superblock {COMPRESSION_LABELS[expected_compression]} marker, "
         "256 KiB block and exact compressed payload pass"
     )
+    if with_xattrs:
+        marker = marker.removesuffix(" pass") + ", xattrs pass"
+    print(marker)
 else:
-    raise SystemExit("expected make DIRECTORY or check IMAGE SUPERBLOCK_REPORT EXTRACTED_DIRECTORY [zstd|xz]")
+    raise SystemExit(
+        "expected make DIRECTORY [xattrs] or check IMAGE SUPERBLOCK_REPORT EXTRACTED_DIRECTORY [zstd|xz] [xattrs]"
+    )

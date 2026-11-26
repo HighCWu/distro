@@ -6,18 +6,25 @@
 #include <stdint.h>
 #include <stdio.h>
 #include <stdlib.h>
+#include <string.h>
 #include <sys/mount.h>
 #include <sys/stat.h>
 #include <sys/statfs.h>
+#include <sys/xattr.h>
 #include <unistd.h>
 
 enum { PAYLOAD_SIZE = 6 * 65536 + 173, BUFFER_SIZE = 8197 };
 
-#ifdef SQUASHFS_XZ
+#ifdef SQUASHFS_XATTRS
+#define SQUASHFS_MARKER "squashfs-xattrs"
+#elif defined(SQUASHFS_XZ)
 #define SQUASHFS_MARKER "squashfs-xz"
 #else
 #define SQUASHFS_MARKER "squashfs-zstd"
 #endif
+
+#define TEST_XATTR_NAME "user.squashfs-test"
+#define TEST_XATTR_VALUE "squashfs-xattr-fixture-v1"
 
 static void require(int ok, const char *what)
 {
@@ -25,6 +32,49 @@ static void require(int ok, const char *what)
     printf("::vm-test::fail: " SQUASHFS_MARKER ": %s errno=%d\n", what, errno);
     fflush(stdout);
     _Exit(1);
+}
+
+static void check_xattrs(const char *path)
+{
+#ifdef SQUASHFS_XATTRS
+    char value[64];
+    ssize_t value_size = getxattr(path, TEST_XATTR_NAME, value, sizeof value);
+    require(value_size == (ssize_t)(sizeof(TEST_XATTR_VALUE) - 1), "get xattr value length");
+    require(memcmp(value, TEST_XATTR_VALUE, sizeof(TEST_XATTR_VALUE) - 1) == 0, "exact xattr value");
+
+    char names[256];
+    ssize_t names_size = listxattr(path, NULL, 0);
+    require(names_size > 1 && names_size <= (ssize_t)sizeof names, "list xattr size");
+    require(listxattr(path, names, (size_t)names_size) == names_size, "list xattrs");
+    int found = 0;
+    size_t offset = 0;
+    while (offset < (size_t)names_size) {
+        size_t name_size = strnlen(names + offset, (size_t)names_size - offset);
+        require(name_size < (size_t)names_size - offset, "well-formed xattr list");
+        if (name_size == sizeof(TEST_XATTR_NAME) - 1 &&
+            memcmp(names + offset, TEST_XATTR_NAME, sizeof(TEST_XATTR_NAME) - 1) == 0) {
+            found = 1;
+        }
+        offset += name_size + 1;
+    }
+    require(found, "list includes test xattr");
+
+    errno = 0;
+    require(getxattr(path, "user.squashfs-missing", value, sizeof value) == -1 && errno == ENODATA,
+            "missing xattr returns ENODATA");
+
+    char short_value[sizeof(TEST_XATTR_VALUE) - 2];
+    errno = 0;
+    require(getxattr(path, TEST_XATTR_NAME, short_value, sizeof short_value) == -1 && errno == ERANGE,
+            "short getxattr buffer returns ERANGE");
+
+    char short_names[256];
+    errno = 0;
+    require(listxattr(path, short_names, (size_t)names_size - 1) == -1 && errno == ERANGE,
+            "short listxattr buffer returns ERANGE");
+#else
+    (void)path;
+#endif
 }
 
 static void bytes_at(const unsigned char *buffer, size_t length, size_t start)
@@ -79,6 +129,7 @@ static void payload(const char *root)
         bytes_at(buffer, expected, start);
     }
     require(pread(fd, buffer, sizeof buffer, PAYLOAD_SIZE) == 0, "tail EOF");
+    check_xattrs(path);
     require(close(fd) == 0, "release compressed payload descriptor");
 }
 
@@ -93,6 +144,9 @@ int main(int argc, char **argv)
     require(statfs("/squashfs", &fs) == 0 && fs.f_type == 0x73717368UL, "actual SquashFS mount");
     payload("/squashfs");
     puts(SQUASHFS_MARKER ": block-backed cross-page read, pread, random cursors and tail pass");
+#ifdef SQUASHFS_XATTRS
+    puts("squashfs-xattrs: get/list, missing ENODATA and short-buffer ERANGE pass");
+#endif
     require(umount("/squashfs") == 0, "unmount compressed image");
     require(rmdir("/squashfs") == 0 && umount("/dev") == 0, "compressed mount cleanup");
     puts(SQUASHFS_MARKER ": mount cleanup pass");
