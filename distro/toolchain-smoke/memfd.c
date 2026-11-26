@@ -48,6 +48,20 @@ static void check_memfd(unsigned flags, const char *name)
 	if (status.st_size != 0)
 		fail("new file did not start empty");
 
+	const long page_size = sysconf(_SC_PAGESIZE);
+	if (page_size <= 0)
+		fail("invalid page size");
+	const off_t grown_size = 2 * (off_t)page_size + 17;
+	if (ftruncate(fd, grown_size) != 0)
+		fail("growing an empty file failed");
+	if (fstat(fd, &status) != 0 || status.st_size != grown_size)
+		fail("growth did not publish the exact unaligned size");
+	unsigned char final_byte = 0xff;
+	if (pread(fd, &final_byte, 1, grown_size - 1) != 1 || final_byte != 0)
+		fail("newly allocated final page did not start zeroed");
+	if (ftruncate(fd, 0) != 0)
+		fail("reset after growth failed");
+
 	int descriptor_flags = fcntl(fd, F_GETFD);
 	if (descriptor_flags < 0)
 		fail("F_GETFD failed");
@@ -76,6 +90,7 @@ int main(void)
 {
 	check_memfd(0, "memfd-no-cloexec");
 	check_memfd(MFD_CLOEXEC, "memfd-cloexec");
+	puts("memfd: empty-file growth publishes the exact size and zeroed final page");
 
 	errno = 0;
 	long invalid = create_memfd("memfd-invalid-flags", 0x80000000U);
