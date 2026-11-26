@@ -244,7 +244,7 @@ async function openPersistentBlockStorage(
     const writeSectors = async (
       start: number,
       end: number,
-      sector: (position: number) => SectorValue | undefined,
+      sector: (position: number) => Uint8Array | undefined,
     ) => {
       assertOpen();
       const transaction = db.transaction("sectors", "readwrite", { durability: "strict" });
@@ -254,8 +254,14 @@ async function openPersistentBlockStorage(
         for (let position = start; position < end; position += SECTOR_BYTES) {
           const value = sector(position);
           const key = position / SECTOR_BYTES;
-          if (value === undefined) store.delete(key);
-          else store.put(value, key);
+          if (value?.some((byte) => byte !== 0)) {
+            // Structured cloning a view can copy its entire backing buffer.
+            store.put(value.byteLength === value.buffer.byteLength ? value : value.slice(), key);
+          } else if (image) {
+            store.put(ZERO_SECTOR, key);
+          } else {
+            store.delete(key);
+          }
         }
       } catch (error) {
         transaction.abort();
@@ -355,16 +361,19 @@ async function openPersistentBlockStorage(
           const payloadEnd = offset + payload.byteLength;
           const start = Math.floor(offset / SECTOR_BYTES) * SECTOR_BYTES;
           const end = Math.ceil(payloadEnd / SECTOR_BYTES) * SECTOR_BYTES;
-          const bytes = new Uint8Array(end - start);
-          if (start !== offset) bytes.set(await readBytes(start, SECTOR_BYTES));
-          if (end !== payloadEnd && (end - SECTOR_BYTES !== start || start === offset))
-            bytes.set(
-              await readBytes(end - SECTOR_BYTES, SECTOR_BYTES),
-              end - start - SECTOR_BYTES,
-            );
-          bytes.set(payload, offset - start);
+          let bytes = payload;
+          if (start !== offset || end !== payloadEnd) {
+            bytes = new Uint8Array(end - start);
+            if (start !== offset) bytes.set(await readBytes(start, SECTOR_BYTES));
+            if (end !== payloadEnd && (end - SECTOR_BYTES !== start || start === offset))
+              bytes.set(
+                await readBytes(end - SECTOR_BYTES, SECTOR_BYTES),
+                end - start - SECTOR_BYTES,
+              );
+            bytes.set(payload, offset - start);
+          }
           await writeSectors(start, end, (position) =>
-            bytes.slice(position - start, position - start + SECTOR_BYTES),
+            bytes.subarray(position - start, position - start + SECTOR_BYTES),
           );
           return payload.byteLength;
         });
@@ -391,11 +400,9 @@ async function openPersistentBlockStorage(
               zeroEnd - (end - SECTOR_BYTES),
             );
           }
-          const zero = image ? new Uint8Array(SECTOR_BYTES) : undefined;
           await writeSectors(start, end, (position) => {
             if (position === start && first) return first;
             if (position === end - SECTOR_BYTES && last) return last;
-            return zero;
           });
         });
       },
@@ -407,8 +414,7 @@ async function openPersistentBlockStorage(
             `${description} discard requires a sector-aligned range up to 1 MiB`,
           );
         return enqueue(async () => {
-          if (length)
-            await writeSectors(offset, offset + length, () => (image ? ZERO_SECTOR : undefined));
+          if (length) await writeSectors(offset, offset + length, () => undefined);
         });
       },
       flush() {

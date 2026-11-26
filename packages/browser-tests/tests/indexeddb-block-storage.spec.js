@@ -190,6 +190,8 @@ test("reopens a zero-backed persistent disk without changing its capacity", asyn
       await storage.discard(1024, 512);
       await storage.write(1536, Uint8Array.of(0x42));
       await storage.writeZeroes(1536, 512);
+      await storage.write(2049, Uint8Array.of(0x43));
+      await storage.write(2049, Uint8Array.of(0));
       await storage.flush();
       await storage.close();
 

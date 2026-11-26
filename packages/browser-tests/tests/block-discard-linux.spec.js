@@ -24,7 +24,7 @@ for (const backend of ["persistent HTTP", "zero-backed persistent"]) {
         });
       });
     await page.goto("/");
-    const { records, exportedBytes } = await page.evaluate(
+    const { records, exportedBytes, zeroSectors } = await page.evaluate(
       async ({ baseUrl, capacity }) => {
         const kernel = await import("/node_modules/@lowland/kernel/dist/index.js");
         const { runRuntimeSmoke } = await import("/runtime-smoke.js");
@@ -44,7 +44,7 @@ for (const backend of ["persistent HTTP", "zero-backed persistent"]) {
             if (first) {
               if (!baseUrl) {
                 const neighbors = new Uint8Array(4096).fill(0xa5);
-                for (const offset of [0, 12288])
+                for (const offset of [0, 12288, 16384])
                   if ((await storage.write(offset, neighbors)) !== neighbors.length)
                     throw new Error("short neighboring disk seed");
               }
@@ -114,7 +114,21 @@ for (const backend of ["persistent HTTP", "zero-backed persistent"]) {
           );
           if (!closed) throw new Error("disk export did not close the sink");
         }
-        return { records, exportedBytes };
+        const databaseName =
+          (baseUrl ? "linux-wasm-http-block:" : "linux-wasm-local-block:") + name;
+        const resultOf = (request) =>
+          new Promise((resolve, reject) => {
+            request.onsuccess = () => resolve(request.result);
+            request.onerror = () => reject(request.error);
+          });
+        const db = await resultOf(indexedDB.open(databaseName));
+        try {
+          const sectors = db.transaction("sectors", "readonly").objectStore("sectors");
+          const zeroSectors = await resultOf(sectors.getAll(IDBKeyRange.bound(32, 39)));
+          return { records, exportedBytes, zeroSectors };
+        } finally {
+          db.close();
+        }
       },
       { baseUrl: base, capacity },
     );
@@ -122,15 +136,25 @@ for (const backend of ["persistent HTTP", "zero-backed persistent"]) {
       "block discard: issued BLKDISCARD and verified bytes",
       "block discard: reopened disk retains discarded bytes",
     ];
+    const zeroWrite = [
+      "block zero write: flushed ordinary pwrite of zeros",
+      "block zero write: reopened disk retains ordinary zero write",
+    ];
     for (const [index, { output }] of records.entries()) {
       const lines = output.split("\n");
       expect(lines.filter((line) => line.startsWith("block discard:"))).toEqual([expected[index]]);
+      expect(lines.filter((line) => line.startsWith("block zero write:"))).toEqual([
+        zeroWrite[index],
+      ]);
       expect(lines.filter((line) => line === "::vm-test::pass")).toHaveLength(1);
       console.log(expected[index]);
+      console.log(zeroWrite[index]);
       console.log("block discard: machine and devices closed for boot " + (index + 1));
     }
     expect(records[0].requests).toEqual([{ offset: 4096, length: 8192 }]);
     expect(records[1].requests).toEqual([]);
+    expect(zeroSectors).toEqual(base ? Array(8).fill(0) : []);
+    console.log("block zero write: verified compact sector storage after shutdown");
     if (!base) {
       expect(exportedBytes).toBe(capacity);
       console.log("block discard: exported and verified the raw persistent disk after shutdown");

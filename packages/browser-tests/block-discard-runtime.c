@@ -16,6 +16,7 @@ enum {
     RangeStart = 4096,
     RangeSize = 8192,
     WindowSize = 4096,
+    WriteStart = RangeStart + RangeSize + WindowSize,
     BaseByte = 0xa5,
     WrittenByte = 0x6b,
 };
@@ -80,7 +81,14 @@ int main(void)
         expect_bytes(fd, RangeStart - WindowSize, WindowSize, BaseByte, "preserve preceding window");
         expect_bytes(fd, RangeStart, RangeSize, 0, "verify discarded range is zero");
         expect_bytes(fd, RangeStart + RangeSize, WindowSize, BaseByte, "preserve following window");
+
+        unsigned char zeros[WindowSize] = {0};
+        expect_bytes(fd, WriteStart, WindowSize, BaseByte, "verify ordinary write seed");
+        require(pwrite(fd, zeros, sizeof(zeros), WriteStart) == sizeof(zeros),
+                "write zeros through ordinary block I/O");
+        require(fsync(fd) == 0, "flush ordinary zero write");
     }
+    expect_bytes(fd, WriteStart, WindowSize, 0, "verify ordinary zero write");
 
     require(close(fd) == 0, "close test disk");
     require(umount("/sys") == 0, "unmount sysfs");
@@ -88,6 +96,9 @@ int main(void)
     puts(first == WrittenByte ?
             "block discard: issued BLKDISCARD and verified bytes" :
             "block discard: reopened disk retains discarded bytes");
+    puts(first == WrittenByte ?
+            "block zero write: flushed ordinary pwrite of zeros" :
+            "block zero write: reopened disk retains ordinary zero write");
     puts("::vm-test::pass");
     fflush(stdout);
     for (;;) sched_yield();
