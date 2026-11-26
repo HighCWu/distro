@@ -30,6 +30,11 @@ let
           name = "initramfs-zstd-${platform.wasmArch}";
           init = "${program}/initramfs-zstd.wasm";
           contents = [ fixtures ];
+          pathModes = {
+            "/zstd-fixture/payload.bin" = "0640";
+            "/zstd-fixture/executable" = "0751";
+            "/zstd-fixture/empty" = "0750";
+          };
           initramfsCompression = "zstd";
           recordRuntimeLog = true;
         };

@@ -218,6 +218,7 @@ let
       init,
       contents ? [ ],
       files ? { },
+      pathModes ? { },
       cpus ? 1,
       heavy ? true,
       disks ? [ ],
@@ -237,7 +238,12 @@ let
       fixtureName = lib.replaceStrings [ "_" ] [ "-" ] name;
       archive = image.mkInitramfs {
         name = "${fixtureName}-initramfs";
-        inherit init contents files;
+        inherit
+          init
+          contents
+          files
+          pathModes
+          ;
       };
       compressedArchive =
         pkgs.runCommand "${fixtureName}-initramfs.cpio.zst" { nativeBuildInputs = [ pkgs.zstd ]; }
