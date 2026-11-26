@@ -55,7 +55,7 @@ ip route del 198.19.0.0/24 dev wasmdummy table 101 || fail "delete custom route"
 echo 'virtual network: dummy and IPv4 policy routing pass'
 
 # The pinned BusyBox ip does not accept the nodad address flag.
-printf '0\n' > /proc/sys/net/ipv6/conf/wasmdummy/accept_dad || fail "disable dummy IPv6 DAD"
+printf '0\n' >/proc/sys/net/ipv6/conf/wasmdummy/accept_dad || fail "disable dummy IPv6 DAD"
 ip -6 address add 2001:db8:100::1/64 dev wasmdummy || fail "assign dummy IPv6 address"
 ip -6 route add 2001:db8:200::/64 dev wasmdummy table 102 || fail "add separate IPv6 route table"
 ip -6 rule add priority 1102 to 2001:db8:200::/64 table 102 || fail "add IPv6 policy rule"
