@@ -50,5 +50,23 @@ int main(int argc, char **argv)
     require(unlink(file) == 0 && rmdir(directory) == 0, "release final fixtures");
     umask(original);
     puts("creation modes: Linux umask still removes requested permissions and cleanup recovers pass");
+
+    umask(0027);
+    require(mknod(file, S_IFREG | 0666, 0) == 0, "create regular file without opening it");
+    struct stat created;
+    require(stat(file, &created) == 0 && S_ISREG(created.st_mode) && created.st_size == 0,
+            "mknod creates an empty regular inode");
+    mode(file, 0640);
+    fd = open(file, O_WRONLY | O_CLOEXEC);
+    require(fd >= 0 && write(fd, "kept", 4) == 4 && close(fd) == 0, "write regular mknod file");
+    errno = 0;
+    require(mknod(file, S_IFREG | 0600, 0) == -1 && errno == EEXIST, "mknod rejects an existing name");
+    struct stat retained;
+    require(stat(file, &retained) == 0 && retained.st_ino == created.st_ino &&
+            retained.st_size == 4 && (retained.st_mode & 0777) == 0640,
+            "mknod collision preserves the inode, size and permissions");
+    require(unlink(file) == 0, "remove mknod file");
+    umask(original);
+    puts("creation modes: regular mknod preserves mode and rejects replacement pass");
     return 0;
 }

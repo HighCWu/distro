@@ -4,7 +4,7 @@ import test from "node:test";
 import { fileSystemDevice, FSError } from "../src/virtio/fs.ts";
 import { close_virtio_device, virtio_imports } from "../src/virtio/core.ts";
 
-for (const opcode of [1, 6, 9, 35]) {
+for (const opcode of [1, 6, 8, 9, 35]) {
   for (const existing of [false, true]) {
     for (const releaseFails of opcode === 35 ? [false, true] : [false]) {
       test(`FUSE entry ${opcode} rolls back failed attributes, existing=${existing}, cleanup fails=${releaseFails}`, async () => {
@@ -13,6 +13,7 @@ for (const opcode of [1, 6, 9, 35]) {
         const handle = {};
         let failAttributes = false;
         let releases = 0;
+        const expectedReleases = opcode === 8 || opcode === 35 ? 1 : 0;
         const device = fileSystemDevice(
           {
             root,
@@ -29,7 +30,11 @@ for (const opcode of [1, 6, 9, 35]) {
             mkdir() {
               return node;
             },
-            create() {
+            create(_parent: object, _name: string, flags: number, context: { mode: number }) {
+              if (opcode === 8) {
+                assert.equal(flags, 0xc1);
+                assert.equal(context.mode, 0o100640);
+              }
               return { node, handle };
             },
             flush() {},
@@ -80,18 +85,14 @@ for (const opcode of [1, 6, 9, 35]) {
         const name = new TextEncoder().encode("file\0");
         try {
           if (existing) await request(1, 1n, name);
-          const body = new Uint8Array(
-            (opcode === 9 ? 8 : opcode === 35 ? 16 : 0) + name.length + (opcode === 6 ? 7 : 0),
-          );
-          body.set(name, opcode === 9 ? 8 : opcode === 35 ? 16 : 0);
+          const prefix = opcode === 8 || opcode === 35 ? 16 : opcode === 9 ? 8 : 0;
+          const body = new Uint8Array(prefix + name.length + (opcode === 6 ? 7 : 0));
+          if (opcode === 8) new DataView(body.buffer).setUint32(0, 0o100640, true);
+          body.set(name, prefix);
           if (opcode === 6) body.set(new TextEncoder().encode("target\0"), name.length);
           failAttributes = true;
           await request(opcode, 1n, body, 13);
-          assert.equal(
-            releases,
-            opcode === 35 ? 1 : 0,
-            "CREATE failure releases its unpublished handle immediately",
-          );
+          assert.equal(releases, expectedReleases, "entry failure leaves no unpublished handle");
           failAttributes = false;
           await request(3, 2n, new Uint8Array(16), existing ? 0 : 2);
           await request(1, 1n, name);
@@ -107,11 +108,7 @@ for (const opcode of [1, 6, 9, 35]) {
         } finally {
           await close_virtio_device(device);
         }
-        assert.equal(
-          releases,
-          opcode === 35 ? 1 : 0,
-          "shutdown must not retry an unpublished failed CREATE handle",
-        );
+        assert.equal(releases, expectedReleases, "shutdown must not retry an unpublished handle");
       });
     }
   }

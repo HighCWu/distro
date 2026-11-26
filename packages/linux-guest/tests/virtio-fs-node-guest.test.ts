@@ -264,6 +264,7 @@ guest_test("Node directory sharing through Linux", async (t, fixture) => {
         "creation modes: zero Linux umask retains requested file and directory permissions pass",
         "creation modes: existing O_CREAT preserves mode and exclusive collision changes nothing pass",
         "creation modes: Linux umask still removes requested permissions and cleanup recovers pass",
+        "creation modes: regular mknod preserves mode and rejects replacement pass",
       ]);
     });
 

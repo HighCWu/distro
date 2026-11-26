@@ -25,6 +25,7 @@ const FuseOpcode = {
   SETATTR: 4,
   READLINK: 5,
   SYMLINK: 6,
+  MKNOD: 8,
   MKDIR: 9,
   UNLINK: 10,
   RMDIR: 11,
@@ -414,6 +415,13 @@ const FuseGetattrIn = Struct({
   fh: U64LE,
 });
 
+const FuseMknodIn = Struct({
+  mode: U32LE,
+  rdev: U32LE,
+  umask: U32LE,
+  padding: U32LE,
+});
+
 const FuseMkdirIn = Struct({
   mode: U32LE,
   umask: U32LE,
@@ -632,6 +640,7 @@ function minimum_response_capacity(opcode: number) {
       return FuseOutHeader.size + FuseInitOut.size;
     case FuseOpcode.LOOKUP:
     case FuseOpcode.SYMLINK:
+    case FuseOpcode.MKNOD:
     case FuseOpcode.MKDIR:
       return FuseOutHeader.size + FuseEntryOut.size;
     case FuseOpcode.GETATTR:
@@ -1037,6 +1046,25 @@ export function fileSystemDevice<TNode extends object, THandle, T extends FS<TNo
         );
         const record = record_for_node(made, node!);
         await write_lookup_entry(payload, record);
+        break;
+      }
+      case FuseOpcode.MKNOD: {
+        const request = body.struct(FuseMknodIn);
+        // Only regular files can be represented by the create backend.
+        if ((request.mode & 0o170000) !== FileType.file || !filesystem.create) {
+          throw new FSError("EOPNOTSUPP");
+        }
+        const name = validate_name(decode_linux_bytes(body.cstring_bytes()));
+        // Linux asm-generic O_WRONLY | O_CREAT | O_EXCL. MKNOD publishes
+        // an inode entry and has no open handle to return to Linux.
+        const created = await filesystem.create(
+          node!.node,
+          name,
+          0x1 | 0x40 | 0x80,
+          create_context(header, request.mode, request.umask),
+        );
+        await filesystem.release?.(created.node, created.handle);
+        await write_lookup_entry(payload, record_for_node(created.node, node!));
         break;
       }
       case FuseOpcode.UNLINK:
