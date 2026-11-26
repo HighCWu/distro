@@ -1127,6 +1127,12 @@ lib.makeScope (scope: lib.callPackageWith ({ inherit lib pkgs; } // scope)) (
       sysroot = self.sysroot-wasm64;
       vm-test = vmTestWasm64;
     };
+    ext4-quota = callPackage ./ext4-quota/package.nix { };
+    ext4-quota-wasm64 = self.ext4-quota.override {
+      platform = self.platform-wasm64;
+      sdk = self.sdk-wasm64;
+      vm-test = vmTestWasm64;
+    };
     erofs-metadata = callPackage ./erofs-metadata/package.nix { };
     erofs-metadata-wasm64 = callPackage ./erofs-metadata/package.nix {
       platform = self.platform-wasm64;
