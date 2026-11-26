@@ -57,7 +57,7 @@ let
         "fchmod/fchmod05"
         "fchmod/fchmod06"
         "fstat/fstat02"
-        # getcwd01 reports TFAIL on the current kernel.
+        "getcwd/getcwd01"
         "getcwd/getcwd02"
         "getcwd/getcwd03"
         "link/link02"
@@ -118,7 +118,7 @@ let
         "getppid/getppid01"
         "getpriority/getpriority01"
         "getpriority/getpriority02"
-        # getrandom01 fails on the current kernel.
+        "getrandom/getrandom01"
         "getrandom/getrandom02"
         "getrandom/getrandom03"
         "getrandom/getrandom04"
