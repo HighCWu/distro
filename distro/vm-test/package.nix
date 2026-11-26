@@ -227,8 +227,24 @@ let
       vsockRoundtrip ? false,
       ninepExport ? null,
       ninepMemory ? false,
+      initramfsCompression ? null,
       recordRuntimeLog ? false,
     }:
+    assert lib.assertMsg (
+      initramfsCompression == null || initramfsCompression == "zstd"
+    ) "rawInitramfsTest only supports null or zstd initramfsCompression";
+    let
+      fixtureName = lib.replaceStrings [ "_" ] [ "-" ] name;
+      archive = image.mkInitramfs {
+        name = "${fixtureName}-initramfs";
+        inherit init contents files;
+      };
+      compressedArchive =
+        pkgs.runCommand "${fixtureName}-initramfs.cpio.zst" { nativeBuildInputs = [ pkgs.zstd ]; }
+          ''
+            zstd --quiet --threads=1 -3 --stdout ${archive} > "$out"
+          '';
+    in
     bootInstalledSystem {
       inherit
         cpus
@@ -243,10 +259,9 @@ let
         ninepMemory
         recordRuntimeLog
         ;
-      initramfs = image.mkInitramfs {
-        name = "${lib.replaceStrings [ "_" ] [ "-" ] name}-initramfs";
-        inherit init contents files;
-      };
+      # The existing runner reads this file unchanged. Decompression belongs
+      # to the Linux initramfs path, never a build-host/runner preload step.
+      initramfs = if initramfsCompression == null then archive else compressedArchive;
     };
 in
 {
