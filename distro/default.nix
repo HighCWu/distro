@@ -660,6 +660,12 @@ lib.makeScope (scope: lib.callPackageWith ({ inherit lib pkgs; } // scope)) (
       sdk = self.sdk-wasm64;
       vm-test = vmTestWasm64;
     };
+    ipv4-multipath = callPackage ./ipv4-multipath/package.nix { };
+    ipv4-multipath-wasm64 = callPackage ./ipv4-multipath/package.nix {
+      platform = self.platform-wasm64;
+      sdk = self.sdk-wasm64;
+      vm-test = vmTestWasm64;
+    };
     virtual-network = callPackage ./virtual-network/package.nix { };
     autofs-runtime = callPackage ./autofs-runtime/package.nix { };
     vsock-runtime = callPackage ./vsock-runtime/package.nix { };

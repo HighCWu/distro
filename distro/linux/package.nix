@@ -22,8 +22,8 @@
     inherit pkgs;
     owner = "HighCWu";
     repo = "linux";
-    rev = "047dad874fdb0d5ef201461392bd8891b05ba524";
-    hash = "sha256-Wpo9AIYhZ7ovGuQTTR6pB/4+fPIQVLP4Bo45ST6FTK0=";
+    rev = "2ff3fec6a16d8f7ab3a45b9196d490976cc87b5f";
+    hash = "sha256-jbUSpm8MZYNu0h/hEpHet+ZgMbvDdHdZEjcsoDCNFWs=";
   },
 }:
 
@@ -195,7 +195,7 @@ pkgs.stdenvNoCC.mkDerivation (finalAttrs: {
     grep -qx 'CONFIG_MEMFD_CREATE=y' .config
     grep -qx 'CONFIG_BLK_DEV_LOOP=y' .config
     grep -qx 'CONFIG_BLK_DEV_LOOP_MIN_COUNT=0' .config
-    for option in TUN VETH DUMMY IP_ADVANCED_ROUTER IP_MULTIPLE_TABLES; do
+    for option in TUN VETH DUMMY IP_ADVANCED_ROUTER IP_MULTIPLE_TABLES IP_ROUTE_MULTIPATH; do
       grep -qx "CONFIG_$option=y" .config
     done
     grep -qx 'CONFIG_FS_STACK=y' .config
