@@ -408,6 +408,12 @@ interface WindowWaiter {
   reject(error: unknown): void;
 }
 
+interface TcpHandshakeRetry {
+  deadline: number;
+  message: string;
+  timer: ReturnType<typeof setTimeout>;
+}
+
 interface TcpFlow {
   readonly key: string;
   readonly guest: Attachment;
@@ -428,7 +434,8 @@ interface TcpFlow {
   advertised_window: number;
   peer_window: number;
   handshake?: PromiseWithResolvers<TcpConnection>;
-  handshake_timeout?: ReturnType<typeof setTimeout>;
+  handshake_retry?: TcpHandshakeRetry;
+  accepted_syn_ack?: { sequence: number; acknowledgement: number };
   readable?: ReadableStreamDefaultController<Uint8Array>;
   writable?: WritableStreamDefaultController;
   writable_closing?: boolean;
@@ -840,7 +847,7 @@ export function createNetwork({ connectTcp, resolveDns }: NetworkOptions): Netwo
     if (flow.closed) return;
     flow.closed = true;
     tcp_flows.delete(flow.key);
-    if (flow.handshake_timeout !== undefined) clearTimeout(flow.handshake_timeout);
+    stop_tcp_handshake_retry(flow);
     take_tcp_transmission(flow)?.completion.reject(error ?? new Error("TCP connection closed"));
     for (const waiter of flow.window_waiters) {
       waiter.reject(error ?? new Error("TCP connection closed"));
@@ -849,6 +856,8 @@ export function createNetwork({ connectTcp, resolveDns }: NetworkOptions): Netwo
     flow.remove_external_abort?.();
     flow.activation_waiter?.reject(error ?? new Error("TCP connection closed"));
     flow.activation_waiter = undefined;
+    flow.handshake?.reject(error ?? new Error("TCP connection closed"));
+    flow.handshake = undefined;
     flow.abort?.abort(error ?? new Error("TCP connection closed"));
     // External teardown must also settle an idle writer. Successful FIN
     // completion and the sink's own abort keep their native stream result.
@@ -859,7 +868,6 @@ export function createNetwork({ connectTcp, resolveDns }: NetworkOptions): Netwo
       } catch {
         // The stream may already have been closed by the peer.
       }
-      flow.handshake?.reject(error);
     } else {
       try {
         flow.readable?.close();
@@ -876,19 +884,44 @@ export function createNetwork({ connectTcp, resolveDns }: NetworkOptions): Netwo
   }
 
   function expire_tcp_handshake(flow: TcpFlow, message: string) {
-    flow.handshake_timeout = setTimeout(() => {
-      abort_tcp_flow(flow, new Error(message));
-    }, TCP_TIMEOUT_MS);
+    flow.handshake_retry = {
+      deadline: performance.now() + TCP_TIMEOUT_MS,
+      message,
+      timer: setTimeout(() => abort_tcp_flow(flow, new Error(message)), TCP_TIMEOUT_MS),
+    };
+  }
+
+  function stop_tcp_handshake_retry(flow: TcpFlow) {
+    clearTimeout(flow.handshake_retry?.timer);
+    flow.handshake_retry = undefined;
+  }
+
+  function send_tcp_handshake(flow: TcpFlow, flags: number, sequence: number) {
+    const handshake = flow.handshake_retry;
+    if (!handshake) return;
+    clearTimeout(handshake.timer);
+    let retry = TCP_INITIAL_RETRY_MS;
+    const attempt = () => {
+      if (flow.handshake_retry !== handshake) return;
+      const remaining = handshake.deadline - performance.now();
+      if (remaining <= 0) {
+        abort_tcp_flow(flow, new Error(handshake.message));
+        return;
+      }
+      handshake.timer = setTimeout(attempt, Math.ceil(Math.min(remaining, retry)));
+      retry = Math.min(retry * 2, TCP_MAX_RETRY_MS);
+      void send_tcp(flow, flags, undefined, sequence).catch((error) => {
+        if (flow.handshake_retry === handshake) close_tcp_flow(flow, error);
+      });
+    };
+    attempt();
   }
 
   function establish_tcp_flow(flow: TcpFlow) {
     flow.established = true;
+    stop_tcp_handshake_retry(flow);
     flow.activation_waiter?.resolve();
     flow.activation_waiter = undefined;
-    if (flow.handshake_timeout !== undefined) {
-      clearTimeout(flow.handshake_timeout);
-      flow.handshake_timeout = undefined;
-    }
   }
 
   function host_tcp_connection(flow: TcpFlow, activate?: () => Promise<void>): TcpConnection {
@@ -997,17 +1030,12 @@ export function createNetwork({ connectTcp, resolveDns }: NetworkOptions): Netwo
     );
     const activate = () => {
       if (flow.activation) return flow.activation;
-      flow.activation = (async () => {
-        const waiter = Promise.withResolvers<void>();
-        // Teardown can win while SYN-ACK is still being emitted. Mark the
-        // waiter observed before that race; this task still awaits and reports
-        // its rejection below when emission succeeds.
-        void waiter.promise.catch(() => {});
-        flow.activation_waiter = waiter;
-        await send_tcp(flow, TcpFlag.SYN | TcpFlag.ACK);
-        flow.send_sequence = sequence_add(flow.send_sequence, 1);
-        await waiter.promise;
-      })();
+      if (flow.closed) return Promise.reject(new Error("TCP connection is closed"));
+      const waiter = Promise.withResolvers<void>();
+      flow.activation_waiter = waiter;
+      flow.activation = waiter.promise;
+      flow.send_sequence = sequence_add(initial, 1);
+      send_tcp_handshake(flow, TcpFlag.SYN | TcpFlag.ACK, initial);
       return flow.activation;
     };
     const streams = host_tcp_connection(flow, activate);
@@ -1047,30 +1075,53 @@ export function createNetwork({ connectTcp, resolveDns }: NetworkOptions): Netwo
       close_tcp_flow(flow, new Error("guest reset TCP connection"));
       return;
     }
+    const syn_ack =
+      (segment.flags & (TcpFlag.SYN | TcpFlag.ACK | TcpFlag.FIN)) === (TcpFlag.SYN | TcpFlag.ACK);
+    if (!flow.established) {
+      const handshake = flow.handshake;
+      if (handshake) {
+        if (!syn_ack || segment.acknowledgement !== flow.send_sequence) return;
+        flow.accepted_syn_ack = {
+          sequence: segment.sequence,
+          acknowledgement: segment.acknowledgement,
+        };
+        update_peer_window(flow, segment.window);
+        flow.receive_sequence = sequence_add(segment.sequence, 1);
+        establish_tcp_flow(flow);
+        await send_tcp(flow, TcpFlag.ACK);
+        if (flow.closed) return;
+        const connection = host_tcp_connection(flow);
+        flow.handshake = undefined;
+        handshake.resolve(connection);
+        return;
+      }
+      if (
+        !flow.activation_waiter ||
+        (segment.flags & (TcpFlag.SYN | TcpFlag.ACK)) !== TcpFlag.ACK ||
+        segment.sequence !== flow.receive_sequence ||
+        segment.acknowledgement !== flow.send_sequence
+      )
+        return;
+      establish_tcp_flow(flow);
+    } else if (segment.flags & TcpFlag.SYN) {
+      const accepted = flow.accepted_syn_ack;
+      // A peer whose final ACK was lost repeats its original SYN-ACK.
+      // Neither changed handshake values nor duplicate SYNs affect data state.
+      if (
+        syn_ack &&
+        accepted?.sequence === segment.sequence &&
+        accepted.acknowledgement === segment.acknowledgement &&
+        flow.receive_sequence === sequence_add(accepted.sequence, 1)
+      ) {
+        await send_tcp(flow, TcpFlag.ACK, undefined, accepted.acknowledgement);
+      }
+      return;
+    }
+
     if (segment.flags & TcpFlag.ACK) {
       update_peer_window(flow, segment.window);
       if (flow.transmission?.sent && flow.transmission.acknowledgement === segment.acknowledgement)
         take_tcp_transmission(flow)?.completion.resolve();
-    }
-
-    if (!flow.established) {
-      if (flow.handshake) {
-        if (
-          (segment.flags & (TcpFlag.SYN | TcpFlag.ACK)) !== (TcpFlag.SYN | TcpFlag.ACK) ||
-          segment.acknowledgement !== flow.send_sequence
-        )
-          return;
-        flow.receive_sequence = sequence_add(segment.sequence, 1);
-        establish_tcp_flow(flow);
-        await send_tcp(flow, TcpFlag.ACK);
-        flow.handshake.resolve(host_tcp_connection(flow));
-        flow.handshake = undefined;
-        return;
-      }
-      if (segment.flags & TcpFlag.ACK && segment.acknowledgement === flow.send_sequence) {
-        establish_tcp_flow(flow);
-      }
-      return;
     }
 
     const consumes = segment.payload.byteLength + (segment.flags & TcpFlag.FIN ? 1 : 0);
@@ -1346,10 +1397,7 @@ export function createNetwork({ connectTcp, resolveDns }: NetworkOptions): Netwo
     };
     tcp_flows.set(key, flow);
     expire_tcp_handshake(flow, `timed out connecting to ${options.hostname}:${options.port}`);
-    const syn = tcp_segment(GATEWAY_IP, guest.ip, port, options.port, initial, 0, TcpFlag.SYN);
-    void send_ip(guest, GATEWAY_IP, IpProtocol.TCP, syn).catch((error) => {
-      close_tcp_flow(flow, error);
-    });
+    send_tcp_handshake(flow, TcpFlag.SYN, initial);
     if (options.signal) {
       const abort = () => abort_tcp_flow(flow, options.signal!.reason);
       options.signal.addEventListener("abort", abort, { once: true });

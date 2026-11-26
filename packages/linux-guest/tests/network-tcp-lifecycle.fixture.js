@@ -11,7 +11,7 @@ import { createNetwork } from "../src/network.ts";
 
 // Exercise the real Ethernet adapter through its packed transmit queue. No Linux
 // boot or test-only network API is needed to create an outbound, lazy session.
-async function tcpFixture() {
+async function tcpFixture({ guestInitiates = true } = {}) {
   const accepted = Promise.withResolvers();
   const handler = Promise.withResolvers();
   const network = createNetwork({
@@ -65,7 +65,7 @@ async function tcpFixture() {
       memory.buffer.slice(address + 12, address + ring.getUint32(descriptor + 8, true)),
     );
   }
-  async function send(flags, sequence = 100, acknowledgement = 0, window = 65535) {
+  async function send(flags, sequence = 100, acknowledgement = 0, window = 65535, port = 80) {
     const frame = new Uint8Array(12 + 14 + 20 + 20);
     const view = new DataView(frame.buffer);
     frame.set([2, 0, 0, 0, 0, 1, 2, 0, 0, 0, 0, 2], 12);
@@ -82,7 +82,7 @@ async function tcpFixture() {
     view.setUint16(ip + 10, ~sum & 0xffff);
     const tcp = ip + 20;
     view.setUint16(tcp, 12000);
-    view.setUint16(tcp + 2, 80);
+    view.setUint16(tcp + 2, port);
     view.setUint32(tcp + 4, sequence);
     view.setUint32(tcp + 8, acknowledgement);
     frame[tcp + 12] = 0x50;
@@ -104,8 +104,9 @@ async function tcpFixture() {
     transport.notify(1);
     await completion.promise;
   }
-  await send(2); // SYN; acquiring a writer does not activate the handshake.
-  const session = await accepted.promise;
+  // SYN; acquiring a writer does not activate the handshake.
+  if (guestInitiates) await send(2);
+  const session = guestInitiates ? await accepted.promise : undefined;
   async function establish(writer) {
     const activate = writer.write(new Uint8Array());
     const synAck = await receive();
@@ -117,6 +118,7 @@ async function tcpFixture() {
   }
   return {
     network,
+    attachment,
     session,
     handler,
     send,
@@ -132,6 +134,103 @@ async function tcpFixture() {
     },
   };
 }
+
+test(
+  "host TCP connect recovers a dropped SYN and a dropped final ACK",
+  { timeout: 4000 },
+  async () => {
+    const fixture = await tcpFixture({ guestInitiates: false });
+    const tcp = 14 + 20;
+    const connect = fixture.attachment.connect({ port: 12000 });
+    void connect.catch(() => {});
+    let writer;
+    try {
+      const lostSyn = await fixture.receive();
+      assert.equal(lostSyn.getUint8(tcp + 13), 2);
+      const retransmittedSyn = await fixture.receive();
+      assert.equal(retransmittedSyn.getUint8(tcp + 13), 2);
+      const initial = lostSyn.getUint32(tcp + 4);
+      const port = lostSyn.getUint16(tcp);
+      assert.equal(retransmittedSyn.getUint32(tcp + 4), initial);
+      assert.equal(retransmittedSyn.getUint16(tcp), port);
+
+      const next = (initial + 1) >>> 0;
+      await fixture.send(2 | 16, 100, next, 65535, port);
+      const lostAck = await fixture.receive();
+      assert.equal(lostAck.getUint8(tcp + 13), 16);
+      assert.equal(lostAck.getUint32(tcp + 4), next);
+      assert.equal(lostAck.getUint32(tcp + 8), 101);
+      writer = (await connect).writable.getWriter();
+
+      await fixture.send(2 | 16, 200, next, 65535, port); // Different peer SYN sequence.
+      await fixture.send(2 | 16, 100, (next + 1) >>> 0, 65535, port); // Different host ACK.
+      await fixture.send(2 | 16, 100, next, 65535, port); // Exact repeat after the lost ACK.
+      const repeatedAck = await fixture.receive();
+      assert.equal(repeatedAck.getUint8(tcp + 13), 16);
+      assert.equal(repeatedAck.getUint32(tcp + 4), next);
+      assert.equal(repeatedAck.getUint32(tcp + 8), 101);
+
+      const written = writer.write(Uint8Array.of(0xa5));
+      void written.catch(() => {});
+      const data = await fixture.receive(); // Earlier mismatches must not have queued replies.
+      assert.equal(data.getUint8(tcp + 13), 16 | 8);
+      assert.equal(data.getUint32(tcp + 4), next);
+      assert.equal(data.getUint8(tcp + 20), 0xa5);
+      await fixture.send(16, 101, (next + 1) >>> 0, 65535, port);
+      await written;
+    } finally {
+      await fixture.close();
+      writer?.releaseLock();
+    }
+  },
+);
+
+test(
+  "guest TCP connect retries SYN-ACK after lazy activation until an exact final ACK",
+  { timeout: 4000 },
+  async () => {
+    const fixture = await tcpFixture();
+    const writer = fixture.session.writable.getWriter();
+    const tcp = 14 + 20;
+    try {
+      let received = false;
+      const firstFrame = fixture.receive().then((frame) => {
+        received = true;
+        return frame;
+      });
+      void firstFrame.catch(() => {});
+      await fixture.send(2); // The guest repeats SYN while the host only holds a writer.
+      assert.equal(received, false);
+      const write = writer.write(Uint8Array.of(0x6b));
+      void write.catch(() => {});
+      const lostSynAck = await firstFrame;
+      assert.equal(lostSynAck.getUint8(tcp + 13), 2 | 16);
+      const initial = lostSynAck.getUint32(tcp + 4);
+      const next = (initial + 1) >>> 0;
+      const retriedSynAck = await fixture.receive();
+      assert.equal(retriedSynAck.getUint8(tcp + 13), 2 | 16);
+      assert.equal(retriedSynAck.getUint32(tcp + 4), initial);
+      assert.equal(retriedSynAck.getUint32(tcp + 8), 101);
+      await fixture.send(16, 102, next);
+      await fixture.send(16, 101, (next + 1) >>> 0);
+      const afterLostAck = await fixture.receive();
+      assert.equal(afterLostAck.getUint8(tcp + 13), 2 | 16);
+      assert.equal(afterLostAck.getUint32(tcp + 4), initial);
+      assert.equal(afterLostAck.getUint32(tcp + 8), 101);
+
+      await fixture.send(16, 101, next);
+      const data = await fixture.receive();
+      assert.equal(data.getUint8(tcp + 13), 16 | 8);
+      assert.equal(data.getUint32(tcp + 4), next);
+      assert.equal(data.getUint8(tcp + 20), 0x6b);
+      await fixture.send(16, 101, (next + 1) >>> 0);
+      await write;
+    } finally {
+      await fixture.close();
+      writer.releaseLock();
+    }
+  },
+);
 
 for (const peerFirst of [false, true]) {
   test(
