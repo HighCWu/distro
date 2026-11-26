@@ -84,7 +84,7 @@ int main(int argc, char **argv)
     require(mkdir("/compressed", 0755) == 0, "create compressed mountpoint");
     const char *sources[] = {"/dev/vda", "/compressed.erofs"};
     for (unsigned i = 0; i < 2; ++i) {
-        require(mount(sources[i], "/compressed", "erofs", MS_RDONLY, NULL) == 0, "mount LZ4 EROFS");
+        require(mount(sources[i], "/compressed", "erofs", MS_RDONLY, NULL) == 0, "mount compressed EROFS");
         struct statfs fs;
         require(statfs("/compressed", &fs) == 0 && fs.f_type == 0xe0f5e1e2UL, "actual EROFS mount");
         payload("/compressed");

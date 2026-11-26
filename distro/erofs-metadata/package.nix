@@ -42,7 +42,8 @@ let
         python3 ${./check-image.py} "$out" ${if tolerance == 0 then "shared" else "inline"}
       '';
   compressedImage =
-    pkgs.runCommand "erofs-compressed-lz4.erofs"
+    compressor:
+    pkgs.runCommand "erofs-compressed-${compressor}.erofs"
       {
         nativeBuildInputs = [
           pkgs.erofs-utils
@@ -52,11 +53,23 @@ let
       ''
         python3 ${./compressed-fixture.py} make root
         mkfs.erofs --all-root -T 0 -U 00000000-0000-0000-0000-000000000000 \
-          -zlz4 --max-extent-bytes=262144 "$out" root
+          -z${compressor} --max-extent-bytes=262144 "$out" root
         dump.erofs --path=/payload -e "$out" | tee extents.txt
         fsck.erofs --extract=extracted "$out"
-        python3 ${./compressed-fixture.py} check extents.txt extracted
+        ${
+          if compressor == "lzma" then
+            ''
+              dump.erofs -s "$out" | tee superblock.txt
+              python3 ${./compressed-fixture.py} check-lzma superblock.txt extents.txt extracted
+            ''
+          else
+            ''
+              python3 ${./compressed-fixture.py} check extents.txt extracted
+            ''
+        }
       '';
+  compressedLz4Image = compressedImage "lz4";
+  compressedLzmaImage = compressedImage "lzma";
   compressedProgram =
     pkgs.runCommand "erofs-compressed-${platform.wasmArch}"
       {
@@ -95,8 +108,16 @@ let
         passthru.checks.compressed = vm-test.rawInitramfsTest {
           name = "erofs-compressed-${platform.wasmArch}";
           init = "${compressedProgram}/erofs-compressed.wasm";
-          disks = [ compressedImage ];
-          files."/compressed.erofs" = compressedImage;
+          disks = [ compressedLz4Image ];
+          files."/compressed.erofs" = compressedLz4Image;
+          readOnlyDisks = true;
+          recordRuntimeLog = true;
+        };
+        passthru.checks."compressed-lzma" = vm-test.rawInitramfsTest {
+          name = "erofs-compressed-lzma-${platform.wasmArch}";
+          init = "${compressedProgram}/erofs-compressed.wasm";
+          disks = [ compressedLzmaImage ];
+          files."/compressed.erofs" = compressedLzmaImage;
           readOnlyDisks = true;
           recordRuntimeLog = true;
         };
