@@ -26,7 +26,7 @@ let
       }
       ''
         python3 ${./fixture.py} make root
-        mksquashfs root "$out" -noappend -comp zstd -b 262144 -no-fragments \
+        env -u SOURCE_DATE_EPOCH mksquashfs root "$out" -noappend -comp zstd -b 262144 -no-fragments \
           -all-root -all-time 0 -mkfs-time 0 -no-xattrs -no-exports -processors 1 -no-progress
         unsquashfs -s "$out" > superblock.txt
         unsquashfs -no-progress -d extracted "$out"
