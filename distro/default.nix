@@ -742,6 +742,12 @@ lib.makeScope (scope: lib.callPackageWith ({ inherit lib pkgs; } // scope)) (
       busybox = self.busybox-wasm64;
       vm-test = vmTestWasm64;
     };
+    cgroup-io = callPackage ./cgroup-io/package.nix { };
+    cgroup-io-wasm64 = self.cgroup-io.override {
+      platform = self.platform-wasm64;
+      sdk = self.sdk-wasm64;
+      vm-test = vmTestWasm64;
+    };
     prctl-mm-map-checkpoint-restore = prctlMmMapCheckpointRestore32.override {
       extraChecks.both = prctlMmMapCheckpointRestoreBoth;
     };
