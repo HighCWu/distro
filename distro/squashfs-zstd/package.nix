@@ -32,13 +32,20 @@ let
         ];
       }
       ''
-        python3 ${./fixture.py} make root ${lib.optionalString xattrs "xattrs"}
+        python3 ${./fixture.py} make root
+        xattrArgs=(-no-xattrs)
+        ${lib.optionalString xattrs ''
+          xattrArgs=(-xattrs-add "$(python3 ${./fixture.py} xattr)")
+        ''}
         env -u SOURCE_DATE_EPOCH mksquashfs root "$out" -noappend -comp ${compression} -b 262144 -no-fragments \
-          -all-root -all-time 0 -mkfs-time 0 ${if xattrs then "-xattrs" else "-no-xattrs"} \
+          -all-root -all-time 0 -mkfs-time 0 "''${xattrArgs[@]}" \
           -no-exports -processors 1 -no-progress
         unsquashfs -s "$out" > superblock.txt
-        unsquashfs -no-progress -d extracted "$out"
-        python3 ${./fixture.py} check "$out" superblock.txt extracted ${compression} ${lib.optionalString xattrs "xattrs"}
+        unsquashfs -no-xattrs -no-progress -d extracted "$out"
+        ${lib.optionalString xattrs ''
+          unsquashfs -pf image.pseudo "$out"
+        ''}
+        python3 ${./fixture.py} check "$out" superblock.txt extracted ${compression} ${lib.optionalString xattrs "image.pseudo"}
       '';
   program =
     pkgs.runCommand "squashfs-${compression}${xattrSuffix}-${platform.wasmArch}"
