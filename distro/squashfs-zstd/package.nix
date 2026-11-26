@@ -6,7 +6,12 @@
   llvm-toolchain,
   sysroot,
   vm-test,
+  compression ? "zstd",
 }:
+assert builtins.elem compression [
+  "zstd"
+  "xz"
+];
 let
   flags = lib.escapeShellArgs (
     [
@@ -17,7 +22,7 @@ let
     ++ map (flag: "-Wl,${flag}") platform.linkerFlags
   );
   image =
-    pkgs.runCommand "squashfs-zstd.squashfs"
+    pkgs.runCommand "squashfs-${compression}.squashfs"
       {
         nativeBuildInputs = [
           pkgs.python3
@@ -26,22 +31,22 @@ let
       }
       ''
         python3 ${./fixture.py} make root
-        env -u SOURCE_DATE_EPOCH mksquashfs root "$out" -noappend -comp zstd -b 262144 -no-fragments \
+        env -u SOURCE_DATE_EPOCH mksquashfs root "$out" -noappend -comp ${compression} -b 262144 -no-fragments \
           -all-root -all-time 0 -mkfs-time 0 -no-xattrs -no-exports -processors 1 -no-progress
         unsquashfs -s "$out" > superblock.txt
         unsquashfs -no-progress -d extracted "$out"
-        python3 ${./fixture.py} check "$out" superblock.txt extracted
+        python3 ${./fixture.py} check "$out" superblock.txt extracted ${compression}
       '';
   program =
-    pkgs.runCommand "squashfs-zstd-${platform.wasmArch}"
+    pkgs.runCommand "squashfs-${compression}-${platform.wasmArch}"
       {
         nativeBuildInputs = [
           llvm-toolchain
           pkgs.wabt
         ];
         passthru.checks.runtime = vm-test.rawInitramfsTest {
-          name = "squashfs-zstd-${platform.wasmArch}";
-          init = "${program}/squashfs-zstd.wasm";
+          name = "squashfs-${compression}-${platform.wasmArch}";
+          init = "${program}/squashfs-${compression}.wasm";
           disks = [ image ];
           readOnlyDisks = true;
           recordRuntimeLog = true;
@@ -49,9 +54,12 @@ let
       }
       ''
         mkdir $out
-        clang ${flags} -O2 -Wall -Wextra -Werror ${./runtime.c} -o $out/squashfs-zstd.wasm
-        chmod 0755 $out/squashfs-zstd.wasm
-        wasm-validate --enable-memory64 --enable-threads --enable-exceptions $out/squashfs-zstd.wasm
+        clang ${flags} -O2 -Wall -Wextra -Werror ${
+          lib.optionalString (compression == "xz") "-DSQUASHFS_XZ"
+        } \
+          ${./runtime.c} -o $out/squashfs-${compression}.wasm
+        chmod 0755 $out/squashfs-${compression}.wasm
+        wasm-validate --enable-memory64 --enable-threads --enable-exceptions $out/squashfs-${compression}.wasm
       '';
 in
 program

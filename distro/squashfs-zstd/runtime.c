@@ -13,10 +13,16 @@
 
 enum { PAYLOAD_SIZE = 6 * 65536 + 173, BUFFER_SIZE = 8197 };
 
+#ifdef SQUASHFS_XZ
+#define SQUASHFS_MARKER "squashfs-xz"
+#else
+#define SQUASHFS_MARKER "squashfs-zstd"
+#endif
+
 static void require(int ok, const char *what)
 {
     if (ok) return;
-    printf("::vm-test::fail: squashfs-zstd: %s errno=%d\n", what, errno);
+    printf("::vm-test::fail: " SQUASHFS_MARKER ": %s errno=%d\n", what, errno);
     fflush(stdout);
     _Exit(1);
 }
@@ -82,18 +88,18 @@ int main(int argc, char **argv)
     (void)argc; (void)argv;
     require(mount("devtmpfs", "/dev", "devtmpfs", 0, NULL) == 0, "mount devices");
     require(mkdir("/squashfs", 0755) == 0, "create compressed mountpoint");
-    require(mount("/dev/vda", "/squashfs", "squashfs", MS_RDONLY, NULL) == 0, "mount read-only SquashFS Zstandard image");
+    require(mount("/dev/vda", "/squashfs", "squashfs", MS_RDONLY, NULL) == 0, "mount read-only SquashFS image");
     struct statfs fs;
     require(statfs("/squashfs", &fs) == 0 && fs.f_type == 0x73717368UL, "actual SquashFS mount");
     payload("/squashfs");
-    puts("squashfs-zstd: block-backed cross-page read, pread, random cursors and tail pass");
+    puts(SQUASHFS_MARKER ": block-backed cross-page read, pread, random cursors and tail pass");
     require(umount("/squashfs") == 0, "unmount compressed image");
     require(rmdir("/squashfs") == 0 && umount("/dev") == 0, "compressed mount cleanup");
-    puts("squashfs-zstd: mount cleanup pass");
+    puts(SQUASHFS_MARKER ": mount cleanup pass");
 #else
     require(argc == 2, "native extracted fixture directory argument");
     payload(argv[1]);
-    puts("squashfs-zstd: native extracted byte workload pass (not Linux SquashFS mount evidence)");
+    puts(SQUASHFS_MARKER ": native extracted byte workload pass (not Linux SquashFS mount evidence)");
 #endif
     puts("::vm-test::pass");
     fflush(stdout);
