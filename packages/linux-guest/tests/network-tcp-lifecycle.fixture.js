@@ -65,7 +65,7 @@ async function tcpFixture() {
       memory.buffer.slice(address + 12, address + ring.getUint32(descriptor + 8, true)),
     );
   }
-  async function send(flags, sequence = 100, acknowledgement = 0) {
+  async function send(flags, sequence = 100, acknowledgement = 0, window = 65535) {
     const frame = new Uint8Array(12 + 14 + 20 + 20);
     const view = new DataView(frame.buffer);
     frame.set([2, 0, 0, 0, 0, 1, 2, 0, 0, 0, 0, 2], 12);
@@ -87,7 +87,7 @@ async function tcpFixture() {
     view.setUint32(tcp + 8, acknowledgement);
     frame[tcp + 12] = 0x50;
     frame[tcp + 13] = flags;
-    view.setUint16(tcp + 14, 65535);
+    view.setUint16(tcp + 14, window);
     sum = 6 + 20;
     for (let offset = ip + 12; offset < ip + 20; offset += 2) sum += view.getUint16(offset);
     for (let offset = tcp; offset < tcp + 20; offset += 2) sum += view.getUint16(offset);
@@ -170,6 +170,63 @@ for (const peerFirst of [false, true]) {
     },
   );
 }
+
+test(
+  "established TCP retransmits dropped data and FIN with the same sequence",
+  { timeout: 4000 },
+  async () => {
+    const fixture = await tcpFixture();
+    const writer = fixture.session.writable.getWriter();
+    const reader = fixture.session.readable.getReader();
+    const tcp = 14 + 20;
+    const sequence = (frame) => frame.getUint32(tcp + 4);
+    const flags = (frame) => frame.getUint8(tcp + 13);
+    const readPayload = (frame) =>
+      new Uint8Array(frame.buffer, frame.byteOffset + tcp + 20, frame.byteLength - tcp - 20);
+    try {
+      const start = await fixture.establish(writer);
+      const payload = Uint8Array.of(0x31, 0x72, 0xa5, 0x14);
+      const write = writer.write(payload);
+      void write.catch(() => {});
+      const lostData = await fixture.receive();
+      assert.equal(sequence(lostData), start);
+      assert.equal(flags(lostData), 16 | 8);
+      assert.deepEqual(readPayload(lostData), payload);
+
+      const next = (start + payload.byteLength) >>> 0;
+      await fixture.send(16, 101, (next + 1) >>> 0); // An ACK past the outstanding segment cannot complete it.
+      await fixture.send(16, 101, start, 1); // A small updated window must not strand the existing segment.
+      fixture.handler.resolve(); // Keep a concurrent handler FIN behind the unacknowledged data.
+      const retriedData = await fixture.receive();
+      assert.equal(sequence(retriedData), sequence(lostData));
+      assert.equal(flags(retriedData), flags(lostData));
+      assert.deepEqual(readPayload(retriedData), payload);
+      await fixture.send(16, 101, next);
+      await write;
+
+      const closing = writer.close();
+      void closing.catch(() => {});
+      const lostFin = await fixture.receive();
+      assert.equal(sequence(lostFin), next);
+      assert.equal(flags(lostFin), 16 | 1);
+      assert.equal(readPayload(lostFin).byteLength, 0);
+      const retriedFin = await fixture.receive();
+      assert.equal(sequence(retriedFin), sequence(lostFin));
+      assert.equal(flags(retriedFin), flags(lostFin));
+      assert.equal(readPayload(retriedFin).byteLength, 0);
+      await fixture.send(16, 101, (next + 1) >>> 0);
+      await closing;
+      assert.equal(fixture.session.signal.aborted, false);
+      await fixture.send(16 | 1, 101, (next + 1) >>> 0);
+      assert.deepEqual(await reader.read(), { done: true, value: undefined });
+      await writer.closed;
+    } finally {
+      await fixture.close();
+      reader.releaseLock();
+      writer.releaseLock();
+    }
+  },
+);
 
 for (const established of [false, true]) {
   for (const mode of [
@@ -262,3 +319,20 @@ for (const stage of ["handshake", "data ACK", "FIN ACK"]) {
     }
   });
 }
+
+test("TCP writer abort cancels an unacknowledged segment", { timeout: 2000 }, async () => {
+  const fixture = await tcpFixture();
+  const writer = fixture.session.writable.getWriter();
+  const reason = new Error("cancel pending TCP write");
+  try {
+    await fixture.establish(writer);
+    const write = assert.rejects(writer.write(Uint8Array.of(42)), (error) => error === reason);
+    await fixture.receive();
+    await writer.abort(reason);
+    await write;
+    assert.equal(fixture.session.signal.reason, reason);
+  } finally {
+    await fixture.close();
+    writer.releaseLock();
+  }
+});
