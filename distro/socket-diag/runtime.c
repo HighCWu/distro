@@ -146,7 +146,7 @@ static void ss(const char *mode)
 	if (!strcmp(mode, "netlink")) {
 		arguments[5] = "-f";
 		arguments[6] = "netlink";
-	} else if (!strcmp(mode, "-u") || !strcmp(mode, "-t")) {
+	} else if (!strcmp(mode, "-u") || !strcmp(mode, "-t") || !strcmp(mode, "-w")) {
 		arguments[6] = "-4";
 	}
 	char *environment[] = {"PATH=/bin:/sbin:/usr/bin:/usr/sbin", "LC_ALL=C", NULL};
@@ -206,6 +206,23 @@ static struct sample create(const char *mode)
 	CHECK(!fstat(sample.fd, &state) && S_ISSOCK(state.st_mode) && state.st_ino, "socket inode identity");
 	sample.inode = state.st_ino;
 	CHECK(fcntl(sample.fd, F_GETFD) & FD_CLOEXEC, "fixtures are not inherited by ss");
+	return sample;
+}
+
+static struct sample create_raw_ipv4(void)
+{
+	struct sample sample = {.mode = "-w"};
+	sample.fd = socket(AF_INET, SOCK_RAW | SOCK_CLOEXEC, IPPROTO_ICMP);
+	CHECK(sample.fd >= 0, "ICMP raw IPv4 socket");
+	struct sockaddr_in address = {.sin_family = AF_INET,
+		.sin_addr.s_addr = htonl(INADDR_LOOPBACK)};
+	CHECK(!bind(sample.fd, (struct sockaddr *)&address, sizeof(address)), "bind raw socket to IPv4 loopback");
+	struct stat state;
+	CHECK(!fstat(sample.fd, &state) && S_ISSOCK(state.st_mode) && state.st_ino,
+	      "raw IPv4 socket inode identity");
+	sample.inode = state.st_ino;
+	int flags = fcntl(sample.fd, F_GETFD);
+	CHECK(flags >= 0 && (flags & FD_CLOEXEC), "raw socket is not inherited by ss");
 	return sample;
 }
 
@@ -402,12 +419,28 @@ static void verify_packet_socket(void)
 	puts("socket diagnostics: closed packet socket disappears from upstream dump pass");
 }
 
+static void verify_raw_ipv4(const struct sample *sample, int present)
+{
+	CHECK(!strcmp(sample->mode, "-w"), "raw IPv4 sample mode");
+	ss(sample->mode);
+	const char *row = inode_row(output, sample->inode);
+	if (present) {
+		if (!row) {
+			printf("ss raw IPv4 diagnostic: inode=%llu output=%.4096s\n", sample->inode, output);
+			fail("upstream ss reports the live raw IPv4 socket inode");
+		}
+	} else {
+		CHECK(!row, "closed raw IPv4 inode absent from fresh dump");
+	}
+}
+
 int main(void)
 {
 	/* ss may fall back to procfs. Keep it unavailable so an absent Netlink
 	 * handler cannot masquerade as successful socket-diag support. */
 	const char *fallback[] = {
-		"/proc/net/unix", "/proc/net/tcp", "/proc/net/udp", "/proc/net/netlink", "/proc/net/packet",
+		"/proc/net/unix", "/proc/net/tcp", "/proc/net/udp", "/proc/net/raw",
+		"/proc/net/netlink", "/proc/net/packet",
 	};
 	for (size_t i = 0; i < sizeof(fallback) / sizeof(fallback[0]); i++) {
 		errno = 0;
@@ -425,6 +458,12 @@ int main(void)
 	close_fd(netlink.fd);
 	verify_netlink(&netlink, 0);
 	puts("socket diagnostics: closed Netlink socket disappears from raw and upstream dumps pass");
+	struct sample raw = create_raw_ipv4();
+	verify_raw_ipv4(&raw, 1);
+	puts("socket diagnostics: upstream ss identifies live raw IPv4 ICMP socket inode pass");
+	close_fd(raw.fd);
+	verify_raw_ipv4(&raw, 0);
+	puts("socket diagnostics: closed raw IPv4 ICMP socket disappears from upstream dump pass");
 	verify_packet_socket();
 	CHECK(!setgroups(0, NULL) && !setgid(65534) && !setuid(65534), "ordinary user credentials");
 	CHECK(getuid() == 65534 && geteuid() == 65534, "credentials applied");
