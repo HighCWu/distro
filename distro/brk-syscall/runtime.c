@@ -2,6 +2,7 @@
 #define _GNU_SOURCE
 #include <errno.h>
 #include <pthread.h>
+#include <stddef.h>
 #include <stdint.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -73,6 +74,19 @@ int main(void)
     require(change_break(before) == before + 64 && sbrk(-1) == (void *)-1 && errno == ENOMEM,
             "existing monotonic arena refuses shrink without moving the break");
     puts("brk syscall: standard query, raw growth, errno and libc state coherence pass");
+
+    before = current_break();
+    uintptr_t unaligned = (before | (uintptr_t)15) + 2;
+    require(change_break(unaligned) == unaligned, "unaligned raw break growth");
+    const size_t allocation_size = 2 * 1024 * 1024;
+    void *allocation = malloc(allocation_size);
+    require(allocation && (uintptr_t)allocation % _Alignof(max_align_t) == 0,
+            "malloc span after unaligned raw break");
+    volatile unsigned char *allocation_bytes = allocation;
+    allocation_bytes[0] = 0x79;
+    allocation_bytes[allocation_size - 1] = 0x31;
+    free(allocation);
+    puts("brk syscall: unaligned raw break permits aligned malloc and free");
 
     struct rlimit as = {0}, data = {0}, restricted;
     require(!getrlimit(RLIMIT_AS, &as) && !getrlimit(RLIMIT_DATA, &data), "read limits");
