@@ -5,10 +5,13 @@
 #include <errno.h>
 #include <fcntl.h>
 #include <grp.h>
+#include <linux/if_ether.h>
+#include <linux/if_packet.h>
 #include <linux/netlink.h>
 #include <linux/netlink_diag.h>
 #include <linux/sock_diag.h>
 #include <linux/unix_diag.h>
+#include <net/if.h>
 #include <netinet/in.h>
 #include <poll.h>
 #include <stddef.h>
@@ -143,7 +146,7 @@ static void ss(const char *mode)
 	if (!strcmp(mode, "netlink")) {
 		arguments[5] = "-f";
 		arguments[6] = "netlink";
-	} else if (strcmp(mode, "-x")) {
+	} else if (!strcmp(mode, "-u") || !strcmp(mode, "-t")) {
 		arguments[6] = "-4";
 	}
 	char *environment[] = {"PATH=/bin:/sbin:/usr/bin:/usr/sbin", "LC_ALL=C", NULL};
@@ -369,11 +372,43 @@ static void verify_netlink(const struct sample *sample, int present)
 	}
 }
 
+static void verify_packet_socket(void)
+{
+	unsigned int loopback = if_nametoindex("lo");
+	CHECK(loopback > 0 && loopback <= INT32_MAX, "packet loopback interface index");
+	int fd = socket(AF_PACKET, SOCK_DGRAM | SOCK_CLOEXEC, 0);
+	CHECK(fd >= 0, "datagram packet socket");
+	struct sockaddr_ll address = {
+		.sll_family = AF_PACKET,
+		.sll_protocol = htons(ETH_P_ALL),
+		.sll_ifindex = (int)loopback,
+	};
+	CHECK(!bind(fd, (struct sockaddr *)&address, sizeof(address)), "bind packet socket to loopback");
+	struct stat state;
+	CHECK(!fstat(fd, &state) && S_ISSOCK(state.st_mode) && state.st_ino, "packet socket inode");
+	int flags = fcntl(fd, F_GETFD);
+	CHECK(flags >= 0 && (flags & FD_CLOEXEC), "packet socket is not inherited by ss");
+	ss("-0");
+	const char *row = inode_row(output, state.st_ino);
+	if (!row || !column_is(row, 0, "p_dgr") || !column_is(row, 4, "*:lo")) {
+		printf("ss packet diagnostic: inode=%llu output=%.4096s\n",
+		       (unsigned long long)state.st_ino, output);
+		fail("upstream ss packet inode, datagram type and loopback binding");
+	}
+	puts("socket diagnostics: upstream ss identifies the live loopback packet socket pass");
+	close_fd(fd);
+	ss("-0");
+	CHECK(!inode_row(output, state.st_ino), "closed packet inode absent from fresh dump");
+	puts("socket diagnostics: closed packet socket disappears from upstream dump pass");
+}
+
 int main(void)
 {
 	/* ss may fall back to procfs. Keep it unavailable so an absent Netlink
 	 * handler cannot masquerade as successful socket-diag support. */
-	const char *fallback[] = {"/proc/net/unix", "/proc/net/tcp", "/proc/net/udp", "/proc/net/netlink"};
+	const char *fallback[] = {
+		"/proc/net/unix", "/proc/net/tcp", "/proc/net/udp", "/proc/net/netlink", "/proc/net/packet",
+	};
 	for (size_t i = 0; i < sizeof(fallback) / sizeof(fallback[0]); i++) {
 		errno = 0;
 		CHECK(access(fallback[i], F_OK) == -1 && errno == ENOENT, "proc fallback unavailable");
@@ -390,6 +425,7 @@ int main(void)
 	close_fd(netlink.fd);
 	verify_netlink(&netlink, 0);
 	puts("socket diagnostics: closed Netlink socket disappears from raw and upstream dumps pass");
+	verify_packet_socket();
 	CHECK(!setgroups(0, NULL) && !setgid(65534) && !setuid(65534), "ordinary user credentials");
 	CHECK(getuid() == 65534 && geteuid() == 65534, "credentials applied");
 	samples[0] = create("-x"); samples[1] = create("-u"); samples[2] = create("-t");

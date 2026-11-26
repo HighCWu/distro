@@ -22,8 +22,8 @@
     inherit pkgs;
     owner = "HighCWu";
     repo = "linux";
-    rev = "3568193837e4fdd6034799880c8d87c66bd7d2fb";
-    hash = "sha256-1mQgU+KRwiLftYxwEJcyO8BUSUW2I0X0UO9ESVAnfHA=";
+    rev = "e5ee8b1b586ef541f3a1211f4e3fb78e8e1293dc";
+    hash = "sha256-9qZI4NmI9TNAXRXQdZYqZnAxlAs7C849TFoYsXDVOPU=";
   },
 }:
 
@@ -211,7 +211,7 @@ pkgs.stdenvNoCC.mkDerivation (finalAttrs: {
     grep -qx 'CONFIG_BPF_UNPRIV_DEFAULT_OFF=y' .config
     ! grep -qx 'CONFIG_BPF_JIT=y' .config
     ! grep -qx 'CONFIG_BPF_JIT_ALWAYS_ON=y' .config
-    for option in UNIX_DIAG INET_DIAG INET_TCP_DIAG INET_UDP_DIAG NETLINK_DIAG; do
+    for option in UNIX_DIAG INET_DIAG INET_TCP_DIAG INET_UDP_DIAG NETLINK_DIAG PACKET_DIAG; do
       grep -qx "CONFIG_$option=y" .config
     done
     for option in CRYPTO CRYPTO_USER CRYPTO_USER_API_HASH CRYPTO_SHA256 CRYPTO_HMAC \
