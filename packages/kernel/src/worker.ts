@@ -92,6 +92,7 @@ import {
   type WasmGlobalImport,
 } from "./wasm_binary.ts";
 import { ProcessDylink } from "./dylink_process.ts";
+import { create_dylink_memory_resolver, type DylinkMemoryGrant } from "./dylink_memory_grants.ts";
 import { DylinkWorkerRuntime } from "./dylink_worker_runtime.ts";
 import {
   DylinkWorkerChannel,
@@ -165,6 +166,7 @@ export interface InitMessage {
   shared_user_prepare?: boolean;
   copy_fault?: CopyFault;
   fork_profile?: ForkProfileRequest;
+  dylink_memory_grants?: readonly DylinkMemoryGrant[];
 }
 export interface ForwardedInitMessage {
   type: "forwarded_init";
@@ -173,6 +175,7 @@ export interface ForwardedInitMessage {
   shared_user_prepare?: boolean;
   copy_fault?: CopyFault;
   fork_profile?: ForkProfileRequest;
+  dylink_memory_grants?: readonly DylinkMemoryGrant[];
 }
 interface AbortWorkerInitMessage {
   type: "abort_init";
@@ -336,12 +339,14 @@ function user_imports({
   get_kernel_instance,
   parent_user: parent,
   profile,
+  hostMemoriesForModule,
 }: {
   kernel_memory: WebAssembly.Memory;
   kernel_address: WasmAddressType;
   get_kernel_instance: () => Instance;
   parent_user: UserContext | null;
   profile?: ForkProfile;
+  hostMemoriesForModule?: ReturnType<typeof create_dylink_memory_resolver>;
 }): {
   context: UserContext | null;
   workerCheckpoint(): number;
@@ -635,6 +640,7 @@ function user_imports({
         memory: context.memory,
         address: context.address,
         maximumPages: context.maximum_pages,
+        ...(hostMemoriesForModule ? { hostMemoriesForModule } : {}),
         tableType: context.dynamic.table,
         signatures: context.dynamic.signatures,
         functionMetadata: context.dynamic.functionMetadata,
@@ -1743,6 +1749,7 @@ function start({
   shared_user_prepare = false,
   copy_fault,
   fork_profile,
+  dylink_memory_grants,
 }: InitMessage) {
   const profile = create_fork_profile(fork_profile, profile_output);
   if (profile) postMessage({ type: "fork_profile_started" });
@@ -1777,6 +1784,20 @@ function start({
   refresh_memory(memory, kernel_address);
   if (initial_user_context) {
     refresh_memory(initial_user_context.memory, initial_user_context.address);
+  }
+  let hostMemoriesForModule: ReturnType<typeof create_dylink_memory_resolver> | undefined;
+  if (dylink_memory_grants?.length) {
+    const refreshedGrantMemories = new Set<WebAssembly.Memory>();
+    for (const grant of dylink_memory_grants) {
+      for (const imports of grant.memories.values()) {
+        for (const resource of imports.values()) {
+          if (refreshedGrantMemories.has(resource.memory)) continue;
+          refresh_memory(resource.memory, resource.type.address);
+          refreshedGrantMemories.add(resource.memory);
+        }
+      }
+    }
+    hostMemoriesForModule = create_dylink_memory_resolver(dylink_memory_grants);
   }
 
   if (user_copy_status && !shared_user_prepare) {
@@ -1813,6 +1834,7 @@ function start({
     get_kernel_instance: () => instance,
     parent_user: user_context,
     profile,
+    hostMemoriesForModule,
   });
 
   const imports = {
@@ -2162,6 +2184,9 @@ listen_endpoint(endpoint, {
           ...init,
           shared_user_prepare: message.shared_user_prepare ?? init.shared_user_prepare,
           copy_fault: message.copy_fault,
+          // Grants come from the trusted wrapper posted by the main agent.
+          // Ignore any similarly named field in the payload on the supplied port.
+          dylink_memory_grants: message.dylink_memory_grants,
         });
       };
       message.port.start();

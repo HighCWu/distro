@@ -4,6 +4,7 @@ import {
   link_dylink_graph,
   type DylinkExternalTag,
   type DylinkExternalSymbol,
+  type DylinkHostMemory,
   type DylinkLazyFunction,
   type DylinkModuleRecord,
   type DylinkSymbolType,
@@ -277,6 +278,12 @@ type Options = {
   tagSignatures?: ReadonlyMap<string, string>;
   functionMetadata?: ReadonlyMap<string, { signature: string; imported: boolean }>;
   privateExports?: ReadonlySet<string>;
+  /** Process-owned authorization for auxiliary memory imports. Called again
+   * against each original module byte array when a worker reconstructs a group. */
+  hostMemoriesForModule?(
+    name: string,
+    bytes: Uint8Array<ArrayBuffer>,
+  ): ReadonlyMap<string, ReadonlyMap<string, DylinkHostMemory>> | undefined;
   userPoll?: { checkpoint: () => number; threadPointer: WebAssembly.Global };
   replay?: DylinkWorkerSnapshot;
   workerPublicationState?: WorkerPublicationState;
@@ -1392,6 +1399,9 @@ export class ProcessDylink {
             limit: BigInt(this.#table.length),
             address: this.#options.tableType.address,
           },
+          ...(this.#options.hostMemoriesForModule
+            ? { hostMemoriesForModule: this.#options.hostMemoriesForModule }
+            : {}),
           hostFunctions,
           hostGlobals,
           externalSymbols,
@@ -1907,6 +1917,9 @@ export class ProcessDylink {
             limit: BigInt(nextSnapshot.main.tableLength),
             address: this.#options.tableType.address,
           },
+          ...(this.#options.hostMemoriesForModule
+            ? { hostMemoriesForModule: this.#options.hostMemoriesForModule }
+            : {}),
           hostFunctions,
           hostGlobals,
           externalSymbols,
@@ -3419,6 +3432,9 @@ export class ProcessDylink {
           tableMaximumElements: this.#options.tableType.maximum,
           memoryArena: { cursor: base, limit: base + size, address: this.#options.address },
           tableArena: { cursor: tableStart, limit: tableEnd, address: tableAddress },
+          ...(this.#options.hostMemoriesForModule
+            ? { hostMemoriesForModule: this.#options.hostMemoriesForModule }
+            : {}),
           hostFunctions,
           hostGlobals,
           externalSymbols: loadExternalSymbols,

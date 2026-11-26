@@ -9,6 +9,7 @@ import {
 } from "../src/dylink_linker.ts";
 import { read_wasm_dynamic_imports } from "../src/wasm_binary.ts";
 import { create_dylink_forwarder } from "../src/dylink_forwarder.ts";
+import { create_dylink_memory_resolver } from "../src/dylink_memory_grants.ts";
 
 const text = (name: string) => [name.length, ...new TextEncoder().encode(name)];
 const section = (id: number, bytes: number[]) => [id, bytes.length, ...bytes];
@@ -31,6 +32,7 @@ function binary(
     startCall?: boolean;
     privateExport?: string;
     element?: "empty" | "active";
+    instructions?: number[];
   } = {},
 ) {
   const metadata = [
@@ -38,11 +40,13 @@ function binary(
     ...section(2, [options.needed?.length ?? 0, ...(options.needed ?? []).flatMap(text)]),
     ...(options.extra ?? []),
   ];
-  const body = options.trap
-    ? [0, 0, 11]
-    : options.callImport
-      ? [0, 0x10, 0, 11]
-      : [0, options.result64 ? 0x42 : 0x41, 42, 11];
+  const body = options.instructions
+    ? [0, ...options.instructions, 11]
+    : options.trap
+      ? [0, 0, 11]
+      : options.callImport
+        ? [0, 0x10, 0, 11]
+        : [0, options.result64 ? 0x42 : 0x41, 42, 11];
   const parts = [
     section(0, [...text("dylink.0"), ...metadata]),
     section(1, [
@@ -105,6 +109,59 @@ function setup(files = new Map([["root", binary()]])) {
     tableArena: { cursor: 3n, limit: 20n, address: "i32" as const },
   };
 }
+
+test("auxiliary memory requires a grant for the exact module bytes", () => {
+  const imports = [
+    2,
+    ...text("env"),
+    ...text("memory"),
+    2,
+    3,
+    1,
+    2,
+    ...text("resource"),
+    ...text("storage"),
+    2,
+    3,
+    1,
+    2,
+  ];
+  const bytes = binary({ imports, instructions: [0x41, 0, 0x28, 0x42, 1, 0] });
+  const auxiliary = new WebAssembly.Memory({ initial: 1, maximum: 2, shared: true });
+  new DataView(auxiliary.buffer).setUint32(0, 42, true);
+  const fields = new Map([
+    [
+      "storage",
+      {
+        memory: auxiliary,
+        type: { address: "i32" as const, minimum: 1n, maximum: 2n, shared: true },
+      },
+    ],
+  ]);
+  const expected = bytes.slice();
+  const resolver = create_dylink_memory_resolver([
+    { bytes: expected, memories: new Map([["resource", fields]]) },
+  ]);
+  expected.fill(0);
+  fields.clear();
+
+  const options = setup(new Map([["root", bytes]]));
+  assert.throws(() => link_dylink_graph(options), /incompatible dynamic memory import/);
+  const graph = link_dylink_graph({ ...options, hostMemoriesForModule: resolver });
+  assert.equal((graph.lookup("answer")!.value as CallableFunction)(), 42);
+  assert.equal(new DataView(options.memory.buffer).getUint32(0, true), 0x5a5a5a5a);
+
+  const altered = binary({ imports, instructions: [0x41, 4, 0x28, 0x42, 1, 0] });
+  assert.equal(altered.byteLength, bytes.byteLength);
+  assert.throws(
+    () =>
+      link_dylink_graph({
+        ...setup(new Map([["root", altered]])),
+        hostMemoriesForModule: resolver,
+      }),
+    /incompatible dynamic memory import/,
+  );
+});
 
 test("deferred Worker replay preserves the live table and pointer map", () => {
   const options = setup();

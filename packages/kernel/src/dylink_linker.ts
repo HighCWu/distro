@@ -10,6 +10,7 @@ import {
   prepare_wasm_dynamic_tail_calls,
   wasm_instantiation_is_table_inert,
   type WasmDylink,
+  type WasmMemoryType,
 } from "./wasm_binary.ts";
 import { wasm_table_get } from "./wasm.ts";
 import { create_dylink_forwarder } from "./dylink_forwarder.ts";
@@ -56,6 +57,13 @@ export type DylinkSymbolType = {
   signature?: string;
 };
 
+/** An explicitly trusted auxiliary memory supplied by the process host. */
+export type DylinkHostMemory = {
+  memory: WebAssembly.Memory;
+  /** The limits and address mode used when this memory was created. */
+  type: WasmMemoryType;
+};
+
 type Initialization = { state: "pending" | "running" | "done" | "failed" };
 export type DylinkModuleRecord = {
   instance: WebAssembly.Instance;
@@ -91,6 +99,13 @@ export function link_dylink_graph(input: {
   stack: WebAssembly.Global;
   memoryArena: Readonly<DylinkArena>;
   tableArena: Readonly<DylinkArena>;
+  /** Return the explicitly trusted auxiliary memory imports for one fresh
+   * module. The resolver sees the original, unmodified bytes. `env.memory`
+   * always refers to the current process memory and cannot be overridden. */
+  hostMemoriesForModule?(
+    name: string,
+    bytes: Uint8Array<ArrayBuffer>,
+  ): ReadonlyMap<string, ReadonlyMap<string, DylinkHostMemory>> | undefined;
   hostFunctions?: ReadonlyMap<string, ReadonlyMap<string, CallableFunction>>;
   hostGlobals?: ReadonlyMap<string, ReadonlyMap<string, WebAssembly.Global>>;
   externalSymbols?: ReadonlyMap<string, DylinkExternalSymbol>;
@@ -140,6 +155,7 @@ export function link_dylink_graph(input: {
   // admission modules outside that retained object.
   const { validatedOriginals, ...options } = input;
   const { memory, table, stack, memoryArena, tableArena } = options;
+  const isProcessMemory = (module: string, name: string) => module === "env" && name === "memory";
   for (const [module, globals] of options.hostGlobals ?? [])
     for (const name of globals.keys())
       if (module !== "linux_user_poll_v2" || name !== "thread_pointer")
@@ -150,6 +166,7 @@ export function link_dylink_graph(input: {
       name: string;
       module: WebAssembly.Module;
       metadata: WasmDylink;
+      hostMemories?: ReadonlyMap<string, ReadonlyMap<string, DylinkHostMemory>>;
       imports: ReturnType<typeof read_wasm_dynamic_imports>;
       signatures: ReturnType<typeof read_wasm_dynamic_signatures>;
       exports: WebAssembly.ModuleExportDescriptor[];
@@ -165,6 +182,21 @@ export function link_dylink_graph(input: {
   // An iterative DFS bounds traversal by fetched files, not the JavaScript stack.
   const order: string[] = [];
   const pending = [{ name: options.root, finish: false }];
+  const snapshotHostMemories = (
+    grant: ReadonlyMap<string, ReadonlyMap<string, DylinkHostMemory>> | undefined,
+  ) => {
+    if (!grant) return undefined;
+    const snapshot = new Map<string, ReadonlyMap<string, DylinkHostMemory>>();
+    for (const [module, fields] of grant) {
+      if (module === "env" && fields.has("memory"))
+        throw new Error("dynamic host memory cannot replace env.memory");
+      const savedFields = new Map<string, DylinkHostMemory>();
+      for (const [name, resource] of fields)
+        savedFields.set(name, { memory: resource.memory, type: { ...resource.type } });
+      snapshot.set(module, savedFields);
+    }
+    return snapshot;
+  };
   while (pending.length) {
     const { name, finish } = pending.pop()!;
     if (finish) {
@@ -177,6 +209,11 @@ export function link_dylink_graph(input: {
     const source = options.files.get(name);
     if (!source) throw new Error(`missing dynamic dependency: ${name}`);
     const resident = options.reuse?.get(name);
+    // Resolve grants once per fresh module, from its exact original bytes and
+    // before any arena layout or mutation. Each dependency gets its own result.
+    const hostMemories = resident
+      ? undefined
+      : snapshotHostMemories(options.hostMemoriesForModule?.(name, source));
     const tail = prepare_wasm_dynamic_tail_calls(source);
     const bytes =
       options.replay && !resident
@@ -239,6 +276,7 @@ export function link_dylink_graph(input: {
         ? originalModule
         : (options.execution?.prepare(name, bytes) ?? originalModule),
       metadata,
+      hostMemories,
       imports: read_wasm_dynamic_imports(bytes),
       signatures: read_wasm_dynamic_signatures(bytes),
       exports,
@@ -502,17 +540,40 @@ export function link_dylink_graph(input: {
       const weak = !!(attributes && attributes.flags & 1);
       switch (entry.kind) {
         case "memory":
-          if (
-            entry.module !== "env" ||
-            entry.name !== "memory" ||
-            entry.type.address !== memoryArena.address ||
-            !entry.type.shared
-          )
-            throw new Error("incompatible dynamic memory import");
-          if (entry.type.minimum * 65536n > BigInt(memory.buffer.byteLength))
-            throw new Error("dynamic memory minimum exceeds current process memory");
-          if (entry.type.maximum !== undefined && options.memoryMaximumPages > entry.type.maximum)
-            throw new Error("dynamic memory maximum excludes process memory");
+          if (isProcessMemory(entry.module, entry.name)) {
+            if (entry.type.address !== memoryArena.address || !entry.type.shared)
+              throw new Error("incompatible dynamic memory import");
+            if (entry.type.minimum * 65536n > BigInt(memory.buffer.byteLength))
+              throw new Error("dynamic memory minimum exceeds current process memory");
+            if (entry.type.maximum !== undefined && options.memoryMaximumPages > entry.type.maximum)
+              throw new Error("dynamic memory maximum excludes process memory");
+          } else {
+            const provider = record.hostMemories?.get(entry.module)?.get(entry.name);
+            if (!provider) throw new Error("incompatible dynamic memory import");
+            const pages = BigInt(provider.memory.buffer.byteLength) / 65536n;
+            const descriptor = provider.type;
+            if (
+              descriptor.minimum < 0n ||
+              (descriptor.maximum !== undefined &&
+                (descriptor.maximum < descriptor.minimum || pages > descriptor.maximum)) ||
+              pages < descriptor.minimum ||
+              (typeof SharedArrayBuffer !== "undefined" &&
+                provider.memory.buffer instanceof SharedArrayBuffer !== descriptor.shared) ||
+              descriptor.address !== entry.type.address ||
+              descriptor.shared !== entry.type.shared
+            )
+              throw new Error("incompatible dynamic host memory descriptor");
+            if (entry.type.minimum > pages)
+              throw new Error("dynamic auxiliary memory minimum exceeds current memory");
+            // For maximum-limit compatibility, a provided memory's maximum
+            // must be no larger than the import's bound. An unbounded provider
+            // cannot satisfy a finite imported maximum.
+            if (
+              entry.type.maximum !== undefined &&
+              (descriptor.maximum === undefined || descriptor.maximum > entry.type.maximum)
+            )
+              throw new Error("dynamic auxiliary memory maximum excludes host memory");
+          }
           break;
         case "table":
           if (entry.minimum > requiredTableMinimum) requiredTableMinimum = entry.minimum;
@@ -953,7 +1014,15 @@ export function link_dylink_graph(input: {
         const group = (imports[entry.module] ??= Object.create(null));
         switch (entry.kind) {
           case "memory":
-            group[entry.name] = memory;
+            // Reuse the exact object that passed preflight. The caller may
+            // mutate hostMemories from callbacks before instantiation.
+            if (isProcessMemory(entry.module, entry.name)) {
+              group[entry.name] = memory;
+            } else {
+              const validated = record.hostMemories?.get(entry.module)?.get(entry.name)?.memory;
+              if (!validated) throw new Error("dynamic host memory binding is unavailable");
+              group[entry.name] = validated;
+            }
             break;
           case "table":
             group[entry.name] =

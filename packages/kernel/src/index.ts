@@ -28,6 +28,11 @@ import {
   wasm_table_get,
 } from "./wasm.ts";
 import type { ForwardedInitMessage, InitMessage, WorkerMessage } from "./worker.ts";
+import {
+  dylink_memory_grants,
+  snapshot_dylink_memory_grants,
+  type DylinkMemoryGrant,
+} from "./dylink_memory_grants.ts";
 import { create_fork_profile, emit_fork_profile_record } from "./fork-profile.ts";
 
 export type { DeviceTreeNode } from "./devicetree.ts";
@@ -204,6 +209,14 @@ function kernel_initial_pages(memory: WasmMemoryType, initcpio_size: number): nu
  */
 export async function bootMachine(options: BootMachineOptions): Promise<Machine> {
   const cpus = checked_cpu_count(options.cpus);
+  const requestedGrants = (
+    options as BootMachineOptions & {
+      [dylink_memory_grants]?: readonly DylinkMemoryGrant[];
+    }
+  )[dylink_memory_grants];
+  const memoryGrants = requestedGrants?.length
+    ? snapshot_dylink_memory_grants(requestedGrants)
+    : undefined;
   const configured = await configure_machine(options.args ?? [], options.plugins ?? []);
   const { devices, plugins } = configured;
   const workers = new Set<WorkerHandle>();
@@ -442,7 +455,13 @@ export async function bootMachine(options: BootMachineOptions): Promise<Machine>
         post_worker_init(
           workers,
           worker,
-          copy_fault ? { ...init, copy_fault } : init,
+          copy_fault || memoryGrants
+            ? {
+                ...init,
+                ...(copy_fault ? { copy_fault } : {}),
+                ...(memoryGrants ? { dylink_memory_grants: memoryGrants } : {}),
+              }
+            : init,
           init.type === "forwarded_init" ? [init.port] : undefined,
         );
       } catch (error) {
