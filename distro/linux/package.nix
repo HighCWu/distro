@@ -22,8 +22,8 @@
     inherit pkgs;
     owner = "HighCWu";
     repo = "linux";
-    rev = "4befbb159d83305a3d9010cb5643b191878c925b";
-    hash = "sha256-RK8G6MipKces6iJsznbM0e0JVWY4vJYBWtIHMVQLZbw=";
+    rev = "047dad874fdb0d5ef201461392bd8891b05ba524";
+    hash = "sha256-Wpo9AIYhZ7ovGuQTTR6pB/4+fPIQVLP4Bo45ST6FTK0=";
   },
 }:
 
@@ -189,6 +189,7 @@ pkgs.stdenvNoCC.mkDerivation (finalAttrs: {
     grep -qx 'CONFIG_AUTOFS_FS=y' .config
     grep -qx 'CONFIG_FS_POSIX_ACL=y' .config
     grep -qx 'CONFIG_IPV6=y' .config
+    grep -qx 'CONFIG_IPV6_MULTIPLE_TABLES=y' .config
     grep -qx 'CONFIG_SYSVIPC=y' .config
     grep -qx 'CONFIG_FUSE_PASSTHROUGH=y' .config
     grep -qx 'CONFIG_MEMFD_CREATE=y' .config
