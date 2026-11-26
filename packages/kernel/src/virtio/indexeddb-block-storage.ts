@@ -4,6 +4,7 @@ import { type HttpImage, openPinnedHttpBlockStorage } from "./http-block-storage
 
 const SECTOR_BYTES = 512;
 const MAX_DISCARD_BYTES = 1024 * 1024;
+const EXPORT_CHUNK_BYTES = 1024 * 1024;
 const IDENTITY_KEY = "image";
 const CAPACITY_KEY = "capacity";
 const DATABASE_VERSION = 2;
@@ -20,12 +21,22 @@ function committed(transaction: IDBTransaction): Promise<void> {
   });
 }
 
-function openDatabase(name: string, description: string): Promise<IDBDatabase> {
+function openDatabase(
+  name: string,
+  description: string,
+  existingOnly: boolean,
+): Promise<IDBDatabase> {
   return new Promise((resolve, reject) => {
     const request = indexedDB.open(name, DATABASE_VERSION);
     let abandoned = false;
+    let openingError: Error | undefined;
     request.onupgradeneeded = ({ oldVersion }) => {
-      if (abandoned) {
+      if (abandoned || existingOnly) {
+        if (existingOnly)
+          openingError = new Error(
+            `${description} ${oldVersion ? "database version mismatch" : "does not exist"}`,
+          );
+        // Export aborts any attempted creation or schema upgrade.
         request.transaction?.abort();
         return;
       }
@@ -36,7 +47,7 @@ function openDatabase(name: string, description: string): Promise<IDBDatabase> {
         request.result.createObjectStore("sectors");
       }
     };
-    request.onerror = () => reject(request.error);
+    request.onerror = () => reject(openingError ?? request.error);
     request.onblocked = () => {
       abandoned = true;
       reject(new Error(`${description} database is blocked`));
@@ -74,6 +85,51 @@ export async function openIndexedDbBlockStorage(
   name: string,
   capacity: number,
 ): Promise<BlockDeviceStorage> {
+  return openLocalBlockStorage(name, capacity, false);
+}
+
+/**
+ * Writes an existing, closed local disk to a raw image stream, including zero
+ * bytes for its unallocated sectors. The disk remains exclusively locked
+ * during export. The destination is closed on success and aborted on failure
+ * once its writer has been acquired.
+ */
+export async function exportIndexedDbBlockStorage(
+  name: string,
+  capacity: number,
+  destination: WritableStream<Uint8Array>,
+): Promise<void> {
+  const storage = await openLocalBlockStorage(name, capacity, true);
+  try {
+    const writer = destination.getWriter();
+    try {
+      for (let offset = 0; offset < capacity;) {
+        const length = Math.min(EXPORT_CHUNK_BYTES, capacity - offset);
+        const bytes = new Uint8Array(length);
+        if ((await storage.read(offset, bytes)) !== length)
+          throw new Error("persistent IndexedDB disk export encountered a short read");
+        await writer.write(bytes);
+        offset += length;
+      }
+      await writer.close();
+    } catch (error) {
+      // The destination's cleanup may block indefinitely. Release both locks
+      // while its abort promise settles and report the original export error.
+      void writer.abort(error).catch(() => {});
+      throw error;
+    } finally {
+      writer.releaseLock();
+    }
+  } finally {
+    await storage.close?.();
+  }
+}
+
+function openLocalBlockStorage(
+  name: string,
+  capacity: number,
+  existingOnly: boolean,
+): Promise<BlockDeviceStorage> {
   if (!Number.isSafeInteger(capacity) || capacity <= 0 || capacity % SECTOR_BYTES !== 0)
     throw new RangeError("persistent IndexedDB disk capacity must be a positive sector multiple");
   return openPersistentBlockStorage(
@@ -81,6 +137,7 @@ export async function openIndexedDbBlockStorage(
     "linux-wasm-local-block",
     "persistent IndexedDB disk",
     () => ({ capacity }),
+    existingOnly,
   );
 }
 
@@ -89,6 +146,7 @@ async function openPersistentBlockStorage(
   prefix: string,
   description: string,
   prepare: () => { capacity: number } | Promise<{ image: HttpImage; storage: BlockDeviceStorage }>,
+  existingOnly = false,
 ): Promise<BlockDeviceStorage> {
   if (typeof name !== "string" || name.length === 0)
     throw new TypeError(`${description} name must be nonempty`);
@@ -122,32 +180,35 @@ async function openPersistentBlockStorage(
     const image = "image" in backing ? backing.image : undefined;
     const capacity = "image" in backing ? backing.image.capacity : backing.capacity;
     const identityKey = image ? IDENTITY_KEY : CAPACITY_KEY;
-    database = await openDatabase(databaseName, description);
+    database = await openDatabase(databaseName, description, existingOnly);
     const db = database;
-    const identityTransaction = db.transaction("metadata", "readwrite", { durability: "strict" });
+    const identityTransaction = existingOnly
+      ? db.transaction("metadata")
+      : db.transaction("metadata", "readwrite", { durability: "strict" });
     const identityDone = committed(identityTransaction);
-    let identityMismatch = false;
+    let identityError: string | undefined;
     const metadata = identityTransaction.objectStore("metadata");
     const identityRequest = metadata.get(identityKey);
     identityRequest.onsuccess = () => {
       const stored = identityRequest.result;
-      if (stored === undefined) metadata.put(image ?? capacity, identityKey);
-      else if (
+      if (stored === undefined) {
+        if (existingOnly) identityError = `${description} does not exist`;
+        else metadata.put(image ?? capacity, identityKey);
+      } else if (
         image
           ? stored?.url !== image.url ||
             stored?.etag !== image.etag ||
             stored?.capacity !== capacity
           : stored !== capacity
       ) {
-        identityMismatch = true;
-        identityTransaction.abort();
+        identityError = `${description} ${image ? "image identity" : "capacity"} mismatch`;
       }
+      if (identityError) identityTransaction.abort();
     };
     try {
       await identityDone;
     } catch (error) {
-      if (identityMismatch)
-        throw new Error(`${description} ${image ? "image identity" : "capacity"} mismatch`);
+      if (identityError) throw new Error(identityError);
       throw error;
     }
 

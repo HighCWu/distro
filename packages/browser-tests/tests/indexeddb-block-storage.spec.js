@@ -124,7 +124,7 @@ test("reopens a zero-backed persistent disk without changing its capacity", asyn
   );
   await page.goto("/indexeddb-local-test.html");
   const result = await page.evaluate(async () => {
-    const { openIndexedDbBlockStorage } =
+    const { exportIndexedDbBlockStorage, openIndexedDbBlockStorage } =
       await import("/node_modules/@lowland/kernel/dist/virtio/indexeddb-block-storage.js");
     const name = `local-${crypto.randomUUID()}`;
     const capacity = 4096;
@@ -150,13 +150,39 @@ test("reopens a zero-backed persistent disk without changing its capacity", asyn
       if ((await storage.read(0, bytes)) !== capacity) throw new Error("short local disk read");
       return bytes;
     };
+    const refuseExport = async (bytes) => {
+      let touched = false;
+      const destination = new WritableStream({
+        write() {
+          touched = true;
+        },
+        close() {
+          touched = true;
+        },
+        abort() {
+          touched = true;
+        },
+      });
+      try {
+        await exportIndexedDbBlockStorage(name, bytes, destination);
+        throw new Error("disk export unexpectedly succeeded");
+      } catch (error) {
+        if (touched || destination.locked) throw error;
+        return error.message;
+      }
+    };
 
     let storage;
     try {
       const invalidCapacity = await refused(513);
+      const missingExport = await refuseExport(capacity);
+      const createdByExport = (await indexedDB.databases()).some(
+        ({ name }) => name === databaseName,
+      );
       storage = await openIndexedDbBlockStorage(name, capacity);
       const startsZero = (await read(storage)).every((byte) => byte === 0);
       const locked = await refused(capacity);
+      const lockedExport = await refuseExport(capacity);
       await storage.write(511, Uint8Array.of(0x31, 0x32, 0x33, 0x34));
       await storage.write(513, Uint8Array.of(0x35, 0x36));
       await storage.writeZeroes(512, 2);
@@ -168,6 +194,7 @@ test("reopens a zero-backed persistent disk without changing its capacity", asyn
       await storage.close();
 
       const mismatch = await refused(capacity + 512);
+      const mismatchExport = await refuseExport(capacity + 512);
       storage = await openIndexedDbBlockStorage(name, capacity);
       const reopened = (await read(storage)).every(
         (byte, index) => byte === (index === 511 ? 0x31 : index === 514 ? 0x36 : 0),
@@ -179,7 +206,19 @@ test("reopens a zero-backed persistent disk without changing its capacity", asyn
       try {
         const sectors = db.transaction("sectors", "readonly").objectStore("sectors");
         const allocated = await requestResult(sectors.getAllKeys());
-        return { count, startsZero, invalidCapacity, locked, mismatch, reopened, allocated };
+        return {
+          count,
+          startsZero,
+          invalidCapacity,
+          locked,
+          mismatch,
+          reopened,
+          allocated,
+          missingExport,
+          createdByExport,
+          lockedExport,
+          mismatchExport,
+        };
       } finally {
         db.close();
       }
@@ -195,6 +234,10 @@ test("reopens a zero-backed persistent disk without changing its capacity", asyn
     invalidCapacity: "persistent IndexedDB disk capacity must be a positive sector multiple",
     locked: "persistent IndexedDB disk is already open",
     mismatch: "persistent IndexedDB disk capacity mismatch",
+    missingExport: "persistent IndexedDB disk does not exist",
+    createdByExport: false,
+    lockedExport: "persistent IndexedDB disk is already open",
+    mismatchExport: "persistent IndexedDB disk capacity mismatch",
     reopened: true,
     allocated: [0, 1],
   });

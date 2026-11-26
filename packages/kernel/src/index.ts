@@ -45,6 +45,7 @@ export {
 export { blockDevice, type BlockDeviceStorage } from "./virtio/block.ts";
 export { openHttpBlockStorage } from "./virtio/http-block-storage.ts";
 export {
+  exportIndexedDbBlockStorage,
   openIndexedDbBlockStorage,
   openIndexedDbHttpBlockStorage,
 } from "./virtio/indexeddb-block-storage.ts";

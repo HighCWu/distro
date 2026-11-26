@@ -24,7 +24,7 @@ for (const backend of ["persistent HTTP", "zero-backed persistent"]) {
         });
       });
     await page.goto("/");
-    const runs = await page.evaluate(
+    const { records, exportedBytes } = await page.evaluate(
       async ({ baseUrl, capacity }) => {
         const kernel = await import("/node_modules/@lowland/kernel/dist/index.js");
         const { runRuntimeSmoke } = await import("/runtime-smoke.js");
@@ -75,7 +75,46 @@ for (const backend of ["persistent HTTP", "zero-backed persistent"]) {
             else if (!device) await storage.close();
           }
         }
-        return records;
+        let exportedBytes = 0;
+        if (!baseUrl) {
+          const sinkError = new Error("test sink rejected disk data");
+          try {
+            await kernel.exportIndexedDbBlockStorage(
+              name,
+              capacity,
+              new WritableStream({
+                write() {
+                  throw sinkError;
+                },
+              }),
+            );
+            throw new Error("disk export unexpectedly succeeded");
+          } catch (error) {
+            if (error !== sinkError) throw error;
+          }
+          let closed = false;
+          await kernel.exportIndexedDbBlockStorage(
+            name,
+            capacity,
+            new WritableStream({
+              write(bytes) {
+                for (let offset = 0; offset < bytes.length; offset++) {
+                  const position = exportedBytes + offset;
+                  const expected =
+                    position < 4096 || (position >= 12288 && position < 16384) ? 0xa5 : 0;
+                  if (bytes[offset] !== expected)
+                    throw new Error("incorrect raw image byte at " + position);
+                }
+                exportedBytes += bytes.length;
+              },
+              close() {
+                closed = true;
+              },
+            }),
+          );
+          if (!closed) throw new Error("disk export did not close the sink");
+        }
+        return { records, exportedBytes };
       },
       { baseUrl: base, capacity },
     );
@@ -83,14 +122,18 @@ for (const backend of ["persistent HTTP", "zero-backed persistent"]) {
       "block discard: issued BLKDISCARD and verified bytes",
       "block discard: reopened disk retains discarded bytes",
     ];
-    for (const [index, { output }] of runs.entries()) {
+    for (const [index, { output }] of records.entries()) {
       const lines = output.split("\n");
       expect(lines.filter((line) => line.startsWith("block discard:"))).toEqual([expected[index]]);
       expect(lines.filter((line) => line === "::vm-test::pass")).toHaveLength(1);
       console.log(expected[index]);
       console.log("block discard: machine and devices closed for boot " + (index + 1));
     }
-    expect(runs[0].requests).toEqual([{ offset: 4096, length: 8192 }]);
-    expect(runs[1].requests).toEqual([]);
+    expect(records[0].requests).toEqual([{ offset: 4096, length: 8192 }]);
+    expect(records[1].requests).toEqual([]);
+    if (!base) {
+      expect(exportedBytes).toBe(capacity);
+      console.log("block discard: exported and verified the raw persistent disk after shutdown");
+    }
   });
 }
