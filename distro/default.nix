@@ -654,6 +654,12 @@ lib.makeScope (scope: lib.callPackageWith ({ inherit lib pkgs; } // scope)) (
     vm-events = callPackage ./vm-events/package.nix { };
     direct-io = callPackage ./direct-io/package.nix { };
     packet-sockets = callPackage ./packet-sockets/package.nix { };
+    ipv4-multicast = callPackage ./ipv4-multicast/package.nix { };
+    ipv4-multicast-wasm64 = self.ipv4-multicast.override {
+      platform = self.platform-wasm64;
+      sdk = self.sdk-wasm64;
+      vm-test = vmTestWasm64;
+    };
     virtual-network = callPackage ./virtual-network/package.nix { };
     autofs-runtime = callPackage ./autofs-runtime/package.nix { };
     vsock-runtime = callPackage ./vsock-runtime/package.nix { };
