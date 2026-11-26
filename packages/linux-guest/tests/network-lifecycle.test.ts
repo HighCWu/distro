@@ -1,8 +1,10 @@
 // SPDX-License-Identifier: MIT
 import assert from "node:assert/strict";
 import test from "node:test";
+import { closeDevice, type EthernetDevice, type VirtioDevice } from "@lowland/kernel";
+import { getMachinePlugin } from "@lowland/kernel/plugin";
 import { guestAgent } from "../src/agent.ts";
-import { createNetwork } from "../src/network.ts";
+import { createNetwork, type NetworkAttachment } from "../src/network.ts";
 
 const isolatedNetwork = () =>
   createNetwork({
@@ -13,6 +15,81 @@ const isolatedNetwork = () =>
       assert.fail("UDP lifecycle test must not resolve external names");
     },
   });
+
+async function attachmentDevice(attachment: NetworkAttachment): Promise<EthernetDevice> {
+  const devices: VirtioDevice[] = [];
+  await attachment[getMachinePlugin]().configure({
+    args: { add: () => assert.fail("network attachment added an unexpected kernel argument") },
+    devices: { add: (...values) => devices.push(...values) },
+    deviceTree: { merge: () => assert.fail("network attachment merged an unexpected device tree") },
+  });
+  assert.equal(devices.length, 1);
+  const device = devices[0]!;
+  assert.ok("macAddress" in device);
+  return device as EthernetDevice;
+}
+
+test(
+  "a closed device releases its IPv4 address without reviving its attachment",
+  { timeout: 2000 },
+  async () => {
+    const network = isolatedNetwork();
+    const firstAgent = guestAgent();
+    const first = network.attach(firstAgent);
+    const device = await attachmentDevice(first);
+    let replacementDevice: EthernetDevice | undefined;
+    try {
+      assert.equal(first.address, "192.0.2.2");
+      for (let suffix = 3; suffix <= 254; ++suffix) {
+        assert.equal(network.attach(guestAgent()).address, `192.0.2.${suffix}`);
+      }
+      const nextAgent = guestAgent();
+      assert.throws(() => network.attach(nextAgent), /network has no guest addresses left/);
+
+      const udp = await first.connect({ transport: "udp", port: 12345 });
+      const writer = udp.writable.getWriter();
+      const reader = udp.readable.getReader();
+      const writerClosed = assert.rejects(writer.closed, /UDP connection is closed/);
+      const tcpClosed = assert.rejects(
+        first.connect({ port: 12345 }),
+        /guest detached from network/,
+      );
+      try {
+        const deviceClosing = closeDevice(device);
+        assert.throws(() => network.attach(nextAgent), /network has no guest addresses left/);
+        await deviceClosing;
+        await writerClosed;
+        await tcpClosed;
+        assert.deepEqual(await reader.read(), { done: true, value: undefined });
+      } finally {
+        udp.close();
+        writer.releaseLock();
+        reader.releaseLock();
+      }
+
+      assert.throws(() => network.attach(firstAgent), /already has a network attachment/);
+      const replacement = network.attach(nextAgent);
+      replacementDevice = await attachmentDevice(replacement);
+      assert.equal(replacement.address, first.address);
+      assert.notDeepEqual(replacementDevice.macAddress, device.macAddress);
+      await assert.rejects(first.connect({ port: 12345 }), /guest detached from network/);
+      await assert.rejects(
+        first.connect({ transport: "udp", port: 12345 }),
+        /guest detached from network/,
+      );
+
+      const current = await replacement.connect({ transport: "udp", port: 12345 });
+      current.close();
+      network.close();
+      network.close();
+      assert.throws(() => network.attach(guestAgent()), /network is closed/);
+    } finally {
+      network.close();
+      await closeDevice(device);
+      if (replacementDevice) await closeDevice(replacementDevice);
+    }
+  },
+);
 
 for (const length of [0, 65507]) {
   test(`UDP stream accepts the IPv4 payload boundary without a Linux instance: ${length}`, async () => {

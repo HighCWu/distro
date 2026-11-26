@@ -1,5 +1,6 @@
 import assert from "node:assert/strict";
 import { createServer, type AddressInfo } from "node:net";
+import { guestAgent } from "../src/agent.ts";
 import { guest_test } from "./fixture.ts";
 import {
   collect,
@@ -8,6 +9,35 @@ import {
   read_with_retransmit,
   expect_ready_message,
 } from "./helpers.ts";
+
+guest_test("network reuses an address after Linux closes", async (_t, fixture) => {
+  const first = await fixture.spawn();
+  for (let suffix = 3; suffix <= 254; ++suffix) {
+    fixture.network.attach(guestAgent());
+  }
+  assert.throws(() => fixture.network.attach(guestAgent()), /no guest addresses left/);
+
+  first.machine.close();
+  await first.machine.closed;
+  await assert.rejects(first.network.connect({ port: 12001 }), /guest detached/);
+
+  const replacement = await fixture.spawn();
+  assert.equal(replacement.network.address, first.network.address);
+  const server = await replacement.exec(["/tmp/network-test", "listen", "tcp", "12001"]);
+  const connection = await connect_with_retry(() => replacement.network.connect({ port: 12001 }));
+  try {
+    const writer = connection.writable.getWriter();
+    const payload = new TextEncoder().encode("replacement Linux instance");
+    await writer.write(payload);
+    await writer.close();
+    assert.deepEqual(await collect(connection.readable), payload);
+    assert.equal((await server.status).code, 0);
+  } finally {
+    connection.close();
+  }
+  replacement.machine.close();
+  await replacement.machine.closed;
+});
 
 guest_test("networking", async (t, fixture) => {
   const guest = await fixture.spawn();

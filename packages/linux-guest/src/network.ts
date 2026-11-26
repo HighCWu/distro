@@ -224,7 +224,8 @@ export interface Network extends Disposable {
   /**
    * Attaches a guest agent to this network. The returned plugin contributes
    * the NIC and configures it after the guest agent becomes ready. An agent
-   * supports one network attachment.
+   * supports one network attachment. Its address may be reused after its
+   * device closes.
    */
   attach(agent: GuestAgent): NetworkAttachment;
   /**
@@ -306,6 +307,7 @@ interface Attachment {
   readonly ip: number;
   readonly macAddress: MacAddress;
   readonly device: EthernetDevice;
+  isCurrent(): boolean;
   close(): void;
 }
 
@@ -577,7 +579,9 @@ export function createNetwork({ connectTcp, resolveDns }: NetworkOptions): Netwo
   const tcp_flows = new Map<string, TcpFlow>();
   const udp_flows = new Map<string, UdpFlow>();
   const ip_reassemblies = new Map<string, IpReassembly>();
+  const free_addresses: number[] = [];
   let next_address = 2;
+  let next_reuse_mac = 256;
   const allocate_port = createPortAllocator();
   let ip_identifier = 0;
   let closed = false;
@@ -618,35 +622,28 @@ export function createNetwork({ connectTcp, resolveDns }: NetworkOptions): Netwo
   }
 
   async function send_ip(
-    destination_mac: MacAddress,
+    guest: Attachment,
     source_ip: number,
-    destination_ip: number,
     protocol: number,
     payload: Uint8Array,
   ) {
+    if (!guest.isCurrent()) return;
     if (payload.byteLength > MAX_IP_PAYLOAD) throw new RangeError("IPv4 payload is too large");
     const identification = ip_identifier++ & 0xffff;
     if (payload.byteLength <= IP_FRAGMENT_PAYLOAD) {
       await gateway.send(
-        ip_packet(
-          destination_mac,
-          source_ip,
-          destination_ip,
-          protocol,
-          payload,
-          identification,
-          0x4000,
-        ),
+        ip_packet(guest.macAddress, source_ip, guest.ip, protocol, payload, identification, 0x4000),
       );
       return;
     }
     for (let offset = 0; offset < payload.byteLength; offset += IP_FRAGMENT_PAYLOAD) {
+      if (!guest.isCurrent()) return;
       const end = Math.min(offset + IP_FRAGMENT_PAYLOAD, payload.byteLength);
       await gateway.send(
         ip_packet(
-          destination_mac,
+          guest.macAddress,
           source_ip,
-          destination_ip,
+          guest.ip,
           protocol,
           payload.subarray(offset, end),
           identification,
@@ -723,7 +720,7 @@ export function createNetwork({ connectTcp, resolveDns }: NetworkOptions): Netwo
       window,
     );
     flow.advertised_window = window;
-    await send_ip(flow.guest.macAddress, flow.peer_ip, flow.guest.ip, IpProtocol.TCP, segment);
+    await send_ip(flow.guest, flow.peer_ip, IpProtocol.TCP, segment);
   }
 
   function tcp_receive_window(flow: TcpFlow) {
@@ -932,7 +929,7 @@ export function createNetwork({ connectTcp, resolveDns }: NetworkOptions): Netwo
       flow.receive_sequence,
       TcpFlag.RST | TcpFlag.ACK,
     );
-    void send_ip(flow.guest.macAddress, flow.peer_ip, flow.guest.ip, IpProtocol.TCP, rst);
+    void send_ip(flow.guest, flow.peer_ip, IpProtocol.TCP, rst);
     close_tcp_flow(flow, error);
   }
 
@@ -991,7 +988,9 @@ export function createNetwork({ connectTcp, resolveDns }: NetworkOptions): Netwo
       signal: abort.signal,
     };
     Promise.resolve()
-      .then(() => connectTcp(session))
+      .then(() => {
+        if (!flow.closed) return connectTcp(session);
+      })
       .then(
         () => {
           if (flow.closed) return;
@@ -1068,13 +1067,9 @@ export function createNetwork({ connectTcp, resolveDns }: NetworkOptions): Netwo
     }
   }
 
-  function receive_tcp(ip: ParsedIpPacket, source_mac: MacAddress) {
+  function receive_tcp(guest: Attachment, ip: ParsedIpPacket) {
     const segment = parse_tcp(ip.payload);
     if (!segment) return;
-    const guest = attachments.get(ip.source);
-    if (!guest) return;
-    // The latest frame is authoritative if a guest's NIC address changed.
-    if (source_mac.some((byte, index) => byte !== guest.macAddress[index])) return;
     const key = tcp_key(ip.source, segment.source_port, ip.destination, segment.destination_port);
     const flow = tcp_flows.get(key);
     if (!flow) {
@@ -1095,17 +1090,15 @@ export function createNetwork({ connectTcp, resolveDns }: NetworkOptions): Netwo
       const { hostname } = decode_dns_name(datagram.payload, 12);
       const response = dns_response(datagram.payload, await resolveDns(hostname));
       const udp = udp_datagram(53, datagram.source_port, response);
-      await send_ip(guest.macAddress, GATEWAY_IP, guest.ip, IpProtocol.UDP, udp);
+      await send_ip(guest, GATEWAY_IP, IpProtocol.UDP, udp);
     } catch {
       // A malformed or failed DNS query behaves like an unreachable resolver.
     }
   }
 
-  function receive_udp(ip: ParsedIpPacket) {
+  function receive_udp(guest: Attachment, ip: ParsedIpPacket) {
     const datagram = parse_udp(ip.payload);
     if (!datagram) return;
-    const guest = attachments.get(ip.source);
-    if (!guest) return;
     if (ip.destination === GATEWAY_IP && datagram.destination_port === 53) {
       void receive_dns(guest, datagram);
       return;
@@ -1115,6 +1108,13 @@ export function createNetwork({ connectTcp, resolveDns }: NetworkOptions): Netwo
     if (flow && (flow.controller.desiredSize ?? 0) > 0) {
       flow.controller.enqueue(datagram.payload.slice());
     }
+  }
+
+  function ingress_attachment(source: number, mac: readonly number[]) {
+    const guest = attachments.get(source);
+    return guest && mac.every((byte, index) => byte === guest.macAddress[index])
+      ? guest
+      : undefined;
   }
 
   function receive_arp(frame: Uint8Array) {
@@ -1130,6 +1130,9 @@ export function createNetwork({ connectTcp, resolveDns }: NetworkOptions): Netwo
       request.operation !== 1 ||
       request.target_ip !== GATEWAY_IP
     )
+      return;
+    const guest = ingress_attachment(request.sender_ip, ethernet_header.source);
+    if (!guest || request.sender_mac.some((byte, index) => byte !== guest.macAddress[index]))
       return;
     const reply = new Bytes(EthernetHeader.size + ArpPacket.size);
     reply.alloc(EthernetHeader).value = {
@@ -1256,14 +1259,16 @@ export function createNetwork({ connectTcp, resolveDns }: NetworkOptions): Netwo
   }
 
   function receive_frame(frame: Uint8Array) {
+    if (closed) return;
     receive_arp(frame);
     const fragment = parseIpv4Frame(frame);
     if (!fragment) return;
+    const guest = ingress_attachment(fragment.source, new EthernetHeader(frame).source);
+    if (!guest) return;
     const ip = reassemble_ip(fragment);
     if (!ip) return;
-    const source_mac = new EthernetHeader(frame).source as unknown as MacAddress;
-    if (ip.protocol === IpProtocol.TCP) receive_tcp(ip, source_mac);
-    else if (ip.protocol === IpProtocol.UDP) receive_udp(ip);
+    if (ip.protocol === IpProtocol.TCP) receive_tcp(guest, ip);
+    else if (ip.protocol === IpProtocol.UDP) receive_udp(guest, ip);
   }
 
   const gateway: EthernetPort = ethernet.addPort(receive_frame);
@@ -1309,7 +1314,7 @@ export function createNetwork({ connectTcp, resolveDns }: NetworkOptions): Netwo
     tcp_flows.set(key, flow);
     expire_tcp_handshake(flow, `timed out connecting to ${options.hostname}:${options.port}`);
     const syn = tcp_segment(GATEWAY_IP, guest.ip, port, options.port, initial, 0, TcpFlag.SYN);
-    void send_ip(guest.macAddress, GATEWAY_IP, guest.ip, IpProtocol.TCP, syn).catch((error) => {
+    void send_ip(guest, GATEWAY_IP, IpProtocol.TCP, syn).catch((error) => {
       close_tcp_flow(flow, error);
     });
     if (options.signal) {
@@ -1387,7 +1392,7 @@ export function createNetwork({ connectTcp, resolveDns }: NetworkOptions): Netwo
         if (flow.closed) throw new Error("UDP connection is closed");
         try {
           const datagram = udp_datagram(host_port, options.port, payload);
-          await send_ip(guest.macAddress, GATEWAY_IP, guest.ip, IpProtocol.UDP, datagram);
+          await send_ip(guest, GATEWAY_IP, IpProtocol.UDP, datagram);
         } catch (error) {
           // A failed sink write errors the WritableStream; its abort callback
           // is not subsequently called. Release the flow and pending reads.
@@ -1421,25 +1426,39 @@ export function createNetwork({ connectTcp, resolveDns }: NetworkOptions): Netwo
     },
     [do_attach_guest]() {
       if (closed) throw new Error("network is closed");
-      if (next_address > 254) throw new Error("network has no guest addresses left");
-      const suffix = next_address++;
+      const fresh = next_address <= 254;
+      // Keep initial addresses and MACs predictable. After reuse, the MAC
+      // identifies the new attachment rather than just its IPv4 address.
+      if (!fresh && next_reuse_mac >= 2 ** 40)
+        throw new Error("network has no guest MAC addresses left");
+      const suffix = fresh ? next_address++ : free_addresses.pop();
+      if (suffix === undefined) throw new Error("network has no guest addresses left");
       const address = `192.0.2.${suffix}`;
       const ip = ipv4_number(address);
-      const macAddress: MacAddress = [0x02, 0, 0, 0, 0, suffix];
+      const mac = fresh ? suffix : next_reuse_mac++;
+      const macAddress: MacAddress = [
+        0x02,
+        Math.floor(mac / 2 ** 32),
+        (mac >>> 24) & 0xff,
+        (mac >>> 16) & 0xff,
+        (mac >>> 8) & 0xff,
+        mac & 0xff,
+      ];
       const device = ethernetDevice(ethernet, { macAddress });
-      let attached = true;
       const attachment: Attachment = {
         address,
         ip,
         macAddress,
         device,
+        isCurrent() {
+          return attachments.get(ip) === attachment;
+        },
         close() {
-          if (!attached) return;
-          attached = false;
+          if (!attachment.isCurrent()) return;
           attachments.delete(ip);
           for (const flow of tcp_flows.values()) {
             if (flow.guest === attachment)
-              abort_tcp_flow(flow, new Error("guest detached from network"));
+              close_tcp_flow(flow, new Error("guest detached from network"));
           }
           for (const flow of udp_flows.values()) {
             if (flow.guest === attachment) flow.close();
@@ -1447,6 +1466,7 @@ export function createNetwork({ connectTcp, resolveDns }: NetworkOptions): Netwo
           for (const [key, reassembly] of ip_reassemblies) {
             if (reassembly.source === ip) discard_ip_reassembly(key);
           }
+          if (!closed) free_addresses.push(suffix);
         },
       };
       attachments.set(ip, attachment);
@@ -1463,6 +1483,7 @@ export function createNetwork({ connectTcp, resolveDns }: NetworkOptions): Netwo
       udp_flows.clear();
       for (const key of ip_reassemblies.keys()) discard_ip_reassembly(key);
       attachments.clear();
+      free_addresses.length = 0;
       gateway.close();
       ethernet.close();
     },
@@ -1496,6 +1517,7 @@ function attach_guest(network: Network, agent: GuestAgent): NetworkAttachment {
   function connect(
     options: Omit<TcpConnectOptions, "hostname"> | Omit<UdpConnectOptions, "hostname">,
   ) {
+    if (!attachment.isCurrent()) return Promise.reject(new Error("guest detached from network"));
     if (options.transport === "udp") {
       return network.connect({ ...options, hostname: attachment.address });
     }
