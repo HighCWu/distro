@@ -1135,6 +1135,14 @@ lib.makeScope (scope: lib.callPackageWith ({ inherit lib pkgs; } // scope)) (
       sysroot = self.sysroot-wasm64;
       vm-test = vmTestWasm64;
     };
+    initramfs-xz = callPackage ./initramfs-zstd/package.nix { compression = "xz"; };
+    initramfs-xz-wasm64 = callPackage ./initramfs-zstd/package.nix {
+      compression = "xz";
+      platform = self.platform-wasm64;
+      llvm-toolchain = self.llvm-toolchain-wasm64;
+      sysroot = self.sysroot-wasm64;
+      vm-test = vmTestWasm64;
+    };
     cpu-accounting = callPackage ./cpu-accounting/package.nix {
       vm-test = vtimeVm32;
       extraChecks = vtimeChecks vtimeVm32 self.toolchain-smoke self.fork-continuation;

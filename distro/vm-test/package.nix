@@ -231,9 +231,11 @@ let
       initramfsCompression ? null,
       recordRuntimeLog ? false,
     }:
-    assert lib.assertMsg (
-      initramfsCompression == null || initramfsCompression == "zstd"
-    ) "rawInitramfsTest only supports null or zstd initramfsCompression";
+    assert lib.assertMsg (builtins.elem initramfsCompression [
+      null
+      "zstd"
+      "xz"
+    ]) "rawInitramfsTest initramfsCompression must be null, zstd or xz";
     let
       fixtureName = lib.replaceStrings [ "_" ] [ "-" ] name;
       archive = image.mkInitramfs {
@@ -246,8 +248,12 @@ let
           ;
       };
       compressedArchive =
-        pkgs.runCommand "${fixtureName}-initramfs.cpio.zst" { nativeBuildInputs = [ pkgs.zstd ]; }
+        if initramfsCompression == "xz" then
+          pkgs.runCommand "${fixtureName}-initramfs.cpio.xz" { nativeBuildInputs = [ pkgs.xz ]; } ''
+            xz --quiet --threads=1 --check=crc32 --lzma2=dict=1MiB --stdout ${archive} > "$out"
           ''
+        else
+          pkgs.runCommand "${fixtureName}-initramfs.cpio.zst" { nativeBuildInputs = [ pkgs.zstd ]; } ''
             zstd --quiet --threads=1 -3 --stdout ${archive} > "$out"
           '';
     in

@@ -10,11 +10,15 @@
 #include <sys/stat.h>
 #include <unistd.h>
 
+#ifndef INITRAMFS_FIXTURE_NAME
+#define INITRAMFS_FIXTURE_NAME "initramfs-zstd"
+#endif
+
 enum { PAYLOAD_SIZE = 4 * 65536 + 257 };
 static void require(int ok, const char *stage)
 {
     if (ok) return;
-    printf("::vm-test::fail: initramfs-zstd: %s errno=%d\n", stage, errno);
+    printf("::vm-test::fail: " INITRAMFS_FIXTURE_NAME ": %s errno=%d\n", stage, errno);
     fflush(stdout);
     _Exit(1);
 }
@@ -87,14 +91,14 @@ int main(int argc, char **argv)
 #ifdef __wasm__
     (void)argc; (void)argv;
     check("/zstd-fixture");
-    puts("initramfs-zstd: Linux decoded archive, multi-page bytes and metadata pass");
+    puts(INITRAMFS_FIXTURE_NAME ": Linux decoded archive, multi-page bytes and metadata pass");
     puts("::vm-test::pass");
     fflush(stdout);
     for (;;) sched_yield();
 #else
     require(argc == 2, "native fixture directory argument");
     check(argv[1]);
-    puts("initramfs-zstd: native reference workload pass (not compressed boot evidence)");
+    puts(INITRAMFS_FIXTURE_NAME ": native reference workload pass (not compressed boot evidence)");
     return 0;
 #endif
 }
