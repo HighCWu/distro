@@ -2095,6 +2095,54 @@ lib.makeScope (scope: lib.callPackageWith ({ inherit lib pkgs; } // scope)) (
       vm-test = vmTestWasm64;
       extraChecks = { };
     };
+    input-runtime = callPackage ./input-runtime/package.nix {
+      extraChecks.both = pkgs.runCommand "input-runtime-check-both" { passthru.ci.heavy = true; } ''
+        test -e ${self.input-runtime.checks.runtime}
+        test -e ${self.input-runtime-wasm64.checks.runtime}
+        touch $out
+      '';
+    };
+    input-runtime-wasm64 = self.input-runtime.override {
+      stdenv = self.stdenv-wasm64;
+      platform = self.platform-wasm64;
+      musl = self.musl-wasm64;
+      llvm-runtimes = self.llvm-runtimes-wasm64;
+      busybox = self.busybox-wasm64;
+      vm-test = vmTestWasm64;
+      extraChecks = { };
+    };
+    fb-runtime = callPackage ./fb-runtime/package.nix {
+      extraChecks.both = pkgs.runCommand "fb-runtime-check-both" { passthru.ci.heavy = true; } ''
+        test -e ${self.fb-runtime.checks.runtime}
+        test -e ${self.fb-runtime-wasm64.checks.runtime}
+        touch $out
+      '';
+    };
+    fb-runtime-wasm64 = self.fb-runtime.override {
+      stdenv = self.stdenv-wasm64;
+      platform = self.platform-wasm64;
+      musl = self.musl-wasm64;
+      llvm-runtimes = self.llvm-runtimes-wasm64;
+      busybox = self.busybox-wasm64;
+      vm-test = vmTestWasm64;
+      extraChecks = { };
+    };
+    splice-pty-runtime = callPackage ./splice-pty-runtime/package.nix {
+      extraChecks.both = pkgs.runCommand "splice-pty-runtime-check-both" { passthru.ci.heavy = true; } ''
+        test -e ${self.splice-pty-runtime.checks.runtime}
+        test -e ${self.splice-pty-runtime-wasm64.checks.runtime}
+        touch $out
+      '';
+    };
+    splice-pty-runtime-wasm64 = self.splice-pty-runtime.override {
+      stdenv = self.stdenv-wasm64;
+      platform = self.platform-wasm64;
+      musl = self.musl-wasm64;
+      llvm-runtimes = self.llvm-runtimes-wasm64;
+      busybox = self.busybox-wasm64;
+      vm-test = vmTestWasm64;
+      extraChecks = { };
+    };
     mqueue-runtime = callPackage ./mqueue-runtime/package.nix {
       extraChecks.both = pkgs.runCommand "mqueue-runtime-check-both" { passthru.ci.heavy = true; } ''
         test -e ${self.mqueue-runtime.checks.runtime}

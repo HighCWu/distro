@@ -274,3 +274,43 @@ test("real runner dispatches ::vm-test::input requests to inputDevice.sendEvents
     rmSync(temp, { recursive: true, force: true });
   }
 });
+
+for (const [scenario, expectedStatus, expectedPattern] of [
+  ["fb-verify-ok", 0, /fb host: verified 640x480x32 \(1 flushes\)/],
+  ["fb-verify-bad-pixels", 1, /vm test failed: framebuffer pixel mismatch:/],
+  ["fb-verify-no-flush", 1, /vm test failed: framebuffer verify reported zero flushes/],
+]) {
+  test(`real runner handles ::vm-test::fb:verify scenario=${scenario}`, () => {
+    const temp = mkdtempSync(join(tmpdir(), "linux-wasm-runner-fb-"));
+    try {
+      const initramfs = join(temp, "initramfs");
+      const disk = join(temp, "disk");
+      writeFileSync(initramfs, new Uint8Array([1]));
+      writeFileSync(disk, new Uint8Array(512).fill(0x37));
+      const result = spawnSync(
+        process.execPath,
+        [
+          fileURLToPath(new URL("./run-test.js", import.meta.url)),
+          "--readonly-disks",
+          fileURLToPath(new URL("./shutdown-fixture.js", import.meta.url)),
+          initramfs,
+          disk,
+        ],
+        {
+          encoding: "utf8",
+          timeout: 10000,
+          env: {
+            ...process.env,
+            RUNNER_FIXTURE_FAIL: "0",
+            RUNNER_FIXTURE_SCENARIO: scenario,
+          },
+        },
+      );
+      assert.ifError(result.error);
+      assert.equal(result.status, expectedStatus, result.stdout + result.stderr);
+      assert.match(expectedStatus === 0 ? result.stdout : result.stderr, expectedPattern);
+    } finally {
+      rmSync(temp, { recursive: true, force: true });
+    }
+  });
+}

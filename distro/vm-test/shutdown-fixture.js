@@ -12,6 +12,13 @@ export const inputDevice = () => ({
     console.log(`fixture: input events ${JSON.stringify(events)}`);
   },
 });
+export const framebufferPlugin = (options = {}) => ({
+  _fbOptions: options,
+  _fbPixels: null,
+  readPixels() {
+    return this._fbPixels;
+  },
+});
 export const blockDevice = (storage) => {
   if (process.env.RUNNER_FIXTURE_SETUP_CHECK === "1") {
     process.once("beforeExit", async () => {
@@ -31,7 +38,30 @@ export async function bootMachine({ plugins }) {
   const writer = plugins[0].output.getWriter();
   const scenario = process.env.RUNNER_FIXTURE_SCENARIO;
   const write = (line) => writer.write(new TextEncoder().encode(line));
-  if (scenario === "console-close-machine-fail" || scenario === "console-close-clean") {
+  if (scenario?.startsWith("fb-verify-")) {
+    const fb = plugins.find((plugin) => plugin?._fbOptions);
+    if (fb) {
+      const info = {
+        fbAddr: 0,
+        width: 640,
+        height: 480,
+        stride: 640 * 4,
+        bpp: 32,
+        byteLength: 640 * 480 * 4,
+      };
+      const pixels = new Uint8Array(info.byteLength);
+      pixels.set([0x00, 0x00, 0xa5, 0xff], 0);
+      if (scenario !== "fb-verify-bad-pixels") {
+        pixels.set([0xde, 0xad, 0xbe, 0xef], info.byteLength - 4);
+      }
+      fb._fbPixels = pixels;
+      fb._fbOptions.onRegister?.(info, fb);
+      if (scenario !== "fb-verify-no-flush") {
+        fb._fbOptions.onFlush?.({ x: 0, y: 0, width: 640, height: 480 }, fb);
+      }
+    }
+    await write("::vm-test::fb:verify:640:480:32\n::vm-test::pass\n");
+  } else if (scenario === "console-close-machine-fail" || scenario === "console-close-clean") {
     await writer.close();
   } else if (scenario !== "boot-pass") {
     const prefix =

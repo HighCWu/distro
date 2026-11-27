@@ -50,8 +50,15 @@ if (
 
 const ninep = ninepServer || ninepMemory ? await import("./ninep-host.js") : null;
 const linuxModule = pathToFileURL(linuxPath);
-const { blockDevice, bootMachine, consoleDevice, entropyDevice, inputDevice, vsockDevice } =
-  await import(linuxModule.href);
+const {
+  blockDevice,
+  bootMachine,
+  consoleDevice,
+  entropyDevice,
+  framebufferPlugin,
+  inputDevice,
+  vsockDevice,
+} = await import(linuxModule.href);
 // Fail before acquiring disk handles or constructing devices for a missing image.
 const initcpio = readFileSync(initramfsPath);
 
@@ -201,6 +208,58 @@ function consumeLine(line, acceptTestResult = true) {
     return;
   }
 
+  const fbVerify = /^::vm-test::fb:verify:(\d+):(\d+):(\d+)$/.exec(line);
+  if (fbVerify) {
+    const width = Number(fbVerify[1]);
+    const height = Number(fbVerify[2]);
+    const bpp = Number(fbVerify[3]);
+    if (!fbDev || !fbRegistered) {
+      finish({ passed: false, reason: "framebuffer verify requested without registered framebuffer" });
+      return;
+    }
+    if (
+      fbRegistered.width !== width ||
+      fbRegistered.height !== height ||
+      fbRegistered.bpp !== bpp
+    ) {
+      finish({
+        passed: false,
+        reason: `framebuffer geometry mismatch: expected ${width}x${height}x${bpp}, got ${fbRegistered.width}x${fbRegistered.height}x${fbRegistered.bpp}`,
+      });
+      return;
+    }
+    if (fbFlushes === 0) {
+      finish({ passed: false, reason: "framebuffer verify reported zero flushes" });
+      return;
+    }
+    const pixels = fbDev.readPixels();
+    const expectedSize = width * height * (bpp / 8);
+    if (!pixels || pixels.length < expectedSize || expectedSize < 8) {
+      finish({
+        passed: false,
+        reason: `framebuffer pixel buffer size mismatch: got ${pixels?.length ?? 0}, expected >= ${expectedSize}`,
+      });
+      return;
+    }
+    const headOk =
+      pixels[0] === 0x00 && pixels[1] === 0x00 && pixels[2] === 0xa5 && pixels[3] === 0xff;
+    const tail = expectedSize - 4;
+    const tailOk =
+      pixels[tail] === 0xde &&
+      pixels[tail + 1] === 0xad &&
+      pixels[tail + 2] === 0xbe &&
+      pixels[tail + 3] === 0xef;
+    if (!headOk || !tailOk) {
+      finish({
+        passed: false,
+        reason: `framebuffer pixel mismatch: head=[${pixels[0]},${pixels[1]},${pixels[2]},${pixels[3]}] tail=[${pixels[tail]},${pixels[tail + 1]},${pixels[tail + 2]},${pixels[tail + 3]}]`,
+      });
+      return;
+    }
+    console.log(`fb host: verified ${width}x${height}x${bpp} (${fbFlushes} flushes)`);
+    return;
+  }
+
   const testResult = parseResult(line);
   if (testResult) {
     if (observingMemoryGrowth && testResult.passed) observeMemoryGrowth(2);
@@ -287,6 +346,19 @@ const inputDev =
   typeof inputDevice === "function"
     ? inputDevice({ name: "Wasm Virtio Input", evBits: { 1: [30] } })
     : null;
+let fbRegistered;
+let fbFlushes = 0;
+const fbDev =
+  typeof framebufferPlugin === "function"
+    ? framebufferPlugin({
+        onRegister(info) {
+          fbRegistered = info;
+        },
+        onFlush() {
+          fbFlushes++;
+        },
+      })
+    : null;
 const devices = [consoleDev, entropyDevice()];
 
 const disks = [];
@@ -340,6 +412,7 @@ try {
   }
 
   if (inputDev) devices.push(inputDev);
+  if (fbDev) devices.push(fbDev);
 
   machine = await bootMachine({
     cpus,
