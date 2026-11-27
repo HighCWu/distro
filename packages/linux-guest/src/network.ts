@@ -421,9 +421,12 @@ interface ParsedUdpDatagram {
 }
 
 interface TcpTransmission {
+  sequence: number;
   acknowledgement: number;
   completion: PromiseWithResolvers<void>;
   sent: boolean;
+  dup_acks: number;
+  retransmit?: () => void;
   timer?: ReturnType<typeof setTimeout>;
 }
 
@@ -818,23 +821,18 @@ export function createNetwork({ connectTcp, connectUdp, resolveDns }: NetworkOpt
     const length = payload.byteLength + (flags & TcpFlag.FIN ? 1 : 0);
     const acknowledgement = sequence_add(sequence, length);
     const transmission: TcpTransmission = {
+      sequence,
       acknowledgement,
       completion: Promise.withResolvers<void>(),
       sent: false,
+      dup_acks: 0,
     };
     flow.transmission = transmission;
     const deadline = performance.now() + TCP_TIMEOUT_MS;
     let retry = TCP_INITIAL_RETRY_MS;
 
-    const attempt = () => {
+    const transmit = () => {
       if (flow.transmission !== transmission) return;
-      const remaining = deadline - performance.now();
-      if (remaining <= 0) {
-        abort_tcp_flow(flow, new Error("timed out waiting for guest TCP acknowledgement"));
-        return;
-      }
-      transmission.timer = setTimeout(attempt, Math.ceil(Math.min(remaining, retry)));
-      retry = Math.min(retry * 2, TCP_MAX_RETRY_MS);
       if (!transmission.sent) {
         if (flow.peer_window < length) return;
         transmission.sent = true;
@@ -845,6 +843,19 @@ export function createNetwork({ connectTcp, connectUdp, resolveDns }: NetworkOpt
         if (flow.transmission === transmission) abort_tcp_flow(flow, error);
       });
     };
+
+    const attempt = () => {
+      if (flow.transmission !== transmission) return;
+      const remaining = deadline - performance.now();
+      if (remaining <= 0) {
+        abort_tcp_flow(flow, new Error("timed out waiting for guest TCP acknowledgement"));
+        return;
+      }
+      transmission.timer = setTimeout(attempt, Math.ceil(Math.min(remaining, retry)));
+      retry = Math.min(retry * 2, TCP_MAX_RETRY_MS);
+      transmit();
+    };
+    transmission.retransmit = transmit;
     attempt();
     return transmission.completion.promise;
   }
@@ -1167,8 +1178,24 @@ export function createNetwork({ connectTcp, connectUdp, resolveDns }: NetworkOpt
 
     if (segment.flags & TcpFlag.ACK) {
       update_peer_window(flow, segment.window);
-      if (flow.transmission?.sent && flow.transmission.acknowledgement === segment.acknowledgement)
-        take_tcp_transmission(flow)?.completion.resolve();
+      const transmission = flow.transmission;
+      if (transmission?.sent) {
+        const span = (transmission.acknowledgement - transmission.sequence) >>> 0;
+        const acked = (segment.acknowledgement - transmission.sequence) >>> 0;
+        if (acked >= span && acked <= 0x7fffffff) {
+          take_tcp_transmission(flow)?.completion.resolve();
+        } else if (
+          segment.acknowledgement === transmission.sequence &&
+          segment.payload.byteLength === 0 &&
+          !(segment.flags & TcpFlag.FIN)
+        ) {
+          transmission.dup_acks++;
+          if (transmission.dup_acks === 3) {
+            transmission.dup_acks = 0;
+            transmission.retransmit?.();
+          }
+        }
+      }
     }
 
     const consumes = segment.payload.byteLength + (segment.flags & TcpFlag.FIN ? 1 : 0);
