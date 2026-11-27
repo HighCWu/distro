@@ -2191,6 +2191,22 @@ lib.makeScope (scope: lib.callPackageWith ({ inherit lib pkgs; } // scope)) (
       vm-test = vmTestWasm64;
       extraChecks = { };
     };
+    memfd-seals-runtime = callPackage ./memfd-seals-runtime/package.nix {
+      extraChecks.both = pkgs.runCommand "memfd-seals-runtime-check-both" { passthru.ci.heavy = true; } ''
+        test -e ${self.memfd-seals-runtime.checks.runtime}
+        test -e ${self.memfd-seals-runtime-wasm64.checks.runtime}
+        touch $out
+      '';
+    };
+    memfd-seals-runtime-wasm64 = self.memfd-seals-runtime.override {
+      stdenv = self.stdenv-wasm64;
+      platform = self.platform-wasm64;
+      musl = self.musl-wasm64;
+      llvm-runtimes = self.llvm-runtimes-wasm64;
+      busybox = self.busybox-wasm64;
+      vm-test = vmTestWasm64;
+      extraChecks = { };
+    };
     mqueue-runtime = callPackage ./mqueue-runtime/package.nix {
       extraChecks.both = pkgs.runCommand "mqueue-runtime-check-both" { passthru.ci.heavy = true; } ''
         test -e ${self.mqueue-runtime.checks.runtime}

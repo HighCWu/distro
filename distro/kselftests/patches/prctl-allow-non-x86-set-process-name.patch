@@ -1,0 +1,24 @@
+prctl/Makefile gates include ../lib.mk behind ifeq ($(ARCH),x86), which
+skips set-process-name on non-x86 build hosts and cross-arch wasm builds.
+Keep the x86 TSC tests gated on x86, and always expose set-process-name
+through lib.mk.
+
+--- a/tools/testing/selftests/prctl/Makefile	2026-11-27 18:30:22.516156035 +0800
++++ b/tools/testing/selftests/prctl/Makefile	2026-11-27 18:30:22.538156403 +0800
+@@ -3,12 +3,12 @@
+ ARCH ?= $(shell uname -m 2>/dev/null || echo not)
+ override ARCH := $(shell echo $(ARCH) | sed -e s/i.86/x86/ -e s/x86_64/x86/)
+ 
++TEST_PROGS := set-process-name
+ ifeq ($(ARCH),x86)
+-TEST_PROGS := disable-tsc-ctxt-sw-stress-test disable-tsc-on-off-stress-test \
+-		disable-tsc-test set-anon-vma-name-test set-process-name
++TEST_PROGS += disable-tsc-ctxt-sw-stress-test disable-tsc-on-off-stress-test \
++		disable-tsc-test set-anon-vma-name-test
++endif
+ all: $(TEST_PROGS)
+ 
+ include ../lib.mk
+-
+-endif
+ endif
