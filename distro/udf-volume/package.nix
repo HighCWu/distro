@@ -11,7 +11,7 @@ let
     pkgs.runCommand "udf-volume.iso"
       {
         nativeBuildInputs = [
-          pkgs.genisoimage
+          pkgs.cdrkit
           pkgs.python3
         ];
       }
