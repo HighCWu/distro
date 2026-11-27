@@ -122,7 +122,6 @@ static int test_sysinfo_uname(void) {
 
 static int test_clock_and_getcpu(void) {
   struct timespec res, t1, t2;
-  unsigned cpu = 0, node = 0;
 
   if (clock_getres(CLOCK_MONOTONIC, &res) != 0)
     return fail_errno("clock_getres(CLOCK_MONOTONIC)");
@@ -143,11 +142,12 @@ static int test_clock_and_getcpu(void) {
     return 1;
   }
 
-  if (getcpu(&cpu, &node) != 0)
-    return fail_errno("getcpu");
+  int cpu = sched_getcpu();
+  if (cpu < 0)
+    return fail_errno("sched_getcpu");
 
-  printf("clock_getcpu: ok (res=%lld.%09lds cpu=%u node=%u)\n",
-         (long long)res.tv_sec, res.tv_nsec, cpu, node);
+  printf("clock_getcpu: ok (res=%lld.%09lds cpu=%d)\n",
+         (long long)res.tv_sec, res.tv_nsec, cpu);
   return 0;
 }
 
