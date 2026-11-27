@@ -219,7 +219,11 @@ test("real runner dispatches ::vm-test::resize requests to consoleDevice.resize"
       {
         encoding: "utf8",
         timeout: 10000,
-        env: { ...process.env, RUNNER_FIXTURE_FAIL: "0", RUNNER_FIXTURE_SCENARIO: "console-resize" },
+        env: {
+          ...process.env,
+          RUNNER_FIXTURE_FAIL: "0",
+          RUNNER_FIXTURE_SCENARIO: "console-resize",
+        },
       },
     );
     assert.ifError(result.error);

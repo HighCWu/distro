@@ -67,11 +67,7 @@ function parseUdpFrame(frame: DataView) {
   const sourcePort = frame.getUint16(udp);
   const destPort = frame.getUint16(udp + 2);
   const udpLength = frame.getUint16(udp + 4);
-  const payload = new Uint8Array(
-    frame.buffer,
-    frame.byteOffset + udp + 8,
-    udpLength - 8,
-  );
+  const payload = new Uint8Array(frame.buffer, frame.byteOffset + udp + 8, udpLength - 8);
   return { sourceIp, destIp, sourcePort, destPort, payload };
 }
 
@@ -252,9 +248,27 @@ test("omitting connectUdp drops outbound UDP while keeping DNS functional", asyn
     );
     // DNS query to 192.0.2.1:53 still succeeds
     const dnsQuery = Uint8Array.of(
-      0x12, 0x34, 0x01, 0x00, 0x00, 0x01, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
-      7, ...new TextEncoder().encode("example"), 3, ...new TextEncoder().encode("com"), 0,
-      0x00, 0x01, 0x00, 0x01,
+      0x12,
+      0x34,
+      0x01,
+      0x00,
+      0x00,
+      0x01,
+      0x00,
+      0x00,
+      0x00,
+      0x00,
+      0x00,
+      0x00,
+      7,
+      ...new TextEncoder().encode("example"),
+      3,
+      ...new TextEncoder().encode("com"),
+      0,
+      0x00,
+      0x01,
+      0x00,
+      0x01,
     );
     await harness.sendFrame(buildUdpFrame([192, 0, 2, 2], [192, 0, 2, 1], 40004, 53, dnsQuery));
     const reply = parseUdpFrame(await harness.receiveFrame());
