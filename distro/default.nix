@@ -3267,6 +3267,27 @@ lib.makeScope (scope: lib.callPackageWith ({ inherit lib pkgs; } // scope)) (
       vm-test = vmTestWasm64;
       extraChecks = { };
     };
+    prctl-caps-creds-runtime = callPackage ./prctl-caps-creds-runtime/package.nix {
+      extraChecks.both =
+        pkgs.runCommand "prctl-caps-creds-runtime-check-both"
+          {
+            passthru.ci.heavy = true;
+          }
+          ''
+            test -e ${self.prctl-caps-creds-runtime.checks.runtime}
+            test -e ${self.prctl-caps-creds-runtime-wasm64.checks.runtime}
+            touch $out
+          '';
+    };
+    prctl-caps-creds-runtime-wasm64 = self.prctl-caps-creds-runtime.override {
+      stdenv = self.stdenv-wasm64;
+      platform = self.platform-wasm64;
+      musl = self.musl-wasm64;
+      llvm-runtimes = self.llvm-runtimes-wasm64;
+      busybox = self.busybox-wasm64;
+      vm-test = vmTestWasm64;
+      extraChecks = { };
+    };
     memfd-seals-runtime = callPackage ./memfd-seals-runtime/package.nix {
       extraChecks.both = pkgs.runCommand "memfd-seals-runtime-check-both" { passthru.ci.heavy = true; } ''
         test -e ${self.memfd-seals-runtime.checks.runtime}

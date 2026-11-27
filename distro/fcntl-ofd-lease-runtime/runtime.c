@@ -5,6 +5,7 @@
 #include <stdlib.h>
 #include <string.h>
 #include <sys/file.h>
+#include <sys/mount.h>
 #include <unistd.h>
 
 static void require(int ok, const char *what) {
@@ -17,12 +18,15 @@ static void require(int ok, const char *what) {
 }
 
 int main(void) {
-  int fd1 = open("/tmp/ofd.dat", O_RDWR | O_CREAT | O_TRUNC | O_CLOEXEC, 0644);
-  require(fd1 >= 0, "open(/tmp/ofd.dat fd1)");
+  require(mount("/dev/vda", "/mnt", "ext4", 0, NULL) == 0,
+          "mount(/dev/vda, ext4)");
+
+  int fd1 = open("/mnt/ofd.dat", O_RDWR | O_CREAT | O_TRUNC | O_CLOEXEC, 0644);
+  require(fd1 >= 0, "open(/mnt/ofd.dat fd1)");
   require(write(fd1, "ofd-lock-data", 13) == 13, "write ofd.dat");
 
-  int fd2 = open("/tmp/ofd.dat", O_RDWR | O_CLOEXEC);
-  require(fd2 >= 0, "open(/tmp/ofd.dat fd2)");
+  int fd2 = open("/mnt/ofd.dat", O_RDWR | O_CLOEXEC);
+  require(fd2 >= 0, "open(/mnt/ofd.dat fd2)");
 
   struct flock lk;
   memset(&lk, 0, sizeof(lk));
@@ -63,11 +67,11 @@ int main(void) {
   lk.l_pid = 0;
   require(fcntl(fd2, F_OFD_SETLK, &lk) == 0, "F_OFD_SETLK fd2 after close");
   require(close(fd2) == 0, "close fd2");
-  require(unlink("/tmp/ofd.dat") == 0, "unlink ofd.dat");
+  require(unlink("/mnt/ofd.dat") == 0, "unlink ofd.dat");
 
   int fl1 =
-      open("/tmp/flock.dat", O_RDWR | O_CREAT | O_TRUNC | O_CLOEXEC, 0644);
-  int fl2 = open("/tmp/flock.dat", O_RDWR | O_CLOEXEC);
+      open("/mnt/flock.dat", O_RDWR | O_CREAT | O_TRUNC | O_CLOEXEC, 0644);
+  int fl2 = open("/mnt/flock.dat", O_RDWR | O_CLOEXEC);
   require(fl1 >= 0 && fl2 >= 0, "open flock.dat");
   require(flock(fl1, LOCK_EX | LOCK_NB) == 0, "flock fl1 LOCK_EX");
   require(flock(fl2, LOCK_EX | LOCK_NB) == -1 &&
@@ -77,10 +81,10 @@ int main(void) {
   require(flock(fl2, LOCK_EX | LOCK_NB) == 0, "flock fl2 after unlock");
   require(close(fl1) == 0, "close fl1");
   require(close(fl2) == 0, "close fl2");
-  require(unlink("/tmp/flock.dat") == 0, "unlink flock.dat");
+  require(unlink("/mnt/flock.dat") == 0, "unlink flock.dat");
 
   int lfd =
-      open("/tmp/lease.dat", O_RDWR | O_CREAT | O_TRUNC | O_CLOEXEC, 0644);
+      open("/mnt/lease.dat", O_RDWR | O_CREAT | O_TRUNC | O_CLOEXEC, 0644);
   require(lfd >= 0, "open lease.dat");
   require(fcntl(lfd, F_SETLEASE, F_WRLCK) == 0, "F_SETLEASE(F_WRLCK)");
   require(fcntl(lfd, F_GETLEASE) == F_WRLCK, "F_GETLEASE == F_WRLCK");
@@ -105,7 +109,8 @@ int main(void) {
 
   require(close(dup_fd) == 0, "close dup_fd");
   require(close(lfd) == 0, "close lfd");
-  require(unlink("/tmp/lease.dat") == 0, "unlink lease.dat");
+  require(unlink("/mnt/lease.dat") == 0, "unlink lease.dat");
+  require(umount("/mnt") == 0, "umount(/mnt)");
 
   printf("fcntl-ofd-lease-runtime: ok ofd=1 flock=1 lease=1 dup=%d\n", dup_fd);
   return 0;

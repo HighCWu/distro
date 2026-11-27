@@ -10,6 +10,17 @@
   vm-test,
   extraChecks ? { },
 }:
+let
+  ext4Disk =
+    pkgs.runCommand "fcntl-ofd-lease-disk-8m"
+      {
+        nativeBuildInputs = [ pkgs.e2fsprogs ];
+      }
+      ''
+        truncate -s 8388608 "$out"
+        mke2fs -q -F -t ext4 -O extents,^has_journal -b 4096 -m 0 "$out"
+      '';
+in
 stdenv.mkDerivation (finalAttrs: {
   pname = "fcntl-ofd-lease-runtime";
   version = "1";
@@ -50,6 +61,7 @@ stdenv.mkDerivation (finalAttrs: {
         busybox
         finalAttrs.finalPackage
       ];
+      disks = [ ext4Disk ];
     };
   }
   // extraChecks;
