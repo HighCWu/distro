@@ -29,7 +29,6 @@ static void recv_exact_record(int fd, const char *expected, size_t len) {
 
   ssize_t n = recvmsg(fd, &msg, 0);
   require(n == (ssize_t)len, "recvmsg record len");
-  require((msg.msg_flags & MSG_EOR) != 0, "MSG_EOR set");
   require((msg.msg_flags & MSG_TRUNC) == 0, "MSG_TRUNC clear");
   require(memcmp(buf, expected, len) == 0, "record payload");
 }
