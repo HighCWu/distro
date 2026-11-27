@@ -2047,6 +2047,23 @@ lib.makeScope (scope: lib.callPackageWith ({ inherit lib pkgs; } // scope)) (
       vm-test = vmTestWasm64;
       extraChecks = { };
     };
+    libgit2-runtime = callPackage ./libgit2-runtime/package.nix {
+      extraChecks.both = pkgs.runCommand "libgit2-runtime-check-both" { passthru.ci.heavy = true; } ''
+        test -e ${self.libgit2-runtime.checks.runtime}
+        test -e ${self.libgit2-runtime-wasm64.checks.runtime}
+        touch $out
+      '';
+    };
+    libgit2-runtime-wasm64 = self.libgit2-runtime.override {
+      platform = self.platform-wasm64;
+      sdk = self.sdk-wasm64;
+      zlib = self.zlib-wasm64;
+      openssl = self.openssl-wasm64;
+      llvm-toolchain = self.llvm-toolchain-wasm64;
+      busybox = self.busybox-wasm64;
+      vm-test = vmTestWasm64;
+      extraChecks = { };
+    };
     libuv-runtime = callPackage ./libuv-runtime/package.nix {
       extraChecks.both = pkgs.runCommand "libuv-runtime-check-both" { passthru.ci.heavy = true; } ''
         test -e ${self.libuv-runtime.checks.runtime}
