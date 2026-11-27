@@ -115,7 +115,10 @@ static void run_skcipher_op(int op_fd, uint32_t op_dir, const uint8_t *iv,
 	cmsg->cmsg_len = CMSG_LEN(sizeof(uint32_t));
 	memcpy(CMSG_DATA(cmsg), &op_dir, sizeof(op_dir));
 
+#pragma clang diagnostic push
+#pragma clang diagnostic ignored "-Wsign-compare"
 	cmsg = CMSG_NXTHDR(&msg, cmsg);
+#pragma clang diagnostic pop
 	cmsg->cmsg_level = SOL_ALG;
 	cmsg->cmsg_type = ALG_SET_IV;
 	cmsg->cmsg_len = CMSG_LEN(sizeof(struct af_alg_iv) + iv_len);
@@ -182,7 +185,10 @@ static ssize_t run_aead_op(int op_fd, uint32_t op_dir, const uint8_t *iv,
 	cmsg->cmsg_len = CMSG_LEN(sizeof(uint32_t));
 	memcpy(CMSG_DATA(cmsg), &op_dir, sizeof(op_dir));
 
+#pragma clang diagnostic push
+#pragma clang diagnostic ignored "-Wsign-compare"
 	cmsg = CMSG_NXTHDR(&msg, cmsg);
+#pragma clang diagnostic pop
 	cmsg->cmsg_level = SOL_ALG;
 	cmsg->cmsg_type = ALG_SET_IV;
 	cmsg->cmsg_len = CMSG_LEN(sizeof(struct af_alg_iv) + iv_len);
@@ -190,7 +196,10 @@ static ssize_t run_aead_op(int op_fd, uint32_t op_dir, const uint8_t *iv,
 	alg_iv->ivlen = (uint32_t)iv_len;
 	memcpy(alg_iv->iv, iv, iv_len);
 
+#pragma clang diagnostic push
+#pragma clang diagnostic ignored "-Wsign-compare"
 	cmsg = CMSG_NXTHDR(&msg, cmsg);
+#pragma clang diagnostic pop
 	cmsg->cmsg_level = SOL_ALG;
 	cmsg->cmsg_type = ALG_SET_AEAD_ASSOCLEN;
 	cmsg->cmsg_len = CMSG_LEN(sizeof(uint32_t));
