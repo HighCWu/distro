@@ -156,7 +156,11 @@ for (const address of ["i32", "i64"] as const) {
 
     // Non-loaded dynamic main after all pthreads retired (DYNAMIC_THREAD_SUCCESS only).
     const unloadedThreaded = context(address);
-    Atomics.store(new Int32Array(unloadedThreaded.dynamic!.process_state!), 0, DYNAMIC_THREAD_SUCCESS);
+    Atomics.store(
+      new Int32Array(unloadedThreaded.dynamic!.process_state!),
+      0,
+      DYNAMIC_THREAD_SUCCESS,
+    );
     assert.equal(candidate({ context: unloadedThreaded, loaderCreated: false }), true);
     increment_dynamic_active_workers(unloadedThreaded.dynamic!.active_workers);
     assert.equal(candidate({ context: unloadedThreaded, loaderCreated: false }), false);

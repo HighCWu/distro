@@ -10,8 +10,9 @@ fail() {
 }
 
 mount -t devtmpfs devtmpfs /dev || fail 'mount devtmpfs'
-out=$(input-runtime 2>&1) || fail "input-runtime failed: $out"
-printf '%s\n' "$out"
+input-runtime
+rc=$?
+[ "$rc" -eq 0 ] || fail "input-runtime failed (rc=$rc)"
 umount /dev || fail 'umount devtmpfs'
 printf '%s\n' '::vm-test::pass'
 while :; do sleep 1; done

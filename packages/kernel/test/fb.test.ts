@@ -120,3 +120,10 @@ test("framebufferPlugin enforces single attachment and ignores flush before regi
   attach_framebuffer_plugins(memory, [fb1]);
   assert.throws(() => attach_framebuffer_plugins(memory, [fb1]), /already attached/);
 });
+
+test("createFramebuffer decodes signed-negative wasm32 pointers above 2 GiB", () => {
+  const memory = new WebAssembly.Memory({ initial: 1, maximum: 2, shared: true });
+  const { state, imports } = createFramebuffer(memory);
+  imports.register(-4096, 4, 2, 16, 32);
+  assert.equal(state.info?.fbAddr, 0xfffff000);
+});

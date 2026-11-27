@@ -2159,6 +2159,22 @@ lib.makeScope (scope: lib.callPackageWith ({ inherit lib pkgs; } // scope)) (
       vm-test = vmTestWasm64;
       extraChecks = { };
     };
+    rtnetlink-runtime = callPackage ./rtnetlink-runtime/package.nix {
+      extraChecks.both = pkgs.runCommand "rtnetlink-runtime-check-both" { passthru.ci.heavy = true; } ''
+        test -e ${self.rtnetlink-runtime.checks.runtime}
+        test -e ${self.rtnetlink-runtime-wasm64.checks.runtime}
+        touch $out
+      '';
+    };
+    rtnetlink-runtime-wasm64 = self.rtnetlink-runtime.override {
+      stdenv = self.stdenv-wasm64;
+      platform = self.platform-wasm64;
+      musl = self.musl-wasm64;
+      llvm-runtimes = self.llvm-runtimes-wasm64;
+      busybox = self.busybox-wasm64;
+      vm-test = vmTestWasm64;
+      extraChecks = { };
+    };
     mqueue-runtime = callPackage ./mqueue-runtime/package.nix {
       extraChecks.both = pkgs.runCommand "mqueue-runtime-check-both" { passthru.ci.heavy = true; } ''
         test -e ${self.mqueue-runtime.checks.runtime}

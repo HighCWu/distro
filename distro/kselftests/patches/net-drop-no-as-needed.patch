@@ -1,0 +1,15 @@
+net/Makefile hardcodes -Wl,--no-as-needed into CFLAGS. wasm-ld does not
+recognize --no-as-needed, so linking fails on wasm32/wasm64-musl. Drop it;
+static musl libc links all standard symbols directly.
+
+--- a/tools/testing/selftests/net/Makefile
++++ b/tools/testing/selftests/net/Makefile
+@@ -1,7 +1,7 @@
+ # SPDX-License-Identifier: GPL-2.0
+ # Makefile for net selftests
+ 
+-CFLAGS += -Wall -Wl,--no-as-needed -O2 -g
++CFLAGS += -Wall -O2 -g
+ CFLAGS += -I../../../../usr/include/ $(KHDR_INCLUDES)
+ # Additional include paths needed by kselftest.h
+ CFLAGS += -I../

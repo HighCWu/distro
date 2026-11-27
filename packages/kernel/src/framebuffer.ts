@@ -6,7 +6,7 @@ import {
   ensure_memory_buffer,
   type Imports,
   type WasmAddress,
-  wasm_address_to_number,
+  wasm_pointer_to_number,
 } from "./wasm.ts";
 
 /** Geometry and linear-memory location registered by `fbdev_wasm`. */
@@ -73,7 +73,7 @@ export function createFramebuffer(
 
   const imports: Imports["fb"] = {
     register(fb_addr: WasmAddress, width: number, height: number, stride: number, bpp: number) {
-      const addr = wasm_address_to_number(fb_addr);
+      const addr = wasm_pointer_to_number(fb_addr);
       const w = width >>> 0;
       const h = height >>> 0;
       const s = stride >>> 0;
