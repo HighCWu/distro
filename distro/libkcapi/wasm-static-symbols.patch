@@ -1,0 +1,22 @@
+# SPDX-License-Identifier: MIT
+# Wasm static archives retain the existing default API, without ELF versions.
+diff --git a/lib/internal.h b/lib/internal.h
+--- a/lib/internal.h
++++ b/lib/internal.h
+@@ -353,7 +353,15 @@ static inline int io_getevents(__attribute__((unused)) aio_context_t ctx,
+  * Auxiliary macros
+  ************************************************************/
+ 
+-#if HAVE_ATTRIBUTE_SYMVER && __GNUC__ >= 10
++#if defined(__wasm__)
++/* Wasm has no ELF symbol versions. Keep the existing default prototype and
++ * implementation; legacy version implementations remain private symbols.
++ */
++# define IMPL_SYMVER(name, version) \
++    extern __typeof__(kcapi_ ## name) kcapi_ ## name \
++        __attribute__((alias("impl_" #name)));
++# define ORIG_SYMVER(name, version)
++#elif HAVE_ATTRIBUTE_SYMVER && __GNUC__ >= 10
+ # define IMPL_SYMVER(name, version) \
+     __attribute__((__symver__("kcapi_" #name "@@LIBKCAPI_" version)))
+ 

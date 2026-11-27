@@ -853,6 +853,33 @@ lib.makeScope (scope: lib.callPackageWith ({ inherit lib pkgs; } // scope)) (
       busybox = self.busybox-wasm64;
       vm-test = vmTestWasm64;
     };
+    libkcapi = callPackage ./libkcapi/package.nix { };
+    libkcapi-wasm64 = callPackage ./libkcapi/package.nix {
+      stdenv = self.stdenv-wasm64;
+      platform = self.platform-wasm64;
+      musl = self.musl-wasm64;
+      llvm-runtimes = self.llvm-runtimes-wasm64;
+    };
+    crypto-tools = (callPackage ./crypto-tools/package.nix { }).overrideAttrs (old: {
+      passthru = (old.passthru or { }) // {
+        checks = (old.passthru.checks or { }) // {
+          both = pkgs.runCommand "crypto-tools-check-both" { passthru.ci.heavy = true; } ''
+            test -e ${self.crypto-tools.checks.runtime}
+            test -e ${self.crypto-tools-wasm64.checks.runtime}
+            touch $out
+          '';
+        };
+      };
+    });
+    crypto-tools-wasm64 = callPackage ./crypto-tools/package.nix {
+      stdenv = self.stdenv-wasm64;
+      platform = self.platform-wasm64;
+      musl = self.musl-wasm64;
+      llvm-runtimes = self.llvm-runtimes-wasm64;
+      libkcapi = self.libkcapi-wasm64;
+      busybox = self.busybox-wasm64;
+      vm-test = vmTestWasm64;
+    };
     packet-sockets-wasm64 = callPackage ./packet-sockets/package.nix {
       stdenv = self.stdenv-wasm64;
       platform = self.platform-wasm64;
