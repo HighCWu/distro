@@ -594,10 +594,6 @@ serve_session(ssh_bind server_bind, int connection_index,
 
   stage = "bind_accept";
   session = ssh_new();
-  if (session != NULL) {
-    int verbosity = SSH_LOG_PROTOCOL;
-    (void)ssh_options_set(session, SSH_OPTIONS_LOG_VERBOSITY, &verbosity);
-  }
   if (session == NULL || ssh_bind_accept(server_bind, session) != SSH_OK)
     goto cleanup;
 
@@ -863,7 +859,6 @@ connect_client(unsigned int port, const char *username)
   bool process_config = false;
   int strict_host_key_check = 0;
   long timeout_seconds = 25;
-  int verbosity = SSH_LOG_PROTOCOL;
 
   if (session == NULL)
     return NULL;
@@ -874,7 +869,6 @@ connect_client(unsigned int port, const char *username)
       ssh_options_set(session, SSH_OPTIONS_STRICTHOSTKEYCHECK,
                       &strict_host_key_check) != SSH_OK ||
       ssh_options_set(session, SSH_OPTIONS_TIMEOUT, &timeout_seconds) != SSH_OK ||
-      ssh_options_set(session, SSH_OPTIONS_LOG_VERBOSITY, &verbosity) != SSH_OK ||
       ssh_connect(session) != SSH_OK) {
     fprintf(stderr, "libssh runtime: connect_client(%s) failed: %s\n",
             username, ssh_get_error(session));
