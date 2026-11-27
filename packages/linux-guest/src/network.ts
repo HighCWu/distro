@@ -497,6 +497,14 @@ interface OutboundUdpFlow {
   closed: boolean;
 }
 
+function is_multicast_or_broadcast(ip: number) {
+  return (
+    ip >>> 28 === 0xe ||
+    ip >>> 0 === 0xffffffff ||
+    ((ip & 0xffffff00) === (GATEWAY_IP & 0xffffff00) && (ip & 0xff) === 0xff)
+  );
+}
+
 function tcp_key(guest_ip: number, guest_port: number, peer_ip: number, peer_port: number) {
   return `${guest_ip}:${guest_port}:${peer_ip}:${peer_port}`;
 }
@@ -1400,7 +1408,13 @@ export function createNetwork({ connectTcp, connectUdp, resolveDns }: NetworkOpt
         return;
       }
     }
-    if (!connectUdp || datagram.destination_port === 0) return;
+    if (
+      !connectUdp ||
+      datagram.destination_port === 0 ||
+      is_multicast_or_broadcast(ip.destination)
+    ) {
+      return;
+    }
     const key = outbound_udp_key(
       ip.source,
       datagram.source_port,
