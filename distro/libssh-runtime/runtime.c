@@ -32,7 +32,7 @@
 #define REJECTED_USER "unknown-user"
 #define EXPECTED_COMMAND "libssh-runtime-self-check"
 #define SFTP_MAX_READ_SIZE 4096
-#define LOG_RING_SIZE 24
+#define LOG_RING_SIZE 48
 
 static pthread_mutex_t log_ring_mutex = PTHREAD_MUTEX_INITIALIZER;
 static char log_ring[LOG_RING_SIZE][160];
@@ -75,6 +75,7 @@ struct server_state {
   pthread_cond_t condition;
   unsigned int port;
   int ready;
+  int completed_sessions;
   int sftp_complete;
   char sftp_root[96];
   char sftp_source_path[128];
@@ -123,6 +124,34 @@ server_ready(struct server_state *state, unsigned int port)
   pthread_mutex_unlock(&state->mutex);
 }
 
+static void
+mark_session_completed(struct server_state *state, int count)
+{
+  pthread_mutex_lock(&state->mutex);
+  state->completed_sessions = count;
+  pthread_cond_broadcast(&state->condition);
+  pthread_mutex_unlock(&state->mutex);
+}
+
+static int
+wait_for_session_completed(struct server_state *state, int target_count)
+{
+  struct timespec deadline;
+  int rc = 0;
+
+  if (clock_gettime(CLOCK_REALTIME, &deadline) != 0)
+    return -1;
+  deadline.tv_sec += 25;
+
+  pthread_mutex_lock(&state->mutex);
+  while (state->completed_sessions < target_count && state->error[0] == '\0' &&
+         rc != ETIMEDOUT)
+    rc = pthread_cond_timedwait(&state->condition, &state->mutex, &deadline);
+  int ok = state->completed_sessions >= target_count && state->error[0] == '\0';
+  pthread_mutex_unlock(&state->mutex);
+  return ok ? 0 : -1;
+}
+
 static int
 accept_with_watchdog(ssh_bind server_bind)
 {
@@ -133,7 +162,7 @@ accept_with_watchdog(ssh_bind server_bind)
   int rc;
 
   do {
-    rc = poll(&descriptor, 1, 20000);
+    rc = poll(&descriptor, 1, 30000);
   } while (rc < 0 && errno == EINTR);
   if (rc <= 0 || (descriptor.revents & POLLIN) == 0)
     return SSH_ERROR;
@@ -565,6 +594,10 @@ serve_session(ssh_bind server_bind, int connection_index,
 
   stage = "bind_accept";
   session = ssh_new();
+  if (session != NULL) {
+    int verbosity = SSH_LOG_PROTOCOL;
+    (void)ssh_options_set(session, SSH_OPTIONS_LOG_VERBOSITY, &verbosity);
+  }
   if (session == NULL || ssh_bind_accept(server_bind, session) != SSH_OK)
     goto cleanup;
 
@@ -768,6 +801,7 @@ server_thread(void *opaque)
     record_server_error(state, detail);
     goto cleanup;
   }
+  mark_session_completed(state, 1);
   if (serve_session(server_bind, 1, state, &failed_stage, session_err,
                     sizeof(session_err)) != SSH_OK) {
     (void)snprintf(detail, sizeof(detail),
@@ -776,6 +810,7 @@ server_thread(void *opaque)
     record_server_error(state, detail);
     goto cleanup;
   }
+  mark_session_completed(state, 2);
   if (serve_session(server_bind, 2, state, &failed_stage, session_err,
                     sizeof(session_err)) != SSH_OK) {
     (void)snprintf(detail, sizeof(detail),
@@ -784,6 +819,7 @@ server_thread(void *opaque)
     record_server_error(state, detail);
     goto cleanup;
   }
+  mark_session_completed(state, 3);
 
 cleanup:
   if (listener >= 0)
@@ -826,7 +862,8 @@ connect_client(unsigned int port, const char *username)
   ssh_session session = ssh_new();
   bool process_config = false;
   int strict_host_key_check = 0;
-  long timeout_seconds = 15;
+  long timeout_seconds = 25;
+  int verbosity = SSH_LOG_PROTOCOL;
 
   if (session == NULL)
     return NULL;
@@ -837,6 +874,7 @@ connect_client(unsigned int port, const char *username)
       ssh_options_set(session, SSH_OPTIONS_STRICTHOSTKEYCHECK,
                       &strict_host_key_check) != SSH_OK ||
       ssh_options_set(session, SSH_OPTIONS_TIMEOUT, &timeout_seconds) != SSH_OK ||
+      ssh_options_set(session, SSH_OPTIONS_LOG_VERBOSITY, &verbosity) != SSH_OK ||
       ssh_connect(session) != SSH_OK) {
     fprintf(stderr, "libssh runtime: connect_client(%s) failed: %s\n",
             username, ssh_get_error(session));
@@ -1056,6 +1094,10 @@ main(void)
   ssh_free(rejected_client);
   rejected_client = NULL;
   puts("libssh: unknown username rejected");
+  if (wait_for_session_completed(&server, 1) != 0) {
+    fprintf(stderr, "libssh runtime: server did not finish rejected session\n");
+    goto cleanup;
+  }
 
   client = connect_client(port, EXPECTED_USER);
   if (client == NULL || ssh_userauth_none(client, NULL) != SSH_AUTH_SUCCESS) {
@@ -1086,6 +1128,10 @@ main(void)
   ssh_disconnect(client);
   ssh_free(client);
   client = NULL;
+  if (wait_for_session_completed(&server, 2) != 0) {
+    fprintf(stderr, "libssh runtime: server did not finish exec session\n");
+    goto cleanup;
+  }
 
   sftp_client = connect_client(port, EXPECTED_USER);
   if (sftp_client == NULL ||
