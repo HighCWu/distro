@@ -41,7 +41,8 @@ pkgs.stdenvNoCC.mkDerivation (finalAttrs: {
       -DCMAKE_AR=${llvm-toolchain}/bin/llvm-ar \
       -DCMAKE_RANLIB=${llvm-toolchain}/bin/llvm-ranlib \
       -DCMAKE_C_FLAGS=-pthread \
-      -DCMAKE_TRY_COMPILE_TARGET_TYPE=STATIC_LIBRARY \
+      -DHAVE_MEMSET_EXPLICIT=OFF \
+      -DHAVE_MEMSET_S=OFF \
       -DCMAKE_THREAD_PREFER_PTHREADS=ON \
       -DTHREADS_PREFER_PTHREAD_FLAG=ON \
       -DCMAKE_INSTALL_PREFIX="$out" \
