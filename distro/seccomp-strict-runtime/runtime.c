@@ -55,9 +55,12 @@ int main(void) {
           "seccomp(SET_MODE_FILTER) EINVAL");
 
   uint32_t act = SECCOMP_RET_ALLOW;
-  long avail = syscall(SYS_seccomp, SECCOMP_GET_ACTION_AVAIL, 0U, &act);
-  require(avail == -1 && (errno == EINVAL || errno == EOPNOTSUPP),
-          "seccomp(GET_ACTION_AVAIL) unsupported");
+  require(syscall(SYS_seccomp, SECCOMP_GET_ACTION_AVAIL, 0U, &act) == 0,
+          "seccomp(GET_ACTION_AVAIL ALLOW) == 0");
+  uint32_t bad_act = 0xdeadbeefU;
+  require(syscall(SYS_seccomp, SECCOMP_GET_ACTION_AVAIL, 0U, &bad_act) == -1 &&
+              errno == EOPNOTSUPP,
+          "seccomp(GET_ACTION_AVAIL invalid) EOPNOTSUPP");
 
   int pfd[2];
   require(pipe2(pfd, O_CLOEXEC) == 0, "pipe2");
