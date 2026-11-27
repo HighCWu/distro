@@ -2,6 +2,7 @@
 #define _GNU_SOURCE
 #include <errno.h>
 #include <fcntl.h>
+#include <linux/falloc.h>
 #include <linux/fiemap.h>
 #include <linux/fs.h>
 #include <stdint.h>
