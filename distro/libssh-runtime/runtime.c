@@ -515,7 +515,8 @@ cleanup:
 
 static int
 serve_session(ssh_bind server_bind, int connection_index,
-              struct server_state *server)
+              struct server_state *server, const char **failed_stage,
+              char *session_err, size_t session_err_size)
 {
   ssh_session session = NULL;
   ssh_message message = NULL;
@@ -523,14 +524,21 @@ serve_session(ssh_bind server_bind, int connection_index,
   int authenticated = 0;
   int rejected = 0;
   int result = SSH_ERROR;
+  const char *stage = "accept_watchdog";
 
   if (accept_with_watchdog(server_bind) != SSH_OK)
     goto cleanup;
 
+  stage = "bind_accept";
   session = ssh_new();
-  if (session == NULL || ssh_bind_accept(server_bind, session) != SSH_OK ||
-      ssh_handle_key_exchange(session) != SSH_OK)
+  if (session == NULL || ssh_bind_accept(server_bind, session) != SSH_OK)
     goto cleanup;
+
+  stage = "key_exchange";
+  if (ssh_handle_key_exchange(session) != SSH_OK)
+    goto cleanup;
+
+  stage = "auth";
 
   while (!authenticated && !rejected) {
     const char *username;
@@ -577,6 +585,7 @@ serve_session(ssh_bind server_bind, int connection_index,
   if (!authenticated)
     goto cleanup;
 
+  stage = "channel_open";
   for (;;) {
     message = ssh_message_get(session);
     if (message == NULL)
@@ -598,6 +607,7 @@ serve_session(ssh_bind server_bind, int connection_index,
     message = NULL;
   }
 
+  stage = "channel_request";
   for (;;) {
     message = ssh_message_get(session);
     if (message == NULL)
@@ -640,6 +650,14 @@ serve_session(ssh_bind server_bind, int connection_index,
   }
 
 cleanup:
+  if (result != SSH_OK) {
+    if (failed_stage != NULL)
+      *failed_stage = stage;
+    if (session_err != NULL && session_err_size > 0) {
+      const char *err = session != NULL ? ssh_get_error(session) : "ssh_new failed";
+      (void)snprintf(session_err, session_err_size, "%s", err != NULL ? err : "");
+    }
+  }
   if (message != NULL)
     ssh_message_free(message);
   if (channel != NULL) {
@@ -703,17 +721,33 @@ server_thread(void *opaque)
   ssh_bind_set_fd(server_bind, (socket_t)listener);
   listener = -1; /* ssh_bind_free closes the adopted socket. */
 
+  const char *failed_stage = NULL;
+  char session_err[128] = "";
+  char detail[256];
+
   server_ready(state, port);
-  if (serve_session(server_bind, 0, state) != SSH_OK) {
-    record_server_error(state, "rejecting the unknown-user SSH session");
+  if (serve_session(server_bind, 0, state, &failed_stage, session_err,
+                    sizeof(session_err)) != SSH_OK) {
+    (void)snprintf(detail, sizeof(detail),
+                   "rejecting the unknown-user SSH session (stage=%s: %s)",
+                   failed_stage ? failed_stage : "?", session_err);
+    record_server_error(state, detail);
     goto cleanup;
   }
-  if (serve_session(server_bind, 1, state) != SSH_OK) {
-    record_server_error(state, "serving the authenticated SSH exec request");
+  if (serve_session(server_bind, 1, state, &failed_stage, session_err,
+                    sizeof(session_err)) != SSH_OK) {
+    (void)snprintf(detail, sizeof(detail),
+                   "serving the authenticated SSH exec request (stage=%s: %s)",
+                   failed_stage ? failed_stage : "?", session_err);
+    record_server_error(state, detail);
     goto cleanup;
   }
-  if (serve_session(server_bind, 2, state) != SSH_OK) {
-    record_server_error(state, "serving the authenticated SFTP subsystem");
+  if (serve_session(server_bind, 2, state, &failed_stage, session_err,
+                    sizeof(session_err)) != SSH_OK) {
+    (void)snprintf(detail, sizeof(detail),
+                   "serving the authenticated SFTP subsystem (stage=%s: %s)",
+                   failed_stage ? failed_stage : "?", session_err);
+    record_server_error(state, detail);
     goto cleanup;
   }
 
