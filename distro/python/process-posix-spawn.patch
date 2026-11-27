@@ -24,7 +24,7 @@ mmap-dependent _posixshmem module.
 
 --- a/Modules/posixmodule.c
 +++ b/Modules/posixmodule.c
-@@ -7048,6 +7048,9 @@ enum posix_spawn_file_actions_identifier {
+@@ -7048,6 +7048,12 @@ enum posix_spawn_file_actions_identifier {
      POSIX_SPAWN_OPEN,
      POSIX_SPAWN_CLOSE,
      POSIX_SPAWN_DUP2
@@ -34,6 +34,9 @@ mmap-dependent _posixshmem module.
  #ifdef HAVE_POSIX_SPAWN_FILE_ACTIONS_ADDCLOSEFROM_NP
      ,POSIX_SPAWN_CLOSEFROM
  #endif
++#ifdef __wasm__
++    ,POSIX_SPAWN_CLOSE_EXCEPT
++#endif
 @@ -7292,6 +7295,29 @@ parse_file_actions(PyObject *file_actions,
                  }
                  break;
@@ -64,7 +67,57 @@ mmap-dependent _posixshmem module.
  #ifdef HAVE_POSIX_SPAWN_FILE_ACTIONS_ADDCLOSEFROM_NP
              case POSIX_SPAWN_CLOSEFROM: {
                  int fd;
-@@ -17465,6 +17491,9 @@ posixmodule_exec(PyObject *m)
+@@ -7319,3 +7349,49 @@
+                 break;
+             }
+ #endif
++#ifdef __wasm__
++            case POSIX_SPAWN_CLOSE_EXCEPT: {
++                int first_fd;
++                PyObject *keep_obj;
++                if (!PyArg_ParseTuple(file_action, "OiO"
++                        ";A close_except file_action tuple must have 3 elements",
++                        &tag_obj, &first_fd, &keep_obj))
++                {
++                    goto fail;
++                }
++                PyObject *keep_seq = PySequence_Fast(keep_obj,
++                        "close_except keep_fds must be a sequence");
++                if (!keep_seq) {
++                    goto fail;
++                }
++                Py_ssize_t keep_len = PySequence_Fast_GET_SIZE(keep_seq);
++                int *keep_fds = NULL;
++                if (keep_len > 0) {
++                    keep_fds = PyMem_New(int, (size_t)keep_len);
++                    if (!keep_fds) {
++                        Py_DECREF(keep_seq);
++                        PyErr_NoMemory();
++                        goto fail;
++                    }
++                    PyObject **items = PySequence_Fast_ITEMS(keep_seq);
++                    for (Py_ssize_t i = 0; i < keep_len; i++) {
++                        int fd = PyLong_AsInt(items[i]);
++                        if (fd == -1 && PyErr_Occurred()) {
++                            PyMem_Free(keep_fds);
++                            Py_DECREF(keep_seq);
++                            goto fail;
++                        }
++                        keep_fds[i] = fd;
++                    }
++                }
++                Py_DECREF(keep_seq);
++                errno = posix_spawn_file_actions_addclose_except_np(
++                        file_actionsp, first_fd, keep_fds, (size_t)keep_len);
++                PyMem_Free(keep_fds);
++                if (errno) {
++                    posix_error();
++                    goto fail;
++                }
++                break;
++            }
++#endif
+@@ -17465,6 +17491,12 @@ posixmodule_exec(PyObject *m)
      if (PyModule_AddIntConstant(m, "POSIX_SPAWN_OPEN", POSIX_SPAWN_OPEN)) return -1;
      if (PyModule_AddIntConstant(m, "POSIX_SPAWN_CLOSE", POSIX_SPAWN_CLOSE)) return -1;
      if (PyModule_AddIntConstant(m, "POSIX_SPAWN_DUP2", POSIX_SPAWN_DUP2)) return -1;
@@ -74,6 +127,9 @@ mmap-dependent _posixshmem module.
  #ifdef HAVE_POSIX_SPAWN_FILE_ACTIONS_ADDCLOSEFROM_NP
      if (PyModule_AddIntMacro(m, POSIX_SPAWN_CLOSEFROM)) return -1;
  #endif
++#ifdef __wasm__
++    if (PyModule_AddIntConstant(m, "POSIX_SPAWN_CLOSE_EXCEPT", POSIX_SPAWN_CLOSE_EXCEPT)) return -1;
++#endif
 
 --- a/Lib/subprocess.py
 +++ b/Lib/subprocess.py
@@ -135,7 +191,7 @@ mmap-dependent _posixshmem module.
 +            if cwd is not None:
 +                file_actions.append((os.POSIX_SPAWN_CHDIR, cwd))
              for fd in (p2cwrite, c2pread, errread):
-@@ -1811,8 +1831,27 @@ class Popen:
+@@ -1811,8 +1831,29 @@ class Popen:
                  if fd != -1:
                      file_actions.append((os.POSIX_SPAWN_DUP2, fd, fd2))
 +            file_actions.extend(
@@ -144,10 +200,12 @@ mmap-dependent _posixshmem module.
  
              if close_fds:
 -                file_actions.append((os.POSIX_SPAWN_CLOSEFROM, 3))
-+                if _HAVE_POSIX_SPAWN_CLOSEFROM and not pass_fds:
++                if hasattr(os, 'POSIX_SPAWN_CLOSE_EXCEPT'):
++                    file_actions.append((os.POSIX_SPAWN_CLOSE_EXCEPT, 3, tuple(pass_fds)))
++                elif _HAVE_POSIX_SPAWN_CLOSEFROM and not pass_fds:
 +                    file_actions.append((os.POSIX_SPAWN_CLOSEFROM, 3))
 +                else:
-+                    # musl has no closefrom action. Enumerate in the parent,
++                    # Fallback for platforms without close_except/closefrom.
 +                    # then close in ascending order after stdio duplication.
 +                    # Ascending order also makes musl safely relocate its
 +                    # internal error pipe if it reuses listdir's directory fd.
@@ -233,7 +291,7 @@ mmap-dependent _posixshmem module.
 
 --- a/Lib/multiprocessing/util.py
 +++ b/Lib/multiprocessing/util.py
-@@ -516,10 +516,29 @@ def _flush_std_streams():
+@@ -516,10 +516,32 @@ def _flush_std_streams():
  #
  
  def spawnv_passfds(path, args, passfds):
@@ -247,17 +305,20 @@ mmap-dependent _posixshmem module.
 +        file_actions = [
 +            (os.POSIX_SPAWN_DUP2, fd, fd) for fd in passfds
 +        ]
-+        try:
-+            open_fds = sorted(map(int, os.listdir('/proc/self/fd')))
-+        except OSError as exc:
-+            raise NotImplementedError(
-+                "spawnv_passfds requires /proc/self/fd without fork()"
-+            ) from exc
-+        keep = set(passfds)
-+        file_actions.extend(
-+            (os.POSIX_SPAWN_CLOSE, fd)
-+            for fd in open_fds if fd >= 3 and fd not in keep
-+        )
++        if hasattr(os, 'POSIX_SPAWN_CLOSE_EXCEPT'):
++            file_actions.append((os.POSIX_SPAWN_CLOSE_EXCEPT, 3, passfds))
++        else:
++            try:
++                open_fds = sorted(map(int, os.listdir('/proc/self/fd')))
++            except OSError as exc:
++                raise NotImplementedError(
++                    "spawnv_passfds requires /proc/self/fd without fork()"
++                ) from exc
++            keep = set(passfds)
++            file_actions.extend(
++                (os.POSIX_SPAWN_CLOSE, fd)
++                for fd in open_fds if fd >= 3 and fd not in keep
++            )
 +        return os.posix_spawn(path, args, os.environ,
 +                              file_actions=file_actions)
 +    import subprocess

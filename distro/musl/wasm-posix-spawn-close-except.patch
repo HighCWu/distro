@@ -1,0 +1,219 @@
+# SPDX-License-Identifier: MIT
+# Add posix_spawn_file_actions_addclose_except_np to atomically close all
+# descriptors >= first_fd except an explicit keep set in the spawned child.
+diff -ruN a/include/spawn.h b/include/spawn.h
+--- a/include/spawn.h	2026-11-27 14:05:29.213181446 +0800
++++ b/include/spawn.h	2026-11-27 14:05:34.367263149 +0800
+@@ -10,6 +10,7 @@
+ #define __NEED_mode_t
+ #define __NEED_pid_t
+ #define __NEED_sigset_t
++#define __NEED_size_t
+ 
+ #include <bits/alltypes.h>
+ 
+diff -ruN a/src/process/fdop.h b/src/process/fdop.h
+--- a/src/process/fdop.h	2026-11-27 14:05:31.526221479 +0800
++++ b/src/process/fdop.h	2026-11-27 14:05:34.367452802 +0800
+@@ -3,11 +3,14 @@
+ #define FDOP_OPEN 3
+ #define FDOP_CHDIR 4
+ #define FDOP_FCHDIR 5
++#define FDOP_CLOSE_EXCEPT 6
+ 
+ struct fdop {
+ 	struct fdop *next, *prev;
+ 	int cmd, fd, srcfd, oflag;
+ 	mode_t mode;
++	size_t keep_count;
++	int *keep_fds;
+ 	char path[];
+ };
+ 
+diff -ruN a/src/process/posix_spawn.c b/src/process/posix_spawn.c
+--- a/src/process/posix_spawn.c	2026-11-27 14:05:34.033264869 +0800
++++ b/src/process/posix_spawn.c	2026-11-27 14:05:34.367654217 +0800
+@@ -6,6 +6,8 @@
+ #include <fcntl.h>
+ #include <errno.h>
+ #include <sys/wait.h>
++#include <sys/resource.h>
++#include <dirent.h>
+ #include "syscall.h"
+ #include "lock.h"
+ #include "pthread_impl.h"
+@@ -20,6 +22,101 @@
+ 	char *const *argv, *const *envp;
+ };
+ 
++static int is_kept_fd(int fd, const int *keep_fds, size_t keep_count, int pipe_fd)
++{
++	if (fd == pipe_fd) return 1;
++	size_t lo = 0, hi = keep_count;
++	while (lo < hi) {
++		size_t mid = lo + (hi - lo) / 2;
++		if (keep_fds[mid] == fd) return 1;
++		if (keep_fds[mid] < fd) lo = mid + 1;
++		else hi = mid;
++	}
++	return 0;
++}
++
++static int parse_fd_name(const char *name)
++{
++	unsigned long val = 0;
++	if (!name[0]) return -1;
++	for (const char *s = name; *s; s++) {
++		if (*s < '0' || *s > '9') return -1;
++		if (val > (unsigned long)INT_MAX / 10) return -1;
++		val = val * 10 + (unsigned long)(*s - '0');
++		if (val > (unsigned long)INT_MAX) return -1;
++	}
++	return (int)val;
++}
++
++static int close_except(int first_fd, const int *keep_fds, size_t keep_count, int pipe_fd)
++{
++#ifdef SYS_close_range
++	unsigned int cursor = (unsigned int)first_fd;
++	int pipe_pending = pipe_fd >= first_fd;
++	int range_failed = 0;
++	for (size_t i = 0; i < keep_count; i++) {
++		int keep = keep_fds[i];
++		if (pipe_pending && pipe_fd <= keep) {
++			if (cursor < (unsigned int)pipe_fd) {
++				long r = __syscall(SYS_close_range, cursor, (unsigned int)pipe_fd - 1, 0);
++				if (r == -ENOSYS) { range_failed = 1; break; }
++				if (r < 0) return (int)r;
++			}
++			if (cursor <= (unsigned int)pipe_fd)
++				cursor = (unsigned int)pipe_fd + 1;
++			pipe_pending = 0;
++		}
++		if (cursor < (unsigned int)keep) {
++			long r = __syscall(SYS_close_range, cursor, (unsigned int)keep - 1, 0);
++			if (r == -ENOSYS) { range_failed = 1; break; }
++			if (r < 0) return (int)r;
++		}
++		if (cursor <= (unsigned int)keep)
++			cursor = (unsigned int)keep + 1;
++	}
++	if (!range_failed && pipe_pending) {
++		if (cursor < (unsigned int)pipe_fd) {
++			long r = __syscall(SYS_close_range, cursor, (unsigned int)pipe_fd - 1, 0);
++			if (r == -ENOSYS) range_failed = 1;
++			else if (r < 0) return (int)r;
++		}
++		if (!range_failed && cursor <= (unsigned int)pipe_fd)
++			cursor = (unsigned int)pipe_fd + 1;
++	}
++	if (!range_failed) {
++		long r = __syscall(SYS_close_range, cursor, ~0U, 0);
++		if (r != -ENOSYS) return (int)r;
++	}
++#endif
++	int dir_fd = __sys_open("/proc/self/fd", O_RDONLY | O_DIRECTORY | O_CLOEXEC, 0);
++	if (dir_fd >= 0) {
++		char buf[1024];
++		for (;;) {
++			long nread = __syscall(SYS_getdents64, dir_fd, buf, sizeof buf);
++			if (nread <= 0) break;
++			for (long pos = 0; pos < nread;) {
++				struct dirent *d = (struct dirent *)(buf + pos);
++				int fd = parse_fd_name(d->d_name);
++				if (fd >= first_fd && fd != dir_fd &&
++				    !is_kept_fd(fd, keep_fds, keep_count, pipe_fd))
++					__syscall(SYS_close, fd);
++				pos += d->d_reclen;
++			}
++		}
++		__syscall(SYS_close, dir_fd);
++		return 0;
++	}
++	struct rlimit rl;
++	int limit = 1024;
++	if (__syscall(SYS_getrlimit, RLIMIT_NOFILE, &rl) == 0 && rl.rlim_cur > 0)
++		limit = rl.rlim_cur > 65536 ? 65536 : (int)rl.rlim_cur;
++	for (int fd = first_fd; fd < limit; fd++) {
++		if (!is_kept_fd(fd, keep_fds, keep_count, pipe_fd))
++			__syscall(SYS_close, fd);
++	}
++	return 0;
++}
++
+ static int __sys_dup2(int old, int new)
+ {
+ #ifdef SYS_dup2
+@@ -91,7 +188,7 @@
+ 			 * the pipe fd used for synchronizing with the
+ 			 * parent. To avoid that, we dup the pipe onto
+ 			 * an unoccupied fd. */
+-			if (op->fd == p) {
++			if (op->cmd != FDOP_CLOSE_EXCEPT && op->fd == p) {
+ 				ret = __syscall(SYS_dup, p);
+ 				if (ret < 0) goto fail;
+ 				__syscall(SYS_close, p);
+@@ -135,6 +232,10 @@
+ 				ret = __syscall(SYS_fchdir, op->fd);
+ 				if (ret<0) goto fail;
+ 				break;
++			case FDOP_CLOSE_EXCEPT:
++				ret = close_except(op->fd, op->keep_fds, op->keep_count, p);
++				if (ret<0) goto fail;
++				break;
+ 			}
+ 		}
+ 	}
+diff -ruN a/src/process/posix_spawn_file_actions_addclose_except_np.c b/src/process/posix_spawn_file_actions_addclose_except_np.c
+--- a/src/process/posix_spawn_file_actions_addclose_except_np.c	1970-01-01 08:00:00.000000000 +0800
++++ b/src/process/posix_spawn_file_actions_addclose_except_np.c	2026-11-27 14:05:34.367562685 +0800
+@@ -0,0 +1,49 @@
++#define _GNU_SOURCE
++#include <spawn.h>
++#include <stdlib.h>
++#include <stdint.h>
++#include <errno.h>
++#include "fdop.h"
++
++int posix_spawn_file_actions_addclose_except_np(
++	posix_spawn_file_actions_t *restrict fa, int first_fd,
++	const int *keep_fds, size_t keep_count)
++{
++	if (first_fd < 0) return EBADF;
++	if (keep_count && !keep_fds) return EINVAL;
++	if (keep_count > (SIZE_MAX - sizeof(struct fdop)) / sizeof(int))
++		return ENOMEM;
++	for (size_t i = 0; i < keep_count; i++) {
++		if (keep_fds[i] < 0) return EBADF;
++	}
++	struct fdop *op = malloc(sizeof *op + keep_count * sizeof(int));
++	if (!op) return ENOMEM;
++	op->cmd = FDOP_CLOSE_EXCEPT;
++	op->fd = first_fd;
++	op->keep_fds = keep_count ? (int *)(op + 1) : 0;
++	size_t unique = 0;
++	for (size_t i = 0; i < keep_count; i++) {
++		int fd = keep_fds[i];
++		if (fd < first_fd) continue;
++		size_t pos = unique;
++		int dup = 0;
++		while (pos > 0 && op->keep_fds[pos - 1] >= fd) {
++			if (op->keep_fds[pos - 1] == fd) {
++				dup = 1;
++				break;
++			}
++			pos--;
++		}
++		for (size_t j = unique; !dup && j > pos; j--)
++			op->keep_fds[j] = op->keep_fds[j - 1];
++		if (!dup) {
++			op->keep_fds[pos] = fd;
++			unique++;
++		}
++	}
++	op->keep_count = unique;
++	if ((op->next = fa->__actions)) op->next->prev = op;
++	op->prev = 0;
++	fa->__actions = op;
++	return 0;
++}

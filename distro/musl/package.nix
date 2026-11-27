@@ -91,6 +91,7 @@ pkgs.stdenvNoCC.mkDerivation (
       ./wasm-mincore.patch
       ./wasm-mmap-query.patch
       ./wasm-cancel-completed-syscall.patch
+      ./wasm-posix-spawn-close-except.patch
     ]
     ++ lib.optional enableForkContinuation ./fork-continuation.patch
     ++ lib.optional enableDynamicLoader ./dynamic-loader.patch
