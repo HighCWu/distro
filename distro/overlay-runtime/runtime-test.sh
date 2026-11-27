@@ -9,10 +9,12 @@ fail() {
   while :; do sleep 1; done
 }
 
-mkdir -p /tmp || fail 'mkdir /tmp'
+mkdir -p /dev /tmp || fail 'mkdir /dev /tmp'
+mount -t devtmpfs devtmpfs /dev || fail 'mount devtmpfs'
 
 out=$(overlay-runtime 2>&1)
 rc=$?
+umount /dev || fail 'umount devtmpfs'
 [ "$rc" -eq 0 ] || fail "overlay-runtime failed (rc=$rc): $out"
 printf '%s\n' "$out"
 

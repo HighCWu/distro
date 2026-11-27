@@ -206,9 +206,9 @@ int main(void)
 {
 	setvbuf(stdout, NULL, _IONBF, 0);
 
-	require(mkdir(BASE_DIR, 0755) == 0, "mkdir base tmpfs mountpoint");
-	require(mount("tmpfs", BASE_DIR, "tmpfs", 0, NULL) == 0,
-		"mount tmpfs for overlay backing");
+	require(mkdir(BASE_DIR, 0755) == 0, "mkdir base ext4 mountpoint");
+	require(mount("/dev/vda", BASE_DIR, "ext4", 0, NULL) == 0,
+		"mount ext4 /dev/vda for overlay backing");
 
 	setup_lower_tree();
 
@@ -226,7 +226,7 @@ int main(void)
 	test_rename_and_hardlink();
 
 	require(umount(MERGED_DIR) == 0, "umount overlayfs");
-	require(umount(BASE_DIR) == 0, "umount backing tmpfs");
+	require(umount(BASE_DIR) == 0, "umount backing ext4");
 	require(rmdir(BASE_DIR) == 0, "rmdir base dir");
 
 	puts("overlay runtime: copy-up, xattr, whiteout, opaque dir, rename and umount pass");
