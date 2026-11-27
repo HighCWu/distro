@@ -589,6 +589,7 @@ function user_imports({
     const write_dynamic_error = (pointer: WasmAddress, sizeValue: WasmAddress): number => {
       try {
         const size = wasm_size_to_number(sizeValue);
+        refresh_memory_range(context!.memory, pointer, size);
         const bytes = memory_bytes(context!.memory, pointer, size);
         if (!bytes) return -14;
         if (size) {
@@ -1593,10 +1594,12 @@ function user_imports({
         try {
           const value = wasm_pointer_to_number(raw);
           if (kernel_address === "i32" && value > 0xffffffff) return -75;
+          const size = kernel_address === "i64" ? 8 : 4;
+          refresh_memory_range(kernel_memory, to, size);
           const bytes = memory_bytes(
             kernel_memory,
             wasm_pointer_to_number(to),
-            kernel_address === "i64" ? 8 : 4,
+            size,
           );
           if (!bytes) return -14;
           const view = new DataView(bytes.buffer, bytes.byteOffset, bytes.byteLength);

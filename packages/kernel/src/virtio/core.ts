@@ -3,7 +3,12 @@
 import { Struct, U16LE, U32LE, U64LE } from "@lowland/bytes";
 import { getMachinePlugin, type MachinePlugin, type MachinePluginProvider } from "../plugin.ts";
 import { assert } from "../util.ts";
-import { type Imports, type WasmAddressType, wasm_address_to_number } from "../wasm.ts";
+import {
+  ensure_memory_buffer,
+  type Imports,
+  type WasmAddressType,
+  wasm_address_to_number,
+} from "../wasm.ts";
 
 const TransportFeatures = {
   VERSION_1: 1n << 32n,
@@ -65,7 +70,8 @@ class Chain implements VirtqueueChain {
   ) {
     this.#buffers = desc.map((descriptor) => {
       const address = Number(descriptor.addr);
-      const target = new Uint8Array(memory.buffer, address, descriptor.len);
+      const buffer = ensure_memory_buffer(memory, address + descriptor.len);
+      const target = new Uint8Array(buffer, address, descriptor.len);
       const writable = (descriptor.flags & DescriptorFlags.WRITE) !== 0;
       // Device work may outlive the queue generation across an await. Keep
       // guest memory isolated until release proves the chain is still valid.
@@ -108,11 +114,16 @@ export function publish_virtqueue_completion(
   completion: VirtqueueCompletion,
 ) {
   for (const { address, data } of completion.outputs) {
-    new Uint8Array(memory.buffer, address, data.byteLength).set(data);
+    const buffer = ensure_memory_buffer(memory, address + data.byteLength);
+    new Uint8Array(buffer, address, data.byteLength).set(data);
   }
 
+  const descriptorBuffer = ensure_memory_buffer(
+    memory,
+    completion.descriptor_address + VirtqDescriptor.size,
+  );
   const descriptor = VirtqDescriptor.get(
-    new DataView(memory.buffer),
+    new DataView(descriptorBuffer),
     completion.descriptor_address,
   );
   descriptor.id = completion.id;
@@ -153,9 +164,10 @@ class PackedVirtqueue implements Virtqueue {
   }
 
   #descriptor(index: number) {
+    const offset = this.#desc_addr + VirtqDescriptor.size * index;
     const desc = VirtqDescriptor.get(
-      new DataView(this.#memory.buffer),
-      this.#desc_addr + VirtqDescriptor.size * index,
+      new DataView(ensure_memory_buffer(this.#memory, offset + VirtqDescriptor.size)),
+      offset,
     );
     return {
       addr: desc.addr,
@@ -167,11 +179,10 @@ class PackedVirtqueue implements Virtqueue {
 
   #indirect_descriptors(address: number, count: number) {
     const descriptors: Descriptor[] = [];
+    const buffer = ensure_memory_buffer(this.#memory, address + VirtqDescriptor.size * count);
+    const view = new DataView(buffer);
     for (let i = 0; i < count; i++) {
-      const desc = VirtqDescriptor.get(
-        new DataView(this.#memory.buffer),
-        address + VirtqDescriptor.size * i,
-      );
+      const desc = VirtqDescriptor.get(view, address + VirtqDescriptor.size * i);
       descriptors.push({
         addr: desc.addr,
         len: desc.len,
@@ -239,9 +250,10 @@ class PackedVirtqueue implements Virtqueue {
   #release(id: number, skip: number, written: number, outputs: VirtqueueOutput[]) {
     if (!this.#valid || !this.#is_current()) return;
 
+    const offset = this.#desc_addr + VirtqDescriptor.size * this.#used_idx;
     const desc = VirtqDescriptor.get(
-      new DataView(this.#memory.buffer),
-      this.#desc_addr + VirtqDescriptor.size * this.#used_idx,
+      new DataView(ensure_memory_buffer(this.#memory, offset + VirtqDescriptor.size)),
+      offset,
     );
     const avail = (desc.flags & DescriptorFlags.AVAIL) !== 0;
     const used = (desc.flags & DescriptorFlags.USED) !== 0;

@@ -2,7 +2,9 @@
 // Experimental, opt-in single-thread user execution ABI. Linux still owns PIDs,
 // clone admission, file inheritance, signals, exit and wait.
 import {
+  ensure_memory_buffer,
   memory_bytes,
+  refresh_memory_range,
   wasm_pointer_to_number,
   wasm_value_to_number,
   type WasmAddress,
@@ -304,6 +306,7 @@ export class ForkContinuation {
     try {
       const word = this.address === "i64" ? 8 : 4;
       const offset = this.pointer(value);
+      refresh_memory_range(this.memory, value, 2 * word);
       const bytes = memory_bytes(this.memory, offset, 2 * word);
       if (!bytes || offset % word) return false;
       const view = new DataView(bytes.buffer, bytes.byteOffset, bytes.byteLength);
@@ -316,7 +319,7 @@ export class ForkContinuation {
         end % word === 0 &&
         end > start &&
         end - start <= 1024 * 1024 &&
-        end <= this.memory.buffer.byteLength &&
+        end <= ensure_memory_buffer(this.memory, end).byteLength &&
         (end <= offset || start >= offset + 2 * word)
       );
     } catch {
@@ -720,8 +723,10 @@ export class ForkContinuation {
     // validate scalar addresses, not the fresh descriptor's start < end rule.
     for (const value of [snapshot.descriptor, snapshot.stack, snapshot.tls, snapshot.entry])
       this.pointer(value);
+    const descriptorSize = this.address === "i64" ? 16 : 8;
+    refresh_memory_range(this.memory, snapshot.descriptor, descriptorSize);
     this.require(
-      memory_bytes(this.memory, this.pointer(snapshot.descriptor), this.address === "i64" ? 16 : 8),
+      memory_bytes(this.memory, this.pointer(snapshot.descriptor), descriptorSize),
       "invalid inherited descriptor",
     );
     this.global("__stack_pointer").value = snapshot.stack;

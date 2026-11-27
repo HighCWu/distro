@@ -165,6 +165,34 @@ export function refresh_memory(memory: WebAssembly.Memory, address: WasmAddressT
   grow.call(memory, address === "i64" ? 0n : 0);
 }
 
+function refresh_memory_any_width(memory: WebAssembly.Memory): void {
+  const grow = memory.grow as unknown as (delta: number | bigint) => number | bigint;
+  try {
+    grow.call(memory, 0);
+  } catch (error) {
+    if (!(error instanceof TypeError)) return;
+    try {
+      grow.call(memory, 0n);
+    } catch {
+      // An unavailable refresh is not permission to grow or to trap.
+    }
+  }
+}
+
+/** Refreshes a stale shared memory wrapper when `end` exceeds the cached buffer. */
+export function ensure_memory_buffer(memory: WebAssembly.Memory, end: number): ArrayBufferLike {
+  let buffer = memory.buffer as ArrayBufferLike;
+  if (
+    typeof SharedArrayBuffer !== "undefined" &&
+    buffer instanceof SharedArrayBuffer &&
+    end > buffer.byteLength
+  ) {
+    refresh_memory_any_width(memory);
+    buffer = memory.buffer as ArrayBufferLike;
+  }
+  return buffer;
+}
+
 /** Refresh an insufficient fixed-length shared wrapper, never its actual size.
  * Keep the raw pointer's width: memory64 grow takes a BigInt zero. Callers
  * still validate bounds and retain their existing error/partial-copy policy. */
