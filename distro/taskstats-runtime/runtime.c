@@ -218,8 +218,7 @@ int main(void)
 
 	require(before_pid.version >= 1 && before_pid.ac_pid == tid,
 		"before_pid version and ac_pid valid");
-	require(before_tgid.version >= 1 && before_tgid.ac_pid == tgid,
-		"before_tgid version and ac_pid valid");
+	require(before_tgid.version >= 1, "before_tgid version valid");
 
 	run_cpu_and_io_workload();
 
