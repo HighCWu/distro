@@ -351,14 +351,14 @@ int main(void) {
   require(nl_fd >= 0, "socket(AF_NETLINK)");
 
   set_iface_up_ipv4("lo", NULL, NULL);
-  create_dummy(nl_fd, "dummy0");
-  create_dummy(nl_fd, "dummy1");
+  create_dummy(nl_fd, "dummy10");
+  create_dummy(nl_fd, "dummy11");
 
-  set_iface_up_ipv4("dummy0", "10.99.1.1", "255.255.255.0");
-  set_iface_up_ipv4("dummy1", "10.99.2.1", "255.255.255.0");
+  set_iface_up_ipv4("dummy10", "10.99.1.1", "255.255.255.0");
+  set_iface_up_ipv4("dummy11", "10.99.2.1", "255.255.255.0");
 
-  uint32_t oif0 = if_nametoindex("dummy0");
-  uint32_t oif1 = if_nametoindex("dummy1");
+  uint32_t oif0 = if_nametoindex("dummy10");
+  uint32_t oif1 = if_nametoindex("dummy11");
   require(oif0 != 0 && oif1 != 0, "dummy ifindex");
 
   route_op(nl_fd, RTM_NEWROUTE,
@@ -416,8 +416,8 @@ int main(void) {
            24, oif0);
   route_op(nl_fd, RTM_DELROUTE, NLM_F_REQUEST | NLM_F_ACK, 102, "10.99.102.0",
            24, oif1);
-  delete_link_by_name(nl_fd, "dummy0");
-  delete_link_by_name(nl_fd, "dummy1");
+  delete_link_by_name(nl_fd, "dummy10");
+  delete_link_by_name(nl_fd, "dummy11");
   require(close(nl_fd) == 0, "close nl_fd");
 
   printf("dummy-policy-route-runtime: ok oif0=%u oif1=%u tables=101,102\n",
