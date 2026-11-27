@@ -35,6 +35,14 @@ stdenv.mkDerivation (finalAttrs: {
     "--disable-libseccomp"
   ];
 
+  postInstall = ''
+    pc="$out/lib/pkgconfig/libmagic.pc"
+    if ! grep -Eq '^(Requires\.private:.*\bzlib\b|Libs\.private:.*-lz([[:space:]]|$))' "$pc"; then
+      substituteInPlace "$pc" \
+        --replace-fail 'Cflags:' $'Requires.private: zlib\nCflags:'
+    fi
+  '';
+
   passthru.checks =
     let
       # Sample files of known types for the detection test.
@@ -43,6 +51,28 @@ stdenv.mkDerivation (finalAttrs: {
         printf 'hello, this is plain ascii text\n' > $out/fixtures/hello.txt
         printf 'hello gzip payload\n' | ${pkgs.gzip}/bin/gzip -c > $out/fixtures/hello.gz
       '';
+      client = stdenv.mkDerivation {
+        pname = "libmagic-static-pkg-config-client";
+        version = "1";
+        dontUnpack = true;
+        nativeBuildInputs = [ pkgs.pkg-config ];
+        buildPhase = ''
+          runHook preBuild
+          export PKG_CONFIG_LIBDIR=${finalAttrs.finalPackage}/lib/pkgconfig:${zlib}/lib/pkgconfig
+          export PKG_CONFIG_PATH=
+          export PKG_CONFIG_SYSTEM_INCLUDE_PATH=
+          export PKG_CONFIG_SYSTEM_LIBRARY_PATH=
+          flags=$(pkg-config --static --cflags --libs libmagic)
+          read -ra linkFlags <<<"$flags"
+          $CC -Wall -Wextra -Werror ${./linked-client.c} "''${linkFlags[@]}" -o libmagic-static-client
+          runHook postBuild
+        '';
+        installPhase = ''
+          runHook preInstall
+          install -Dm755 libmagic-static-client "$out/bin/libmagic-static-client"
+          runHook postInstall
+        '';
+      };
     in
     {
       detect = vm-test.installedTest {
@@ -52,6 +82,15 @@ stdenv.mkDerivation (finalAttrs: {
           finalAttrs.finalPackage
           busybox
           fixtures
+        ];
+      };
+      libmagic = vm-test.installedTest {
+        name = "file-libmagic";
+        init = ./linked-client-test.sh;
+        contents = [
+          finalAttrs.finalPackage
+          busybox
+          client
         ];
       };
     };

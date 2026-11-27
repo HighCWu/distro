@@ -211,3 +211,26 @@ for (const mode of ["connection close", "network close", "reader cancel"] as con
     }
   });
 }
+
+test(
+  "guest address suffixes recycle across more than 260 attachment cycles",
+  { timeout: 5000 },
+  async () => {
+    const network = isolatedNetwork();
+    try {
+      const seenAddresses = new Set<string>();
+      const seenMacs = new Set<string>();
+      for (let i = 0; i < 300; i++) {
+        const attachment = network.attach(guestAgent());
+        const device = await attachmentDevice(attachment);
+        seenAddresses.add(attachment.address);
+        seenMacs.add(device.macAddress.join(":"));
+        await closeDevice(device);
+      }
+      assert.equal(seenAddresses.size, 253);
+      assert.equal(seenMacs.size, 300);
+    } finally {
+      network.close();
+    }
+  },
+);
