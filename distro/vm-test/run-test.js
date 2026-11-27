@@ -214,7 +214,10 @@ function consumeLine(line, acceptTestResult = true) {
     const height = Number(fbVerify[2]);
     const bpp = Number(fbVerify[3]);
     if (!fbDev || !fbRegistered) {
-      finish({ passed: false, reason: "framebuffer verify requested without registered framebuffer" });
+      finish({
+        passed: false,
+        reason: "framebuffer verify requested without registered framebuffer",
+      });
       return;
     }
     if (

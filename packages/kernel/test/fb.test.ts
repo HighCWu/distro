@@ -48,10 +48,8 @@ test("createFramebuffer registers geometry, invokes flush, and refreshes after m
 
   const liveBytes = new Uint8Array(memory.buffer, fbAddr, stride * height);
   liveBytes.set([
-    0x11, 0x22, 0x33, 0xff, 0x44, 0x55, 0x66, 0xff,
-    0x77, 0x88, 0x99, 0xff, 0xaa, 0xbb, 0xcc, 0xff,
-    0x01, 0x02, 0x03, 0xff, 0x04, 0x05, 0x06, 0xff,
-    0x07, 0x08, 0x09, 0xff, 0x0a, 0x0b, 0x0c, 0xff,
+    0x11, 0x22, 0x33, 0xff, 0x44, 0x55, 0x66, 0xff, 0x77, 0x88, 0x99, 0xff, 0xaa, 0xbb, 0xcc, 0xff,
+    0x01, 0x02, 0x03, 0xff, 0x04, 0x05, 0x06, 0xff, 0x07, 0x08, 0x09, 0xff, 0x0a, 0x0b, 0x0c, 0xff,
   ]);
 
   imports.flush(0, 0, width, height);
@@ -97,4 +95,28 @@ test("framebufferPlugin attaches to a machine memory and exposes live pixels", (
   assert.deepEqual(events, ["register:2x2x32", "flush:0,0,2x2:90"]);
   assert.equal(readInfo()?.fbAddr, fbAddr);
   assert.equal(fb.readPixels()?.[15], 0x5a);
+});
+
+test("framebufferPlugin enforces single attachment and ignores flush before register", () => {
+  const memory = new WebAssembly.Memory({ initial: 1, maximum: 2, shared: true });
+  let flushCount = 0;
+  const { imports } = createFramebuffer(memory, {
+    onFlush() {
+      flushCount++;
+    },
+  });
+
+  imports.flush(0, 0, 10, 10);
+  assert.equal(flushCount, 0);
+  assert.throws(() => imports.register(0, 10, 0, 40, 32), /invalid framebuffer size/);
+
+  const fb1 = framebufferPlugin();
+  const fb2 = framebufferPlugin();
+  assert.throws(
+    () => attach_framebuffer_plugins(memory, [fb1, fb2]),
+    /at most one framebufferPlugin/,
+  );
+
+  attach_framebuffer_plugins(memory, [fb1]);
+  assert.throws(() => attach_framebuffer_plugins(memory, [fb1]), /already attached/);
 });

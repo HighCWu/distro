@@ -199,3 +199,42 @@ test("virtio input updates guest config buffer synchronously on set_config", asy
     await close_virtio_device(device);
   }
 });
+
+test("virtio input preserves pending events across reset and validates bitmap range", async () => {
+  const bad = inputDevice({ propBits: [1024] });
+  try {
+    assert.throws(() => bad.queryConfig(VirtioInputConfigSelect.PROP_BITS), RangeError);
+  } finally {
+    await close_virtio_device(bad);
+  }
+
+  const device = inputDevice({ evBits: { [EV_KEY]: [KEY_A] } });
+  const memory = new WebAssembly.Memory({ initial: 4, maximum: 4, shared: true });
+  const imports = virtio_imports({
+    memory,
+    devices: [device],
+    trigger_irq() {},
+    on_error(error) {
+      throw error;
+    },
+  });
+
+  const view = new DataView(memory.buffer);
+  view.setBigUint64(0, 256n, true);
+  view.setUint32(8, 8, true);
+  view.setUint16(14, 128 | 2, true);
+
+  try {
+    device.sendEvent({ type: EV_KEY, code: KEY_A, value: 1 });
+    imports.enable_vring(0, 0, 1, 0, 1);
+    imports.reset(0);
+    imports.enable_vring(0, 0, 1, 0, 1);
+    imports.notify(0, 0);
+
+    assert.equal(view.getUint16(256, true), EV_KEY);
+    assert.equal(view.getUint16(258, true), KEY_A);
+    assert.equal(view.getInt32(260, true), 1);
+  } finally {
+    await close_virtio_device(device);
+  }
+});
