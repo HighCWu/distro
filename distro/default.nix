@@ -1175,6 +1175,12 @@ lib.makeScope (scope: lib.callPackageWith ({ inherit lib pkgs; } // scope)) (
       sdk = self.sdk-wasm64;
       vm-test = vmTestWasm64;
     };
+    udf-volume = callPackage ./udf-volume/package.nix { };
+    udf-volume-wasm64 = callPackage ./udf-volume/package.nix {
+      platform = self.platform-wasm64;
+      sdk = self.sdk-wasm64;
+      vm-test = vmTestWasm64;
+    };
     erofs-metadata = callPackage ./erofs-metadata/package.nix { };
     erofs-metadata-wasm64 = callPackage ./erofs-metadata/package.nix {
       platform = self.platform-wasm64;
