@@ -47,7 +47,10 @@ pkgs.stdenvNoCC.mkDerivation (finalAttrs: {
   configurePhase = ''
     runHook preConfigure
     export CONFIG_SITE=${lib.escapeShellArg sdk-dynamic-loader.configSite}
-    export CC=${sdk-dynamic-loader}/bin/wasm-linux-dlopen-cc
+    compiler=wasm-linux-dlopen-cc
+    resolved_compiler=$(command -v "$compiler")
+    test "$resolved_compiler" = "${sdk-dynamic-loader}/bin/$compiler"
+    export CC="$compiler"
     export AR=${toolchain}/bin/llvm-ar
     export RANLIB=${toolchain}/bin/llvm-ranlib
     export NM=${toolchain}/bin/llvm-nm
@@ -77,7 +80,12 @@ pkgs.stdenvNoCC.mkDerivation (finalAttrs: {
     make -j"$NIX_BUILD_CORES"
     test -x apps/openssl
     test -s providers/legacy.so
-
+    test -s crypto/buildinf.h
+    grep -Fq 'wasm-linux-dlopen-cc' crypto/buildinf.h
+    if grep -Fq '${sdk-dynamic-loader}/bin/wasm-linux-dlopen-cc' crypto/buildinf.h; then
+      echo 'OpenSSL build information embeds the compiler store path' >&2
+      exit 1
+    fi
     ${sdk-dynamic-loader}/bin/wasm-linux-dlopen-cc \
       -O2 -Wall -Wextra -Werror -Iinclude \
       ${./provider-runtime.c} libcrypto.a -ldl -pthread -o provider-runtime.wasm
@@ -102,6 +110,17 @@ pkgs.stdenvNoCC.mkDerivation (finalAttrs: {
     test -s "$prefix/lib/ossl-modules/legacy.so"
     test -s "$prefix/ssl/openssl.cnf"
     install -Dm755 provider-runtime.wasm "$prefix/bin/provider-runtime"
+    for artifact in \
+      "$prefix/bin/openssl" \
+      "$prefix/bin/provider-runtime" \
+      "$prefix/lib/libcrypto.a" \
+      "$prefix/lib/libssl.a" \
+      "$prefix/lib/ossl-modules/legacy.so"; do
+      if grep -aFq '${sdk-dynamic-loader}/bin/wasm-linux-dlopen-cc' "$artifact"; then
+        echo "OpenSSL runtime artifact embeds the compiler store path: $artifact" >&2
+        exit 1
+      fi
+    done
 
     notices="$out/share/licenses/openssl-dynamic"
     materials="$buildMaterials/share/openssl-dynamic-materials"
@@ -124,7 +143,8 @@ pkgs.stdenvNoCC.mkDerivation (finalAttrs: {
     cp ${./package.nix} ${./provider-runtime.c} ${./runtime-test.sh} \
       ${../openssl/speed-no-mlock-on-wasm.patch} \
       ${../busybox/check-binary.mjs} ${../../packages/kernel/src/wasm_binary.ts} \
-      configdata.pm Makefile "$materials/"
+      configdata.pm Makefile crypto/build.info crypto/buildinf.h util/mkbuildinf.pl \
+      "$materials/"
     cp "$CONFIG_SITE" "$materials/config.site"
     ln -s "$src" "$materials/source"
     ln -s ${sdk-dynamic-loader.buildMaterials} "$materials/dynamic-sdk"
@@ -134,6 +154,7 @@ pkgs.stdenvNoCC.mkDerivation (finalAttrs: {
     source=OpenSSL $version inherited from openssl.src
     target=linux-generic${toString platform.addressBits}
     CC=$CC
+    Resolved build compiler=${sdk-dynamic-loader}/bin/wasm-linux-dlopen-cc
     CONFIG_SITE=$CONFIG_SITE
     AR=$AR
     RANLIB=$RANLIB
