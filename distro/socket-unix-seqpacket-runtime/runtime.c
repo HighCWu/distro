@@ -1,6 +1,7 @@
 #define _GNU_SOURCE
 #include <errno.h>
 #include <fcntl.h>
+#include <stddef.h>
 #include <stdint.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -136,12 +137,10 @@ int main(void) {
   require(memcmp(rtag, tag, sizeof(tag) - 1) == 0, "SCM_RIGHTS payload");
 
   int got_fd = -1;
-  for (struct cmsghdr *rc = CMSG_FIRSTHDR(&rmsg); rc != NULL;
-       rc = CMSG_NXTHDR(&rmsg, rc)) {
-    if (rc->cmsg_level == SOL_SOCKET && rc->cmsg_type == SCM_RIGHTS) {
-      memcpy(&got_fd, CMSG_DATA(rc), sizeof(int));
-      break;
-    }
+  struct cmsghdr *rc = CMSG_FIRSTHDR(&rmsg);
+  if (rc != NULL && rc->cmsg_level == SOL_SOCKET &&
+      rc->cmsg_type == SCM_RIGHTS) {
+    memcpy(&got_fd, CMSG_DATA(rc), sizeof(int));
   }
   require(got_fd >= 0, "extracted SCM_RIGHTS fd");
 
