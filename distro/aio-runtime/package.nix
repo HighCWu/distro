@@ -50,5 +50,6 @@ stdenv.mkDerivation (finalAttrs: {
         finalAttrs.finalPackage
       ];
     };
-  } // extraChecks;
+  }
+  // extraChecks;
 })

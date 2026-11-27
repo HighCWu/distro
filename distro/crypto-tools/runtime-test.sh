@@ -8,6 +8,7 @@ fail() {
 }
 sum=/libexec/libkcapi/sha256sum
 sum224=/libexec/libkcapi/sha224sum
+mount -t devtmpfs devtmpfs /dev || fail 'mount devtmpfs'
 mount -t proc proc /proc || fail 'mount proc'
 (cd / && sha256sum -c /crypto-tools.sha256) || fail 'final upstream binary identities'
 version=$("$sum" --version 2>&1) || fail 'hasher version'
@@ -59,6 +60,7 @@ done
 rm "$work/abc" "$work/empty" "$work/large" "$work/checks" "$work/bad" "$work/negative" "$work/key" "$work/message" "$work/unknown" "$work/unpriv" || fail 'fixture cleanup'
 rmdir "$work" || fail 'temporary directory cleanup'
 umount /proc || fail 'proc cleanup'
+umount /dev || fail 'dev cleanup'
 echo 'crypto tools: unprivileged Netlink/AF_ALG execution, notices and cleanup pass'
 echo '::vm-test::pass'
 while :; do sleep 1; done

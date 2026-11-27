@@ -17,7 +17,6 @@ pkgs.stdenvNoCC.mkDerivation (finalAttrs: {
     "out"
     "buildMaterials"
   ];
-  dontUnpack = true;
   dontConfigure = true;
   dontCheck = true;
   dontFixup = true;
@@ -34,7 +33,7 @@ pkgs.stdenvNoCC.mkDerivation (finalAttrs: {
   buildPhase = ''
     runHook preBuild
 
-    cmake -S "$src" -B build -G Ninja \
+    cmake -S . -B build -G Ninja \
       -DCMAKE_SYSTEM_NAME=Linux \
       -DCMAKE_SYSTEM_PROCESSOR=${platform.wasmArch} \
       -DCMAKE_C_COMPILER=${sdk}/bin/wasm-linux-cc \
@@ -108,7 +107,7 @@ pkgs.stdenvNoCC.mkDerivation (finalAttrs: {
     notices="$out/share/licenses/libevent-runtime"
     materials="$buildMaterials/share/libevent-runtime-materials"
     mkdir -p "$notices" "$materials"
-    install -Dm644 "$src/LICENSE" "$notices/libevent-LICENSE"
+    install -Dm644 LICENSE "$notices/libevent-LICENSE"
     install -Dm644 ${../sdk/LICENSE.MIT} "$notices/LOCAL-ADDITIONS.MIT"
     cp -r ${sdk}/share/linux-wasm-sdk/licenses "$notices/standard-sdk"
     cp -r ${sdk}/share/linux-wasm-sdk/licenses "$materials/standard-sdk-licenses"
