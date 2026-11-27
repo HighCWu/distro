@@ -233,3 +233,44 @@ test("real runner dispatches ::vm-test::resize requests to consoleDevice.resize"
     rmSync(temp, { recursive: true, force: true });
   }
 });
+
+test("real runner dispatches ::vm-test::input requests to inputDevice.sendEvents", () => {
+  const temp = mkdtempSync(join(tmpdir(), "linux-wasm-runner-input-"));
+  try {
+    const initramfs = join(temp, "initramfs");
+    const disk = join(temp, "disk");
+    writeFileSync(initramfs, new Uint8Array([1]));
+    writeFileSync(disk, new Uint8Array(512).fill(0x37));
+    const result = spawnSync(
+      process.execPath,
+      [
+        fileURLToPath(new URL("./run-test.js", import.meta.url)),
+        "--readonly-disks",
+        fileURLToPath(new URL("./shutdown-fixture.js", import.meta.url)),
+        initramfs,
+        disk,
+      ],
+      {
+        encoding: "utf8",
+        timeout: 10000,
+        env: {
+          ...process.env,
+          RUNNER_FIXTURE_FAIL: "0",
+          RUNNER_FIXTURE_SCENARIO: "input-events",
+        },
+      },
+    );
+    assert.ifError(result.error);
+    assert.equal(result.status, 0, result.stdout + result.stderr);
+    assert.match(
+      result.stdout,
+      /fixture: input events \[\{"type":1,"code":30,"value":1\},\{"type":0,"code":0,"value":0\}\]/,
+    );
+    assert.match(
+      result.stdout,
+      /fixture: input events \[\{"type":1,"code":30,"value":0\},\{"type":0,"code":0,"value":0\}\]/,
+    );
+  } finally {
+    rmSync(temp, { recursive: true, force: true });
+  }
+});

@@ -7,6 +7,11 @@ export const consoleDevice = (_input, output) => ({
   },
 });
 export const entropyDevice = () => ({});
+export const inputDevice = () => ({
+  sendEvents(events) {
+    console.log(`fixture: input events ${JSON.stringify(events)}`);
+  },
+});
 export const blockDevice = (storage) => {
   if (process.env.RUNNER_FIXTURE_SETUP_CHECK === "1") {
     process.once("beforeExit", async () => {
@@ -29,8 +34,14 @@ export async function bootMachine({ plugins }) {
   if (scenario === "console-close-machine-fail" || scenario === "console-close-clean") {
     await writer.close();
   } else if (scenario !== "boot-pass") {
+    const prefix =
+      scenario === "console-resize"
+        ? "::vm-test::resize:120:40\n"
+        : scenario === "input-events"
+          ? "::vm-test::input:30:1\n::vm-test::input:30:0\n"
+          : "";
     await write(
-      (scenario === "console-resize" ? "::vm-test::resize:120:40\n" : "") +
+      prefix +
         "::vm-test::pass\n" +
         (scenario === "same-chunk" ? "::vm-test::fail: late failure\n" : ""),
     );

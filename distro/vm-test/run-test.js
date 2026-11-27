@@ -50,9 +50,8 @@ if (
 
 const ninep = ninepServer || ninepMemory ? await import("./ninep-host.js") : null;
 const linuxModule = pathToFileURL(linuxPath);
-const { blockDevice, bootMachine, consoleDevice, entropyDevice, vsockDevice } = await import(
-  linuxModule.href
-);
+const { blockDevice, bootMachine, consoleDevice, entropyDevice, inputDevice, vsockDevice } =
+  await import(linuxModule.href);
 // Fail before acquiring disk handles or constructing devices for a missing image.
 const initcpio = readFileSync(initramfsPath);
 
@@ -193,6 +192,15 @@ function consumeLine(line, acceptTestResult = true) {
     return;
   }
 
+  const inputEvent = /^::vm-test::input:(\d+):(\d+)$/.exec(line);
+  if (inputEvent) {
+    inputDev?.sendEvents([
+      { type: 1, code: Number(inputEvent[1]), value: Number(inputEvent[2]) },
+      { type: 0, code: 0, value: 0 },
+    ]);
+    return;
+  }
+
   const testResult = parseResult(line);
   if (testResult) {
     if (observingMemoryGrowth && testResult.passed) observeMemoryGrowth(2);
@@ -275,6 +283,10 @@ function consoleOutput({ failWhenClosed, acceptTestResult = true }) {
 const input = new TransformStream();
 const inputWriter = input.writable.getWriter();
 const consoleDev = consoleDevice(input.readable, consoleOutput({ failWhenClosed: true }));
+const inputDev =
+  typeof inputDevice === "function"
+    ? inputDevice({ name: "Wasm Virtio Input", evBits: { 1: [30] } })
+    : null;
 const devices = [consoleDev, entropyDevice()];
 
 const disks = [];
@@ -326,6 +338,8 @@ try {
       }),
     );
   }
+
+  if (inputDev) devices.push(inputDev);
 
   machine = await bootMachine({
     cpus,
