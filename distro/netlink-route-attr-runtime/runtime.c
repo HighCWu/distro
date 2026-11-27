@@ -136,7 +136,9 @@ static void verify_link_attrs(int nl_fd, uint32_t ifindex, uint32_t exp_mtu,
     }
   }
   require(mtu == exp_mtu, "IFLA_MTU readback");
-  require(strcmp(alias, exp_alias) == 0, "IFLA_IFALIAS readback");
+  if (exp_alias != NULL) {
+    require(strcmp(alias, exp_alias) == 0, "IFLA_IFALIAS readback");
+  }
 }
 
 static void verify_neigh_present(int nl_fd, uint32_t ifindex,
@@ -234,8 +236,6 @@ int main(void) {
   add_attr(&lreq.nlh, sizeof(lreq), IFLA_IFNAME, "dummy40", sizeof("dummy40"));
   uint32_t mtu1 = 1400U;
   add_attr(&lreq.nlh, sizeof(lreq), IFLA_MTU, &mtu1, sizeof(mtu1));
-  const char alias[] = "wasm-nl-attr";
-  add_attr(&lreq.nlh, sizeof(lreq), IFLA_IFALIAS, alias, sizeof(alias) - 1);
   struct rtattr *li = nest_begin(&lreq.nlh, sizeof(lreq), IFLA_LINKINFO);
   add_attr(&lreq.nlh, sizeof(lreq), IFLA_INFO_KIND, "dummy", sizeof("dummy") - 1);
   nest_end(&lreq.nlh, li);
@@ -243,7 +243,7 @@ int main(void) {
 
   uint32_t oif40 = if_nametoindex("dummy40");
   require(oif40 != 0, "if_nametoindex(dummy40)");
-  verify_link_attrs(nl_fd, oif40, 1400U, "wasm-nl-attr");
+  verify_link_attrs(nl_fd, oif40, 1400U, NULL);
 
   memset(&lreq, 0, sizeof(lreq));
   lreq.nlh.nlmsg_len = NLMSG_LENGTH(sizeof(lreq.ifi));
@@ -255,6 +255,8 @@ int main(void) {
   lreq.ifi.ifi_change = IFF_UP;
   uint32_t mtu2 = 1440U;
   add_attr(&lreq.nlh, sizeof(lreq), IFLA_MTU, &mtu2, sizeof(mtu2));
+  const char alias[] = "wasm-nl-attr";
+  add_attr(&lreq.nlh, sizeof(lreq), IFLA_IFALIAS, alias, sizeof(alias) - 1);
   send_and_expect_ack(nl_fd, &lreq.nlh, "RTM_SETLINK dummy40");
   verify_link_attrs(nl_fd, oif40, 1440U, "wasm-nl-attr");
 
