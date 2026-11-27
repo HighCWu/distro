@@ -152,12 +152,15 @@ int main(void) {
 
   char err_buf[64];
   struct iovec err_local = {.iov_base = err_buf, .iov_len = sizeof(err_buf)};
-  struct iovec bad_remote = {.iov_base = (void *)(uintptr_t)0x1000U,
+  struct iovec bad_remote = {.iov_base = (void *)(~(uintptr_t)0xfffU),
                              .iov_len = sizeof(err_buf)};
   ssize_t ef = process_vm_readv(self_pid, &err_local, 1, &bad_remote, 1, 0);
   require(ef == -1 && errno == EFAULT, "process_vm_readv EFAULT");
 
   struct iovec good_remote = {.iov_base = loc0, .iov_len = sizeof(err_buf)};
+  ssize_t ev = process_vm_readv(self_pid, &err_local, 1, &good_remote, 1, 1);
+  require(ev == -1 && errno == EINVAL, "process_vm_readv nonzero flags EINVAL");
+
   ssize_t es =
       process_vm_readv((pid_t)999999, &err_local, 1, &good_remote, 1, 0);
   require(es == -1 && errno == ESRCH, "process_vm_readv ESRCH");
