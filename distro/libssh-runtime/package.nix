@@ -111,7 +111,8 @@ pkgs.stdenvNoCC.mkDerivation (finalAttrs: {
       build/CMakeCache.txt "$materials/"
     ln -s "$src" "$materials/source.tar.xz"
     ln -s ${sdk.buildMaterials} "$materials/standard-sdk"
-    ln -s ${openssl.buildMaterials} "$materials/openssl"
+    ln -s ${openssl.src} "$materials/openssl-source"
+    cp ${../openssl/package.nix} "$materials/openssl-source-package.nix"
     ln -s ${llvm-toolchain.licenseSource} "$materials/llvm-toolchain-source"
     runHook postInstall
   '';
