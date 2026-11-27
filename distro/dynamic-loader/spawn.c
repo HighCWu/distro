@@ -3,6 +3,7 @@
 #include <dlfcn.h>
 #include <errno.h>
 #include <fcntl.h>
+#include <pthread.h>
 #include <spawn.h>
 #include <stdint.h>
 #include <stdio.h>
@@ -49,7 +50,11 @@ static int spawn_child_with_closed_fd(uint32_t process, uint32_t thread)
 
     errno = EDOM;
     pid_t child = -1;
-    error = posix_spawn(&child, "/init", &actions, NULL, arguments, environ);
+    for (int attempt = 0; attempt < 100; attempt++) {
+        error = posix_spawn(&child, "/init", &actions, NULL, arguments, environ);
+        if (error != EOPNOTSUPP) break;
+        usleep(5000);
+    }
     verify_parent(process, thread, EDOM);
     require(error == 0 && child > 0, "posix_spawn child image");
     require(fcntl(descriptors[0], F_GETFD) >= 0, "child close action leaves parent descriptor open");
@@ -82,6 +87,26 @@ static void child_main(int argc, char **argv)
     errno = 0;
     if (fcntl((int)descriptor, F_GETFD) != -1 || errno != EBADF) exit(23);
     exit(0);
+}
+
+struct worker_gate {
+    pthread_mutex_t mutex;
+    pthread_cond_t cond;
+    int started;
+    int release;
+};
+
+static void *active_worker_main(void *arg)
+{
+    struct worker_gate *gate = (struct worker_gate *)arg;
+    pthread_mutex_lock(&gate->mutex);
+    gate->started = 1;
+    pthread_cond_broadcast(&gate->cond);
+    while (!gate->release) {
+        pthread_cond_wait(&gate->cond, &gate->mutex);
+    }
+    pthread_mutex_unlock(&gate->mutex);
+    return NULL;
 }
 
 int main(int argc, char **argv)
@@ -122,8 +147,43 @@ int main(int argc, char **argv)
             "spawn after a shared library has been loaded");
     verify_parent(process_value, thread_value, ECHILD);
     require(leaf_value() == 0x13579bdf, "call shared library after spawning");
+
+    struct worker_gate gate = {
+        .mutex = PTHREAD_MUTEX_INITIALIZER,
+        .cond = PTHREAD_COND_INITIALIZER,
+        .started = 0,
+        .release = 0,
+    };
+    pthread_t worker;
+    require(pthread_create(&worker, NULL, active_worker_main, &gate) == 0,
+            "create background worker before posix_spawn");
+    pthread_mutex_lock(&gate.mutex);
+    while (!gate.started) {
+        pthread_cond_wait(&gate.cond, &gate.mutex);
+    }
+    pthread_mutex_unlock(&gate.mutex);
+
+    char *blocked_arguments[] = { (char *)"/init", (char *)"--spawn-child", (char *)"0", NULL };
+    pid_t blocked_child = -1;
+    int blocked = posix_spawn(&blocked_child, "/init", NULL, NULL, blocked_arguments, environ);
+    require(blocked == EOPNOTSUPP,
+            "posix_spawn while a background worker is active reports EOPNOTSUPP");
+
+    pthread_mutex_lock(&gate.mutex);
+    gate.release = 1;
+    pthread_cond_broadcast(&gate.cond);
+    pthread_mutex_unlock(&gate.mutex);
+    void *worker_result = (void *)1;
+    require(pthread_join(worker, &worker_result) == 0 && worker_result == NULL,
+            "join background worker before post-thread posix_spawn");
+
+    require(spawn_child_with_closed_fd(process_value, thread_value) == 0,
+            "spawn after all background workers have retired");
+    verify_parent(process_value, thread_value, ECHILD);
+    require(leaf_value() == 0x13579bdf, "call shared library after post-thread spawn");
+
     require(dlclose(library) == 0, "close shared library after spawning");
-    puts("dynamic spawn: loaded library, exec, wait and parent reuse pass");
+    puts("dynamic spawn: loaded library, active-worker EOPNOTSUPP, post-thread spawn and parent reuse pass");
     puts("::vm-test::pass");
     for (;;) pause();
 }

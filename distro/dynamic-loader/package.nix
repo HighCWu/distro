@@ -123,7 +123,7 @@ pkgs.stdenvNoCC.mkDerivation (finalAttrs: {
       output = "capacity-leaf.so";
       inputs = [ "capacity-leaf.o" ];
     }}
-    wasm-linux-dlopen-cc -O2 -Wall -Wextra -Werror ${./spawn.c} -o spawn.wasm
+    wasm-linux-dlopen-cc -O2 -Wall -Wextra -Werror -pthread ${./spawn.c} -o spawn.wasm
     wasm-linux-dlopen-cc -O2 -Wall -Wextra -Werror ${./poll-runtime.c} -o poll-runtime.wasm
     wasm-linux-dlopen-cc -O2 -Wall -Wextra -Werror -pthread ${./thread-runtime.c} -o thread-runtime.wasm
     wasm-linux-dlopen-cc -O2 -Wall -Wextra -Werror ${./process-copy-runtime.c} -o process-copy-runtime.wasm
