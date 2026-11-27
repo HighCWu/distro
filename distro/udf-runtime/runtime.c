@@ -1,0 +1,146 @@
+// SPDX-License-Identifier: MIT
+#define _GNU_SOURCE
+#include <dirent.h>
+#include <errno.h>
+#include <fcntl.h>
+#include <stdint.h>
+#include <stdio.h>
+#include <stdlib.h>
+#include <string.h>
+#include <sys/mount.h>
+#include <sys/stat.h>
+#include <sys/statfs.h>
+#include <unistd.h>
+
+#define DEV_PATH "/dev/vda"
+#define MNT_DIR "/mnt"
+#define UDF_DIR MNT_DIR "/UdfSubDir"
+#define UDF_FILE UDF_DIR "/LongUdfPayload.bin"
+#define UDF_RENAMED_NAME "RenamedUdfPayload.bin"
+#define UDF_RENAMED UDF_DIR "/" UDF_RENAMED_NAME
+#define UDF_SYMLINK UDF_DIR "/link.bin"
+#define UDF_HARDLINK UDF_DIR "/hard.bin"
+#define UDF_MAGIC_VAL 0x15013346U
+#define WRITE_SIZE 24576U
+#define EXTEND_SIZE 28672U
+
+static void require(int ok, const char *what)
+{
+	if (ok) return;
+	fprintf(stderr, "udf-runtime: %s (errno=%d: %s)\n", what, errno,
+		strerror(errno));
+	exit(1);
+}
+
+static uint8_t pattern_byte(size_t offset)
+{
+	return (uint8_t)((offset * 157u + 23u) & 0xffu);
+}
+
+int main(void)
+{
+	setvbuf(stdout, NULL, _IONBF, 0);
+
+	if (mkdir(MNT_DIR, 0755) != 0) {
+		require(errno == EEXIST, "mkdir /mnt");
+	}
+	if (mount(DEV_PATH, MNT_DIR, "udf", 0, "iocharset=utf8") != 0) {
+		require(errno == EINVAL &&
+				mount(DEV_PATH, MNT_DIR, "udf", 0, NULL) == 0,
+			"mount udf /dev/vda");
+	}
+
+	struct statfs sfs;
+	require(statfs(MNT_DIR, &sfs) == 0, "statfs /mnt");
+	require((uint32_t)sfs.f_type == UDF_MAGIC_VAL,
+		"statfs f_type == UDF_SUPER_MAGIC");
+
+	require(mkdir(UDF_DIR, 0755) == 0, "mkdir UdfSubDir");
+
+	int fd = open(UDF_FILE, O_CREAT | O_RDWR | O_TRUNC, 0644);
+	require(fd >= 0, "create LongUdfPayload.bin");
+
+	uint8_t wbuf[4096];
+	size_t done = 0;
+	while (done < WRITE_SIZE) {
+		size_t chunk = WRITE_SIZE - done;
+		if (chunk > sizeof(wbuf)) chunk = sizeof(wbuf);
+		for (size_t i = 0; i < chunk; i++) {
+			wbuf[i] = pattern_byte(done + i);
+		}
+		ssize_t n = write(fd, wbuf, chunk);
+		if (n < 0 && errno == EINTR) continue;
+		require(n > 0, "write pattern to UDF");
+		done += (size_t)n;
+	}
+	require(ftruncate(fd, EXTEND_SIZE) == 0, "ftruncate extend UDF file");
+	require(fsync(fd) == 0, "fsync UDF file");
+	require(close(fd) == 0, "close UDF file");
+
+	require(rename(UDF_FILE, UDF_RENAMED) == 0, "rename UDF LFN");
+
+	DIR *d = opendir(UDF_DIR);
+	require(d != NULL, "opendir UdfSubDir");
+	int saw_renamed = 0;
+	int saw_old = 0;
+	struct dirent *ent;
+	while ((ent = readdir(d)) != NULL) {
+		if (strcmp(ent->d_name, UDF_RENAMED_NAME) == 0) {
+			saw_renamed = 1;
+		}
+		if (strcmp(ent->d_name, "LongUdfPayload.bin") == 0) {
+			saw_old = 1;
+		}
+	}
+	require(closedir(d) == 0, "closedir UdfSubDir");
+	require(saw_renamed == 1 && saw_old == 0,
+		"readdir shows renamed UDF LFN");
+
+	require(symlink(UDF_RENAMED_NAME, UDF_SYMLINK) == 0,
+		"symlink on UDF");
+	char target[128] = { 0 };
+	ssize_t rlen = readlink(UDF_SYMLINK, target, sizeof(target) - 1);
+	require(rlen == (ssize_t)strlen(UDF_RENAMED_NAME) &&
+			strcmp(target, UDF_RENAMED_NAME) == 0,
+		"readlink on UDF");
+
+	int rfd = open(UDF_SYMLINK, O_RDONLY);
+	require(rfd >= 0, "open via UDF symlink");
+	struct stat st;
+	require(fstat(rfd, &st) == 0 && (size_t)st.st_size == EXTEND_SIZE,
+		"fstat extended UDF size");
+	uint8_t rbuf[4096];
+	done = 0;
+	while (done < EXTEND_SIZE) {
+		size_t chunk = EXTEND_SIZE - done;
+		if (chunk > sizeof(rbuf)) chunk = sizeof(rbuf);
+		ssize_t n = read(rfd, rbuf, chunk);
+		if (n < 0 && errno == EINTR) continue;
+		require(n > 0, "read via UDF symlink");
+		for (ssize_t i = 0; i < n; i++) {
+			size_t pos = done + (size_t)i;
+			uint8_t exp = pos < WRITE_SIZE ? pattern_byte(pos) : 0;
+			require(rbuf[i] == exp, "UDF byte matches expected");
+		}
+		done += (size_t)n;
+	}
+	require(close(rfd) == 0, "close read UDF file");
+
+	require(link(UDF_RENAMED, UDF_HARDLINK) == 0, "hardlink on UDF");
+	struct stat st_orig;
+	struct stat st_hard;
+	require(stat(UDF_RENAMED, &st_orig) == 0 &&
+			stat(UDF_HARDLINK, &st_hard) == 0 &&
+			st_orig.st_ino == st_hard.st_ino &&
+			st_orig.st_nlink == 2,
+		"UDF hardlink shares inode and nlink=2");
+
+	require(unlink(UDF_SYMLINK) == 0, "unlink UDF symlink");
+	require(unlink(UDF_HARDLINK) == 0, "unlink UDF hardlink");
+	require(unlink(UDF_RENAMED) == 0, "unlink UDF file");
+	require(rmdir(UDF_DIR) == 0, "rmdir UdfSubDir");
+	require(umount(MNT_DIR) == 0, "umount /mnt");
+
+	puts("udf runtime: mount, statfs, LFN, truncate, rename, symlink, hardlink and umount pass");
+	return 0;
+}
