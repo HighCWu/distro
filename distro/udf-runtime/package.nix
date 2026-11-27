@@ -18,7 +18,7 @@ let
       }
       ''
         truncate -s 16777216 "$out"
-        mkudffs --media-type=hd --utf8 -b 4096 --lvid=WASMUDF --vid=WASMUDF "$out"
+        mkudffs --utf8 --media-type=hd -b 4096 --lvid=WASMUDF --vid=WASMUDF "$out"
       '';
 in
 stdenv.mkDerivation (finalAttrs: {
