@@ -2031,6 +2031,22 @@ lib.makeScope (scope: lib.callPackageWith ({ inherit lib pkgs; } // scope)) (
       vm-test = vmTestWasm64;
       extraChecks = { };
     };
+    libssh-runtime = callPackage ./libssh-runtime/package.nix {
+      extraChecks.both = pkgs.runCommand "libssh-runtime-check-both" { passthru.ci.heavy = true; } ''
+        test -e ${self.libssh-runtime.checks.runtime}
+        test -e ${self.libssh-runtime-wasm64.checks.runtime}
+        touch $out
+      '';
+    };
+    libssh-runtime-wasm64 = self.libssh-runtime.override {
+      platform = self.platform-wasm64;
+      sdk = self.sdk-wasm64;
+      openssl = self.openssl-wasm64;
+      llvm-toolchain = self.llvm-toolchain-wasm64;
+      busybox = self.busybox-wasm64;
+      vm-test = vmTestWasm64;
+      extraChecks = { };
+    };
     libuv-runtime = callPackage ./libuv-runtime/package.nix {
       extraChecks.both = pkgs.runCommand "libuv-runtime-check-both" { passthru.ci.heavy = true; } ''
         test -e ${self.libuv-runtime.checks.runtime}
