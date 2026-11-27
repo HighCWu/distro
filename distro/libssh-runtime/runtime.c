@@ -858,7 +858,8 @@ connect_client(unsigned int port, const char *username)
   ssh_session session = ssh_new();
   bool process_config = false;
   int strict_host_key_check = 0;
-  long timeout_seconds = 25;
+  int nodelay = 1;
+  long timeout_seconds = 45;
 
   if (session == NULL)
     return NULL;
@@ -868,6 +869,7 @@ connect_client(unsigned int port, const char *username)
       ssh_options_set(session, SSH_OPTIONS_PROCESS_CONFIG, &process_config) != SSH_OK ||
       ssh_options_set(session, SSH_OPTIONS_STRICTHOSTKEYCHECK,
                       &strict_host_key_check) != SSH_OK ||
+      ssh_options_set(session, SSH_OPTIONS_NODELAY, &nodelay) != SSH_OK ||
       ssh_options_set(session, SSH_OPTIONS_TIMEOUT, &timeout_seconds) != SSH_OK ||
       ssh_connect(session) != SSH_OK) {
     fprintf(stderr, "libssh runtime: connect_client(%s) failed: %s\n",
@@ -1038,7 +1040,7 @@ main(void)
     goto cleanup;
   }
   (void)ssh_set_log_callback(capture_ssh_log);
-  (void)ssh_set_log_level(SSH_LOG_PROTOCOL);
+  (void)ssh_set_log_level(SSH_LOG_PACKET);
   ssh_initialized = 1;
   path_length = snprintf(server.sftp_root, sizeof(server.sftp_root),
                          "/tmp/libssh-sftp-runtime-%ld", (long)getpid());

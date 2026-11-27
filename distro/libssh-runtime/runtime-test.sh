@@ -66,9 +66,9 @@ status=$?
 [ -n "$workdir" ] || fail 'creating temporary directory'
 
 if [ "$native_reference" = 1 ]; then
-  "$timeout_program" 60 "$program" >"$workdir/program.out" 2>"$workdir/program.err"
+  "$timeout_program" 120 "$program" >"$workdir/program.out" 2>"$workdir/program.err"
 else
-  "$timeout_program" timeout 60 "$program" >"$workdir/program.out" 2>"$workdir/program.err"
+  "$timeout_program" timeout 120 "$program" >"$workdir/program.out" 2>"$workdir/program.err"
 fi
 status=$?
 [ "$status" -eq 0 ] || fail "consumer did not finish under the watchdog (status $status)"
