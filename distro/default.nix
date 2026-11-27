@@ -1163,6 +1163,12 @@ lib.makeScope (scope: lib.callPackageWith ({ inherit lib pkgs; } // scope)) (
       sdk = self.sdk-wasm64;
       vm-test = vmTestWasm64;
     };
+    exfat-volume = callPackage ./exfat-volume/package.nix { };
+    exfat-volume-wasm64 = callPackage ./exfat-volume/package.nix {
+      platform = self.platform-wasm64;
+      sdk = self.sdk-wasm64;
+      vm-test = vmTestWasm64;
+    };
     isofs-volume = callPackage ./isofs-volume/package.nix { };
     isofs-volume-wasm64 = callPackage ./isofs-volume/package.nix {
       platform = self.platform-wasm64;
