@@ -1596,11 +1596,7 @@ function user_imports({
           if (kernel_address === "i32" && value > 0xffffffff) return -75;
           const size = kernel_address === "i64" ? 8 : 4;
           refresh_memory_range(kernel_memory, to, size);
-          const bytes = memory_bytes(
-            kernel_memory,
-            wasm_pointer_to_number(to),
-            size,
-          );
+          const bytes = memory_bytes(kernel_memory, wasm_pointer_to_number(to), size);
           if (!bytes) return -14;
           const view = new DataView(bytes.buffer, bytes.byteOffset, bytes.byteLength);
           if (kernel_address === "i64") view.setBigUint64(0, BigInt(value), true);
