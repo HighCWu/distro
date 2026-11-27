@@ -3,6 +3,7 @@
 #include <dirent.h>
 #include <errno.h>
 #include <fcntl.h>
+#include <stddef.h>
 #include <linux/fuse.h>
 #include <pthread.h>
 #include <stdint.h>
