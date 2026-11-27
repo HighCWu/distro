@@ -38,7 +38,7 @@ if "$sum" -c "$work/bad" >"$work/negative" 2>&1; then fail 'bad checksum unexpec
 check_file "$sum" "$work/abc" ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad
 echo 'crypto tools: large binary mapping/splice, checksum rejection and recovery pass'
 
-for i in 1 2 3 4 5 6 7 8 9 10 11 12 13 14 15 16 17 18 19 20; do
+for _ in 1 2 3 4 5 6 7 8 9 10 11 12 13 14 15 16 17 18 19 20; do
   printf '\013' >>"$work/key" || fail 'public HMAC fixture key'
 done
 printf 'Hi There' >"$work/message" || fail 'HMAC message'
