@@ -1990,12 +1990,15 @@ lib.makeScope (scope: lib.callPackageWith ({ inherit lib pkgs; } // scope)) (
       extraChecks.both = pkgs.runCommand "libevent-runtime-check-both" { passthru.ci.heavy = true; } ''
         test -e ${self.libevent-runtime.checks.runtime}
         test -e ${self.libevent-runtime-wasm64.checks.runtime}
+        test -e ${self.libevent-runtime.checks.tls-runtime}
+        test -e ${self.libevent-runtime-wasm64.checks.tls-runtime}
         touch $out
       '';
     };
     libevent-runtime-wasm64 = self.libevent-runtime.override {
       platform = self.platform-wasm64;
       sdk = self.sdk-wasm64;
+      openssl = self.openssl-wasm64;
       llvm-toolchain = self.llvm-toolchain-wasm64;
       busybox = self.busybox-wasm64;
       vm-test = vmTestWasm64;
