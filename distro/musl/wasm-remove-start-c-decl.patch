@@ -1,0 +1,13 @@
+# SPDX-License-Identifier: MIT
+# Remove the now-unused _start_c forward declaration from arch/wasm32/crt_arch.h.
+diff --git a/arch/wasm32/crt_arch.h b/arch/wasm32/crt_arch.h
+--- a/arch/wasm32/crt_arch.h
++++ b/arch/wasm32/crt_arch.h
+@@ -16,7 +16,6 @@ hidden void _dlstart(void) {
+ #ifdef START_is_start
+ void __wasm_call_ctors(void);
+ int __main_void(void);
+-hidden void _start_c(long *p);
+ hidden void _start(void) {
+ 	if (__syscall(SYS_wasm_get_args, __wasm_process_args,
+ 	    sizeof(args_buf)) < 0) __builtin_trap();

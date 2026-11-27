@@ -88,6 +88,7 @@ pkgs.stdenvNoCC.mkDerivation (
   // {
     patches = [
       ./wasm-crt1.patch
+      ./wasm-remove-start-c-decl.patch
       ./wasm-mincore.patch
       ./wasm-mmap-query.patch
       ./wasm-cancel-completed-syscall.patch

@@ -22,117 +22,105 @@ close actions remove everything else. Advertise only the real spawn context
 when os.fork is absent, and let the semaphore resource tracker work without the
 mmap-dependent _posixshmem module.
 
---- a/Modules/posixmodule.c
-+++ b/Modules/posixmodule.c
-@@ -7048,6 +7048,12 @@ enum posix_spawn_file_actions_identifier {
-     POSIX_SPAWN_OPEN,
-     POSIX_SPAWN_CLOSE,
-     POSIX_SPAWN_DUP2
-+#ifdef HAVE_POSIX_SPAWN_FILE_ACTIONS_ADDCHDIR_NP
-+    ,POSIX_SPAWN_CHDIR
-+#endif
- #ifdef HAVE_POSIX_SPAWN_FILE_ACTIONS_ADDCLOSEFROM_NP
-     ,POSIX_SPAWN_CLOSEFROM
- #endif
-+#ifdef __wasm__
-+    ,POSIX_SPAWN_CLOSE_EXCEPT
-+#endif
-@@ -7292,6 +7295,29 @@ parse_file_actions(PyObject *file_actions,
-                 }
-                 break;
-             }
-+#ifdef HAVE_POSIX_SPAWN_FILE_ACTIONS_ADDCHDIR_NP
-+            case POSIX_SPAWN_CHDIR: {
-+                PyObject *path;
-+                if (!PyArg_ParseTuple(file_action, "OO&"
-+                        ";A chdir file_action tuple must have 2 elements",
-+                        &tag_obj, PyUnicode_FSConverter, &path))
-+                {
-+                    goto fail;
-+                }
-+                if (PyList_Append(temp_buffer, path)) {
-+                    Py_DECREF(path);
-+                    goto fail;
-+                }
-+                errno = posix_spawn_file_actions_addchdir_np(file_actionsp,
-+                        PyBytes_AS_STRING(path));
-+                Py_DECREF(path);
-+                if (errno) {
-+                    posix_error();
-+                    goto fail;
-+                }
-+                break;
-+            }
-+#endif
- #ifdef HAVE_POSIX_SPAWN_FILE_ACTIONS_ADDCLOSEFROM_NP
-             case POSIX_SPAWN_CLOSEFROM: {
-                 int fd;
-@@ -7319,3 +7349,49 @@
-                 break;
-             }
- #endif
-+#ifdef __wasm__
-+            case POSIX_SPAWN_CLOSE_EXCEPT: {
-+                int first_fd;
-+                PyObject *keep_obj;
-+                if (!PyArg_ParseTuple(file_action, "OiO"
-+                        ";A close_except file_action tuple must have 3 elements",
-+                        &tag_obj, &first_fd, &keep_obj))
-+                {
-+                    goto fail;
-+                }
-+                PyObject *keep_seq = PySequence_Fast(keep_obj,
-+                        "close_except keep_fds must be a sequence");
-+                if (!keep_seq) {
-+                    goto fail;
-+                }
-+                Py_ssize_t keep_len = PySequence_Fast_GET_SIZE(keep_seq);
-+                int *keep_fds = NULL;
-+                if (keep_len > 0) {
-+                    keep_fds = PyMem_New(int, (size_t)keep_len);
-+                    if (!keep_fds) {
-+                        Py_DECREF(keep_seq);
-+                        PyErr_NoMemory();
-+                        goto fail;
-+                    }
-+                    PyObject **items = PySequence_Fast_ITEMS(keep_seq);
-+                    for (Py_ssize_t i = 0; i < keep_len; i++) {
-+                        int fd = PyLong_AsInt(items[i]);
-+                        if (fd == -1 && PyErr_Occurred()) {
-+                            PyMem_Free(keep_fds);
-+                            Py_DECREF(keep_seq);
-+                            goto fail;
-+                        }
-+                        keep_fds[i] = fd;
-+                    }
-+                }
-+                Py_DECREF(keep_seq);
-+                errno = posix_spawn_file_actions_addclose_except_np(
-+                        file_actionsp, first_fd, keep_fds, (size_t)keep_len);
-+                PyMem_Free(keep_fds);
-+                if (errno) {
-+                    posix_error();
-+                    goto fail;
-+                }
-+                break;
-+            }
-+#endif
-@@ -17465,6 +17491,12 @@ posixmodule_exec(PyObject *m)
-     if (PyModule_AddIntConstant(m, "POSIX_SPAWN_OPEN", POSIX_SPAWN_OPEN)) return -1;
-     if (PyModule_AddIntConstant(m, "POSIX_SPAWN_CLOSE", POSIX_SPAWN_CLOSE)) return -1;
-     if (PyModule_AddIntConstant(m, "POSIX_SPAWN_DUP2", POSIX_SPAWN_DUP2)) return -1;
-+#ifdef HAVE_POSIX_SPAWN_FILE_ACTIONS_ADDCHDIR_NP
-+    if (PyModule_AddIntConstant(m, "POSIX_SPAWN_CHDIR", POSIX_SPAWN_CHDIR)) return -1;
-+#endif
- #ifdef HAVE_POSIX_SPAWN_FILE_ACTIONS_ADDCLOSEFROM_NP
-     if (PyModule_AddIntMacro(m, POSIX_SPAWN_CLOSEFROM)) return -1;
- #endif
-+#ifdef __wasm__
-+    if (PyModule_AddIntConstant(m, "POSIX_SPAWN_CLOSE_EXCEPT", POSIX_SPAWN_CLOSE_EXCEPT)) return -1;
-+#endif
-
---- a/Lib/subprocess.py
-+++ b/Lib/subprocess.py
+--- a/Lib/multiprocessing/context.py	2026-11-27 14:16:24.599510252 +0800
++++ b/Lib/multiprocessing/context.py	2026-11-27 14:16:28.474500031 +0800
+@@ -265,7 +265,7 @@
+ 
+     def get_all_start_methods(self):
+         """Returns a list of the supported start methods, default first."""
+-        if sys.platform == 'win32':
++        if sys.platform == 'win32' or not hasattr(os, 'fork'):
+             return ['spawn']
+         else:
+             methods = ['spawn', 'fork'] if sys.platform == 'darwin' else ['fork', 'spawn']
+@@ -322,13 +322,17 @@
+                 raise ValueError('forkserver start method not available')
+ 
+     _concrete_contexts = {
+-        'fork': ForkContext(),
+         'spawn': SpawnContext(),
+-        'forkserver': ForkServerContext(),
+     }
+-    if sys.platform == 'darwin':
++    if hasattr(os, 'fork'):
++        _concrete_contexts.update({
++            'fork': ForkContext(),
++            'forkserver': ForkServerContext(),
++        })
++    if sys.platform == 'darwin' or not hasattr(os, 'fork'):
+         # bpo-33725: running arbitrary code after fork() is no longer reliable
+-        # on macOS since macOS 10.14 (Mojave). Use spawn by default instead.
++        # on macOS since macOS 10.14 (Mojave). Platforms without fork must
++        # likewise use spawn.
+         _default_context = DefaultContext(_concrete_contexts['spawn'])
+     else:
+         _default_context = DefaultContext(_concrete_contexts['fork'])
+--- a/Lib/multiprocessing/resource_tracker.py	2026-11-27 14:16:27.235556487 +0800
++++ b/Lib/multiprocessing/resource_tracker.py	2026-11-27 14:16:28.474642040 +0800
+@@ -44,7 +44,10 @@
+ 
+ if os.name == 'posix':
+     import _multiprocessing
+-    import _posixshmem
++    try:
++        import _posixshmem
++    except ImportError:
++        _posixshmem = None
+ 
+     # Use sem_unlink() to clean up named semaphores.
+     #
+@@ -55,9 +58,10 @@
+         _CLEANUP_FUNCS.update({
+             'semaphore': _multiprocessing.sem_unlink,
+         })
+-    _CLEANUP_FUNCS.update({
+-        'shared_memory': _posixshmem.shm_unlink,
+-    })
++    if _posixshmem is not None:
++        _CLEANUP_FUNCS.update({
++            'shared_memory': _posixshmem.shm_unlink,
++        })
+ 
+ 
+ class ReentrantCallError(RuntimeError):
+--- a/Lib/multiprocessing/util.py	2026-11-27 14:16:22.130467453 +0800
++++ b/Lib/multiprocessing/util.py	2026-11-27 14:16:28.510385587 +0800
+@@ -516,9 +516,31 @@
+ #
+ 
+ def spawnv_passfds(path, args, passfds):
+-    import _posixsubprocess
+-    import subprocess
+     passfds = tuple(sorted(map(int, passfds)))
++    try:
++        import _posixsubprocess
++    except ImportError:
++        # POSIX_SPAWN_DUP2 with equal descriptors clears FD_CLOEXEC.
++        file_actions = [
++            (os.POSIX_SPAWN_DUP2, fd, fd) for fd in passfds
++        ]
++        if hasattr(os, 'POSIX_SPAWN_CLOSE_EXCEPT'):
++            file_actions.append((os.POSIX_SPAWN_CLOSE_EXCEPT, 3, passfds))
++        else:
++            try:
++                open_fds = sorted(map(int, os.listdir('/proc/self/fd')))
++            except OSError as exc:
++                raise NotImplementedError(
++                    "spawnv_passfds requires /proc/self/fd without fork()"
++                ) from exc
++            keep = set(passfds)
++            file_actions.extend(
++                (os.POSIX_SPAWN_CLOSE, fd)
++                for fd in open_fds if fd >= 3 and fd not in keep
++            )
++        return os.posix_spawn(path, args, os.environ,
++                              file_actions=file_actions)
++    import subprocess
+     errpipe_read, errpipe_write = os.pipe()
+     try:
+         return _posixsubprocess.fork_exec(
+--- a/Lib/subprocess.py	2026-11-27 14:16:19.735426104 +0800
++++ b/Lib/subprocess.py	2026-11-27 14:16:28.503274090 +0800
 @@ -76,6 +76,9 @@
  
  # some platforms do not support subprocesses
@@ -169,19 +157,18 @@ mmap-dependent _posixshmem module.
  
  class Popen:
      """ Execute a child program in a new process.
-@@ -1787,5 +1800,6 @@ class Popen:
+@@ -1785,6 +1798,7 @@
+ 
+ 
          def _posix_spawn(self, args, executable, env, restore_signals, close_fds,
--                         p2cread, p2cwrite,
 +                         pass_fds, cwd, start_new_session, process_group,
-+                         p2cread, p2cwrite,
+                          p2cread, p2cwrite,
                           c2pread, c2pwrite,
                           errread, errwrite):
-             """Execute program using os.posix_spawn()."""
-@@ -1799,5 +1812,12 @@ class Popen:
+@@ -1799,7 +1813,14 @@
                          sigset.append(signum)
                  kwargs['setsigdef'] = sigset
--
-+
+ 
 +            if start_new_session:
 +                kwargs['setsid'] = True
 +            if process_group != -1:
@@ -191,7 +178,10 @@ mmap-dependent _posixshmem module.
 +            if cwd is not None:
 +                file_actions.append((os.POSIX_SPAWN_CHDIR, cwd))
              for fd in (p2cwrite, c2pread, errread):
-@@ -1811,8 +1831,29 @@ class Popen:
+                 if fd != -1:
+                     file_actions.append((os.POSIX_SPAWN_CLOSE, fd))
+@@ -1810,9 +1831,30 @@
+             ):
                  if fd != -1:
                      file_actions.append((os.POSIX_SPAWN_DUP2, fd, fd2))
 +            file_actions.extend(
@@ -205,7 +195,7 @@ mmap-dependent _posixshmem module.
 +                elif _HAVE_POSIX_SPAWN_CLOSEFROM and not pass_fds:
 +                    file_actions.append((os.POSIX_SPAWN_CLOSEFROM, 3))
 +                else:
-+                    # Fallback for platforms without close_except/closefrom.
++                    # musl has no closefrom action. Enumerate in the parent,
 +                    # then close in ascending order after stdio duplication.
 +                    # Ascending order also makes musl safely relocate its
 +                    # internal error pipe if it reuses listdir's directory fd.
@@ -222,7 +212,7 @@ mmap-dependent _posixshmem module.
  
              if file_actions:
                  kwargs['file_actions'] = file_actions
-@@ -1858,6 +1897,54 @@ class Popen:
+@@ -1858,6 +1900,54 @@
  
              sys.audit("subprocess.Popen", executable, args, cwd, env)
  
@@ -277,115 +267,129 @@ mmap-dependent _posixshmem module.
              if (_USE_POSIX_SPAWN
                      and os.path.dirname(executable)
                      and preexec_fn is None
-@@ -1874,7 +1960,9 @@ class Popen:
+@@ -1874,6 +1964,8 @@
                      and uid is None
                      and umask < 0):
                  self._posix_spawn(args, executable, env, restore_signals, close_fds,
--                                  p2cread, p2cwrite,
 +                                  pass_fds, cwd, start_new_session,
 +                                  process_group,
-+                                  p2cread, p2cwrite,
+                                   p2cread, p2cwrite,
                                    c2pread, c2pwrite,
                                    errread, errwrite)
-                 return
-
---- a/Lib/multiprocessing/util.py
-+++ b/Lib/multiprocessing/util.py
-@@ -516,10 +516,32 @@ def _flush_std_streams():
- #
+--- a/Modules/posixmodule.c	2026-11-27 14:16:17.926394872 +0800
++++ b/Modules/posixmodule.c	2026-11-27 14:16:28.502868442 +0800
+@@ -7048,9 +7048,15 @@
+     POSIX_SPAWN_OPEN,
+     POSIX_SPAWN_CLOSE,
+     POSIX_SPAWN_DUP2
++#ifdef HAVE_POSIX_SPAWN_FILE_ACTIONS_ADDCHDIR_NP
++    ,POSIX_SPAWN_CHDIR
++#endif
+ #ifdef HAVE_POSIX_SPAWN_FILE_ACTIONS_ADDCLOSEFROM_NP
+     ,POSIX_SPAWN_CLOSEFROM
+ #endif
++#ifdef __wasm__
++    ,POSIX_SPAWN_CLOSE_EXCEPT
++#endif
+ };
  
- def spawnv_passfds(path, args, passfds):
--    import _posixsubprocess
--    import subprocess
-     passfds = tuple(sorted(map(int, passfds)))
-+    try:
-+        import _posixsubprocess
-+    except ImportError:
-+        # POSIX_SPAWN_DUP2 with equal descriptors clears FD_CLOEXEC.
-+        file_actions = [
-+            (os.POSIX_SPAWN_DUP2, fd, fd) for fd in passfds
-+        ]
-+        if hasattr(os, 'POSIX_SPAWN_CLOSE_EXCEPT'):
-+            file_actions.append((os.POSIX_SPAWN_CLOSE_EXCEPT, 3, passfds))
-+        else:
-+            try:
-+                open_fds = sorted(map(int, os.listdir('/proc/self/fd')))
-+            except OSError as exc:
-+                raise NotImplementedError(
-+                    "spawnv_passfds requires /proc/self/fd without fork()"
-+                ) from exc
-+            keep = set(passfds)
-+            file_actions.extend(
-+                (os.POSIX_SPAWN_CLOSE, fd)
-+                for fd in open_fds if fd >= 3 and fd not in keep
-+            )
-+        return os.posix_spawn(path, args, os.environ,
-+                              file_actions=file_actions)
-+    import subprocess
-     errpipe_read, errpipe_write = os.pipe()
-     try:
-         return _posixsubprocess.fork_exec(
+ #if defined(HAVE_SCHED_SETPARAM) || defined(HAVE_SCHED_SETSCHEDULER) || defined(POSIX_SPAWN_SETSCHEDULER) || defined(POSIX_SPAWN_SETSCHEDPARAM)
+@@ -7292,6 +7298,29 @@
+                 }
+                 break;
+             }
++#ifdef HAVE_POSIX_SPAWN_FILE_ACTIONS_ADDCHDIR_NP
++            case POSIX_SPAWN_CHDIR: {
++                PyObject *path;
++                if (!PyArg_ParseTuple(file_action, "OO&"
++                        ";A chdir file_action tuple must have 2 elements",
++                        &tag_obj, PyUnicode_FSConverter, &path))
++                {
++                    goto fail;
++                }
++                if (PyList_Append(temp_buffer, path)) {
++                    Py_DECREF(path);
++                    goto fail;
++                }
++                errno = posix_spawn_file_actions_addchdir_np(file_actionsp,
++                        PyBytes_AS_STRING(path));
++                Py_DECREF(path);
++                if (errno) {
++                    posix_error();
++                    goto fail;
++                }
++                break;
++            }
++#endif
+ #ifdef HAVE_POSIX_SPAWN_FILE_ACTIONS_ADDCLOSEFROM_NP
+             case POSIX_SPAWN_CLOSEFROM: {
+                 int fd;
+@@ -7310,6 +7339,52 @@
+                 break;
+             }
+ #endif
++#ifdef __wasm__
++            case POSIX_SPAWN_CLOSE_EXCEPT: {
++                int first_fd;
++                PyObject *keep_obj;
++                if (!PyArg_ParseTuple(file_action, "OiO"
++                        ";A close_except file_action tuple must have 3 elements",
++                        &tag_obj, &first_fd, &keep_obj))
++                {
++                    goto fail;
++                }
++                PyObject *keep_seq = PySequence_Fast(keep_obj,
++                        "close_except keep_fds must be a sequence");
++                if (!keep_seq) {
++                    goto fail;
++                }
++                Py_ssize_t keep_len = PySequence_Fast_GET_SIZE(keep_seq);
++                int *keep_fds = NULL;
++                if (keep_len > 0) {
++                    keep_fds = PyMem_New(int, (size_t)keep_len);
++                    if (!keep_fds) {
++                        Py_DECREF(keep_seq);
++                        PyErr_NoMemory();
++                        goto fail;
++                    }
++                    PyObject **items = PySequence_Fast_ITEMS(keep_seq);
++                    for (Py_ssize_t i = 0; i < keep_len; i++) {
++                        int fd = PyLong_AsInt(items[i]);
++                        if (fd == -1 && PyErr_Occurred()) {
++                            PyMem_Free(keep_fds);
++                            Py_DECREF(keep_seq);
++                            goto fail;
++                        }
++                        keep_fds[i] = fd;
++                    }
++                }
++                Py_DECREF(keep_seq);
++                errno = posix_spawn_file_actions_addclose_except_np(
++                        file_actionsp, first_fd, keep_fds, (size_t)keep_len);
++                PyMem_Free(keep_fds);
++                if (errno) {
++                    posix_error();
++                    goto fail;
++                }
++                break;
++            }
++#endif
+             default: {
+                 PyErr_SetString(PyExc_TypeError,
+                                 "Unknown file_actions identifier");
+@@ -17465,9 +17540,15 @@
+     if (PyModule_AddIntConstant(m, "POSIX_SPAWN_OPEN", POSIX_SPAWN_OPEN)) return -1;
+     if (PyModule_AddIntConstant(m, "POSIX_SPAWN_CLOSE", POSIX_SPAWN_CLOSE)) return -1;
+     if (PyModule_AddIntConstant(m, "POSIX_SPAWN_DUP2", POSIX_SPAWN_DUP2)) return -1;
++#ifdef HAVE_POSIX_SPAWN_FILE_ACTIONS_ADDCHDIR_NP
++    if (PyModule_AddIntConstant(m, "POSIX_SPAWN_CHDIR", POSIX_SPAWN_CHDIR)) return -1;
++#endif
+ #ifdef HAVE_POSIX_SPAWN_FILE_ACTIONS_ADDCLOSEFROM_NP
+     if (PyModule_AddIntMacro(m, POSIX_SPAWN_CLOSEFROM)) return -1;
+ #endif
++#ifdef __wasm__
++    if (PyModule_AddIntConstant(m, "POSIX_SPAWN_CLOSE_EXCEPT", POSIX_SPAWN_CLOSE_EXCEPT)) return -1;
++#endif
+ #endif
  
---- a/Lib/multiprocessing/context.py
-+++ b/Lib/multiprocessing/context.py
-@@ -265,7 +265,7 @@ class DefaultContext(BaseContext):
- 
-     def get_all_start_methods(self):
-         """Returns a list of the supported start methods, default first."""
--        if sys.platform == 'win32':
-+        if sys.platform == 'win32' or not hasattr(os, 'fork'):
-             return ['spawn']
-         else:
-             methods = ['spawn', 'fork'] if sys.platform == 'darwin' else ['fork', 'spawn']
-@@ -321,15 +321,19 @@ if sys.platform != 'win32':
-             if not reduction.HAVE_SEND_HANDLE:
-                 raise ValueError('forkserver start method not available')
- 
-     _concrete_contexts = {
--        'fork': ForkContext(),
-         'spawn': SpawnContext(),
--        'forkserver': ForkServerContext(),
-     }
--    if sys.platform == 'darwin':
-+    if hasattr(os, 'fork'):
-+        _concrete_contexts.update({
-+            'fork': ForkContext(),
-+            'forkserver': ForkServerContext(),
-+        })
-+    if sys.platform == 'darwin' or not hasattr(os, 'fork'):
-         # bpo-33725: running arbitrary code after fork() is no longer reliable
--        # on macOS since macOS 10.14 (Mojave). Use spawn by default instead.
-+        # on macOS since macOS 10.14 (Mojave). Platforms without fork must
-+        # likewise use spawn.
-         _default_context = DefaultContext(_concrete_contexts['spawn'])
-     else:
-         _default_context = DefaultContext(_concrete_contexts['fork'])
- 
---- a/Lib/multiprocessing/resource_tracker.py
-+++ b/Lib/multiprocessing/resource_tracker.py
-@@ -44,7 +44,10 @@ _CLEANUP_FUNCS = {
- 
- if os.name == 'posix':
-     import _multiprocessing
--    import _posixshmem
-+    try:
-+        import _posixshmem
-+    except ImportError:
-+        _posixshmem = None
- 
-     # Use sem_unlink() to clean up named semaphores.
-     #
-@@ -55,9 +58,10 @@ if os.name == 'posix':
-         _CLEANUP_FUNCS.update({
-             'semaphore': _multiprocessing.sem_unlink,
-         })
--    _CLEANUP_FUNCS.update({
--        'shared_memory': _posixshmem.shm_unlink,
--    })
-+    if _posixshmem is not None:
-+        _CLEANUP_FUNCS.update({
-+            'shared_memory': _posixshmem.shm_unlink,
-+        })
- 
- 
- class ReentrantCallError(RuntimeError):
+ #if defined(HAVE_SPAWNV) || defined (HAVE_RTPSPAWN)
