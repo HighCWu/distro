@@ -169,8 +169,15 @@ static int test_scm_rights(void) {
     return 1;
   }
 
+#if defined(__clang__)
+#pragma clang diagnostic push
+#pragma clang diagnostic ignored "-Wsign-compare"
+#endif
   for (cmsg = CMSG_FIRSTHDR(&msg); cmsg != NULL;
        cmsg = CMSG_NXTHDR(&msg, cmsg)) {
+#if defined(__clang__)
+#pragma clang diagnostic pop
+#endif
     if (cmsg->cmsg_level == SOL_SOCKET && cmsg->cmsg_type == SCM_RIGHTS &&
         cmsg->cmsg_len >= CMSG_LEN(sizeof(int))) {
       memcpy(&recv_fd, CMSG_DATA(cmsg), sizeof(int));
