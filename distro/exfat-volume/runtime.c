@@ -2,11 +2,13 @@
 #define _GNU_SOURCE
 #include <errno.h>
 #include <fcntl.h>
+#include <linux/fs.h>
 #include <sched.h>
 #include <stdint.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <sys/ioctl.h>
 #include <sys/mount.h>
 #include <sys/stat.h>
 #include <sys/statfs.h>
@@ -22,6 +24,28 @@ static void require(int ok, const char *stage)
     printf("::vm-test::fail: exfat volume: %s (errno=%d)\n", stage, errno);
     fflush(stdout);
     _Exit(1);
+}
+
+static void check_filesystem_label(int fd, const char *expected, const char *stage)
+{
+    unsigned char label[FSLABEL_MAX];
+    memset(label, 0xa5, sizeof(label));
+    require(ioctl(fd, FS_IOC_GETFSLABEL, label) == 0, stage);
+    const size_t length = strlen(expected);
+    require(length + 1 < sizeof(label) && !memcmp(label, expected, length) && label[length] == '\0',
+            stage);
+    for (size_t i = length + 1; i < sizeof(label); ++i) {
+        require(label[i] == 0xa5, "GETFSLABEL leaves buffer tail untouched");
+    }
+}
+
+static void set_filesystem_label(int fd, const char *label)
+{
+    unsigned char buffer[FSLABEL_MAX] = {0};
+    const size_t length = strlen(label);
+    require(length + 1 <= sizeof(buffer), "replacement filesystem label fits ioctl buffer");
+    memcpy(buffer, label, length + 1);
+    require(ioctl(fd, FS_IOC_SETFSLABEL, buffer) == 0, "set UTF-8 filesystem label");
 }
 
 static unsigned char expected_byte(size_t position)
@@ -131,6 +155,11 @@ int main(void)
             "confirm mounted exFAT filesystem");
     int directory_fd = open(ROOT, O_RDONLY | O_DIRECTORY | O_CLOEXEC);
     require(directory_fd >= 0, "open exFAT root directory");
+    check_filesystem_label(directory_fd, "WASMTEST", "read initial exFAT filesystem label");
+    static const char replacement_label[] = "卷ABC";
+    set_filesystem_label(directory_fd, replacement_label);
+    check_filesystem_label(directory_fd, replacement_label, "read UTF-8 exFAT filesystem label");
+    puts("exfat volume: GETFSLABEL and SETFSLABEL preserve UTF-8, NUL and sentinel tail");
     int fd = openat(directory_fd, LONG_NAME, O_WRONLY | O_CREAT | O_EXCL | O_CLOEXEC, 0644);
     require(fd >= 0, "create long UTF-8 filename");
     write_payload(fd);
@@ -146,6 +175,8 @@ int main(void)
             "confirm remounted exFAT filesystem");
     directory_fd = open(ROOT, O_RDONLY | O_DIRECTORY | O_CLOEXEC);
     require(directory_fd >= 0, "open remounted exFAT root");
+    check_filesystem_label(directory_fd, replacement_label, "read remounted exFAT filesystem label");
+    puts("exfat volume: UTF-8 filesystem label persisted across remount");
     verify_payload(directory_fd);
     puts("exfat volume: remount and exact sequential/cross-page pread data pass");
 
