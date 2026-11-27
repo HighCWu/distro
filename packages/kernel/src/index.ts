@@ -80,6 +80,17 @@ export {
   type MacAddress,
 } from "./virtio/net.ts";
 export {
+  type InputDevice,
+  inputDevice,
+  type VirtioInputAbsInfo,
+  type VirtioInputConfigSelectValue,
+  type VirtioInputDevids,
+  type VirtioInputEvent,
+  type VirtioInputOptions,
+  VIRTIO_ID_INPUT,
+  VirtioInputConfigSelect,
+} from "./virtio/input.ts";
+export {
   type VsockConnection,
   type VsockDevice,
   type VsockListener,

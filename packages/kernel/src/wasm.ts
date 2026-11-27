@@ -526,6 +526,7 @@ export interface Imports {
     set_features(dev: number, features: bigint): void;
 
     setup(dev: number, config_irq: number, config_addr: WasmAddress, config_len: number): void;
+    set_config(dev: number, offset: number, len: number): void;
     reset(dev: number): void;
 
     enable_vring(dev: number, vq: number, size: number, desc_addr: WasmAddress, irq: number): void;

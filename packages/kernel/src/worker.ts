@@ -2089,6 +2089,7 @@ function start({
     virtio: {
       set_features: unavailable,
       setup: unavailable,
+      set_config: unavailable,
       reset: unavailable,
       enable_vring: unavailable,
       disable_vring: unavailable,

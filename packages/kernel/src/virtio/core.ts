@@ -315,6 +315,8 @@ export type VirtqueueHandler = (
 export interface VirtioDriver {
   /** One handler per virtqueue. */
   readonly queues: readonly VirtqueueHandler[];
+  /** Handles guest config space writes (such as virtio-input selector updates). */
+  setConfig?(config: Uint8Array, offset: number, length: number): Uint8Array | void;
   /** Drops guest-owned protocol state when the guest resets the device. */
   reset?(): void;
   /** Synchronously starts cancellation needed to unblock queue handlers. */
@@ -326,6 +328,7 @@ export interface VirtioDriver {
 export interface ConnectedVirtioDevice {
   set_features(features: bigint): void;
   setup(config_irq: number, config_address: number, config_length: number): void;
+  set_config?(offset: number, length: number): void;
   enable_queue(vq: number, size: number, descriptor_address: number, irq: number): void;
   disable_queue(vq: number): void;
   notify(vq: number): void;
@@ -476,6 +479,18 @@ export class VirtioController {
           reset: () => {
             if (!closed) driver.reset?.();
           },
+          set_config: (offset, length) => {
+            if (closed || !driver.setConfig || !get_guest_config) return;
+            const guest_config = get_guest_config();
+            const end = Math.min(config.byteLength, guest_config.byteLength);
+            config.set(guest_config.subarray(0, end));
+            const next_config = driver.setConfig(config, offset, length);
+            if (next_config) {
+              assert(next_config.byteLength === config.byteLength, "virtio config size cannot change");
+              config.set(next_config);
+            }
+            guest_config.subarray(0, end).set(config.subarray(0, end));
+          },
         }),
       close: start_close,
     };
@@ -513,6 +528,7 @@ interface LocalVirtioDevice {
   attach(get_config: () => Uint8Array, raise_config: RaiseConfigInterrupt): void;
   notify(vq: number, queue: Virtqueue): void | PromiseLike<void>;
   reset(): void;
+  set_config?(offset: number, length: number): void;
 }
 
 function connect_local_virtio_device(
@@ -549,17 +565,21 @@ function connect_local_virtio_device(
     },
     setup(config_irq, _config_address, config_length) {
       assert(config_length >= device.config.byteLength, "config space too small");
-      const config = context.config_target
-        ? context.config_target(config_length)
-        : new Uint8Array(context.memory.buffer, _config_address, config_length);
-      device.attach(
-        () => config,
-        () => {
-          if (context.publish_config) context.publish_config(config_irq, config.slice(), true);
-          else context.trigger_irq(config_irq);
-        },
-      );
-      context.publish_config?.(config_irq, config.slice(), false);
+      const target_config = context.config_target?.(config_length);
+      const get_config = target_config
+        ? () => target_config
+        : () => {
+            ensure_memory_buffer(context.memory, _config_address + config_length);
+            return new Uint8Array(context.memory.buffer, _config_address, config_length);
+          };
+      device.attach(get_config, () => {
+        if (context.publish_config) context.publish_config(config_irq, get_config().slice(), true);
+        else context.trigger_irq(config_irq);
+      });
+      context.publish_config?.(config_irq, get_config().slice(), false);
+    },
+    set_config(offset, length) {
+      device.set_config?.(offset, length);
     },
     enable_queue(vq, size, descriptor_address, irq) {
       const state = queue_state(vq);
@@ -680,6 +700,12 @@ export function virtio_imports({
       const device = connected[dev];
       assert(device);
       device.setup(config_irq, address, length);
+    },
+
+    set_config(dev, offset, len) {
+      const device = connected[dev];
+      assert(device);
+      device.set_config?.(offset >>> 0, len >>> 0);
     },
 
     notify(dev, vq) {
