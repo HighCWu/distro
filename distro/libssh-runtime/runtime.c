@@ -32,7 +32,7 @@
 #define REJECTED_USER "unknown-user"
 #define EXPECTED_COMMAND "libssh-runtime-self-check"
 #define SFTP_MAX_READ_SIZE 4096
-#define LOG_RING_SIZE 128
+#define LOG_RING_SIZE 256
 
 static pthread_mutex_t log_ring_mutex = PTHREAD_MUTEX_INITIALIZER;
 static char log_ring[LOG_RING_SIZE][192];
@@ -588,8 +588,12 @@ serve_session(ssh_bind server_bind, int connection_index,
   int authenticated = 0;
   int rejected = 0;
   int result = SSH_ERROR;
+  int verbosity = SSH_LOG_PACKET;
+  int nodelay = 1;
+  long timeout_seconds = 45;
   const char *stage = "accept_watchdog";
 
+  fprintf(stderr, "libssh-srv: conn=%d stage=accept_wait\n", connection_index);
   if (accept_with_watchdog(server_bind) != SSH_OK)
     goto cleanup;
 
@@ -597,10 +601,17 @@ serve_session(ssh_bind server_bind, int connection_index,
   session = ssh_new();
   if (session == NULL || ssh_bind_accept(server_bind, session) != SSH_OK)
     goto cleanup;
+  if (ssh_options_set(session, SSH_OPTIONS_LOG_VERBOSITY, &verbosity) != SSH_OK ||
+      ssh_options_set(session, SSH_OPTIONS_NODELAY, &nodelay) != SSH_OK ||
+      ssh_options_set(session, SSH_OPTIONS_TIMEOUT, &timeout_seconds) != SSH_OK)
+    goto cleanup;
+  fprintf(stderr, "libssh-srv: conn=%d stage=accepted\n", connection_index);
 
   stage = "key_exchange";
+  fprintf(stderr, "libssh-srv: conn=%d stage=kex_begin\n", connection_index);
   if (ssh_handle_key_exchange(session) != SSH_OK)
     goto cleanup;
+  fprintf(stderr, "libssh-srv: conn=%d stage=kex_done\n", connection_index);
 
   stage = "auth";
 
@@ -643,11 +654,13 @@ serve_session(ssh_bind server_bind, int connection_index,
   }
 
   if (rejected) {
+    fprintf(stderr, "libssh-srv: conn=%d stage=auth_done\n", connection_index);
     result = SSH_OK;
     goto cleanup;
   }
   if (!authenticated)
     goto cleanup;
+  fprintf(stderr, "libssh-srv: conn=%d stage=auth_done\n", connection_index);
 
   stage = "channel_open";
   for (;;) {
@@ -714,6 +727,8 @@ serve_session(ssh_bind server_bind, int connection_index,
   }
 
 cleanup:
+  if (result == SSH_OK)
+    fprintf(stderr, "libssh-srv: conn=%d stage=session_done\n", connection_index);
   if (result != SSH_OK) {
     if (failed_stage != NULL)
       *failed_stage = stage;
@@ -775,7 +790,9 @@ server_thread(void *opaque)
     goto cleanup;
   }
   server_bind = ssh_bind_new();
+  int bind_verbosity = SSH_LOG_PACKET;
   if (server_bind == NULL ||
+      ssh_bind_options_set(server_bind, SSH_BIND_OPTIONS_LOG_VERBOSITY, &bind_verbosity) != SSH_OK ||
       ssh_bind_options_set(server_bind, SSH_BIND_OPTIONS_PROCESS_CONFIG, &config_enabled) != SSH_OK ||
       ssh_bind_options_set(server_bind, SSH_BIND_OPTIONS_IMPORT_KEY, host_key) != SSH_OK) {
     record_server_error(state, "configuring the libssh server");
