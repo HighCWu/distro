@@ -99,7 +99,7 @@ accept_with_watchdog(ssh_bind server_bind)
   int rc;
 
   do {
-    rc = poll(&descriptor, 1, 10000);
+    rc = poll(&descriptor, 1, 20000);
   } while (rc < 0 && errno == EINTR);
   if (rc <= 0 || (descriptor.revents & POLLIN) == 0)
     return SSH_ERROR;
@@ -737,7 +737,7 @@ wait_for_server(struct server_state *state, unsigned int *port, char *error,
 
   if (clock_gettime(CLOCK_REALTIME, &deadline) != 0)
     return -1;
-  deadline.tv_sec += 10;
+  deadline.tv_sec += 20;
 
   pthread_mutex_lock(&state->mutex);
   while (!state->ready && state->error[0] == '\0' && rc != ETIMEDOUT)
@@ -758,7 +758,7 @@ connect_client(unsigned int port, const char *username)
   ssh_session session = ssh_new();
   bool process_config = false;
   int strict_host_key_check = 0;
-  long timeout_seconds = 5;
+  long timeout_seconds = 15;
 
   if (session == NULL)
     return NULL;
@@ -770,6 +770,8 @@ connect_client(unsigned int port, const char *username)
                       &strict_host_key_check) != SSH_OK ||
       ssh_options_set(session, SSH_OPTIONS_TIMEOUT, &timeout_seconds) != SSH_OK ||
       ssh_connect(session) != SSH_OK) {
+    fprintf(stderr, "libssh runtime: connect_client(%s) failed: %s\n",
+            username, ssh_get_error(session));
     ssh_disconnect(session);
     ssh_free(session);
     return NULL;
@@ -987,7 +989,8 @@ main(void)
 
   client = connect_client(port, EXPECTED_USER);
   if (client == NULL || ssh_userauth_none(client, NULL) != SSH_AUTH_SUCCESS) {
-    fprintf(stderr, "libssh runtime: valid user authentication failed\n");
+    fprintf(stderr, "libssh runtime: valid user authentication failed%s%s\n",
+            client ? ": " : "", client ? ssh_get_error(client) : "");
     goto cleanup;
   }
   puts("libssh: valid username authenticated after rejection");

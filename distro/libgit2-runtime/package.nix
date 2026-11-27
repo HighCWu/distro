@@ -43,6 +43,12 @@ pkgs.stdenvNoCC.mkDerivation (finalAttrs: {
     test -f "$source_tree/CMakeLists.txt"
     test -f "$source_tree/COPYING"
 
+    # wasm32 musl defines size_t as unsigned long, while SIZE_MAX == UINT_MAX
+    # makes libgit2 select __builtin_umul_overflow(unsigned int *).
+    substituteInPlace "$source_tree/src/util/integer.h" \
+      --replace-fail "__builtin_umul_overflow" "__builtin_mul_overflow" \
+      --replace-fail "__builtin_uadd_overflow" "__builtin_add_overflow"
+
     cmake -S "$source_tree" -B build -G Ninja \
       -DCMAKE_TOOLCHAIN_FILE=${sdk}/share/cmake/linux-wasm.cmake \
       -DCMAKE_AR=${llvm-toolchain}/bin/llvm-ar \

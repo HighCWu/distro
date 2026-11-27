@@ -76,7 +76,7 @@ pkgs.stdenvNoCC.mkDerivation (finalAttrs: {
       libevent-runtime.wasm ${toString platform.addressBits} ${toString platform.maximumMemoryBytes}
 
     ${sdk}/bin/wasm-linux-cc -O2 -pthread -Wall -Wextra -Werror \
-      -I"$out/include" ${./runtime-tls.c} \
+      -I"$out/include" -I"${openssl}/include" ${./runtime-tls.c} \
       -Wl,--start-group "$out/lib/libevent_openssl.a" "$out/lib/libevent_pthreads.a" \
       "$out/lib/libevent_core.a" "${openssl}/lib/libssl.a" "${openssl}/lib/libcrypto.a" \
       -Wl,--end-group -pthread -o libevent-runtime-tls.wasm
