@@ -127,3 +127,19 @@ test("createFramebuffer decodes signed-negative wasm32 pointers above 2 GiB", ()
   imports.register(-4096, 4, 2, 16, 32);
   assert.equal(state.info?.fbAddr, 0xfffff000);
 });
+
+test("attach_framebuffer_plugins attaches raw framebufferPlugin alongside MachinePlugin entries", () => {
+  const memory = new WebAssembly.Memory({ initial: 1, maximum: 2, shared: true });
+  let registered: FramebufferInfo | undefined;
+  const plainPlugin = { configure() {} };
+  const fb = framebufferPlugin({
+    onRegister(info) {
+      registered = info;
+    },
+  });
+  const imports = attach_framebuffer_plugins(memory, [plainPlugin, fb]);
+  imports.register(4096, 640, 480, 2560, 32);
+  assert.equal(registered?.fbAddr, 4096);
+  assert.equal(registered?.width, 640);
+  assert.equal(fb.info?.height, 480);
+});

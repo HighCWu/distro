@@ -171,6 +171,7 @@ static void query_route_expect(int nl_fd, const char *src_str, const char *dst_s
 	req.rtm.rtm_family = AF_INET6;
 	req.rtm.rtm_dst_len = 128;
 	req.rtm.rtm_src_len = 128;
+	req.rtm.rtm_flags = RTM_F_FIB_MATCH;
 
 	struct in6_addr dst;
 	struct in6_addr src;
@@ -190,6 +191,18 @@ static void query_route_expect(int nl_fd, const char *src_str, const char *dst_s
 
 	const struct nlmsghdr *resp = (const struct nlmsghdr *)buf;
 	require(NLMSG_OK(resp, (size_t)n), "valid RTM_GETROUTE response");
+	if (resp->nlmsg_type == NLMSG_ERROR &&
+	    NLMSG_PAYLOAD(resp, 0) >= sizeof(struct nlmsgerr)) {
+		const struct nlmsgerr *err = (const struct nlmsgerr *)NLMSG_DATA(resp);
+		errno = -err->error;
+		fprintf(stderr, "rtnetlink-runtime: RTM_GETROUTE returned NLMSG_ERROR (%d)\n",
+			err->error);
+		exit(1);
+	}
+	if (resp->nlmsg_type != RTM_NEWROUTE) {
+		fprintf(stderr, "rtnetlink-runtime: RTM_GETROUTE nlmsg_type=%u\n",
+			resp->nlmsg_type);
+	}
 	require(resp->nlmsg_type == RTM_NEWROUTE, "RTM_GETROUTE returned RTM_NEWROUTE");
 
 	const struct rtmsg *rtm = (const struct rtmsg *)NLMSG_DATA(resp);

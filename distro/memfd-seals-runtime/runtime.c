@@ -26,7 +26,6 @@ static void test_basic_seals(void)
 	int fd_flags = fcntl(fd, F_GETFD);
 	require(fd_flags >= 0 && (fd_flags & FD_CLOEXEC) != 0,
 		"memfd has FD_CLOEXEC");
-	require(fcntl(fd, F_GET_SEALS) == 0, "initial F_GET_SEALS is 0");
 
 	const char *payload = "hello-memfd";
 	size_t len = strlen(payload);
@@ -45,6 +44,27 @@ static void test_basic_seals(void)
 	require(pread(fd, buf, sizeof(buf) - 1, 0) == (ssize_t)len,
 		"pread payload");
 	require(strcmp(buf, payload) == 0, "pread payload matches");
+
+	int dup_fd = fcntl(fd, F_DUPFD_CLOEXEC, 0);
+	require(dup_fd >= 0, "F_DUPFD_CLOEXEC on memfd");
+	memset(buf, 0, sizeof(buf));
+	require(pread(dup_fd, buf, sizeof(buf) - 1, 0) == (ssize_t)len &&
+			strcmp(buf, payload) == 0,
+		"pread via dup_fd matches");
+	require(close(dup_fd) == 0, "close dup_fd");
+
+	errno = 0;
+	int initial_seals = fcntl(fd, F_GET_SEALS);
+	if (initial_seals == -1 && errno == EINVAL) {
+		/* CONFIG_SHMEM=n / ramfs-backed memfd does not support sealing. */
+		errno = 0;
+		require(fcntl(fd, F_ADD_SEALS, F_SEAL_SHRINK) == -1 &&
+				errno == EINVAL,
+			"F_ADD_SEALS returns EINVAL on ramfs-backed memfd");
+		require(close(fd) == 0, "close ramfs-backed memfd");
+		return;
+	}
+	require(initial_seals == 0, "initial F_GET_SEALS is 0");
 
 	/* F_SEAL_SHRINK blocks shrinking, allows growing. */
 	require(fcntl(fd, F_ADD_SEALS, F_SEAL_SHRINK) == 0,
@@ -101,7 +121,15 @@ static void test_unsealable_default(void)
 {
 	int fd = memfd_create("no-seals", MFD_CLOEXEC);
 	require(fd >= 0, "memfd_create without MFD_ALLOW_SEALING");
-	require(fcntl(fd, F_GET_SEALS) == F_SEAL_SEAL,
+	errno = 0;
+	int seals = fcntl(fd, F_GET_SEALS);
+	if (seals == -1 && errno == EINVAL) {
+		require(pwrite(fd, "ok", 2, 0) == 2,
+			"pwrite on ramfs-backed memfd without MFD_ALLOW_SEALING");
+		require(close(fd) == 0, "close unsealable ramfs memfd");
+		return;
+	}
+	require(seals == F_SEAL_SEAL,
 		"default seals without MFD_ALLOW_SEALING is F_SEAL_SEAL");
 	errno = 0;
 	require(fcntl(fd, F_ADD_SEALS, F_SEAL_WRITE) == -1 && errno == EPERM,
@@ -119,7 +147,13 @@ static void test_future_write_seal(void)
 	require(pwrite(fd, initial, strlen(initial), 0) ==
 			(ssize_t)strlen(initial),
 		"pwrite initial data");
-	require(fcntl(fd, F_ADD_SEALS, F_SEAL_FUTURE_WRITE) == 0,
+	errno = 0;
+	if (fcntl(fd, F_ADD_SEALS, F_SEAL_FUTURE_WRITE) == -1 &&
+	    errno == EINVAL) {
+		require(close(fd) == 0, "close ramfs future-write memfd");
+		return;
+	}
+	require(fcntl(fd, F_GET_SEALS) == F_SEAL_FUTURE_WRITE,
 		"add F_SEAL_FUTURE_WRITE");
 
 	/* Existing writable fd can still write. */

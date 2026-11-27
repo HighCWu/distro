@@ -617,7 +617,7 @@ export async function bootMachine(options: BootMachineOptions): Promise<Machine>
           instance.exports.trigger_irq(irq);
         },
       }),
-      fb: attach_framebuffer_plugins(wasm_memory, plugins),
+      fb: attach_framebuffer_plugins(wasm_memory, options.plugins ?? []),
     } satisfies Imports;
 
     instance = (await WebAssembly.instantiate(vmlinux, imports)) as Instance;

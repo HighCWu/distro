@@ -20,14 +20,6 @@ static void on_winch(int signo)
         got_winch = 1;
 }
 
-static void on_unexpected_signal(int signo)
-{
-    const char msg[] = "splice-pty: unexpected SIGHUP\n";
-    ssize_t r = write(STDERR_FILENO, msg, sizeof(msg) - 1);
-    (void)r;
-    _exit(128 + signo);
-}
-
 static int write_full(int fd, const void *buf, size_t len)
 {
     const uint8_t *p = buf;
@@ -133,14 +125,12 @@ static int test_zero_copy(void)
     }
 
     loff_t off_in = 0;
-    puts("splice-pty: step splice1");
     if (splice_all(src_fd, &off_in, p1[1], NULL, sizeof(payload)) != 0 ||
         off_in != (loff_t)sizeof(payload)) {
         perror("splice(file -> pipe)");
         goto fail_pipes;
     }
 
-    puts("splice-pty: step tee");
     if (tee_all(p1[0], p2[1], sizeof(payload)) != 0) {
         perror("tee(pipe -> pipe)");
         goto fail_pipes;
@@ -148,7 +138,6 @@ static int test_zero_copy(void)
 
     /* Verify tee duplicated into p2 without consuming p1. */
     memset(check, 0, sizeof(check));
-    puts("splice-pty: step read_tee");
     if (read_full(p2[0], check, sizeof(check)) != 0 ||
         memcmp(check, payload, sizeof(payload)) != 0) {
         fprintf(stderr, "tee destination payload mismatch\n");
@@ -162,7 +151,6 @@ static int test_zero_copy(void)
         goto fail_pipes;
     }
     loff_t off_out = 0;
-    puts("splice-pty: step splice2");
     if (splice_all(p1[0], NULL, cfr_fd, &off_out, sizeof(payload)) != 0 ||
         off_out != (loff_t)sizeof(payload)) {
         perror("splice(pipe -> file)");
@@ -181,7 +169,6 @@ static int test_zero_copy(void)
     off_t cfr_in = 0;
     off_t cfr_out = 0;
     size_t cfr_left = sizeof(payload);
-    puts("splice-pty: step copy_file_range");
     while (cfr_left > 0) {
         ssize_t n = copy_file_range(cfr_fd, &cfr_in, sf_fd, &cfr_out, cfr_left, 0);
         if (n <= 0) {
@@ -205,7 +192,6 @@ static int test_zero_copy(void)
     /* sendfile(src_fd -> p2[1]) */
     off_t sf_off = 0;
     size_t sf_left = sizeof(payload);
-    puts("splice-pty: step sendfile");
     while (sf_left > 0) {
         ssize_t n = sendfile(p2[1], src_fd, &sf_off, sf_left);
         if (n <= 0) {
@@ -217,7 +203,6 @@ static int test_zero_copy(void)
         sf_left -= (size_t)n;
     }
     memset(check, 0, sizeof(check));
-    puts("splice-pty: step read_sendfile");
     if (read_full(p2[0], check, sizeof(check)) != 0 ||
         memcmp(check, payload, sizeof(payload)) != 0) {
         fprintf(stderr, "sendfile payload mismatch\n");
@@ -330,6 +315,8 @@ static int test_pty_winch(void)
         return 1;
     }
 
+    /* Closing the controlling PTY master sends SIGHUP to this foreground group. */
+    signal(SIGHUP, SIG_IGN);
     close(slave_fd);
     close(master_fd);
     return 0;
@@ -339,11 +326,6 @@ int main(void)
 {
     setvbuf(stdout, NULL, _IONBF, 0);
     setvbuf(stderr, NULL, _IONBF, 0);
-    struct sigaction hup_sa;
-    memset(&hup_sa, 0, sizeof(hup_sa));
-    hup_sa.sa_handler = on_unexpected_signal;
-    sigemptyset(&hup_sa.sa_mask);
-    sigaction(SIGHUP, &hup_sa, NULL);
     puts("splice-pty: start zero-copy");
     if (test_zero_copy() != 0)
         return 1;
