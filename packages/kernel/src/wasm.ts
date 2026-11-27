@@ -534,6 +534,16 @@ export interface Imports {
 
     notify(dev: number, vq: number): void;
   };
+  fb: {
+    register(
+      fb_addr: WasmAddress,
+      width: number,
+      height: number,
+      stride: number,
+      bpp: number,
+    ): void;
+    flush(x: number, y: number, width: number, height: number): void;
+  };
 }
 
 export { HALT_KERNEL };

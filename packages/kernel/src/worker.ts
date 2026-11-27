@@ -2095,6 +2095,10 @@ function start({
       disable_vring: unavailable,
       notify: unavailable,
     },
+    fb: {
+      register: unavailable,
+      flush: unavailable,
+    },
   } satisfies Imports;
 
   const instantiate_kernel = () => new WebAssembly.Instance(vmlinux, imports) as Instance;

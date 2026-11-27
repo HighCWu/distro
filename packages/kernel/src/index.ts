@@ -13,6 +13,7 @@ import { reject_user_copy, user_copy_failed } from "./user-copy.ts";
 import { assert, unreachable } from "./util.ts";
 import { read_wasm_memories, type WasmMemoryType } from "./wasm_binary.ts";
 import { close_virtio_device, virtio_device_description, virtio_imports } from "./virtio/core.ts";
+import { attach_framebuffer_plugins } from "./framebuffer.ts";
 import { merge_snapshot_device_tree } from "./immutable-image.ts";
 import {
   allocate_shared_memory,
@@ -57,6 +58,14 @@ export {
 export { type Endpoint, serveDevice, workerDevice } from "./virtio/remote.ts";
 export { type ConsoleDevice, consoleDevice } from "./virtio/console.ts";
 export { entropyDevice } from "./virtio/entropy.ts";
+export {
+  type FramebufferInfo,
+  type FramebufferOptions,
+  type FramebufferPlugin,
+  type FramebufferRect,
+  type FramebufferState,
+  framebufferPlugin,
+} from "./framebuffer.ts";
 export {
   type FS,
   type FSAttributes,
@@ -608,6 +617,7 @@ export async function bootMachine(options: BootMachineOptions): Promise<Machine>
           instance.exports.trigger_irq(irq);
         },
       }),
+      fb: attach_framebuffer_plugins(wasm_memory, plugins),
     } satisfies Imports;
 
     instance = (await WebAssembly.instantiate(vmlinux, imports)) as Instance;
