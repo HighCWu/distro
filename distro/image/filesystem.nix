@@ -1,6 +1,7 @@
 {
   pkgs,
   lib,
+  checkStoreReferences ? null,
 }:
 
 {
@@ -9,6 +10,7 @@
   format ? "erofs",
   label ? "LOWLAND_ROOT",
   size ? "256M",
+  forbidStoreReferences ? true,
 }:
 
 assert lib.assertMsg (
@@ -24,16 +26,22 @@ assert lib.assertMsg (
   && builtins.match "[A-Za-z0-9._-]+" label != null
 ) "mkFilesystem label must contain 1 to 15 ASCII letters, digits, dots, underscores, or hyphens";
 pkgs.runCommand "${name}.${format}"
-  {
-    nativeBuildInputs = [
-      pkgs.fakeroot
-    ]
-    ++ lib.optionals (format == "ext4") [ pkgs.e2fsprogs ]
-    ++ lib.optionals (format == "erofs") [ pkgs.erofs-utils ];
-    passthru = {
-      inherit format label root;
-    };
-  }
+  (
+    {
+      nativeBuildInputs = [
+        pkgs.fakeroot
+      ]
+      ++ lib.optional (forbidStoreReferences && checkStoreReferences != null) checkStoreReferences
+      ++ lib.optionals (format == "ext4") [ pkgs.e2fsprogs ]
+      ++ lib.optionals (format == "erofs") [ pkgs.erofs-utils ];
+      passthru = {
+        inherit format label root;
+      };
+    }
+    // lib.optionalAttrs forbidStoreReferences {
+      allowedReferences = [ ];
+    }
+  )
   ''
     mkdir root
     cp -a --no-preserve=ownership ${root}/. root/
@@ -43,6 +51,9 @@ pkgs.runCommand "${name}.${format}"
     # fail without it.
     mkdir -p root/dev root/mnt root/proc root/root root/run root/sys root/tmp
     chmod 01777 root/tmp
+    ${lib.optionalString (forbidStoreReferences && checkStoreReferences != null) ''
+      apk-check-store-references root
+    ''}
 
     ${
       if format == "ext4" then

@@ -74,6 +74,7 @@ let
     in
     pkgs.runCommand "apk-${name}-${version}"
       {
+        allowedReferences = [ ];
         nativeBuildInputs = [
           checkStoreReferences
           pkgs.fakeroot

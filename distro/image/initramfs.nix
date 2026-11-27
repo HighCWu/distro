@@ -1,6 +1,7 @@
 {
   pkgs,
   lib,
+  checkStoreReferences ? null,
 }:
 
 {
@@ -9,6 +10,7 @@
   contents ? [ ],
   files ? { },
   pathModes ? { },
+  forbidStoreReferences ? false,
 }:
 
 let
@@ -47,13 +49,19 @@ else if invalidModePaths != [ ] then
   throw "mkInitramfs pathModes require normalized paths and four-digit octal modes: ${lib.concatStringsSep ", " invalidModePaths}"
 else
   pkgs.runCommand "${name}.cpio"
-    {
-      nativeBuildInputs = [
-        pkgs.cpio
-        pkgs.findutils
-      ];
-      initramfsSources = contents ++ builtins.attrValues normalizedFiles ++ [ normalizedInit ];
-    }
+    (
+      {
+        nativeBuildInputs = [
+          pkgs.cpio
+          pkgs.findutils
+        ]
+        ++ lib.optional (forbidStoreReferences && checkStoreReferences != null) checkStoreReferences;
+        initramfsSources = contents ++ builtins.attrValues normalizedFiles ++ [ normalizedInit ];
+      }
+      // lib.optionalAttrs forbidStoreReferences {
+        allowedReferences = [ ];
+      }
+    )
     ''
       copy_tree() {
         local source=$1
@@ -109,6 +117,9 @@ else
         "set_mode ${lib.escapeShellArg (lib.removePrefix "/" path)} ${lib.escapeShellArg pathModes.${path}}"
       ) modePaths}
 
+      ${lib.optionalString (forbidStoreReferences && checkStoreReferences != null) ''
+        apk-check-store-references root
+      ''}
       cd root
       find . -print0 | sort -z | cpio --null --reproducible --owner=0:0 -H newc -o > $out
     ''
