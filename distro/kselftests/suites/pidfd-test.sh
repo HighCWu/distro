@@ -26,14 +26,18 @@ export PATH=/bin:/sbin:/usr/bin:/usr/sbin
 mount -t proc proc /proc || fail "mounting proc failed"
 /vm-test-setup-dev-fd || fail "creating /dev/fd links failed"
 
-pidfd_open_test || fail "pidfd_open_test failed"
+out=$(pidfd_open_test 2>&1)
+rc=$?
+printf '%s\n' "$out"
+[ "$rc" -eq 0 ] || fail "pidfd_open_test exited $rc"
+echo "$out" | grep -Eq '^not ok|#[[:space:]]*SKIP|FAIL' && fail "pidfd_open_test reported a failure or skip"
 
 out=$(pidfd_test 2>&1)
 rc=$?
 printf '%s\n' "$out"
 [ "$rc" -eq 0 ] || fail "pidfd_test exited $rc"
 echo "$out" | grep -q '^1\.\.5$' || fail "pidfd_test reported an unexpected TAP plan"
-echo "$out" | grep -Eq '^not ok|# SKIP' && fail "pidfd_test reported a failure or skip"
+echo "$out" | grep -Eq '^not ok|#[[:space:]]*SKIP|FAIL' && fail "pidfd_test reported a failure or skip"
 [ "$(echo "$out" | grep -c '^ok [0-9]')" -eq 5 ] || fail "pidfd_test did not pass all five tests"
 
 echo "::vm-test::pass"

@@ -4,13 +4,16 @@
 
 #include <fcntl.h>
 #include <pty.h>
+#include <sched.h>
 #include <signal.h>
+#include <stdint.h>
 #include <stdlib.h>
 #include <sys/ioctl.h>
 #include <sys/mount.h>
 #include <sys/stat.h>
 #include <sys/wait.h>
 #include <termios.h>
+#include <time.h>
 #include <unistd.h>
 
 static void write_all(int fd, const char *message, size_t size)
@@ -118,6 +121,86 @@ static void test_openpty_and_controlling_terminal(void)
 	free(stack);
 }
 
+static volatile sig_atomic_t winch_received;
+
+static void handle_sigwinch(int sig)
+{
+	(void)sig;
+	winch_received = 1;
+}
+
+static uint64_t monotonic_nanoseconds(void)
+{
+	struct timespec now;
+
+	if (clock_gettime(CLOCK_MONOTONIC, &now) == -1)
+		return 0;
+	return (uint64_t)now.tv_sec * 1000000000 + now.tv_nsec;
+}
+
+static int exercise_hvc_resize(void *unused)
+{
+	struct sigaction action = { .sa_handler = handle_sigwinch };
+	struct winsize size;
+	uint64_t deadline;
+	int hvc;
+
+	(void)unused;
+	if (setsid() == -1)
+		return 20;
+	hvc = open("/dev/hvc0", O_RDWR | O_NOCTTY | O_CLOEXEC);
+	if (hvc == -1)
+		return 21;
+	if (ioctl(hvc, TIOCSCTTY, 0) == -1)
+		return 22;
+	if (ioctl(hvc, TIOCGWINSZ, &size) == -1)
+		return 23;
+	if (size.ws_col != 80 || size.ws_row != 24)
+		return 24;
+	if (sigemptyset(&action.sa_mask) == -1 ||
+	    sigaction(SIGWINCH, &action, NULL) == -1)
+		return 25;
+
+	winch_received = 0;
+	puts("::vm-test::resize:120:40");
+	fflush(stdout);
+
+	deadline = monotonic_nanoseconds() + 5000000000ULL;
+	for (;;) {
+		if (ioctl(hvc, TIOCGWINSZ, &size) == -1)
+			return 26;
+		if (winch_received && size.ws_col == 120 && size.ws_row == 40)
+			break;
+		if (monotonic_nanoseconds() >= deadline)
+			return 27;
+		sched_yield();
+	}
+	close(hvc);
+	return 0;
+}
+
+static void test_virtio_console_resize(void)
+{
+	const size_t stack_size = 64 * 1024;
+	char *stack = malloc(stack_size);
+	pid_t child;
+	int status;
+
+	if (stack == NULL)
+		test_perror("malloc resize stack");
+	child = clone(exercise_hvc_resize, stack + stack_size, SIGCHLD, NULL);
+	if (child == -1)
+		test_perror("clone console-resize child");
+	if (waitpid(child, &status, 0) != child)
+		test_perror("waitpid console-resize");
+	if (!WIFEXITED(status) || WEXITSTATUS(status) != 0) {
+		printf("virtio console resize child status=0x%x exit=%d\n",
+		       status, WIFEXITED(status) ? WEXITSTATUS(status) : -1);
+		test_fail("virtio console resize failed");
+	}
+	free(stack);
+}
+
 int main(void)
 {
 	struct stat device;
@@ -133,5 +216,6 @@ int main(void)
 
 	test_posix_openpt();
 	test_openpty_and_controlling_terminal();
+	test_virtio_console_resize();
 	test_pass();
 }

@@ -24,7 +24,7 @@ out=$(mq_open_tests /test-queue 2>&1)
 rc=$?
 printf '%s\n' "$out"
 [ "$rc" -eq 0 ] || fail "mq_open_tests exited $rc"
-echo "$out" | grep -q 'FAIL' && fail "mq_open_tests reported a failure"
+echo "$out" | grep -Eq '^not ok|#[[:space:]]*SKIP|FAIL' && fail "mq_open_tests reported a failure or skip"
 echo "$out" | grep -q 'PASS' || fail "mq_open_tests reported no passing assertions"
 
 echo "::vm-test::pass"

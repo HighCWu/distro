@@ -199,3 +199,33 @@ for (const [scenario, expectedReason] of [
     }
   });
 }
+
+test("real runner dispatches ::vm-test::resize requests to consoleDevice.resize", () => {
+  const temp = mkdtempSync(join(tmpdir(), "linux-wasm-runner-resize-"));
+  try {
+    const initramfs = join(temp, "initramfs");
+    const disk = join(temp, "disk");
+    writeFileSync(initramfs, new Uint8Array([1]));
+    writeFileSync(disk, new Uint8Array(512).fill(0x37));
+    const result = spawnSync(
+      process.execPath,
+      [
+        fileURLToPath(new URL("./run-test.js", import.meta.url)),
+        "--readonly-disks",
+        fileURLToPath(new URL("./shutdown-fixture.js", import.meta.url)),
+        initramfs,
+        disk,
+      ],
+      {
+        encoding: "utf8",
+        timeout: 10000,
+        env: { ...process.env, RUNNER_FIXTURE_FAIL: "0", RUNNER_FIXTURE_SCENARIO: "console-resize" },
+      },
+    );
+    assert.ifError(result.error);
+    assert.equal(result.status, 0, result.stdout + result.stderr);
+    assert.match(result.stdout, /fixture: console resized to 120x40/);
+  } finally {
+    rmSync(temp, { recursive: true, force: true });
+  }
+});

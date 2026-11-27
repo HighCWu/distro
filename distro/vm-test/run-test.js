@@ -187,6 +187,12 @@ function consumeLine(line, acceptTestResult = true) {
     return;
   }
 
+  const resize = /^::vm-test::resize:(\d+):(\d+)$/.exec(line);
+  if (resize) {
+    consoleDev.resize(Number(resize[1]), Number(resize[2]));
+    return;
+  }
+
   const testResult = parseResult(line);
   if (testResult) {
     if (observingMemoryGrowth && testResult.passed) observeMemoryGrowth(2);
@@ -268,10 +274,8 @@ function consoleOutput({ failWhenClosed, acceptTestResult = true }) {
 
 const input = new TransformStream();
 const inputWriter = input.writable.getWriter();
-const devices = [
-  consoleDevice(input.readable, consoleOutput({ failWhenClosed: true })),
-  entropyDevice(),
-];
+const consoleDev = consoleDevice(input.readable, consoleOutput({ failWhenClosed: true }));
+const devices = [consoleDev, entropyDevice()];
 
 const disks = [];
 let startupFailed = false;

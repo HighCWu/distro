@@ -31,11 +31,13 @@ export PATH=/bin:/sbin:/usr/bin:/usr/sbin
 mount -t proc proc /proc || fail "mounting proc failed"
 /vm-test-setup-dev-fd || fail "creating /dev/fd links failed"
 
-# Runs one test binary and rejects kselftest's skip code along with failures.
+# Runs one test binary and rejects kselftest's skip code, TAP skips/failures, and textual FAILs.
 run() {
-  "$1"
+  out=$("$1" 2>&1)
   rc=$?
+  printf '%s\n' "$out"
   [ "$rc" -eq 0 ] || fail "$1 exited $rc"
+  echo "$out" | grep -Eq '^not ok|#[[:space:]]*SKIP|FAIL' && fail "$1 reported a failure or skip"
 }
 
 # A child thread blocks in FUTEX_WAIT (private) for a full second, then the

@@ -1,6 +1,11 @@
 // SPDX-License-Identifier: MIT
 // Host substitute only: exercises the real runner without booting Linux.
-export const consoleDevice = (_input, output) => ({ output });
+export const consoleDevice = (_input, output) => ({
+  output,
+  resize(columns, rows) {
+    console.log(`fixture: console resized to ${columns}x${rows}`);
+  },
+});
 export const entropyDevice = () => ({});
 export const blockDevice = (storage) => {
   if (process.env.RUNNER_FIXTURE_SETUP_CHECK === "1") {
@@ -25,7 +30,9 @@ export async function bootMachine({ plugins }) {
     await writer.close();
   } else if (scenario !== "boot-pass") {
     await write(
-      "::vm-test::pass\n" + (scenario === "same-chunk" ? "::vm-test::fail: late failure\n" : ""),
+      (scenario === "console-resize" ? "::vm-test::resize:120:40\n" : "") +
+        "::vm-test::pass\n" +
+        (scenario === "same-chunk" ? "::vm-test::fail: late failure\n" : ""),
     );
     if (scenario === "separate-chunk") await write("::vm-test::fail: late failure\n");
   }
