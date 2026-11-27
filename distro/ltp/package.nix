@@ -103,8 +103,8 @@ let
     process = {
       disk = null;
       tests = [
-        # brk01 fails on the current kernel.
-        # clock_gettime01 fails on the current kernel.
+        # brk01 requires MMU-backed dynamic brk growth beyond nommu's fixed context.end_brk.
+        # clock_gettime01 setup() spins on /proc/self/stat utime != 0 (requires WASM_VTIME=y).
         "clock_gettime/clock_gettime04"
         "getcpu/getcpu01"
         "getegid/getegid01"
