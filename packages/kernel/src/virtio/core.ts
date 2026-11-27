@@ -486,7 +486,10 @@ export class VirtioController {
             config.set(guest_config.subarray(0, end));
             const next_config = driver.setConfig(config, offset, length);
             if (next_config) {
-              assert(next_config.byteLength === config.byteLength, "virtio config size cannot change");
+              assert(
+                next_config.byteLength === config.byteLength,
+                "virtio config size cannot change",
+              );
               config.set(next_config);
             }
             guest_config.subarray(0, end).set(config.subarray(0, end));

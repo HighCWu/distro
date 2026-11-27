@@ -47,10 +47,7 @@ test("virtio input reports device id, name, serial, devids, evBits, propBits, an
     );
 
     const serialCfg = device.queryConfig(VirtioInputConfigSelect.ID_SERIAL);
-    assert.equal(
-      new TextDecoder().decode(serialCfg.subarray(8, 8 + serialCfg[2]!)),
-      "kb-001",
-    );
+    assert.equal(new TextDecoder().decode(serialCfg.subarray(8, 8 + serialCfg[2]!)), "kb-001");
 
     const devidsCfg = device.queryConfig(VirtioInputConfigSelect.ID_DEVIDS);
     const devidsView = new DataView(devidsCfg.buffer);
