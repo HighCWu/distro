@@ -129,6 +129,23 @@ int main(void)
 	CHECK(lseek(fd, 0, SEEK_CUR) == CHUNK, "pread preserves fd position");
 	puts("direct I/O: ext4 aligned scalar writes and positional reads pass");
 
+	const size_t alignment_segment = 4096;
+	const off_t alignment_offset = PAGE;
+	CHECK(pwrite(fd, source, alignment_segment, alignment_offset) == (ssize_t)alignment_segment,
+	      "aligned 4 KiB positional write");
+	CHECK(pread(fd, destination, alignment_segment, alignment_offset) == (ssize_t)alignment_segment &&
+	      !memcmp(source, destination, alignment_segment), "aligned 4 KiB positional read contents");
+	errno = 0;
+	CHECK(pwrite(fd, source + 1, alignment_segment, alignment_offset) == -1 && errno == EINVAL,
+	      "unaligned 4 KiB write buffer is rejected");
+	CHECK(pread(fd, destination, alignment_segment, alignment_offset) == (ssize_t)alignment_segment &&
+	      !memcmp(source, destination, alignment_segment), "rejected write leaves existing bytes unchanged");
+	errno = 0;
+	CHECK(pread(fd, destination + 1, alignment_segment, alignment_offset) == -1 && errno == EINVAL,
+	      "unaligned 4 KiB read buffer is rejected");
+	CHECK(lseek(fd, 0, SEEK_CUR) == CHUNK, "4 KiB positional calls preserve fd position");
+	puts("direct I/O: 4 KiB buffer alignment rejection and aligned positional recovery pass");
+
 	struct iovec output[] = {{source + 2 * PAGE, PAGE}, {source + PAGE, PAGE}, {source, PAGE}};
 	CHECK(pwritev(fd, output, 3, 0) == CHUNK, "bounded vectored short write");
 	CHECK(lseek(fd, 0, SEEK_SET) == 0, "rewind vector read");
