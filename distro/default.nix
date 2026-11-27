@@ -2063,6 +2063,22 @@ lib.makeScope (scope: lib.callPackageWith ({ inherit lib pkgs; } // scope)) (
       vm-test = vmTestWasm64;
       extraChecks = { };
     };
+    io-uring-runtime = callPackage ./io-uring-runtime/package.nix {
+      extraChecks.both = pkgs.runCommand "io-uring-runtime-check-both" { passthru.ci.heavy = true; } ''
+        test -e ${self.io-uring-runtime.checks.runtime}
+        test -e ${self.io-uring-runtime-wasm64.checks.runtime}
+        touch $out
+      '';
+    };
+    io-uring-runtime-wasm64 = self.io-uring-runtime.override {
+      stdenv = self.stdenv-wasm64;
+      platform = self.platform-wasm64;
+      musl = self.musl-wasm64;
+      llvm-runtimes = self.llvm-runtimes-wasm64;
+      busybox = self.busybox-wasm64;
+      vm-test = vmTestWasm64;
+      extraChecks = { };
+    };
     libgit2-runtime = callPackage ./libgit2-runtime/package.nix {
       extraChecks.both = pkgs.runCommand "libgit2-runtime-check-both" { passthru.ci.heavy = true; } ''
         test -e ${self.libgit2-runtime.checks.runtime}
