@@ -257,7 +257,7 @@ static int test_pty_winch(void)
         return 1;
     }
 
-    int slave_fd = open(slave_name, O_RDWR | O_CLOEXEC);
+    int slave_fd = open(slave_name, O_RDWR | O_NOCTTY | O_CLOEXEC);
     if (slave_fd < 0) {
         perror("open(ptsname)");
         close(master_fd);
@@ -322,8 +322,12 @@ static int test_pty_winch(void)
 
 int main(void)
 {
+    setvbuf(stdout, NULL, _IONBF, 0);
+    setvbuf(stderr, NULL, _IONBF, 0);
+    puts("splice-pty: start zero-copy");
     if (test_zero_copy() != 0)
         return 1;
+    puts("splice-pty: start pty-winch");
     if (test_pty_winch() != 0)
         return 1;
     puts("splice-pty-runtime ok");

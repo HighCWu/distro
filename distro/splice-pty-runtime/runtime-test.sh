@@ -10,10 +10,12 @@ fail() {
 }
 
 mount -t devtmpfs devtmpfs /dev || fail 'mount devtmpfs'
-mkdir -p /dev/pts || fail 'mkdir /dev/pts'
+mkdir -p /dev/pts /tmp || fail 'mkdir /dev/pts /tmp'
 mount -t devpts devpts /dev/pts || fail 'mount devpts'
 
-out=$(splice-pty-runtime 2>&1) || fail "splice-pty-runtime failed: $out"
+out=$(splice-pty-runtime 2>&1)
+rc=$?
+[ "$rc" -eq 0 ] || fail "splice-pty-runtime failed (rc=$rc): $out"
 printf '%s\n' "$out"
 
 umount /dev/pts || fail 'umount devpts'

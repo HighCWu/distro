@@ -22,8 +22,8 @@
     inherit pkgs;
     owner = "HighCWu";
     repo = "linux";
-    rev = "8856e4e4e217a8044e3fa47e03713fdb32db85ba";
-    hash = "sha256-K9UPGXWPIT/1BwbN9msTboeqf6/oigr/cd+S2dNI3XM=";
+    rev = "0d5dcfefeb342dc82ec88ed5534befbab914fa7c";
+    hash = "sha256-ly95MOjng4XCkkMiXtepXCVIZPnUfeBu+/J1Dz5+b4s=";
   },
 }:
 
@@ -203,6 +203,9 @@ pkgs.stdenvNoCC.mkDerivation (finalAttrs: {
     grep -qx 'CONFIG_PACKET=y' .config
     grep -qx 'CONFIG_BPF=y' .config
     grep -qx 'CONFIG_BPF_SYSCALL=y' .config
+    grep -qx 'CONFIG_INPUT_EVDEV=y' .config
+    grep -qx 'CONFIG_VIRTIO_INPUT=y' .config
+    grep -qx 'CONFIG_FB_WASM=y' .config
     for option in CGROUPS CGROUP_PIDS KERNFS; do
       grep -qx "CONFIG_$option=y" .config
     done
