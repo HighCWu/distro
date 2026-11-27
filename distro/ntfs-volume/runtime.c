@@ -99,7 +99,7 @@ int main(void)
     puts("NTFS volume: mounted read-only with ntfs3");
 
     struct statfs filesystem;
-    require(statfs(ROOT, &filesystem) == 0 && filesystem.f_type == 0x5346544e,
+    require(statfs(ROOT, &filesystem) == 0 && filesystem.f_type == 0x7366746e,
             "confirm NTFS filesystem magic");
     int directory_fd = open(ROOT, O_RDONLY | O_DIRECTORY | O_CLOEXEC);
     require(directory_fd >= 0, "open NTFS root directory");
