@@ -219,7 +219,51 @@ static void query_route_expect(int nl_fd, const char *src_str, const char *dst_s
 	require(got_table == expected_table, "matched expected policy routing table");
 }
 
-static void verify_rule_dump(int nl_fd, uint32_t table_a, uint32_t table_b)
+static void query_route_error_expect(int nl_fd, const char *src_str,
+				     const char *dst_str, int expected_error)
+{
+	struct {
+		struct nlmsghdr nlh;
+		struct rtmsg rtm;
+		char attrs[256];
+	} req;
+	memset(&req, 0, sizeof(req));
+	req.nlh.nlmsg_len = NLMSG_LENGTH(sizeof(req.rtm));
+	req.nlh.nlmsg_type = RTM_GETROUTE;
+	req.nlh.nlmsg_flags = NLM_F_REQUEST;
+	req.nlh.nlmsg_seq = next_seq++;
+	req.rtm.rtm_family = AF_INET6;
+	req.rtm.rtm_dst_len = 128;
+	req.rtm.rtm_src_len = 128;
+	req.rtm.rtm_flags = RTM_F_FIB_MATCH;
+
+	struct in6_addr dst;
+	struct in6_addr src;
+	require(inet_pton(AF_INET6, dst_str, &dst) == 1, "inet_pton query dst");
+	require(inet_pton(AF_INET6, src_str, &src) == 1, "inet_pton query src");
+	add_attr(&req.nlh, sizeof(req), RTA_DST, &dst, sizeof(dst));
+	add_attr(&req.nlh, sizeof(req), RTA_SRC, &src, sizeof(src));
+
+	struct sockaddr_nl kernel = { .nl_family = AF_NETLINK };
+	ssize_t sent = sendto(nl_fd, &req, req.nlh.nlmsg_len, 0,
+			      (const struct sockaddr *)&kernel, sizeof(kernel));
+	require(sent == (ssize_t)req.nlh.nlmsg_len, "send RTM_GETROUTE blackhole");
+
+	char buf[4096];
+	ssize_t n = recv(nl_fd, buf, sizeof(buf), 0);
+	require(n >= (ssize_t)sizeof(struct nlmsghdr), "recv RTM_GETROUTE blackhole");
+
+	const struct nlmsghdr *resp = (const struct nlmsghdr *)buf;
+	require(NLMSG_OK(resp, (size_t)n), "valid RTM_GETROUTE blackhole response");
+	require(resp->nlmsg_type == NLMSG_ERROR &&
+			NLMSG_PAYLOAD(resp, 0) >= sizeof(struct nlmsgerr),
+		"RTM_GETROUTE blackhole returned NLMSG_ERROR");
+	const struct nlmsgerr *err = (const struct nlmsgerr *)NLMSG_DATA(resp);
+	require(err->error == expected_error, "blackhole route lookup returned expected error");
+}
+
+static void verify_rule_dump(int nl_fd, uint32_t table_a, uint32_t table_b,
+			     uint32_t table_c)
 {
 	struct {
 		struct nlmsghdr nlh;
@@ -239,6 +283,7 @@ static void verify_rule_dump(int nl_fd, uint32_t table_a, uint32_t table_b)
 
 	int saw_a = 0;
 	int saw_b = 0;
+	int saw_c = 0;
 	for (;;) {
 		char buf[8192];
 		ssize_t n = recv(nl_fd, buf, sizeof(buf), 0);
@@ -246,7 +291,8 @@ static void verify_rule_dump(int nl_fd, uint32_t table_a, uint32_t table_b)
 		for (const struct nlmsghdr *nlh = (const struct nlmsghdr *)buf;
 		     NLMSG_OK(nlh, (size_t)n); nlh = NLMSG_NEXT(nlh, n)) {
 			if (nlh->nlmsg_type == NLMSG_DONE) {
-				require(saw_a && saw_b, "RTM_GETRULE dump contains both policy rules");
+				require(saw_a && saw_b && saw_c,
+					"RTM_GETRULE dump contains all policy rules");
 				return;
 			}
 			require(nlh->nlmsg_type == RTM_NEWRULE, "RTM_GETRULE record");
@@ -265,6 +311,7 @@ static void verify_rule_dump(int nl_fd, uint32_t table_a, uint32_t table_b)
 			}
 			if (table == table_a) saw_a = 1;
 			if (table == table_b) saw_b = 1;
+			if (table == table_c) saw_c = 1;
 		}
 	}
 }
@@ -286,23 +333,32 @@ int main(void)
 
 	add_ipv6_addr(nl_fd, lo_index, "fd00:1::1");
 	add_ipv6_addr(nl_fd, lo_index, "fd00:2::1");
+	add_ipv6_addr(nl_fd, lo_index, "fd00:4::1");
 
-	const uint32_t table_unicast = 100;
-	const uint32_t table_blackhole = 200;
+	const uint32_t table_unicast_a = 100;
+	const uint32_t table_unicast_b = 200;
+	const uint32_t table_blackhole = 300;
 
-	modify_route(nl_fd, 1, table_unicast, RTN_UNICAST, "fd00:3::", lo_index);
+	modify_route(nl_fd, 1, table_unicast_a, RTN_UNICAST, "fd00:3::", lo_index);
+	modify_route(nl_fd, 1, table_unicast_b, RTN_UNICAST, "fd00:3::", lo_index);
 	modify_route(nl_fd, 1, table_blackhole, RTN_BLACKHOLE, "fd00:3::", 0);
 
-	modify_rule(nl_fd, 1, 100, table_unicast, "fd00:1::1");
-	modify_rule(nl_fd, 1, 101, table_blackhole, "fd00:2::1");
+	modify_rule(nl_fd, 1, 100, table_unicast_a, "fd00:1::1");
+	modify_rule(nl_fd, 1, 101, table_unicast_b, "fd00:2::1");
+	modify_rule(nl_fd, 1, 102, table_blackhole, "fd00:4::1");
 
-	verify_rule_dump(nl_fd, table_unicast, table_blackhole);
-	query_route_expect(nl_fd, "fd00:1::1", "fd00:3::1", table_unicast, RTN_UNICAST);
-	query_route_expect(nl_fd, "fd00:2::1", "fd00:3::1", table_blackhole, RTN_BLACKHOLE);
+	verify_rule_dump(nl_fd, table_unicast_a, table_unicast_b, table_blackhole);
+	query_route_expect(nl_fd, "fd00:1::1", "fd00:3::1", table_unicast_a, RTN_UNICAST);
+	query_route_expect(nl_fd, "fd00:2::1", "fd00:3::1", table_unicast_b, RTN_UNICAST);
+	/* Linux inet6_rtm_getroute checks rt->dst.error (-EINVAL for blackhole)
+	 * before RTM_F_FIB_MATCH serializes the route. */
+	query_route_error_expect(nl_fd, "fd00:4::1", "fd00:3::1", -EINVAL);
 
-	modify_rule(nl_fd, 0, 100, table_unicast, "fd00:1::1");
-	modify_rule(nl_fd, 0, 101, table_blackhole, "fd00:2::1");
-	modify_route(nl_fd, 0, table_unicast, RTN_UNICAST, "fd00:3::", lo_index);
+	modify_rule(nl_fd, 0, 100, table_unicast_a, "fd00:1::1");
+	modify_rule(nl_fd, 0, 101, table_unicast_b, "fd00:2::1");
+	modify_rule(nl_fd, 0, 102, table_blackhole, "fd00:4::1");
+	modify_route(nl_fd, 0, table_unicast_a, RTN_UNICAST, "fd00:3::", lo_index);
+	modify_route(nl_fd, 0, table_unicast_b, RTN_UNICAST, "fd00:3::", lo_index);
 	modify_route(nl_fd, 0, table_blackhole, RTN_BLACKHOLE, "fd00:3::", 0);
 
 	require(close(nl_fd) == 0, "close NETLINK_ROUTE socket");
