@@ -77,30 +77,73 @@ pkgs.stdenvNoCC.mkDerivation (finalAttrs: {
       -DOPENSSL_SSL_LIBRARY=${openssl}/lib/libssl.a \
       -DOPENSSL_CRYPTO_LIBRARY=${openssl}/lib/libcrypto.a
 
-    grep -qx 'CMAKE_C_FLAGS:STRING=-DNO_MMAP -pthread' build/CMakeCache.txt
-    grep -qx 'BUILD_SHARED_LIBS:BOOL=OFF' build/CMakeCache.txt
-    grep -qx 'BUILD_TESTS:BOOL=OFF' build/CMakeCache.txt
-    grep -qx 'BUILD_CLI:BOOL=OFF' build/CMakeCache.txt
-    grep -qx 'USE_THREADS:BOOL=ON' build/CMakeCache.txt
-    grep -qx 'USE_SSH:STRING=OFF' build/CMakeCache.txt
-    grep -qx 'USE_HTTPS:STRING=OpenSSL' build/CMakeCache.txt
-    grep -qx 'USE_HTTP_PARSER:STRING=builtin' build/CMakeCache.txt
-    grep -qx 'REGEX_BACKEND:STRING=builtin' build/CMakeCache.txt
-    grep -qx 'USE_BUNDLED_ZLIB:STRING=OFF' build/CMakeCache.txt
-    grep -qx 'USE_SHA1:STRING=CollisionDetection' build/CMakeCache.txt
-    grep -qx 'USE_SHA256:STRING=OpenSSL' build/CMakeCache.txt
-    grep -F -- '${zlib}/include' build/CMakeCache.txt
-    grep -F -- '${zlib}/lib/libz.a' build/CMakeCache.txt
-    grep -F -- '${openssl}/lib/libssl.a' build/CMakeCache.txt
-    grep -F -- '${openssl}/lib/libcrypto.a' build/CMakeCache.txt
-    grep -qx '#define GIT_THREADS 1' build/gen_headers/git2_features.h
-    grep -qx '#define GIT_OPENSSL 1' build/gen_headers/git2_features.h
-    grep -qx '#define GIT_REGEX_BUILTIN 1' build/gen_headers/git2_features.h
-    grep -qx '#define GIT_HTTPPARSER_BUILTIN 1' build/gen_headers/git2_features.h
-    grep -qx '#define GIT_COMPRESSION_ZLIB 1' build/gen_headers/git2_features.h
-    grep -qx '#define GIT_SHA1_COLLISIONDETECT 1' build/gen_headers/git2_features.h
-    grep -qx '#define GIT_SHA256_OPENSSL 1' build/gen_headers/git2_features.h
-    if grep -q '^#define GIT_SSH 1$' build/gen_headers/git2_features.h; then
+    assert_cache() {
+      local key="$1" expected="$2"
+      if ! grep -Eq "^''${key}:(BOOL|STRING|UNINITIALIZED|FILEPATH|PATH)=''${expected}\$" build/CMakeCache.txt; then
+        echo "CMakeCache assertion failed for ''${key}: expected ''${expected}" >&2
+        grep -E "^''${key}:" build/CMakeCache.txt >&2 || true
+        exit 1
+      fi
+    }
+    assert_cache_path() {
+      local pattern="$1"
+      if ! grep -Fq -- "$pattern" build/CMakeCache.txt; then
+        echo "CMakeCache path assertion failed: missing $pattern" >&2
+        exit 1
+      fi
+    }
+
+    if ! grep -Eq '^CMAKE_C_FLAGS:STRING=.*-DNO_MMAP' build/CMakeCache.txt ||
+       ! grep -Eq '^CMAKE_C_FLAGS:STRING=.*-pthread' build/CMakeCache.txt; then
+      echo "CMakeCache assertion failed for CMAKE_C_FLAGS (-DNO_MMAP -pthread)" >&2
+      grep -E '^CMAKE_C_FLAGS:' build/CMakeCache.txt >&2 || true
+      exit 1
+    fi
+    assert_cache BUILD_SHARED_LIBS OFF
+    assert_cache BUILD_TESTS OFF
+    assert_cache BUILD_CLI OFF
+    assert_cache USE_THREADS ON
+    assert_cache USE_SSH OFF
+    assert_cache USE_HTTPS OpenSSL
+    assert_cache USE_HTTP_PARSER builtin
+    assert_cache REGEX_BACKEND builtin
+    assert_cache USE_BUNDLED_ZLIB OFF
+    assert_cache USE_SHA1 CollisionDetection
+    assert_cache USE_SHA256 OpenSSL
+    assert_cache_path '${zlib}/include'
+    assert_cache_path '${zlib}/lib/libz.a'
+    assert_cache_path '${openssl}/lib/libssl.a'
+    assert_cache_path '${openssl}/lib/libcrypto.a'
+
+    features_h=""
+    for candidate in build/src/util/git2_features.h build/gen_headers/git2_features.h; do
+      if [ -f "$candidate" ]; then
+        features_h="$candidate"
+        break
+      fi
+    done
+    if [ -z "$features_h" ]; then
+      echo "git2_features.h not found under build/" >&2
+      find build -name 'git2_features.h' >&2 || true
+      exit 1
+    fi
+    assert_feature() {
+      local symbol="$1"
+      if ! grep -Eq "^#define ''${symbol}[[:space:]]+1\$" "$features_h"; then
+        echo "Feature assertion failed in $features_h: missing #define ''${symbol} 1" >&2
+        cat "$features_h" >&2 || true
+        exit 1
+      fi
+    }
+
+    assert_feature GIT_THREADS
+    assert_feature GIT_OPENSSL
+    assert_feature GIT_REGEX_BUILTIN
+    assert_feature GIT_HTTPPARSER_BUILTIN
+    assert_feature GIT_COMPRESSION_ZLIB
+    assert_feature GIT_SHA1_COLLISIONDETECT
+    assert_feature GIT_SHA256_OPENSSL
+    if grep -Eq '^#define GIT_SSH[[:space:]]+1$' "$features_h"; then
       echo "libgit2 enabled an SSH transport despite USE_SSH=OFF" >&2
       exit 1
     fi
