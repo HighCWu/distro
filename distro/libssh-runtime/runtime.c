@@ -67,6 +67,14 @@ dump_ssh_logs(void)
   pthread_mutex_unlock(&log_ring_mutex);
 }
 
+static void
+record_stage_log(int conn, const char *stage)
+{
+  char msg[64];
+  (void)snprintf(msg, sizeof(msg), "conn=%d stage=%s", conn, stage ? stage : "?");
+  capture_ssh_log(SSH_LOG_INFO, "libssh-srv", msg, NULL);
+}
+
 static const unsigned char expected_payload[] = {
   0x00, 0x53, 0x53, 0x48, 0xff, 0x80, 0x0a, 0x00, 0x7f,
 };
@@ -593,7 +601,7 @@ serve_session(ssh_bind server_bind, int connection_index,
   long timeout_seconds = 45;
   const char *stage = "accept_watchdog";
 
-  fprintf(stderr, "libssh-srv: conn=%d stage=accept_wait\n", connection_index);
+  record_stage_log(connection_index, "accept_wait");
   if (accept_with_watchdog(server_bind) != SSH_OK)
     goto cleanup;
 
@@ -605,13 +613,13 @@ serve_session(ssh_bind server_bind, int connection_index,
       ssh_options_set(session, SSH_OPTIONS_NODELAY, &nodelay) != SSH_OK ||
       ssh_options_set(session, SSH_OPTIONS_TIMEOUT, &timeout_seconds) != SSH_OK)
     goto cleanup;
-  fprintf(stderr, "libssh-srv: conn=%d stage=accepted\n", connection_index);
+  record_stage_log(connection_index, "accepted");
 
   stage = "key_exchange";
-  fprintf(stderr, "libssh-srv: conn=%d stage=kex_begin\n", connection_index);
+  record_stage_log(connection_index, "kex_begin");
   if (ssh_handle_key_exchange(session) != SSH_OK)
     goto cleanup;
-  fprintf(stderr, "libssh-srv: conn=%d stage=kex_done\n", connection_index);
+  record_stage_log(connection_index, "kex_done");
 
   stage = "auth";
 
@@ -654,13 +662,13 @@ serve_session(ssh_bind server_bind, int connection_index,
   }
 
   if (rejected) {
-    fprintf(stderr, "libssh-srv: conn=%d stage=auth_done\n", connection_index);
+    record_stage_log(connection_index, "auth_done");
     result = SSH_OK;
     goto cleanup;
   }
   if (!authenticated)
     goto cleanup;
-  fprintf(stderr, "libssh-srv: conn=%d stage=auth_done\n", connection_index);
+  record_stage_log(connection_index, "auth_done");
 
   stage = "channel_open";
   for (;;) {
@@ -728,7 +736,7 @@ serve_session(ssh_bind server_bind, int connection_index,
 
 cleanup:
   if (result == SSH_OK)
-    fprintf(stderr, "libssh-srv: conn=%d stage=session_done\n", connection_index);
+    record_stage_log(connection_index, "session_done");
   if (result != SSH_OK) {
     if (failed_stage != NULL)
       *failed_stage = stage;
@@ -762,6 +770,8 @@ server_thread(void *opaque)
   int reuse = 1;
   bool config_enabled = false;
   unsigned int port;
+
+  (void)ssh_set_log_callback(capture_ssh_log);
 
   listener = socket(AF_INET, SOCK_STREAM, 0);
   if (listener < 0 ||
