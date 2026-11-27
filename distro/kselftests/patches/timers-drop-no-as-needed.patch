@@ -1,0 +1,13 @@
+timers/Makefile hardcodes -Wl,-no-as-needed into CFLAGS. wasm-ld does not
+recognize -no-as-needed, so linking fails on wasm32/wasm64-musl. Drop it;
+the static musl libc already folds -lrt, -lpthread, and -lm into libc.a.
+
+--- a/tools/testing/selftests/timers/Makefile
++++ b/tools/testing/selftests/timers/Makefile
+@@ -1,5 +1,5 @@
+ # SPDX-License-Identifier: GPL-2.0
+-CFLAGS += -O3 -Wl,-no-as-needed -Wall -I $(top_srcdir)
++CFLAGS += -O3 -Wall -I $(top_srcdir)
+ LDLIBS += -lrt -lpthread -lm
+ 
+ # these are all "safe" tests that don't modify
