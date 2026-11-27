@@ -31,6 +31,39 @@
 #define REJECTED_USER "unknown-user"
 #define EXPECTED_COMMAND "libssh-runtime-self-check"
 #define SFTP_MAX_READ_SIZE 4096
+#define LOG_RING_SIZE 24
+
+static pthread_mutex_t log_ring_mutex = PTHREAD_MUTEX_INITIALIZER;
+static char log_ring[LOG_RING_SIZE][160];
+static size_t log_ring_head;
+static size_t log_ring_count;
+
+static void
+capture_ssh_log(int priority, const char *function, const char *buffer,
+                void *userdata)
+{
+  (void)userdata;
+  pthread_mutex_lock(&log_ring_mutex);
+  size_t idx = (log_ring_head + log_ring_count) % LOG_RING_SIZE;
+  if (log_ring_count == LOG_RING_SIZE)
+    log_ring_head = (log_ring_head + 1) % LOG_RING_SIZE;
+  else
+    log_ring_count++;
+  (void)snprintf(log_ring[idx], sizeof(log_ring[idx]), "[%d] %s: %s",
+                 priority, function ? function : "?", buffer ? buffer : "");
+  pthread_mutex_unlock(&log_ring_mutex);
+}
+
+static void
+dump_ssh_logs(void)
+{
+  pthread_mutex_lock(&log_ring_mutex);
+  for (size_t i = 0; i < log_ring_count; ++i) {
+    size_t idx = (log_ring_head + i) % LOG_RING_SIZE;
+    fprintf(stderr, "  libssh-log: %s\n", log_ring[idx]);
+  }
+  pthread_mutex_unlock(&log_ring_mutex);
+}
 
 static const unsigned char expected_payload[] = {
   0x00, 0x53, 0x53, 0x48, 0xff, 0x80, 0x0a, 0x00, 0x7f,
@@ -971,6 +1004,8 @@ main(void)
     fprintf(stderr, "libssh runtime: initializing libssh failed\n");
     goto cleanup;
   }
+  (void)ssh_set_log_callback(capture_ssh_log);
+  (void)ssh_set_log_level(SSH_LOG_PROTOCOL);
   ssh_initialized = 1;
   path_length = snprintf(server.sftp_root, sizeof(server.sftp_root),
                          "/tmp/libssh-sftp-runtime-%ld", (long)getpid());
@@ -1131,5 +1166,7 @@ cleanup:
 
   if (result == 0)
     puts("libssh: client and server sessions, keys, sockets, and thread cleaned up");
+  else
+    dump_ssh_logs();
   return result;
 }

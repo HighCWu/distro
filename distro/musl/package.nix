@@ -78,6 +78,21 @@ pkgs.stdenvNoCC.mkDerivation (
       runHook postBuild
     '';
 
+    postPatch = ''
+      if ! grep -q 'posix_spawn_file_actions_addclose_except_np' include/spawn.h; then
+        awk '
+          /posix_spawn_file_actions_addfchdir_np/ {
+            print
+            print "int posix_spawn_file_actions_addclose_except_np(posix_spawn_file_actions_t *__restrict, int, const int *, size_t);"
+            found = 1
+            next
+          }
+          { print }
+          END { if (!found) exit 1 }
+        ' include/spawn.h > include/spawn.h.tmp && mv include/spawn.h.tmp include/spawn.h
+      fi
+    '';
+
     installPhase = ''
       runHook preInstall
       mkdir $out
