@@ -61,6 +61,10 @@ export function create_dynamic_process_state(): SharedArrayBuffer {
   return new SharedArrayBuffer(Int32Array.BYTES_PER_ELEMENT);
 }
 
+export function create_dynamic_active_workers(): SharedArrayBuffer {
+  return new SharedArrayBuffer(Int32Array.BYTES_PER_ELEMENT);
+}
+
 function state_word(state: SharedArrayBuffer | undefined): Int32Array | null {
   if (
     typeof SharedArrayBuffer === "undefined" ||
@@ -74,6 +78,34 @@ function state_word(state: SharedArrayBuffer | undefined): Int32Array | null {
 export function dynamic_process_value(state: SharedArrayBuffer | undefined): number | null {
   const word = state_word(state);
   return word ? Atomics.load(word, 0) : null;
+}
+
+export function dynamic_active_workers_count(
+  activeWorkers: SharedArrayBuffer | undefined,
+): number | null {
+  const word = state_word(activeWorkers);
+  return word ? Atomics.load(word, 0) : null;
+}
+
+export function increment_dynamic_active_workers(
+  activeWorkers: SharedArrayBuffer | undefined,
+): boolean {
+  const word = state_word(activeWorkers);
+  if (!word) return false;
+  Atomics.add(word, 0, 1);
+  return true;
+}
+
+export function decrement_dynamic_active_workers(
+  activeWorkers: SharedArrayBuffer | undefined,
+): boolean {
+  const word = state_word(activeWorkers);
+  if (!word) return false;
+  for (;;) {
+    const current = Atomics.load(word, 0);
+    if (current <= 0) return false;
+    if (Atomics.compareExchange(word, 0, current, current - 1) === current) return true;
+  }
 }
 
 export function dynamic_process_is_pristine(state: SharedArrayBuffer | undefined): boolean {

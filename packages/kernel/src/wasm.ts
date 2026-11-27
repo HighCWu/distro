@@ -82,6 +82,8 @@ export interface UserContext {
     privateExports: ReadonlySet<string>;
     /** Shared loader/thread arbitration word, created afresh for every dynamic exec. */
     process_state?: SharedArrayBuffer;
+    /** Shared count of live child Workers sharing this dynamic process, created afresh for every dynamic exec. */
+    active_workers?: SharedArrayBuffer;
     /** Immutable loaded graph, copied into callback Workers before their entry runs. */
     worker_snapshot?: DylinkWorkerSnapshot;
     /** Publication identity and generation belonging to worker_snapshot. */

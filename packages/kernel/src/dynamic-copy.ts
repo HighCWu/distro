@@ -5,7 +5,11 @@ import {
   prepare_dylink_worker_snapshot,
   type DylinkWorkerSnapshot,
 } from "./dylink_process_worker.ts";
-import { claim_dynamic_loader, create_dynamic_process_state } from "./dynamic-thread.ts";
+import {
+  claim_dynamic_loader,
+  create_dynamic_active_workers,
+  create_dynamic_process_state,
+} from "./dynamic-thread.ts";
 import type { UserContext, WasmAddress } from "./wasm.ts";
 
 const CLONE_VM = 0x00000100n;
@@ -98,6 +102,7 @@ export function create_dynamic_process_copy_context(
       ),
       privateExports: new Set(parentDynamic.privateExports),
       process_state: processState,
+      active_workers: create_dynamic_active_workers(),
       ...(workerSnapshot === undefined ? {} : { worker_snapshot: workerSnapshot }),
     },
   };

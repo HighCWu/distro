@@ -8,7 +8,16 @@ import {
   dynamic_vfork_context,
   dynamic_vfork_replay_allowed,
 } from "../src/dynamic-vfork.ts";
-import { create_dynamic_process_state, DYNAMIC_LOADER_CLAIMED } from "../src/dynamic-thread.ts";
+import {
+  create_dynamic_active_workers,
+  create_dynamic_process_state,
+  decrement_dynamic_active_workers,
+  DYNAMIC_LOADER_CLAIMED,
+  DYNAMIC_REPLAY_READY,
+  DYNAMIC_THREAD_SUCCESS,
+  dynamic_active_workers_count,
+  increment_dynamic_active_workers,
+} from "../src/dynamic-thread.ts";
 import { prepare_dylink_worker_snapshot } from "../src/dylink_process_worker.ts";
 import type { UserContext, WasmAddress } from "../src/wasm.ts";
 
@@ -28,6 +37,7 @@ function context(address: "i32" | "i64", vforkChild = false): UserContext {
       functionMetadata: new Map([["main", { signature: "signature", imported: false }]]),
       privateExports: new Set(["private"]),
       process_state: create_dynamic_process_state(),
+      active_workers: create_dynamic_active_workers(),
       ...(vforkChild ? { vfork_child: true } : {}),
     },
   };
@@ -86,12 +96,12 @@ for (const address of ["i32", "i64"] as const) {
     assert.equal(candidate({ context: { ...context(address), dynamic: undefined } }), false);
   });
 
-  test(`${address}: settled loaded vfork requires the single-threaded loader claim without a cohort`, () => {
+  test(`${address}: settled loaded vfork requires the single-threaded loader claim or retired thread cohort`, () => {
     const loaded = context(address);
     Atomics.store(new Int32Array(loaded.dynamic!.process_state!), 0, DYNAMIC_LOADER_CLAIMED);
     assert.equal(candidate({ context: loaded, loaderCreated: true }), true);
     assert.equal(candidate({ context: loaded, loaderCreated: false }), false);
-    for (const value of [0, 1, 0x20000000, 0x40000000]) {
+    for (const value of [0, 1, DYNAMIC_REPLAY_READY, DYNAMIC_THREAD_SUCCESS]) {
       Atomics.store(new Int32Array(loaded.dynamic!.process_state!), 0, value);
       assert.equal(candidate({ context: loaded, loaderCreated: true }), false);
     }
@@ -106,6 +116,50 @@ for (const address of ["i32", "i64"] as const) {
     delete loaded.dynamic!.worker_membership;
     delete loaded.dynamic!.process_state;
     assert.equal(candidate({ context: loaded, loaderCreated: true }), false);
+  });
+
+  test(`${address}: allows vfork after dynamic threads retire, and rejects while any worker is active`, () => {
+    const threaded = context(address);
+    Atomics.store(
+      new Int32Array(threaded.dynamic!.process_state!),
+      0,
+      DYNAMIC_THREAD_SUCCESS | DYNAMIC_REPLAY_READY,
+    );
+    threaded.dynamic!.worker_publication = { processIdentity: "cohort", generation: 1 };
+    threaded.dynamic!.worker_membership = {} as NonNullable<
+      typeof threaded.dynamic
+    >["worker_membership"];
+
+    // All child workers retired (active_workers === 0): loaded vfork is allowed.
+    assert.equal(dynamic_active_workers_count(threaded.dynamic!.active_workers), 0);
+    assert.equal(candidate({ context: threaded, loaderCreated: true }), true);
+    // Non-loaded vfork does not accept DYNAMIC_REPLAY_READY.
+    assert.equal(candidate({ context: threaded, loaderCreated: false }), false);
+
+    // While a background worker is active, vfork must be rejected.
+    assert.equal(increment_dynamic_active_workers(threaded.dynamic!.active_workers), true);
+    assert.equal(dynamic_active_workers_count(threaded.dynamic!.active_workers), 1);
+    assert.equal(candidate({ context: threaded, loaderCreated: true }), false);
+
+    // Once the active worker retires, vfork is allowed again.
+    assert.equal(decrement_dynamic_active_workers(threaded.dynamic!.active_workers), true);
+    assert.equal(decrement_dynamic_active_workers(threaded.dynamic!.active_workers), false);
+    assert.equal(dynamic_active_workers_count(threaded.dynamic!.active_workers), 0);
+    assert.equal(candidate({ context: threaded, loaderCreated: true }), true);
+
+    // Missing active_workers fails closed.
+    const withoutActive = {
+      ...threaded,
+      dynamic: { ...threaded.dynamic!, active_workers: undefined },
+    };
+    assert.equal(candidate({ context: withoutActive, loaderCreated: true }), false);
+
+    // Non-loaded dynamic main after all pthreads retired (DYNAMIC_THREAD_SUCCESS only).
+    const unloadedThreaded = context(address);
+    Atomics.store(new Int32Array(unloadedThreaded.dynamic!.process_state!), 0, DYNAMIC_THREAD_SUCCESS);
+    assert.equal(candidate({ context: unloadedThreaded, loaderCreated: false }), true);
+    increment_dynamic_active_workers(unloadedThreaded.dynamic!.active_workers);
+    assert.equal(candidate({ context: unloadedThreaded, loaderCreated: false }), false);
   });
 }
 
@@ -188,6 +242,30 @@ test("vfork replay snapshot is child-only, requires no cohort and clears on fail
   assert.equal(state.pending, false);
   state.run(() => assert.equal(state.context(parent)?.dynamic?.worker_snapshot, undefined));
   assert.equal(parent.dynamic?.worker_snapshot, undefined);
+
+  // Post-thread replay: parent has cohort membership/publication and
+  // DYNAMIC_THREAD_SUCCESS | DYNAMIC_REPLAY_READY, with active_workers === 0.
+  const threadedParent = context("i64");
+  Atomics.store(
+    new Int32Array(threadedParent.dynamic!.process_state!),
+    0,
+    DYNAMIC_THREAD_SUCCESS | DYNAMIC_REPLAY_READY,
+  );
+  threadedParent.dynamic!.worker_publication = { processIdentity: "cohort", generation: 2 };
+  threadedParent.dynamic!.worker_membership = {} as NonNullable<
+    typeof threadedParent.dynamic
+  >["worker_membership"];
+  state.run(() => {
+    const vforkChild = state.context(threadedParent)!;
+    assert.equal(vforkChild.dynamic?.worker_membership, undefined);
+    assert.equal(vforkChild.dynamic?.worker_publication, undefined);
+    assert.equal(dynamic_vfork_replay_allowed(vforkChild), true);
+
+    increment_dynamic_active_workers(vforkChild.dynamic?.active_workers);
+    assert.equal(dynamic_vfork_replay_allowed(vforkChild), false);
+    decrement_dynamic_active_workers(vforkChild.dynamic?.active_workers);
+    assert.equal(dynamic_vfork_replay_allowed(vforkChild), true);
+  }, snapshot);
 });
 
 test("vfork marks only the child context copy and clears the pending marker on return", () => {

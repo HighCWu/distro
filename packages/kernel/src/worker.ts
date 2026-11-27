@@ -118,10 +118,13 @@ import {
 import {
   DYNAMIC_LOADER_CLAIMED,
   claim_dynamic_loader,
+  create_dynamic_active_workers,
   create_dynamic_process_state,
+  decrement_dynamic_active_workers,
   dynamic_process_has_replay,
   dynamic_process_value,
   dynamic_thread_clone_allowed,
+  increment_dynamic_active_workers,
   publish_dynamic_replay_ready,
   release_dynamic_loader_claim,
   restore_dynamic_table,
@@ -164,6 +167,8 @@ export interface InitMessage {
   user_copy_status: UserCopyStatus | null;
   /** Wait until a shared-memory callback Worker has reconstructed dynamic state. */
   shared_user_prepare?: boolean;
+  /** True when this Worker is a dynamic-process thread counted in active_workers. */
+  dynamic_thread_worker?: boolean;
   copy_fault?: CopyFault;
   fork_profile?: ForkProfileRequest;
   dylink_memory_grants?: readonly DylinkMemoryGrant[];
@@ -323,8 +328,18 @@ function without_worker_membership(user: UserContext | null): UserContext | null
   return { ...user, dynamic };
 }
 
+let active_dynamic_worker_state: SharedArrayBuffer | null = null;
+
+function retire_active_dynamic_worker(): void {
+  const state = active_dynamic_worker_state;
+  if (!state) return;
+  active_dynamic_worker_state = null;
+  decrement_dynamic_active_workers(state);
+}
+
 const stop_worker = () => {
   try {
+    retire_active_dynamic_worker();
     terminate_for_membership_retirement(cleanup_active_worker_membership());
     service_worker_membership = undefined;
     postMessage({ type: "worker_exit" });
@@ -917,7 +932,10 @@ function user_imports({
           try {
             // The suspended parent retains its shared memory and file pins.
             // Export before marking vfork pending, while the loader is idle.
-            vforkSnapshot = dynamic.exportWorkerSnapshot();
+            vforkSnapshot = dynamic.runAtWorkerCheckpoint(() => {
+              const publication = dynamic!.getWorkerPublicationState();
+              return publication?.snapshot ?? dynamic!.exportWorkerSnapshot();
+            });
           } catch (error) {
             if (control(error)) throw error;
             const errno = snapshot_error_errno(error);
@@ -1349,6 +1367,7 @@ function user_imports({
               functionMetadata: metadata.functions,
               privateExports: metadata.privateExports,
               process_state: create_dynamic_process_state(),
+              active_workers: create_dynamic_active_workers(),
             };
           }
         } catch {
@@ -1963,6 +1982,24 @@ function start({
           }
         }
 
+        const trackDynamicThread =
+          Boolean(user?.dynamic) && !copy_user_memory && !user?.dynamic?.vfork_child;
+        let dynamicThreadCounted = false;
+        const releaseDynamicThreadCount = () => {
+          if (!dynamicThreadCounted) return;
+          dynamicThreadCounted = false;
+          decrement_dynamic_active_workers(user?.dynamic?.active_workers);
+        };
+        if (trackDynamicThread) {
+          if (!increment_dynamic_active_workers(user?.dynamic?.active_workers)) {
+            cancelAdmission(-95);
+            direct.port1.close();
+            direct.port2.close();
+            return -95;
+          }
+          dynamicThreadCounted = true;
+        }
+
         const fork_profile = copy_user_memory ? new_fork_profile_request() : undefined;
         const parent_profile = create_fork_profile(fork_profile, profile_output);
         try {
@@ -1979,6 +2016,7 @@ function start({
           );
         } catch (error) {
           console.error("could not publish callback Worker:", error);
+          releaseDynamicThreadCount();
           cancelAdmission(-11);
           direct.port1.close();
           direct.port2.close();
@@ -1995,10 +2033,12 @@ function start({
             user: childUser,
             user_copy_status,
             shared_user_prepare,
+            ...(trackDynamicThread ? { dynamic_thread_worker: true } : {}),
             ...(fork_profile ? { fork_profile } : {}),
           } satisfies InitMessage);
         } catch (error) {
           console.error("could not send callback Worker initialization:", error);
+          releaseDynamicThreadCount();
           cancelAdmission(-11);
           try {
             direct.port2.postMessage({ type: "abort_init" } satisfies AbortWorkerInitMessage);
@@ -2079,6 +2119,7 @@ function start({
         return user.context;
       },
       worker_exit() {
+        retire_active_dynamic_worker();
         terminate_for_membership_retirement(cleanup_active_worker_membership());
         service_worker_membership = undefined;
         service_worker_checkpoint = undefined;
@@ -2145,15 +2186,23 @@ function start({
 }
 
 function start_with_shared_ack(init: InitMessage): void {
+  if (init.dynamic_thread_worker && init.user?.dynamic?.active_workers) {
+    active_dynamic_worker_state = init.user.dynamic.active_workers;
+  }
   try {
     start(init);
+    retire_active_dynamic_worker();
   } catch (error) {
-    if (!init.shared_user_prepare || !init.user_copy_status) throw error;
+    if (!init.shared_user_prepare || !init.user_copy_status) {
+      retire_active_dynamic_worker();
+      throw error;
+    }
     const status = Atomics.load(init.user_copy_status, 0);
     if (status === USER_COPY_COMPLETE) {
       // The replay acknowledgement was already published; this is now an
       // unexpected failure in the admitted child, so retire its live token and
       // preserve the original failure for the Worker host.
+      retire_active_dynamic_worker();
       terminate_for_membership_retirement(cleanup_active_worker_membership());
       service_worker_membership = undefined;
       throw error;
