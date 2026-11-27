@@ -11,8 +11,9 @@
 }:
 
 let
-  testDevice = pkgs.runCommand "ltp-test-device" { } ''
+  testDevice = pkgs.runCommand "ltp-test-device" { nativeBuildInputs = [ pkgs.e2fsprogs ]; } ''
     truncate -s 320M $out
+    mkfs.ext4 -F -q $out
   '';
 
   # Syscall-port waves, as <dir>/<binary> paths below testcases/kernel/syscalls.
@@ -66,7 +67,7 @@ let
         "lseek/lseek01"
         "lseek/lseek02"
         "lseek/lseek07"
-        # lseek11 reports TCONF on the current kernel.
+        "lseek/lseek11"
         "mkdir/mkdir02"
         "mkdir/mkdir04"
         "mkdir/mkdir05"

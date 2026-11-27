@@ -32,5 +32,6 @@ export {
   type TcpSession,
   type UdpConnection,
   type UdpConnectOptions,
+  type UdpSession,
 } from "./network.ts";
 export { ChildProcess, type CommandStatus, type Signal, type StdinMode } from "./process.ts";

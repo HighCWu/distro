@@ -25,6 +25,7 @@ const TCP_INITIAL_RETRY_MS = 250;
 const TCP_MAX_RETRY_MS = 2_000;
 /** Host-facing UDP streams retain at most this many datagrams, then tail-drop. */
 const UDP_READABLE_QUEUE_CAP = 64;
+const UDP_IDLE_TIMEOUT_MS = 60_000;
 const ETHERNET_MTU = 1500;
 const IP_REASSEMBLY_TIMEOUT_MS = 60_000;
 const MAX_IP_REASSEMBLIES = 64;
@@ -190,6 +191,21 @@ export interface TcpSession {
   readonly signal: AbortSignal;
 }
 
+/** One supervised outbound guest UDP session. */
+export interface UdpSession {
+  /** The address selected by the guest datagram. */
+  readonly target: { readonly hostname: string; readonly port: number };
+  /**
+   * Datagrams received from the guest. The queue retains at most 64 datagrams
+   * and drops new arrivals while full.
+   */
+  readonly readable: ReadableStream<Uint8Array>;
+  /** One write per datagram back to the guest. */
+  readonly writable: WritableStream<Uint8Array>;
+  /** Aborted when the guest detaches, the network closes, or the session expires. */
+  readonly signal: AbortSignal;
+}
+
 /**
  * The outward-facing half of a `Network`: how to reach the world beyond the
  * virtual subnet on a guest's behalf.
@@ -208,6 +224,14 @@ export interface NetworkOptions {
    * say.
    */
   connectTcp: (session: TcpSession) => void | PromiseLike<void>;
+  /**
+   * Handles one outbound UDP flow whenever a guest sends a datagram outside
+   * `GATEWAY_IP:53` (DNS) and outside any host-initiated `connect({ transport: "udp" })`
+   * flow. The callback lives for the duration of the flow until either side
+   * closes it or it idles out. When omitted, outbound UDP datagrams (other than
+   * DNS) are dropped.
+   */
+  connectUdp?: (session: UdpSession) => void | PromiseLike<void>;
   /** Answers guest DNS A queries with the IPv4 addresses for `hostname`. */
   resolveDns: (hostname: string) => Promise<string[]>;
 }
@@ -457,12 +481,34 @@ interface UdpFlow {
   close(): void;
 }
 
+interface OutboundUdpFlow {
+  readonly key: string;
+  readonly guest: Attachment;
+  readonly guest_port: number;
+  readonly peer_ip: number;
+  readonly peer_port: number;
+  readonly controller: ReadableStreamDefaultController<Uint8Array>;
+  readonly writable: WritableStreamDefaultController;
+  readonly abort: AbortController;
+  timer: ReturnType<typeof setTimeout>;
+  closed: boolean;
+}
+
 function tcp_key(guest_ip: number, guest_port: number, peer_ip: number, peer_port: number) {
   return `${guest_ip}:${guest_port}:${peer_ip}:${peer_port}`;
 }
 
 function udp_key(guest_ip: number, guest_port: number, host_port: number) {
   return `${guest_ip}:${guest_port}:${host_port}`;
+}
+
+function outbound_udp_key(
+  guest_ip: number,
+  guest_port: number,
+  peer_ip: number,
+  peer_port: number,
+) {
+  return `${guest_ip}:${guest_port}:${peer_ip}:${peer_port}`;
 }
 
 function parse_tcp(payload: Uint8Array): ParsedTcpSegment | undefined {
@@ -584,11 +630,12 @@ function dns_response(query: Uint8Array, addresses: readonly string[]) {
  * const process = await agent.exec(["wget", "-qO-", "http://example.com"]);
  * ```
  */
-export function createNetwork({ connectTcp, resolveDns }: NetworkOptions): Network {
+export function createNetwork({ connectTcp, connectUdp, resolveDns }: NetworkOptions): Network {
   const ethernet = ethernetNetwork();
   const attachments = new Map<number, Attachment>();
   const tcp_flows = new Map<string, TcpFlow>();
   const udp_flows = new Map<string, UdpFlow>();
+  const outbound_udp_flows = new Map<string, OutboundUdpFlow>();
   const ip_reassemblies = new Map<string, IpReassembly>();
   const free_addresses: number[] = [];
   let next_address = 2;
@@ -1181,6 +1228,133 @@ export function createNetwork({ connectTcp, resolveDns }: NetworkOptions): Netwo
     }
   }
 
+  function close_outbound_udp(flow: OutboundUdpFlow, error?: unknown, closeWriter = true) {
+    if (flow.closed) return;
+    flow.closed = true;
+    clearTimeout(flow.timer);
+    outbound_udp_flows.delete(flow.key);
+    flow.abort.abort(error ?? new Error("UDP session closed"));
+    if (closeWriter) {
+      try {
+        flow.writable.error(error ?? new Error("UDP session closed"));
+      } catch {
+        // The stream may already be errored or closed.
+      }
+    }
+    if (error !== undefined) {
+      try {
+        flow.controller.error(error);
+      } catch {
+        // The stream may already be closed or cancelled.
+      }
+    } else {
+      try {
+        flow.controller.close();
+      } catch {
+        // The stream may already be closed or cancelled.
+      }
+    }
+  }
+
+  function touch_outbound_udp(flow: OutboundUdpFlow) {
+    if (flow.closed) return;
+    clearTimeout(flow.timer);
+    flow.timer = setTimeout(
+      () => close_outbound_udp(flow, new Error("UDP session timed out")),
+      UDP_IDLE_TIMEOUT_MS,
+    );
+  }
+
+  function start_outbound_udp(
+    guest: Attachment,
+    ip: ParsedIpPacket,
+    datagram: ParsedUdpDatagram,
+  ): OutboundUdpFlow {
+    const key = outbound_udp_key(
+      ip.source,
+      datagram.source_port,
+      ip.destination,
+      datagram.destination_port,
+    );
+    let controller!: ReadableStreamDefaultController<Uint8Array>;
+    const readable = new ReadableStream<Uint8Array>(
+      {
+        start(value) {
+          controller = value;
+        },
+        cancel(reason) {
+          close_outbound_udp(flow, reason);
+        },
+      },
+      {
+        highWaterMark: UDP_READABLE_QUEUE_CAP,
+        size() {
+          return 1;
+        },
+      },
+    );
+    let writable_controller!: WritableStreamDefaultController;
+    const abort = new AbortController();
+    const flow: OutboundUdpFlow = {
+      key,
+      guest,
+      guest_port: datagram.source_port,
+      peer_ip: ip.destination,
+      peer_port: datagram.destination_port,
+      controller,
+      get writable() {
+        return writable_controller;
+      },
+      abort,
+      timer: setTimeout(
+        () => close_outbound_udp(flow, new Error("UDP session timed out")),
+        UDP_IDLE_TIMEOUT_MS,
+      ),
+      closed: false,
+    };
+    const writable = new WritableStream<Uint8Array>({
+      start(value) {
+        writable_controller = value;
+      },
+      async write(payload) {
+        if (flow.closed) throw new Error("UDP session is closed");
+        touch_outbound_udp(flow);
+        try {
+          const reply = udp_datagram(flow.peer_port, flow.guest_port, payload);
+          await send_ip(flow.guest, flow.peer_ip, IpProtocol.UDP, reply);
+        } catch (error) {
+          close_outbound_udp(flow, error, false);
+          throw error;
+        }
+      },
+      close() {
+        close_outbound_udp(flow, undefined, false);
+      },
+      abort(reason) {
+        close_outbound_udp(flow, reason, false);
+      },
+    });
+    outbound_udp_flows.set(key, flow);
+    const session: UdpSession = {
+      target: {
+        hostname: ip.destination === GATEWAY_IP ? "127.0.0.1" : ipv4_string(ip.destination),
+        port: datagram.destination_port,
+      },
+      readable,
+      writable,
+      signal: abort.signal,
+    };
+    Promise.resolve()
+      .then(() => {
+        if (!flow.closed) return connectUdp!(session);
+      })
+      .then(
+        () => close_outbound_udp(flow),
+        (error) => close_outbound_udp(flow, error),
+      );
+    return flow;
+  }
+
   function receive_udp(guest: Attachment, ip: ParsedIpPacket) {
     const datagram = parse_udp(ip.payload);
     if (!datagram) return;
@@ -1188,9 +1362,27 @@ export function createNetwork({ connectTcp, resolveDns }: NetworkOptions): Netwo
       void receive_dns(guest, datagram);
       return;
     }
-    if (ip.destination !== GATEWAY_IP) return;
-    const flow = udp_flows.get(udp_key(ip.source, datagram.source_port, datagram.destination_port));
-    if (flow && (flow.controller.desiredSize ?? 0) > 0) {
+    if (ip.destination === GATEWAY_IP) {
+      const host_flow = udp_flows.get(
+        udp_key(ip.source, datagram.source_port, datagram.destination_port),
+      );
+      if (host_flow) {
+        if ((host_flow.controller.desiredSize ?? 0) > 0) {
+          host_flow.controller.enqueue(datagram.payload.slice());
+        }
+        return;
+      }
+    }
+    if (!connectUdp || datagram.destination_port === 0) return;
+    const key = outbound_udp_key(
+      ip.source,
+      datagram.source_port,
+      ip.destination,
+      datagram.destination_port,
+    );
+    const flow = outbound_udp_flows.get(key) ?? start_outbound_udp(guest, ip, datagram);
+    touch_outbound_udp(flow);
+    if ((flow.controller.desiredSize ?? 0) > 0) {
       flow.controller.enqueue(datagram.payload.slice());
     }
   }
@@ -1544,6 +1736,10 @@ export function createNetwork({ connectTcp, resolveDns }: NetworkOptions): Netwo
           for (const flow of udp_flows.values()) {
             if (flow.guest === attachment) flow.close();
           }
+          for (const flow of outbound_udp_flows.values()) {
+            if (flow.guest === attachment)
+              close_outbound_udp(flow, new Error("guest detached from network"));
+          }
           for (const [key, reassembly] of ip_reassemblies) {
             if (reassembly.source === ip) discard_ip_reassembly(key);
           }
@@ -1560,8 +1756,12 @@ export function createNetwork({ connectTcp, resolveDns }: NetworkOptions): Netwo
       for (const flow of udp_flows.values()) {
         flow.close();
       }
+      for (const flow of outbound_udp_flows.values()) {
+        close_outbound_udp(flow, new Error("network closed"));
+      }
       tcp_flows.clear();
       udp_flows.clear();
+      outbound_udp_flows.clear();
       for (const key of ip_reassemblies.keys()) discard_ip_reassembly(key);
       attachments.clear();
       free_addresses.length = 0;

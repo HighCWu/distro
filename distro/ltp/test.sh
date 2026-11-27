@@ -36,9 +36,21 @@ failed=0
 while read -r test; do
   [ -n "$test" ] || continue
 
+  test_tmpdir=$TMPDIR
+  mounted_ltp_tmp=0
+  if [ "$test" = "lseek11" ] && [ -e /ltp-device ]; then
+    mkdir -p /mnt/ltp-tmp || fail "creating /mnt/ltp-tmp failed"
+    mount -t ext4 /dev/vdb /mnt/ltp-tmp || fail "mounting /dev/vdb failed"
+    test_tmpdir=/mnt/ltp-tmp
+    mounted_ltp_tmp=1
+  fi
+
   printf '=== %s (started) ===\n' "$test"
-  out=$(cd /tmp && timeout 15 "/bin/$test" 2>&1)
+  out=$(cd "$test_tmpdir" && TMPDIR="$test_tmpdir" timeout 15 "/bin/$test" 2>&1)
   rc=$?
+  if [ "$mounted_ltp_tmp" -eq 1 ]; then
+    umount /mnt/ltp-tmp >/dev/null 2>&1 || true
+  fi
   printf '=== %s (exit %d) ===\n%s\n' "$test" "$rc" "$out"
 
   if [ "$rc" -eq 124 ]; then
