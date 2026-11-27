@@ -3288,6 +3288,27 @@ lib.makeScope (scope: lib.callPackageWith ({ inherit lib pkgs; } // scope)) (
       vm-test = vmTestWasm64;
       extraChecks = { };
     };
+    getrusage-times-sysinfo-runtime = callPackage ./getrusage-times-sysinfo-runtime/package.nix {
+      extraChecks.both =
+        pkgs.runCommand "getrusage-times-sysinfo-runtime-check-both"
+          {
+            passthru.ci.heavy = true;
+          }
+          ''
+            test -e ${self.getrusage-times-sysinfo-runtime.checks.runtime}
+            test -e ${self.getrusage-times-sysinfo-runtime-wasm64.checks.runtime}
+            touch $out
+          '';
+    };
+    getrusage-times-sysinfo-runtime-wasm64 = self.getrusage-times-sysinfo-runtime.override {
+      stdenv = self.stdenv-wasm64;
+      platform = self.platform-wasm64;
+      musl = self.musl-wasm64;
+      llvm-runtimes = self.llvm-runtimes-wasm64;
+      busybox = self.busybox-wasm64;
+      vm-test = vmTestWasm64;
+      extraChecks = { };
+    };
     memfd-seals-runtime = callPackage ./memfd-seals-runtime/package.nix {
       extraChecks.both = pkgs.runCommand "memfd-seals-runtime-check-both" { passthru.ci.heavy = true; } ''
         test -e ${self.memfd-seals-runtime.checks.runtime}
