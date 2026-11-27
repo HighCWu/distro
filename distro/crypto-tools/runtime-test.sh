@@ -43,9 +43,9 @@ for _ in 1 2 3 4 5 6 7 8 9 10 11 12 13 14 15 16 17 18 19 20; do
   printf '\013' >>"$work/key" || fail 'public HMAC fixture key'
 done
 printf 'Hi There' >"$work/message" || fail 'HMAC message'
-digest=$(kcapi-dgst -c 'hmac(sha256)' --keyfd 3 --hex -i "$work/message" 3<"$work/key") || fail 'upstream keyed digest'
+digest=$(kcapi-dgst -c 'hmac(sha256)' --keyfd 3 --hex <"$work/message" 3<"$work/key") || fail 'upstream keyed digest'
 test "$digest" = b0344c61d8db38535ca8afceaf0bf12b881dc200c9833da726e9376c2e32cff7 || fail 'RFC 4231 HMAC bytes'
-if kcapi-dgst -c linux-wasm-nonexistent-algorithm --hex -i "$work/abc" >"$work/unknown" 2>&1; then fail 'unknown algorithm accepted'; fi
+if kcapi-dgst -c linux-wasm-nonexistent-algorithm --hex <"$work/abc" >"$work/unknown" 2>&1; then fail 'unknown algorithm accepted'; fi
 echo 'crypto tools: standard keyed digest and unavailable algorithm errors pass'
 
 printf abc | /libexec/crypto-tools/unpriv-exec "$sum" >"$work/unpriv" || fail 'ordinary unprivileged program'

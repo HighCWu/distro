@@ -132,8 +132,19 @@ static void submit_one(const struct io_uring_params *p, uint8_t opcode,
 	CHECK(c_head != c_tail, "non-empty cq");
 
 	struct io_uring_cqe *cqe = &cqes[c_head & *cq_mask];
-	CHECK(cqe->user_data == tag, "cqe user_data match");
-	CHECK(cqe->res == expected_res, "cqe res match");
+	if (cqe->user_data != tag) {
+		fprintf(stderr,
+			"linux io_uring: cqe user_data mismatch (got=0x%llx expected=0x%llx res=%d)\n",
+			(unsigned long long)cqe->user_data,
+			(unsigned long long)tag, cqe->res);
+		fail("cqe user_data match");
+	}
+	if (cqe->res != expected_res) {
+		fprintf(stderr,
+			"linux io_uring: cqe res mismatch for tag=0x%llx (got=%d expected=%d)\n",
+			(unsigned long long)tag, cqe->res, expected_res);
+		fail("cqe res match");
+	}
 
 	__atomic_store_n(cq_head, c_head + 1, __ATOMIC_RELEASE);
 }

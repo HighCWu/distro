@@ -34,6 +34,7 @@ pkgs.stdenvNoCC.mkDerivation (finalAttrs: {
     runHook preBuild
 
     cmake -S . -B build -G Ninja \
+      -DCMAKE_POLICY_VERSION_MINIMUM=3.5 \
       -DCMAKE_SYSTEM_NAME=Linux \
       -DCMAKE_SYSTEM_PROCESSOR=${platform.wasmArch} \
       -DCMAKE_C_COMPILER=${sdk}/bin/wasm-linux-cc \
