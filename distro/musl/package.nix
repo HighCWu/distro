@@ -90,6 +90,7 @@ pkgs.stdenvNoCC.mkDerivation (
       ./wasm-crt1.patch
       ./wasm-mincore.patch
       ./wasm-mmap-query.patch
+      ./wasm-cancel-completed-syscall.patch
     ]
     ++ lib.optional enableForkContinuation ./fork-continuation.patch
     ++ lib.optional enableDynamicLoader ./dynamic-loader.patch

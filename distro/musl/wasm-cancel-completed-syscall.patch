@@ -1,0 +1,51 @@
+# SPDX-License-Identifier: MIT
+# Distinguish completed syscalls from still-blocked cancellation points on Wasm
+# so deferred cancellation does not discard committed kernel side effects.
+--- a/src/thread/pthread_cancel.c
++++ b/src/thread/pthread_cancel.c
+@@ -10,6 +10,18 @@
+ #ifdef __wasm__
+ __attribute__((import_module("linux_signal_cancel_v1"), import_name("abi")))
+ hidden int __wasm_signal_cancel_abi(void);
++__attribute__((import_module("linux_signal_syscall_v1"), import_name("abi")))
++hidden int __wasm_signal_syscall_abi(void);
++__attribute__((import_module("linux_signal_syscall_v1"), import_name("frame")))
++hidden int __wasm_signal_syscall_frame(void *to);
++
++struct wasm_signal_syscall_v1 {
++	long result;
++	unsigned long flags;
++};
++
++#define WASM_SIGNAL_SYSCALL_VALID   (1UL << 0)
++#define WASM_SIGNAL_SYSCALL_RESTART (1UL << 1)
+ #endif
+ 
+ long __cancel()
+@@ -70,7 +82,7 @@
+ 	if (__wasm_signal_cancel_abi() != 1) return -ENOSYS;
+ 	r = nr == SYS_close ? __syscall(nr, u, v, w, x, y, z) :
+ 		wasm_cancellable_syscall(self, nr, u, v, w, x, y, z);
+-	if (nr!=SYS_close && self->cancel &&
++	if (r==-EINTR && nr!=SYS_close && self->cancel &&
+ 	    self->canceldisable != PTHREAD_CANCEL_DISABLE)
+ 		r = __cancel();
+ #else
+@@ -107,6 +119,17 @@
+ 	}
+ 
+ #ifdef __wasm__
++	/* If the interrupted syscall already completed with a non-EINTR result
++	 * (e.g. an acquired semaphore token or read bytes), do not discard its
++	 * side effect by longjmp-ing out of the cancellation point. */
++	if (__wasm_signal_syscall_abi() == 1) {
++		struct wasm_signal_syscall_v1 sc;
++		if (__wasm_signal_syscall_frame(&sc) == 0 &&
++		    (sc.flags & WASM_SIGNAL_SYSCALL_VALID) &&
++		    !(sc.flags & WASM_SIGNAL_SYSCALL_RESTART) &&
++		    sc.result != -EINTR)
++			return;
++	}
+ 	/* Return to the cancellation wrapper before SA_RESTART can restart a
+ 	 * blocked call. Masked cancellation (cond_wait) must return ECANCELED
+ 	 * there, not exit from this handler before reacquiring its mutex. */
