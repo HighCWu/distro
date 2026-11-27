@@ -3309,29 +3309,48 @@ lib.makeScope (scope: lib.callPackageWith ({ inherit lib pkgs; } // scope)) (
       vm-test = vmTestWasm64;
       extraChecks = { };
     };
-    dup-pipe-nonblock-fionread-runtime =
-      callPackage ./dup-pipe-nonblock-fionread-runtime/package.nix {
-        extraChecks.both =
-          pkgs.runCommand "dup-pipe-nonblock-fionread-runtime-check-both"
-            {
-              passthru.ci.heavy = true;
-            }
-            ''
-              test -e ${self.dup-pipe-nonblock-fionread-runtime.checks.runtime}
-              test -e ${self.dup-pipe-nonblock-fionread-runtime-wasm64.checks.runtime}
-              touch $out
-            '';
-      };
-    dup-pipe-nonblock-fionread-runtime-wasm64 =
-      self.dup-pipe-nonblock-fionread-runtime.override {
-        stdenv = self.stdenv-wasm64;
-        platform = self.platform-wasm64;
-        musl = self.musl-wasm64;
-        llvm-runtimes = self.llvm-runtimes-wasm64;
-        busybox = self.busybox-wasm64;
-        vm-test = vmTestWasm64;
-        extraChecks = { };
-      };
+    dup-pipe-nonblock-fionread-runtime = callPackage ./dup-pipe-nonblock-fionread-runtime/package.nix {
+      extraChecks.both =
+        pkgs.runCommand "dup-pipe-nonblock-fionread-runtime-check-both"
+          {
+            passthru.ci.heavy = true;
+          }
+          ''
+            test -e ${self.dup-pipe-nonblock-fionread-runtime.checks.runtime}
+            test -e ${self.dup-pipe-nonblock-fionread-runtime-wasm64.checks.runtime}
+            touch $out
+          '';
+    };
+    dup-pipe-nonblock-fionread-runtime-wasm64 = self.dup-pipe-nonblock-fionread-runtime.override {
+      stdenv = self.stdenv-wasm64;
+      platform = self.platform-wasm64;
+      musl = self.musl-wasm64;
+      llvm-runtimes = self.llvm-runtimes-wasm64;
+      busybox = self.busybox-wasm64;
+      vm-test = vmTestWasm64;
+      extraChecks = { };
+    };
+    select-pselect-poll-ppoll-runtime = callPackage ./select-pselect-poll-ppoll-runtime/package.nix {
+      extraChecks.both =
+        pkgs.runCommand "select-pselect-poll-ppoll-runtime-check-both"
+          {
+            passthru.ci.heavy = true;
+          }
+          ''
+            test -e ${self.select-pselect-poll-ppoll-runtime.checks.runtime}
+            test -e ${self.select-pselect-poll-ppoll-runtime-wasm64.checks.runtime}
+            touch $out
+          '';
+    };
+    select-pselect-poll-ppoll-runtime-wasm64 = self.select-pselect-poll-ppoll-runtime.override {
+      stdenv = self.stdenv-wasm64;
+      platform = self.platform-wasm64;
+      musl = self.musl-wasm64;
+      llvm-runtimes = self.llvm-runtimes-wasm64;
+      busybox = self.busybox-wasm64;
+      vm-test = vmTestWasm64;
+      extraChecks = { };
+    };
     memfd-seals-runtime = callPackage ./memfd-seals-runtime/package.nix {
       extraChecks.both = pkgs.runCommand "memfd-seals-runtime-check-both" { passthru.ci.heavy = true; } ''
         test -e ${self.memfd-seals-runtime.checks.runtime}
