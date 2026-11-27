@@ -39,11 +39,11 @@ static int test_prctl(void) {
   char name[16];
   int val;
 
-  if (prctl(PR_SET_NAME, "wasm-prctl", 0, 0, 0) != 0)
+  if (prctl(PR_SET_NAME, (unsigned long)"wasm-prctl", 0UL, 0UL, 0UL) != 0)
     return fail_errno("prctl(PR_SET_NAME)");
 
   memset(name, 0, sizeof(name));
-  if (prctl(PR_GET_NAME, name, 0, 0, 0) != 0)
+  if (prctl(PR_GET_NAME, (unsigned long)name, 0UL, 0UL, 0UL) != 0)
     return fail_errno("prctl(PR_GET_NAME)");
   if (strcmp(name, "wasm-prctl") != 0) {
     fprintf(stderr, "FAIL: PR_GET_NAME got '%s', expected 'wasm-prctl'\n",
@@ -51,25 +51,25 @@ static int test_prctl(void) {
     return 1;
   }
 
-  if (prctl(PR_SET_DUMPABLE, 0, 0, 0, 0) != 0)
+  if (prctl(PR_SET_DUMPABLE, 0UL, 0UL, 0UL, 0UL) != 0)
     return fail_errno("prctl(PR_SET_DUMPABLE, 0)");
-  val = prctl(PR_GET_DUMPABLE, 0, 0, 0, 0);
+  val = prctl(PR_GET_DUMPABLE, 0UL, 0UL, 0UL, 0UL);
   if (val != 0) {
     fprintf(stderr, "FAIL: PR_GET_DUMPABLE=%d, expected 0\n", val);
     return 1;
   }
 
-  if (prctl(PR_SET_DUMPABLE, 1, 0, 0, 0) != 0)
+  if (prctl(PR_SET_DUMPABLE, 1UL, 0UL, 0UL, 0UL) != 0)
     return fail_errno("prctl(PR_SET_DUMPABLE, 1)");
-  val = prctl(PR_GET_DUMPABLE, 0, 0, 0, 0);
+  val = prctl(PR_GET_DUMPABLE, 0UL, 0UL, 0UL, 0UL);
   if (val != 1) {
     fprintf(stderr, "FAIL: PR_GET_DUMPABLE=%d, expected 1\n", val);
     return 1;
   }
 
-  if (prctl(PR_SET_NO_NEW_PRIVS, 1, 0, 0, 0) != 0)
+  if (prctl(PR_SET_NO_NEW_PRIVS, 1UL, 0UL, 0UL, 0UL) != 0)
     return fail_errno("prctl(PR_SET_NO_NEW_PRIVS, 1)");
-  val = prctl(PR_GET_NO_NEW_PRIVS, 0, 0, 0, 0);
+  val = prctl(PR_GET_NO_NEW_PRIVS, 0UL, 0UL, 0UL, 0UL);
   if (val != 1) {
     fprintf(stderr, "FAIL: PR_GET_NO_NEW_PRIVS=%d, expected 1\n", val);
     return 1;
