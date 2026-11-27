@@ -63,6 +63,7 @@ const result = new Promise((resolve) => {
 let settled = false;
 let runtimeFailure;
 let shuttingDown = false;
+let userConsoleClosed = false;
 let machine;
 let initialMemoryBytes;
 let observingMemoryGrowth = false;
@@ -225,6 +226,23 @@ function observeMemoryGrowth(stage) {
   if (stage < 2) void inputWriter.write(new Uint8Array([0x0a]));
 }
 
+function reportConsoleClosedBeforeResult() {
+  if (!settled) {
+    finish({
+      passed: false,
+      reason: "guest console closed before reporting a result",
+    });
+  }
+}
+
+function observeConsoleClosedWithoutResult() {
+  if (!machine) {
+    userConsoleClosed = true;
+    return;
+  }
+  void machine.closed.then(reportConsoleClosedBeforeResult, () => {});
+}
+
 function consoleOutput({ failWhenClosed, acceptTestResult = true }) {
   const decoder = new LineDecoder();
   const consume = (lines) =>
@@ -236,10 +254,7 @@ function consoleOutput({ failWhenClosed, acceptTestResult = true }) {
     close() {
       consume(decoder.close());
       if (failWhenClosed && !settled) {
-        finish({
-          passed: false,
-          reason: "guest console closed before reporting a result",
-        });
+        observeConsoleClosedWithoutResult();
       }
     },
     abort(error) {
@@ -319,7 +334,10 @@ try {
   finish({ passed: false, reason: `machine failed to boot: ${error}` });
 }
 
-if (machine) initialMemoryBytes = machine.memory.buffer.byteLength;
+if (machine) {
+  initialMemoryBytes = machine.memory.buffer.byteLength;
+  if (userConsoleClosed && !settled) observeConsoleClosedWithoutResult();
+}
 
 if (machine && vsock) {
   vsockTimer = setTimeout(() => {

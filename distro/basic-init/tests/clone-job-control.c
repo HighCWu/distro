@@ -127,18 +127,11 @@ static int session_supervisor(void *unused)
 	if (kill(pid, SIGTSTP) == -1)
 		return 19;
 	waited = wait_state(pid, &status, WUNTRACED);
-	if (waited == pid && WIFSTOPPED(status) && WSTOPSIG(status) == SIGTSTP) {
-		puts("clone wait states: SIGTSTP stopped child; WUNTRACED reported it");
-	} else {
+	if (waited != pid || !WIFSTOPPED(status) || WSTOPSIG(status) != SIGTSTP) {
 		puts("clone wait states: SIGTSTP did not produce a WUNTRACED stop");
-		if (kill(pid, SIGSTOP) == -1)
-			return 20;
-		waited = wait_state(pid, &status, WUNTRACED);
-		if (waited != pid || !WIFSTOPPED(status) ||
-		    WSTOPSIG(status) != SIGSTOP)
-			return 21;
-		puts("clone wait states: SIGSTOP and WUNTRACED work");
+		return 20;
 	}
+	puts("clone wait states: SIGTSTP stopped child; WUNTRACED reported it");
 
 	if (kill(pid, SIGCONT) == -1)
 		return 22;

@@ -164,3 +164,38 @@ for (const scenario of [
     }
   });
 }
+
+for (const [scenario, expectedReason] of [
+  ["console-close-machine-fail", /vm test failed: machine failed: Error: late machine failure/],
+  ["console-close-clean", /vm test failed: guest console closed before reporting a result/],
+]) {
+  test(`real runner does not mask machine errors when console closes early: ${scenario}`, () => {
+    const temp = mkdtempSync(join(tmpdir(), "linux-wasm-runner-console-close-"));
+    try {
+      const initramfs = join(temp, "initramfs");
+      const disk = join(temp, "disk");
+      writeFileSync(initramfs, new Uint8Array([1]));
+      writeFileSync(disk, new Uint8Array(512).fill(0x37));
+      const result = spawnSync(
+        process.execPath,
+        [
+          fileURLToPath(new URL("./run-test.js", import.meta.url)),
+          "--readonly-disks",
+          fileURLToPath(new URL("./shutdown-fixture.js", import.meta.url)),
+          initramfs,
+          disk,
+        ],
+        {
+          encoding: "utf8",
+          timeout: 10000,
+          env: { ...process.env, RUNNER_FIXTURE_FAIL: "0", RUNNER_FIXTURE_SCENARIO: scenario },
+        },
+      );
+      assert.ifError(result.error);
+      assert.equal(result.status, 1, result.stdout + result.stderr);
+      assert.match(result.stderr, expectedReason);
+    } finally {
+      rmSync(temp, { recursive: true, force: true });
+    }
+  });
+}

@@ -21,7 +21,9 @@ export async function bootMachine({ plugins }) {
   const writer = plugins[0].output.getWriter();
   const scenario = process.env.RUNNER_FIXTURE_SCENARIO;
   const write = (line) => writer.write(new TextEncoder().encode(line));
-  if (scenario !== "boot-pass") {
+  if (scenario === "console-close-machine-fail" || scenario === "console-close-clean") {
+    await writer.close();
+  } else if (scenario !== "boot-pass") {
     await write(
       "::vm-test::pass\n" + (scenario === "same-chunk" ? "::vm-test::fail: late failure\n" : ""),
     );
@@ -31,6 +33,11 @@ export async function bootMachine({ plugins }) {
     throw new Error("fixture boot failed after pass");
   const closed = Promise.withResolvers();
   void closed.promise.catch(() => {});
+  if (scenario === "console-close-machine-fail") {
+    setTimeout(() => closed.reject(new Error("late machine failure")), 10);
+  } else if (scenario === "console-close-clean") {
+    setTimeout(() => closed.resolve(), 10);
+  }
   return {
     memory: new WebAssembly.Memory({ initial: 1 }),
     bootConsole: new ReadableStream({
