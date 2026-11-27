@@ -2079,6 +2079,22 @@ lib.makeScope (scope: lib.callPackageWith ({ inherit lib pkgs; } // scope)) (
       vm-test = vmTestWasm64;
       extraChecks = { };
     };
+    coredump-runtime = callPackage ./coredump-runtime/package.nix {
+      extraChecks.both = pkgs.runCommand "coredump-runtime-check-both" { passthru.ci.heavy = true; } ''
+        test -e ${self.coredump-runtime.checks.runtime}
+        test -e ${self.coredump-runtime-wasm64.checks.runtime}
+        touch $out
+      '';
+    };
+    coredump-runtime-wasm64 = self.coredump-runtime.override {
+      stdenv = self.stdenv-wasm64;
+      platform = self.platform-wasm64;
+      musl = self.musl-wasm64;
+      llvm-runtimes = self.llvm-runtimes-wasm64;
+      busybox = self.busybox-wasm64;
+      vm-test = vmTestWasm64;
+      extraChecks = { };
+    };
     libgit2-runtime = callPackage ./libgit2-runtime/package.nix {
       extraChecks.both = pkgs.runCommand "libgit2-runtime-check-both" { passthru.ci.heavy = true; } ''
         test -e ${self.libgit2-runtime.checks.runtime}
