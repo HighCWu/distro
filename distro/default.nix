@@ -3735,18 +3735,20 @@ lib.makeScope (scope: lib.callPackageWith ({ inherit lib pkgs; } // scope)) (
       vm-test = vmTestWasm64;
       extraChecks = { };
     };
-    posix-spawn-cloexec-sigmask-runtime = callPackage ./posix-spawn-cloexec-sigmask-runtime/package.nix {
-      extraChecks.both =
-        pkgs.runCommand "posix-spawn-cloexec-sigmask-runtime-check-both"
-          {
-            passthru.ci.heavy = true;
-          }
-          ''
-            test -e ${self.posix-spawn-cloexec-sigmask-runtime.checks.runtime}
-            test -e ${self.posix-spawn-cloexec-sigmask-runtime-wasm64.checks.runtime}
-            touch $out
-          '';
-    };
+    posix-spawn-cloexec-sigmask-runtime =
+      callPackage ./posix-spawn-cloexec-sigmask-runtime/package.nix
+        {
+          extraChecks.both =
+            pkgs.runCommand "posix-spawn-cloexec-sigmask-runtime-check-both"
+              {
+                passthru.ci.heavy = true;
+              }
+              ''
+                test -e ${self.posix-spawn-cloexec-sigmask-runtime.checks.runtime}
+                test -e ${self.posix-spawn-cloexec-sigmask-runtime-wasm64.checks.runtime}
+                touch $out
+              '';
+        };
     posix-spawn-cloexec-sigmask-runtime-wasm64 = self.posix-spawn-cloexec-sigmask-runtime.override {
       stdenv = self.stdenv-wasm64;
       platform = self.platform-wasm64;
@@ -3756,20 +3758,18 @@ lib.makeScope (scope: lib.callPackageWith ({ inherit lib pkgs; } // scope)) (
       vm-test = vmTestWasm64;
       extraChecks = { };
     };
-    fcntl-dupfd-cloexec-flags-runtime =
-      callPackage ./fcntl-dupfd-cloexec-flags-runtime/package.nix
-        {
-          extraChecks.both =
-            pkgs.runCommand "fcntl-dupfd-cloexec-flags-runtime-check-both"
-              {
-                passthru.ci.heavy = true;
-              }
-              ''
-                test -e ${self.fcntl-dupfd-cloexec-flags-runtime.checks.runtime}
-                test -e ${self.fcntl-dupfd-cloexec-flags-runtime-wasm64.checks.runtime}
-                touch $out
-              '';
-        };
+    fcntl-dupfd-cloexec-flags-runtime = callPackage ./fcntl-dupfd-cloexec-flags-runtime/package.nix {
+      extraChecks.both =
+        pkgs.runCommand "fcntl-dupfd-cloexec-flags-runtime-check-both"
+          {
+            passthru.ci.heavy = true;
+          }
+          ''
+            test -e ${self.fcntl-dupfd-cloexec-flags-runtime.checks.runtime}
+            test -e ${self.fcntl-dupfd-cloexec-flags-runtime-wasm64.checks.runtime}
+            touch $out
+          '';
+    };
     fcntl-dupfd-cloexec-flags-runtime-wasm64 = self.fcntl-dupfd-cloexec-flags-runtime.override {
       stdenv = self.stdenv-wasm64;
       platform = self.platform-wasm64;
