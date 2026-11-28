@@ -47,7 +47,7 @@ static int verify_zero_range(int fd, off_t offset, size_t len) {
 }
 
 int main(void) {
-  const char *path = "/tmp/sparse-lseek-hole-test.bin";
+  const char *path = "/mnt/sparse-lseek-hole-test.bin";
   char block[4096];
   char region[32768];
   int fd;

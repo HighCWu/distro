@@ -3483,6 +3483,69 @@ lib.makeScope (scope: lib.callPackageWith ({ inherit lib pkgs; } // scope)) (
       vm-test = vmTestWasm64;
       extraChecks = { };
     };
+    getrandom-urandom-prng-runtime = callPackage ./getrandom-urandom-prng-runtime/package.nix {
+      extraChecks.both =
+        pkgs.runCommand "getrandom-urandom-prng-runtime-check-both"
+          {
+            passthru.ci.heavy = true;
+          }
+          ''
+            test -e ${self.getrandom-urandom-prng-runtime.checks.runtime}
+            test -e ${self.getrandom-urandom-prng-runtime-wasm64.checks.runtime}
+            touch $out
+          '';
+    };
+    getrandom-urandom-prng-runtime-wasm64 = self.getrandom-urandom-prng-runtime.override {
+      stdenv = self.stdenv-wasm64;
+      platform = self.platform-wasm64;
+      musl = self.musl-wasm64;
+      llvm-runtimes = self.llvm-runtimes-wasm64;
+      busybox = self.busybox-wasm64;
+      vm-test = vmTestWasm64;
+      extraChecks = { };
+    };
+    statfs-fstatfs-statvfs-runtime = callPackage ./statfs-fstatfs-statvfs-runtime/package.nix {
+      extraChecks.both =
+        pkgs.runCommand "statfs-fstatfs-statvfs-runtime-check-both"
+          {
+            passthru.ci.heavy = true;
+          }
+          ''
+            test -e ${self.statfs-fstatfs-statvfs-runtime.checks.runtime}
+            test -e ${self.statfs-fstatfs-statvfs-runtime-wasm64.checks.runtime}
+            touch $out
+          '';
+    };
+    statfs-fstatfs-statvfs-runtime-wasm64 = self.statfs-fstatfs-statvfs-runtime.override {
+      stdenv = self.stdenv-wasm64;
+      platform = self.platform-wasm64;
+      musl = self.musl-wasm64;
+      llvm-runtimes = self.llvm-runtimes-wasm64;
+      busybox = self.busybox-wasm64;
+      vm-test = vmTestWasm64;
+      extraChecks = { };
+    };
+    sched-affinity-priority-runtime = callPackage ./sched-affinity-priority-runtime/package.nix {
+      extraChecks.both =
+        pkgs.runCommand "sched-affinity-priority-runtime-check-both"
+          {
+            passthru.ci.heavy = true;
+          }
+          ''
+            test -e ${self.sched-affinity-priority-runtime.checks.runtime}
+            test -e ${self.sched-affinity-priority-runtime-wasm64.checks.runtime}
+            touch $out
+          '';
+    };
+    sched-affinity-priority-runtime-wasm64 = self.sched-affinity-priority-runtime.override {
+      stdenv = self.stdenv-wasm64;
+      platform = self.platform-wasm64;
+      musl = self.musl-wasm64;
+      llvm-runtimes = self.llvm-runtimes-wasm64;
+      busybox = self.busybox-wasm64;
+      vm-test = vmTestWasm64;
+      extraChecks = { };
+    };
     memfd-seals-runtime = callPackage ./memfd-seals-runtime/package.nix {
       extraChecks.both = pkgs.runCommand "memfd-seals-runtime-check-both" { passthru.ci.heavy = true; } ''
         test -e ${self.memfd-seals-runtime.checks.runtime}
