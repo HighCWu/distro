@@ -3779,20 +3779,18 @@ lib.makeScope (scope: lib.callPackageWith ({ inherit lib pkgs; } // scope)) (
       vm-test = vmTestWasm64;
       extraChecks = { };
     };
-    ftruncate-truncate-append-runtime =
-      callPackage ./ftruncate-truncate-append-runtime/package.nix
-        {
-          extraChecks.both =
-            pkgs.runCommand "ftruncate-truncate-append-runtime-check-both"
-              {
-                passthru.ci.heavy = true;
-              }
-              ''
-                test -e ${self.ftruncate-truncate-append-runtime.checks.runtime}
-                test -e ${self.ftruncate-truncate-append-runtime-wasm64.checks.runtime}
-                touch $out
-              '';
-        };
+    ftruncate-truncate-append-runtime = callPackage ./ftruncate-truncate-append-runtime/package.nix {
+      extraChecks.both =
+        pkgs.runCommand "ftruncate-truncate-append-runtime-check-both"
+          {
+            passthru.ci.heavy = true;
+          }
+          ''
+            test -e ${self.ftruncate-truncate-append-runtime.checks.runtime}
+            test -e ${self.ftruncate-truncate-append-runtime-wasm64.checks.runtime}
+            touch $out
+          '';
+    };
     ftruncate-truncate-append-runtime-wasm64 = self.ftruncate-truncate-append-runtime.override {
       stdenv = self.stdenv-wasm64;
       platform = self.platform-wasm64;
@@ -3802,20 +3800,18 @@ lib.makeScope (scope: lib.callPackageWith ({ inherit lib pkgs; } // scope)) (
       vm-test = vmTestWasm64;
       extraChecks = { };
     };
-    sigwaitinfo-sigqueue-rt-runtime =
-      callPackage ./sigwaitinfo-sigqueue-rt-runtime/package.nix
-        {
-          extraChecks.both =
-            pkgs.runCommand "sigwaitinfo-sigqueue-rt-runtime-check-both"
-              {
-                passthru.ci.heavy = true;
-              }
-              ''
-                test -e ${self.sigwaitinfo-sigqueue-rt-runtime.checks.runtime}
-                test -e ${self.sigwaitinfo-sigqueue-rt-runtime-wasm64.checks.runtime}
-                touch $out
-              '';
-        };
+    sigwaitinfo-sigqueue-rt-runtime = callPackage ./sigwaitinfo-sigqueue-rt-runtime/package.nix {
+      extraChecks.both =
+        pkgs.runCommand "sigwaitinfo-sigqueue-rt-runtime-check-both"
+          {
+            passthru.ci.heavy = true;
+          }
+          ''
+            test -e ${self.sigwaitinfo-sigqueue-rt-runtime.checks.runtime}
+            test -e ${self.sigwaitinfo-sigqueue-rt-runtime-wasm64.checks.runtime}
+            touch $out
+          '';
+    };
     sigwaitinfo-sigqueue-rt-runtime-wasm64 = self.sigwaitinfo-sigqueue-rt-runtime.override {
       stdenv = self.stdenv-wasm64;
       platform = self.platform-wasm64;
