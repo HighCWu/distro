@@ -83,6 +83,7 @@ static int test_file_msync(size_t pagesz) {
   const char *path = "/tmp/madvise_msync_test.dat";
   size_t len = pagesz * 2U;
   int fd;
+  void *shared;
   uint8_t *map;
   char check[16];
 
@@ -94,40 +95,59 @@ static int test_file_msync(size_t pagesz) {
     return fail_errno("open(file)");
   if (ftruncate(fd, (off_t)len) != 0)
     return fail_errno("ftruncate");
+  if (pwrite(fd, "MSYNC_PAYLOAD!", 14, 0) != 14)
+    return fail_errno("pwrite(page1)");
+  if (pwrite(fd, "PAGE2_OK", 8, (off_t)pagesz) != 8)
+    return fail_errno("pwrite(page2)");
 
-  map = mmap(NULL, len, PROT_READ | PROT_WRITE, MAP_SHARED, fd, 0);
+  shared = mmap(NULL, len, PROT_READ, MAP_SHARED, fd, 0);
+  if (shared != MAP_FAILED) {
+    if (munmap(shared, len) != 0)
+      return fail_errno("munmap(shared)");
+  } else if (errno != EINVAL && errno != ENODEV && errno != EOPNOTSUPP) {
+    return fail_errno("mmap(file MAP_SHARED)");
+  }
+
+  map = mmap(NULL, len, PROT_READ | PROT_WRITE, MAP_PRIVATE, fd, 0);
   if (map == MAP_FAILED)
     return fail_errno("mmap(file)");
 
-  if (madvise(map, len, MADV_WILLNEED) != 0)
+  if (memcmp(map, "MSYNC_PAYLOAD!", 14) != 0 ||
+      memcmp(map + pagesz, "PAGE2_OK", 8) != 0) {
+    fprintf(stderr, "FAIL: MAP_PRIVATE initial contents mismatch\n");
+    return 1;
+  }
+
+  if (madvise(map, len, MADV_WILLNEED) != 0 && errno != ENOSYS)
     return fail_errno("madvise(file WILLNEED)");
-  if (madvise(map, len, MADV_SEQUENTIAL) != 0)
+  if (madvise(map, len, MADV_SEQUENTIAL) != 0 && errno != ENOSYS)
     return fail_errno("madvise(file SEQUENTIAL)");
 
-  memcpy(map, "MSYNC_PAYLOAD!", 14);
-  memcpy(map + pagesz, "PAGE2_OK", 8);
+  map[0] = 'X';
+  memset(check, 0, sizeof(check));
+  if (pread(fd, check, 14, 0) != 14 ||
+      memcmp(check, "MSYNC_PAYLOAD!", 14) != 0) {
+    fprintf(stderr, "FAIL: MAP_PRIVATE write leaked to backing file\n");
+    return 1;
+  }
 
-  if (msync(map, len, MS_SYNC) != 0)
-    return fail_errno("msync(MS_SYNC)");
+  if (msync(map, len, MS_SYNC) != 0) {
+    if (errno != ENOSYS)
+      return fail_errno("msync(MS_SYNC)");
+  } else {
+    errno = 0;
+    if (msync(map, len, MS_SYNC | MS_ASYNC) != -1 || errno != EINVAL) {
+      fprintf(stderr, "FAIL: msync(MS_SYNC|MS_ASYNC) expected EINVAL, errno=%d\n",
+              errno);
+      return 1;
+    }
+  }
 
   if (sys_mlock(map, pagesz) != 0) {
     if (errno != ENOSYS)
       return fail_errno("mlock(file)");
   } else if (sys_munlock(map, pagesz) != 0) {
     return fail_errno("munlock(file)");
-  }
-
-  memset(check, 0, sizeof(check));
-  if (pread(fd, check, 14, 0) != 14 ||
-      memcmp(check, "MSYNC_PAYLOAD!", 14) != 0) {
-    fprintf(stderr, "FAIL: pread after msync page1 mismatch\n");
-    return 1;
-  }
-  memset(check, 0, sizeof(check));
-  if (pread(fd, check, 8, (off_t)pagesz) != 8 ||
-      memcmp(check, "PAGE2_OK", 8) != 0) {
-    fprintf(stderr, "FAIL: pread after msync page2 mismatch\n");
-    return 1;
   }
 
   if (munmap(map, len) != 0)
