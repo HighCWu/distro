@@ -4,6 +4,7 @@
 #include <stdio.h>
 #include <string.h>
 #include <sys/resource.h>
+#include <sys/syscall.h>
 #include <unistd.h>
 
 static int fail_errno(const char *msg) {
@@ -77,9 +78,9 @@ static int test_scheduler_and_priority(void) {
   int pol, min_other, max_other, min_fifo, max_fifo;
   int orig_prio, target_prio, got_prio;
 
-  pol = sched_getscheduler(0);
+  pol = (int)syscall(SYS_sched_getscheduler, 0);
   if (pol < 0)
-    return fail_errno("sched_getscheduler(0)");
+    return fail_errno("syscall(SYS_sched_getscheduler, 0)");
 
   min_other = sched_get_priority_min(SCHED_OTHER);
   max_other = sched_get_priority_max(SCHED_OTHER);
