@@ -3884,6 +3884,27 @@ lib.makeScope (scope: lib.callPackageWith ({ inherit lib pkgs; } // scope)) (
       vm-test = vmTestWasm64;
       extraChecks = { };
     };
+    madvise-msync-mlock-runtime = callPackage ./madvise-msync-mlock-runtime/package.nix {
+      extraChecks.both =
+        pkgs.runCommand "madvise-msync-mlock-runtime-check-both"
+          {
+            passthru.ci.heavy = true;
+          }
+          ''
+            test -e ${self.madvise-msync-mlock-runtime.checks.runtime}
+            test -e ${self.madvise-msync-mlock-runtime-wasm64.checks.runtime}
+            touch $out
+          '';
+    };
+    madvise-msync-mlock-runtime-wasm64 = self.madvise-msync-mlock-runtime.override {
+      stdenv = self.stdenv-wasm64;
+      platform = self.platform-wasm64;
+      musl = self.musl-wasm64;
+      llvm-runtimes = self.llvm-runtimes-wasm64;
+      busybox = self.busybox-wasm64;
+      vm-test = vmTestWasm64;
+      extraChecks = { };
+    };
     memfd-seals-runtime = callPackage ./memfd-seals-runtime/package.nix {
       extraChecks.both = pkgs.runCommand "memfd-seals-runtime-check-both" { passthru.ci.heavy = true; } ''
         test -e ${self.memfd-seals-runtime.checks.runtime}
