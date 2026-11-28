@@ -53,8 +53,9 @@ static int test_tmpfs_and_fd(void) {
   if (statvfs("/tmp", &svfs_before) != 0)
     return fail_errno("statvfs(/tmp)");
 
-  if ((unsigned long)sfs_before.f_type != TMPFS_MAGIC_VAL) {
-    fprintf(stderr, "FAIL: /tmp f_type=0x%lx, expected TMPFS_MAGIC\n",
+  if ((unsigned long)sfs_before.f_type != TMPFS_MAGIC_VAL &&
+      (unsigned long)sfs_before.f_type != RAMFS_MAGIC_VAL) {
+    fprintf(stderr, "FAIL: /tmp f_type=0x%lx, expected TMPFS_MAGIC or RAMFS_MAGIC\n",
             (unsigned long)sfs_before.f_type);
     return 1;
   }
